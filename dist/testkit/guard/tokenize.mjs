@@ -39,11 +39,22 @@ export function tokenize(text) {
         while (i < n) {
             const c = text[i];
             if (c === '\\') {
+                // A backslash before CRLF is one line continuation, not an escaped \r followed by a bare line break.
+                if (text[i + 1] === '\r' && text[i + 2] === '\n') {
+                    line++;
+                    i += 3;
+                    continue;
+                }
                 const e = text[i + 1] ?? '';
                 value += SIMPLE_ESCAPES[e] ?? e;
                 if (e === '\n')
                     line++;
                 i += 2;
+                continue;
+            }
+            // A template's cooked value has LF for every CRLF in the source.
+            if (c === '\r' && text[i + 1] === '\n') {
+                i++;
                 continue;
             }
             if (c === '`') {
@@ -101,6 +112,12 @@ export function tokenize(text) {
             i++;
             while (i < n && text[i] !== c && text[i] !== '\n') {
                 if (text[i] === '\\') {
+                    // Line continuation across CRLF: without this the \r is taken as the escaped character and the \n then ends the literal early, so the rest of the line is read as code.
+                    if (text[i + 1] === '\r' && text[i + 2] === '\n') {
+                        line++;
+                        i += 3;
+                        continue;
+                    }
                     const e = text[i + 1] ?? '';
                     value += SIMPLE_ESCAPES[e] ?? e;
                     if (e === '\n')

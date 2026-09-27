@@ -2,7 +2,8 @@
  * Runs the guard over a directory tree and applies the allow file.
  */
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
-import { join, relative, sep, extname, isAbsolute } from 'node:path';
+import * as nodePath from 'node:path';
+import { join, extname, isAbsolute } from 'node:path';
 import { DEFAULT_GUARD_CONFIG } from './config.mjs';
 import { scanSource } from './scan.mjs';
 import { parseAllow, allowMatches } from './allow.mjs';
@@ -17,6 +18,10 @@ function walk(dir, config, out) {
             out.push(full);
         }
     }
+}
+/** A scanned file's path relative to root, with forward slashes: the form findings and allow entries use on every OS. `path` is replaceable so the Windows form can be tested on any host. */
+export function relativePosix(root, full, path = nodePath) {
+    return path.relative(root, full).split(path.sep).join('/');
 }
 /** Scans the configured directories and returns findings split by the allow file. */
 export function runGuard(options) {
@@ -34,8 +39,10 @@ export function runGuard(options) {
         else
             paths.push(full);
     }
-    paths.sort();
-    const files = paths.map((p) => relative(options.root, p).split(sep).join('/'));
+    // Sorted by the forward-slash form, so findings come out in the same order on every OS ('\\' and '/' sort differently against '.' and '-').
+    const pairs = paths.map((p) => ({ p, rel: relativePosix(options.root, p) })).sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    paths.splice(0, paths.length, ...pairs.map((x) => x.p));
+    const files = pairs.map((x) => x.rel);
     const findings = [];
     const allowed = [];
     const used = new Set();
