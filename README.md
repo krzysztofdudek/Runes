@@ -18,7 +18,7 @@ Code enters Runes only when both hold:
 | `@chrisdudek/runes/relations` | per-language relation extractors, the symbol table, the three-state resolver, path resolution, repository layout | Yggdrasil (npm), Grain (vendor) |
 | `@chrisdudek/runes/ast` | `walk`; a parser with an injected parser factory and runtime identity | Yggdrasil, Grain |
 | `@chrisdudek/runes/grammars` | the grammar manifest: grammar pins, the `web-tree-sitter` runtime pin, patches, and a build recipe verified by sha256 | Yggdrasil, Grain |
-| `@chrisdudek/runes/fs` | `withLock`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
+| `@chrisdudek/runes/fs` | `withLock`, `withLockAsync`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
 | `@chrisdudek/runes/cli` | a command-table schema, `parseArgs`, the `<tool>-error/1` error document, the single `--json` block rule | Jarl, Grain, Horde |
 | `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain, Horde |
 | `@chrisdudek/runes/testkit` | the family guard; later the git test environment, CLI/MCP parity, `tools/list` measurement and the runtime pin check | all |
@@ -36,6 +36,20 @@ Code enters Runes only when both hold:
 - Executables: the package has no `bin`.
 - Network access at run time.
 - Runtime dependencies: `web-tree-sitter` is an optional peer dependency, for types only.
+
+## `fs`: locks, atomic writes, the root
+
+```js
+import { withLock, withLockAsync, writeAtomic, renameWithRetry, findRoot, mainCheckout } from '@chrisdudek/runes/fs';
+
+withLock(join(stateDir, '.lock'), () => writeAtomic(file, text));   // sync, re-entrant per path
+await withLockAsync(lockPath, async () => { /* ... */ });          // async, not re-entrant
+const root = findRoot(process.cwd(), { marker: '<state dir>' });    // a worktree without the marker resolves to its main checkout
+```
+
+- `withLock(lockPath, fn, options?)` takes the lock file with an exclusive create and writes `<pid> <host> <ISO time>` into it. A stale lock is broken and taken over: empty and older than 2 s, a holder on this host whose pid is gone (or older than 10 minutes, against pid reuse), or one from another host older than 30 s. Breaking is serialised behind `<lock>.break`, and only a lock whose content is still the one judged stale is removed. A live holder that does not let go within `waitMs` (20 s) throws `LockHeldError` (`code: 'ELOCKED'`) naming the holder; a missing directory throws `LockDirectoryMissingError`. Nothing runs without the lock. Every limit is an option.
+- `writeAtomic(path, data)` writes `.<name>.<pid>.<random>.tmp` beside the target and renames it over the target, so a reader never sees half a file; one ignore pattern, `.*.tmp`, covers the temporary files. `renameWithRetry` retries EPERM, EACCES and EBUSY on Windows (a file another process holds open) and EBUSY elsewhere, within a 2 s budget.
+- `findRoot(from, { marker })` is the nearest checkout (a directory holding `.git`, a directory or a worktree's file). When that checkout lacks `marker` and the main checkout, found through `git rev-parse --git-common-dir`, has it, the main checkout is the root. `checkoutRoot`, `mainCheckout`, `gitCommonDir` and `isLinkedWorktree` are the pieces.
 
 ## The guard
 
