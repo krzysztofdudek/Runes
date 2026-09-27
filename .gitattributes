@@ -3,3 +3,5 @@
 dist/** text eol=lf
 skills/** text eol=lf
 tools/** text eol=lf
+grammars/*.json text eol=lf
+*.wasm binary
