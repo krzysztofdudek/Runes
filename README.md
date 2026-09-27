@@ -128,9 +128,11 @@ A fragment is a piece of skill text more than one tool's `SKILL.md` carries word
 
 | Fragment | Says |
 |---|---|
-| `mcp-first` | call the tool's MCP tools first (fields, absolute paths, one JSON block, `<tool>-error/1`, -32602, timeouts); the CLI is the fallback |
-| `worker-worktree` | a worker works in its own worktree on its own branch, one issue per commit, state passed by the main checkout's absolute path, scratch outside the repository, the coordinator merges |
+| `mcp-first` | call the tool's MCP tools first (fields, absolute paths for what the command would look up from the working directory, one JSON block, -32602 and `isError`, `<tool>-error/1` where the tool has one, the time limit where the server sets one); the CLI is the fallback |
+| `worker-worktree` | a worker works in its own worktree on its own branch, one issue per commit, state passed by the main checkout's absolute path, scratch outside the repository, the brief's checks pass before the report, merging is never the worker's |
 | `evidence` | the `--ran`/`--saw` vocabulary: the exact command and what it printed, pairs by position, notes never prove, a fix shows red then green, evidence is appended |
+
+A fragment states only what is true of every consumer that carries it; what differs (a tool whose workers leave the full check to the merger, a tool whose path fields are relative to the repository) stays in the consumer's own text around the markers. A tool's own working protocol is not a fragment: Yggdrasil's is printed by `yg prime` from the installed CLI, and a copy here would drift from the version a repository actually runs.
 
 ## The guard
 

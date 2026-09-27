@@ -5,6 +5,7 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 ## [0.1.2] - 2026-09-27
 
 - Windows: the guard reads CRLF sources (a string continued across a CRLF line break no longer ends early) and backslash paths, `check:dist` rebuilds without spawning `npm.cmd`, the vendor tool retries removing a clone Windows still holds open, and CI runs the suite on `windows-latest` with Node 22 and 24.
+- `skills/`: `mcp-first` and `worker-worktree` state only what holds for every consumer: the absolute-path rule covers the fields a command would look up from the working directory, the `<tool>-error/1` document and the time limit apply where the tool has them, the CLI fallback leaves command-line parsing to the tool's own usage, and a worker passes the checks its brief names before reporting (rather than always the repository's full check) and never merges.
 
 ## [0.1.1] - 2026-09-27
 
