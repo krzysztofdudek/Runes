@@ -4,7 +4,7 @@ Shared code for the Yggdrasil tool family.
 
 **Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
-Status: 0.1.0 is the skeleton: the subpaths exist and publish, the guard and the vendoring tool work, and the grammar manifest format is fixed. Since then, not yet released: the shared file-system, CLI and MCP code, the rest of the test kit, and the first skill fragments. The relation extractor, the AST walker and the grammar build move in next.
+Status: 0.1.0 (not yet published) holds the guard, the vendoring tool, the grammar manifest format, the shared file-system, CLI and MCP code, the test kit and the first skill fragments. `relations` and `ast` are still stubs: the relation extractor, the AST walker and the grammar build move in next.
 
 ## What goes in: the entry rule
 
