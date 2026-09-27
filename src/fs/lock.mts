@@ -36,12 +36,23 @@ export const LOCK_DEFAULTS: Readonly<Required<Omit<LockOptions, 'platform'>>> = 
   breakStaleMs: 5_000,
 });
 
-/** Thrown when a live holder does not let go within `waitMs`. Nothing ran. */
+/** Thrown when the lock is not free within `waitMs`: a live holder that does not let go, or a stale lock that could not be removed in time. Nothing ran. */
 export class LockHeldError extends Error {
   readonly code = 'ELOCKED';
-  constructor(readonly path: string, readonly holder: string) {
-    super(`${path} is held by another process (${holder.trim() || 'holder unknown'}) — nothing was done; retry, or remove the file if that process is gone`);
+  constructor(readonly path: string, readonly holder: string, readonly stale: boolean = false) {
+    super(stale
+      ? `${path} is stale (${holder.trim() || 'holder unknown'}) but could not be taken over in time — nothing was done; remove the file by hand if its holder is gone`
+      : `${path} is held by another process (${holder.trim() || 'holder unknown'}) — nothing was done; retry, or remove the file if that process is gone`);
     this.name = 'LockHeldError';
+  }
+}
+
+/** Thrown when a stale lock cannot be removed at all (no permission on the lock, on `<lock>.break` or on the directory): waiting would not help. Nothing ran. */
+export class LockBreakError extends Error {
+  readonly code = 'ELOCKBREAK';
+  constructor(readonly path: string, readonly holder: string, override readonly cause: unknown) {
+    super(`${path} is stale (${holder.trim() || 'holder unknown'}) but cannot be removed: ${(cause as Error)?.message ?? String(cause)} — nothing was done; fix the permissions or remove the file by hand`);
+    this.name = 'LockBreakError';
   }
 }
 
@@ -124,15 +135,20 @@ function breakStale(path: string, stale: string, o: Resolved): void {
     const fd = openSync(brk, 'wx');
     try { writeSync(fd, mine); } finally { closeSync(fd); }
   } catch (e) {
-    if (errCode(e) !== 'EEXIST' && !transient(errCode(e), o.platform)) return;
-    try { if (Date.now() - statSync(brk).mtimeMs > o.breakStaleMs) unlinkPatiently(brk, o.platform); } catch { /* gone */ }
+    const code = errCode(e);
+    if (code === 'ENOENT') return;   // the directory went away: the next try reports it
+    // A breaker that cannot even create its own file (a read-only directory, no permission) will never get further: say so now instead of spinning until the deadline.
+    if (code !== 'EEXIST' && !transient(code, o.platform)) throw new LockBreakError(path, stale, e);
+    try { if (Date.now() - statSync(brk).mtimeMs > o.breakStaleMs) unlinkPatiently(brk, o.platform); } catch { /* gone, or another breaker's to clear */ }
     return;
   }
   try {
     let now: string | null = null;
     try { now = readFileSync(path, 'utf8'); } catch { /* released meanwhile */ }
-    if (now === stale) unlinkPatiently(path, o.platform);
-  } catch { /* released meanwhile */ } finally {
+    if (now === stale) {
+      try { unlinkPatiently(path, o.platform); } catch (e) { throw new LockBreakError(path, stale, e); }
+    }
+  } finally {
     try { if (readIfMine(brk, mine)) unlinkPatiently(brk, o.platform); } catch { /* gone */ }
   }
 }
@@ -146,8 +162,8 @@ function nextDelay(path: string, o: Resolved, until: number): number {
     if (Date.now() > until) throw new LockHeldError(path, '');
     return jitter(5, 10);
   }
+  if (Date.now() > until) throw new LockHeldError(path, text, lockIsStale(text, mtimeMs, o));
   if (lockIsStale(text, mtimeMs, o)) { breakStale(path, text, o); return jitter(1, 5); }
-  if (Date.now() > until) throw new LockHeldError(path, text);
   return jitter(10, 40);
 }
 
@@ -183,7 +199,7 @@ export function withLock<T>(lockPath: string, fn: () => T, options: LockOptions 
 }
 
 /**
- * Runs the async `fn` while holding the lock file at `lockPath`, waiting without blocking the event loop. Not re-entrant: an `fn` that awaits `withLockAsync` on the same path again waits for itself until `waitMs` and fails. Two calls in one process on the same path take turns like two processes do.
+ * Runs the async `fn` while holding the lock file at `lockPath`, waiting without blocking the event loop. Not re-entrant: an `fn` that awaits `withLockAsync` on the same path again, or calls the synchronous `withLock` on it, waits for itself until `waitMs` and then throws `LockHeldError` (`ELOCKED`). Two calls in one process on the same path take turns like two processes do.
  */
 export async function withLockAsync<T>(lockPath: string, fn: () => Promise<T> | T, options: LockOptions = {}): Promise<T> {
   const path = resolve(lockPath);

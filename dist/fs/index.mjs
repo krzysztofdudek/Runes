@@ -6,6 +6,6 @@
 export { RUNES_VERSION as version } from '../version.mjs';
 /** The subpath this module is published under. */
 export const subpath = 'fs';
-export { withLock, withLockAsync, lockIsStale, lockHolderText, pidRuns, LOCK_DEFAULTS, LockHeldError, LockDirectoryMissingError } from './lock.mjs';
+export { withLock, withLockAsync, lockIsStale, lockHolderText, pidRuns, LOCK_DEFAULTS, LockHeldError, LockBreakError, LockDirectoryMissingError } from './lock.mjs';
 export { writeAtomic, renameWithRetry, transientRenameCodes, tempPathFor } from './atomic.mjs';
 export { findRoot, checkoutRoot, mainCheckout, gitCommonDir, isLinkedWorktree } from './root.mjs';

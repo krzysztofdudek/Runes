@@ -1,11 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, utimesSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, utimesSync, realpathSync, chmodSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import {
-  withLock, withLockAsync, lockIsStale, lockHolderText, pidRuns, LockHeldError, LockDirectoryMissingError,
+  withLock, withLockAsync, lockIsStale, lockHolderText, pidRuns, LockHeldError, LockBreakError, LockDirectoryMissingError,
   writeAtomic, renameWithRetry, transientRenameCodes, tempPathFor,
   findRoot, checkoutRoot, mainCheckout, gitCommonDir, isLinkedWorktree,
 } from '@chrisdudek/runes/fs';
@@ -81,6 +81,44 @@ describe('withLock', () => {
       old(`${lock}.break`, 60_000);
       assert.equal(withLock(lock, () => 'ran', { waitMs: 2000 }), 'ran');
       assert.equal(existsSync(`${lock}.break`), false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  const readOnlyWorks = process.platform !== 'win32' && process.getuid?.() !== 0;
+  test('a stale lock that cannot be removed fails at once with LockBreakError, well before the deadline', { skip: !readOnlyWorks && 'needs POSIX permissions and a non-root user' }, () => {
+    const dir = temp();
+    const locks = join(dir, 'locks');
+    mkdirSync(locks);
+    try {
+      const lock = join(locks, '.lock');
+      writeFileSync(lock, lockHolderText(deadPid()));
+      chmodSync(locks, 0o555);   // neither .lock.break can be created nor .lock removed
+      let ran = false;
+      const t = Date.now();
+      assert.throws(() => withLock(lock, () => { ran = true; }, { waitMs: 20_000 }), (e) => e instanceof LockBreakError && e.code === 'ELOCKBREAK' && /cannot be removed/.test(e.message));
+      assert.ok(Date.now() - t < 5000, `failed fast (${Date.now() - t} ms)`);
+      assert.equal(ran, false);
+    } finally { chmodSync(locks, 0o755); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('a stale lock whose breaker file another breaker holds respects waitMs and names it stale', () => {
+    const dir = temp();
+    try {
+      const lock = join(dir, '.lock');
+      writeFileSync(lock, lockHolderText(deadPid()));
+      writeFileSync(`${lock}.break`, lockHolderText(process.pid));   // a live breaker, not yet stale
+      const t = Date.now();
+      assert.throws(() => withLock(lock, () => 0, { waitMs: 300 }), (e) => e instanceof LockHeldError && e.stale === true && /is stale .* could not be taken over in time/.test(e.message));
+      assert.ok(Date.now() - t < 3000, `bounded by waitMs (${Date.now() - t} ms)`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('a sync withLock inside withLockAsync on the same path waits, then throws ELOCKED', async () => {
+    const dir = temp();
+    try {
+      const lock = join(dir, '.lock');
+      await assert.rejects(withLockAsync(lock, () => withLock(lock, () => 0, { waitMs: 100 })), (e) => e instanceof LockHeldError && e.code === 'ELOCKED');
+      assert.equal(existsSync(lock), false);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

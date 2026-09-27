@@ -13,12 +13,21 @@ export interface LockOptions {
     platform?: NodeJS.Platform;
 }
 export declare const LOCK_DEFAULTS: Readonly<Required<Omit<LockOptions, 'platform'>>>;
-/** Thrown when a live holder does not let go within `waitMs`. Nothing ran. */
+/** Thrown when the lock is not free within `waitMs`: a live holder that does not let go, or a stale lock that could not be removed in time. Nothing ran. */
 export declare class LockHeldError extends Error {
     readonly path: string;
     readonly holder: string;
+    readonly stale: boolean;
     readonly code = "ELOCKED";
-    constructor(path: string, holder: string);
+    constructor(path: string, holder: string, stale?: boolean);
+}
+/** Thrown when a stale lock cannot be removed at all (no permission on the lock, on `<lock>.break` or on the directory): waiting would not help. Nothing ran. */
+export declare class LockBreakError extends Error {
+    readonly path: string;
+    readonly holder: string;
+    readonly cause: unknown;
+    readonly code = "ELOCKBREAK";
+    constructor(path: string, holder: string, cause: unknown);
 }
 /** Thrown when the lock's directory does not exist (it was removed while the caller waited, or never existed). Nothing ran. */
 export declare class LockDirectoryMissingError extends Error {
@@ -39,6 +48,6 @@ export declare function lockIsStale(text: string, mtimeMs: number, options?: Loc
  */
 export declare function withLock<T>(lockPath: string, fn: () => T, options?: LockOptions): T;
 /**
- * Runs the async `fn` while holding the lock file at `lockPath`, waiting without blocking the event loop. Not re-entrant: an `fn` that awaits `withLockAsync` on the same path again waits for itself until `waitMs` and fails. Two calls in one process on the same path take turns like two processes do.
+ * Runs the async `fn` while holding the lock file at `lockPath`, waiting without blocking the event loop. Not re-entrant: an `fn` that awaits `withLockAsync` on the same path again, or calls the synchronous `withLock` on it, waits for itself until `waitMs` and then throws `LockHeldError` (`ELOCKED`). Two calls in one process on the same path take turns like two processes do.
  */
 export declare function withLockAsync<T>(lockPath: string, fn: () => Promise<T> | T, options?: LockOptions): Promise<T>;
