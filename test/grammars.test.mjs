@@ -160,6 +160,25 @@ describe('buildGrammars and verifyGrammarFiles', () => {
     }
   });
 
+  test('on Windows a source pin comes from the cache; a cold cache is refused with the reason, before any download or build', async () => {
+    const out = tmp();
+    const cache = path.join(out, 'cache');
+    const pin = byLanguage.get('typescript');
+    try {
+      assert.equal(pin.source.kind, 'source');
+      mkdirSync(cache);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g'), only: ['typescript'], resolveFrom: root, cacheDir: cache, platform: 'win32' }), /typescript is not in the cache .* does not work on Windows: .* Linux, macOS or WSL/);
+      assert.ok(!existsSync(path.join(out, 'g')), 'nothing written');
+      const src = path.join(root, '.grammars');
+      writeFileSync(path.join(cache, pin.sha256.wasm), readFileSync(path.join(src, pin.wasmFile)));
+      writeFileSync(path.join(cache, pin.sha256.nodeTypes), readFileSync(path.join(src, syntaxNodeTypesFile(pin.wasmFile))));
+      const built = await buildGrammars({ outDir: path.join(out, 'g'), only: ['typescript'], resolveFrom: root, cacheDir: cache, platform: 'win32' });
+      assert.deepEqual(built.map((b) => b.from), ['cache']);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
   test('a pin whose bytes differ fails before anything is written, and verifyGrammarFiles names the mismatch', async () => {
     const out = tmp();
     try {

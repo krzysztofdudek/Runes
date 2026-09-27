@@ -10,7 +10,8 @@ import {
   findRoot, checkoutRoot, mainCheckout, gitCommonDir, isLinkedWorktree,
 } from '@chrisdudek/runes/fs';
 
-const temp = () => realpathSync(mkdtempSync(join(tmpdir(), 'runes-fs-')));
+// realpathSync.native: git reports long names on Windows, where tmpdir() can hold an 8.3 short one (RUNNER~1).
+const temp = () => realpathSync.native(mkdtempSync(join(tmpdir(), 'runes-fs-')));
 const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); return r.pid; };
 const old = (path, ms) => { const t = (Date.now() - ms) / 1000; utimesSync(path, t, t); };
 

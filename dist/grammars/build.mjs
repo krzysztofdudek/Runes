@@ -1,5 +1,5 @@
 /**
- * The grammar build recipe: turns manifest pins into the two files a parser loads, `<wasmFile>` and `<name>.node-types.json`, and writes a file only after its bytes were hashed and matched against the pin, whatever its source (see `GrammarSource`). Built and downloaded files land in a content-addressed cache named by their sha256 and are re-hashed on every read: a warm cache needs no network and no toolchain, and a damaged entry is evicted, never written out. Source builds are byte-reproducible (the same bytes from Linux x64 and macOS arm64), so the pinned sha256 is also the reproducibility check.
+ * The grammar build recipe: turns manifest pins into the two files a parser loads, `<wasmFile>` and `<name>.node-types.json`, and writes a file only after its bytes were hashed and matched against the pin, whatever its source (see `GrammarSource`). Built and downloaded files land in a content-addressed cache named by their sha256 and are re-hashed on every read: a warm cache needs no network and no toolchain, and a damaged entry is evicted, never written out. Source builds are byte-reproducible on Linux and macOS (the same bytes from Linux x64 and macOS arm64), so the pinned sha256 is also the reproducibility check. Windows is the exception, and a source build there is refused before any download: the wasi-sdk that tree-sitter-cli 0.27.0 fetches on Windows (wasi-sdk-34) names its clang `23.1.0-rc3` in the WASM `producers` section, where the Linux and macOS builds of the same LLVM commit say `23.1.0-wasi-sdk`. The code is byte-identical; only that metadata string differs, and it changes the sha256. On Windows the grammars come from the cache, filled from a Linux, macOS or WSL build.
  *
  * This runs at build time, never at run time: it downloads, checks out repositories and runs the tree-sitter CLI. A consumer calls it from its own build or test script; `@chrisdudek/runes` itself ships no executable.
  */
@@ -20,6 +20,7 @@ export function loadGrammarManifest() {
     return parseGrammarManifest(readFileSync(path.join(shippedGrammarsDir(), 'manifest.json'), 'utf8'));
 }
 const REPIN_HINT = 'If the pin in the grammar manifest was changed on purpose, set the sha256 to the value above after reviewing the grammar change (the node-types.json diff and the full relation test suite); otherwise what was read, downloaded or built is not the pinned grammar.';
+const WIN32_SOURCE_BUILD = (language, cli, cacheDir) => `grammar ${language} is not in the cache (${cacheDir}) and is built from source, which does not work on Windows: tree-sitter-cli ${cli} compiles there with a wasi-sdk whose clang labels itself differently in the WASM producers section, so the bytes (identical code, different metadata) never match the pin. Build the grammars on Linux, macOS or WSL and copy the cache directory (its files are named by their sha256) to this machine, or point RUNES_GRAMMAR_CACHE at such a copy; buildGrammars then verifies and uses them.`;
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 function verifyPinned(what, bytes, expected) {
     const actual = sha256(bytes);
@@ -171,6 +172,8 @@ export async function buildGrammars(options) {
             from = 'download';
         }
         else {
+            if ((options.platform ?? process.platform) === 'win32')
+                throw new Error(WIN32_SOURCE_BUILD(pin.language, manifest.cli.version, cacheDir));
             cli ??= treeSitterCli(resolveFrom, manifest.cli.version);
             log(`building ${pin.language} from ${pin.repo} at ${pin.commit} with tree-sitter-cli ${manifest.cli.version}`);
             files = buildFromSource(pin, src, cli, patchesRoot);

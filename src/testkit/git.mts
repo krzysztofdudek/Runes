@@ -42,7 +42,7 @@ export function gitLocalEnvVars(): string[] {
 let nullPaths: { config: string; hooks: string } | null = null;
 function emptyPaths(): { config: string; hooks: string } {
   if (nullPaths && existsSync(nullPaths.config) && existsSync(nullPaths.hooks)) return nullPaths;
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'runes-gitenv-')));
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'runes-gitenv-')));
   const config = join(dir, 'gitconfig');
   const hooks = join(dir, 'hooks');
   writeFileSync(config, '');
@@ -110,7 +110,8 @@ export interface TempRepo {
 
 /** A fresh repository under the OS temp dir, with `gitEnv`. `files` are written and committed as a first commit when given. */
 export function makeTempRepo(options: GitEnvOptions & { files?: Record<string, string>; prefix?: string; env?: NodeJS.ProcessEnv } = {}): TempRepo {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), options.prefix ?? 'runes-repo-')));
+  // realpathSync.native: the canonical path git itself reports (macOS /private, Windows long names instead of 8.3 short ones such as RUNNER~1).
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), options.prefix ?? 'runes-repo-')));
   const env = gitEnv(options.env ?? process.env, options);
   const git = (...args: string[]): string => execFileSync('git', args, { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).toString();
   const write = (path: string, content: string): void => {
