@@ -81,6 +81,28 @@ try {
 - **One JSON block**: with `--json`, stdout holds exactly one document, the answer or the error document, and every note goes to stderr. `renderResult`, `renderFailure` and `emit` do this; `isSingleJsonBlock` checks it.
 - **`readUsage(usage, table)`** reads a hand-written usage text (the section after `commands:` or `usage:`) into blocks per command, with each entry's synopsis, description and `--flags`, and lists entries that name no command.
 
+## `mcp`: a stdio server from the table
+
+```js
+import { createServer, serveStdio, inProcess, spawnCli, InvalidParams } from '@chrisdudek/runes/mcp';
+
+const server = createServer({
+  table: TABLE, version: '1.0.0',
+  executor: inProcess(({ parsed, data }) => dispatch(data.root, parsed.command, parsed.args, parsed.flags)),   // Jarl style
+  // executor: spawnCli({ args: [cliScript] }),                                                                // Grain style
+  tools: { help: USAGE },
+  timeoutMs: (command) => (command === 'propose' ? 3_600_000 : 600_000),
+  prepare: ({ command, input }) => ({ data: { root: input.root ?? found }, notes: input.root ? {} : { root: `reached ${found}` } }),
+});
+serveStdio(server);
+```
+
+- **Tools**: one per public command, `<tool>_<command>` (`grain_decide_steer`), one field per argument and flag, `readOnlyHint`, `destructiveHint` and `idempotentHint` from the table, and a `<tool>_help` tool with the usage text when `help` is given. `describe` and `fieldNote` shape the text; short descriptions keep `tools/list` small, and the help tool carries the rest.
+- **Input**: a call becomes the argv the CLI would get (flags inline, then `--`, then the arguments), so the CLI's parser reads it. Unknown fields, wrong types, a missing required argument, an argument after a gap, and a relative path in a field the table marks as a path are a JSON-RPC -32602 error, and nothing runs. `prepare` may refuse with `InvalidParams` too.
+- **Executors**: `inProcess(run)` hands `run` the parsed call and takes back `{ value, text, notes, exitCode }` or a thrown refusal; it cannot be stopped midway, so a timeout or cancel drops its answer and the next call waits for it to end. `spawnCli({ command, args })` runs the CLI as a child in its own process group; a timeout, a cancel, stdin closing or SIGTERM/SIGINT/SIGHUP kill the whole tree (`taskkill /T /F` on Windows, where there are no process groups).
+- **Answers**: a JSON answer is exactly one text block, notes in `_meta` under `<tool>/<key>`; a refusal in JSON mode is the `<tool>-error/1` document as that block. A non-zero exit or a refusal is `isError: true`.
+- **Transport**: tool calls run one at a time, in order; `initialize`, `ping` and `tools/list` never wait behind them. `notifications/cancelled` stops a running call or drops a queued one, without an answer; a cancel for any other id is ignored. Client responses are ignored. The protocol version a client asks for comes back when it is one of `2025-06-18`, `2025-03-26`, `2024-11-05`; any other gets the first.
+
 ## The guard
 
 `@chrisdudek/runes/testkit` exports `runGuard`, which scans source files and fails when code shipped by one tool:
