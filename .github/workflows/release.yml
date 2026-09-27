@@ -1,0 +1,102 @@
+name: Release
+
+# Publishes @chrisdudek/runes when a vX.Y.Z tag is pushed. Nothing else publishes: no job here creates tags, and the owner pushes the tag.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Version and tag agree
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          if [ "${TAG}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${TAG} does not match package.json version ${VERSION}. Bump package.json (and CHANGELOG.md) first, then tag v${VERSION}."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # A prerelease (X.Y.Z-<id>.N) publishes under its <id>; a stable X.Y.Z under 'latest'.
+          if [[ "${VERSION}" == *-* ]]; then
+            PRE="${VERSION#*-}"
+            echo "disttag=${PRE%%.*}" >> "$GITHUB_OUTPUT"
+          else
+            echo "disttag=latest" >> "$GITHUB_OUTPUT"
+          fi
+      - name: RUNES_VERSION agrees with package.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: grep -q "RUNES_VERSION = '${VERSION}'" src/version.mts || { echo "::error::src/version.mts does not say ${VERSION}."; exit 1; }
+      - name: Check npm for an existing version
+        id: npm-check
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "@chrisdudek/runes@${VERSION}" version > /dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version ${VERSION} is already on npm. Skipping publish and the GitHub release."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Runs before the publish on purpose: npm publish cannot be taken back, and a version without its CHANGELOG section must never reach the registry.
+      - name: Release notes from CHANGELOG
+        if: steps.npm-check.outputs.published == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v want="## [${VERSION}]" '
+            /^## \[/ { if (found) exit; found = (index($0, want) == 1); next }
+            found { print }
+          ' CHANGELOG.md | sed '/./,$!d' > "${RUNNER_TEMP}/release-notes.md"
+          if [ ! -s "${RUNNER_TEMP}/release-notes.md" ]; then
+            echo "::error::CHANGELOG.md has no section for ${VERSION}. Add '## [${VERSION}] - <date>' before releasing."
+            exit 1
+          fi
+          {
+            printf '\n## Install\n\n'
+            printf '```\n'
+            printf 'npm i -E @chrisdudek/runes@%s\n' "${VERSION}"
+            printf '```\n\n'
+            printf 'Vendoring consumers: tools/vendor.mjs update --tag v%s\n' "${VERSION}"
+          } >> "${RUNNER_TEMP}/release-notes.md"
+      - uses: actions/setup-node@v7
+        if: steps.npm-check.outputs.published == 'false'
+        with:
+          node-version-file: .nvmrc
+          registry-url: 'https://registry.npmjs.org'
+      # OIDC trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.x.
+      - name: Use OIDC-capable npm
+        if: steps.npm-check.outputs.published == 'false'
+        run: npm install -g npm@latest
+      - run: npm ci
+        if: steps.npm-check.outputs.published == 'false'
+      - name: Build and confirm dist/ is what the tag carries
+        if: steps.npm-check.outputs.published == 'false'
+        run: npm run check:dist
+      # No NODE_AUTH_TOKEN: authentication is npm trusted publishing over OIDC (id-token: write above), configured on npmjs.com for this repository and this workflow file.
+      - name: Publish to npm
+        if: steps.npm-check.outputs.published == 'false'
+        env:
+          DISTTAG: ${{ steps.version.outputs.disttag }}
+        run: npm publish --provenance --access public --tag "${DISTTAG}"
+      - uses: softprops/action-gh-release@v3
+        if: steps.npm-check.outputs.published == 'false'
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
