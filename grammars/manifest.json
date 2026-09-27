@@ -3,7 +3,8 @@
   "schema": "runes-grammars/1",
   "runtime": {
     "package": "web-tree-sitter",
-    "version": "0.27.0"
+    "version": "0.27.0",
+    "wasmSha256": "c03bccdc3b448a32848f5ae327e209c982bbb0840d43eec8bc2d5759544a1ed3"
   },
   "cli": {
     "package": "tree-sitter-cli",

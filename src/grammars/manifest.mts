@@ -39,8 +39,8 @@ export interface GrammarPin {
 
 export interface GrammarManifest {
   schema: typeof GRAMMAR_MANIFEST_SCHEMA;
-  /** The runtime every consumer must load, at exactly this version. */
-  runtime: { package: 'web-tree-sitter'; version: string };
+  /** The runtime every consumer must load, at exactly this version, with the sha256 of its `web-tree-sitter.wasm`: the version names the release, the hash proves the engine bytes. */
+  runtime: { package: 'web-tree-sitter'; version: string; wasmSha256: string };
   /** The tree-sitter CLI every `source` grammar is built with, at exactly this version. */
   cli: { package: 'tree-sitter-cli'; version: string };
   grammars: GrammarPin[];
@@ -63,9 +63,9 @@ function onlyKeys(o: Obj, allowed: string[], where: string, errors: string[]): v
   for (const k of Object.keys(o)) if (!allowed.includes(k)) errors.push(`${where}: unknown key '${k}'`);
 }
 
-function exactPin(o: unknown, pkg: string, where: string, errors: string[]): void {
+function exactPin(o: unknown, pkg: string, where: string, errors: string[], extraKeys: string[] = []): void {
   if (!isObj(o)) { errors.push(`${where}: missing`); return; }
-  onlyKeys(o, ['package', 'version'], where, errors);
+  onlyKeys(o, ['package', 'version', ...extraKeys], where, errors);
   if (o.package !== pkg) errors.push(`${where}.package: expected '${pkg}'`);
   if (typeof o.version !== 'string' || !EXACT_VERSION.test(o.version)) errors.push(`${where}.version: expected an exact version`);
 }
@@ -76,7 +76,8 @@ export function validateGrammarManifest(value: unknown): string[] {
   if (!isObj(value)) return ['manifest: not an object'];
   onlyKeys(value, ['$schema', 'schema', 'runtime', 'cli', 'grammars'], 'manifest', errors);
   if (value.schema !== GRAMMAR_MANIFEST_SCHEMA) errors.push(`manifest.schema: expected '${GRAMMAR_MANIFEST_SCHEMA}'`);
-  exactPin(value.runtime, 'web-tree-sitter', 'manifest.runtime', errors);
+  exactPin(value.runtime, 'web-tree-sitter', 'manifest.runtime', errors, ['wasmSha256']);
+  if (isObj(value.runtime) && (typeof value.runtime.wasmSha256 !== 'string' || !SHA256.test(value.runtime.wasmSha256))) errors.push('manifest.runtime.wasmSha256: expected 64 lower-case hex');
   exactPin(value.cli, 'tree-sitter-cli', 'manifest.cli', errors);
   const cliVersion = isObj(value.cli) ? value.cli.version : undefined;
 

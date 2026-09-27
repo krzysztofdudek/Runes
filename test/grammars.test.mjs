@@ -33,6 +33,10 @@ describe('the shipped manifest', () => {
     assert.equal(manifest.cli.version, pkg.devDependencies['tree-sitter-cli']);
   });
 
+  test('the runtime pin carries the sha256 of the installed web-tree-sitter.wasm', () => {
+    assert.equal(manifest.runtime.wasmSha256, sha(readFileSync(require.resolve('web-tree-sitter/web-tree-sitter.wasm'))));
+  });
+
   test('pins the union of the two family grammar sets: 16 shared languages and 7 more', () => {
     const shared = ['typescript', 'tsx', 'javascript', 'python', 'go', 'rust', 'java', 'csharp', 'c', 'cpp', 'php', 'ruby', 'json', 'kotlin', 'yaml', 'toml'];
     const more = ['scala', 'bash', 'lua', 'zig', 'groovy', 'solidity', 'properties'];
@@ -72,7 +76,7 @@ describe('the shipped manifest', () => {
 });
 
 describe('validateGrammarManifest', () => {
-  const base = { schema: 'runes-grammars/1', runtime: { package: 'web-tree-sitter', version: '0.27.0' }, cli: { package: 'tree-sitter-cli', version: '0.27.0' } };
+  const base = { schema: 'runes-grammars/1', runtime: { package: 'web-tree-sitter', version: '0.27.0', wasmSha256: hex('9') }, cli: { package: 'tree-sitter-cli', version: '0.27.0' } };
 
   test('a manifest with each source kind validates', () => {
     const m = {
@@ -99,7 +103,7 @@ describe('validateGrammarManifest', () => {
     };
     const errors = validateGrammarManifest(bad);
     for (const expected of [
-      'manifest.schema', 'manifest.runtime.version', 'manifest.cli: missing', "manifest.grammars[0]: unknown key 'extra'", 'manifest.grammars[0].source.version', 'manifest.grammars[0].source.wasmPath', 'manifest.grammars[0].sha256.wasm',
+      'manifest.schema', 'manifest.runtime.version', 'manifest.runtime.wasmSha256', 'manifest.cli: missing', "manifest.grammars[0]: unknown key 'extra'", 'manifest.grammars[0].source.version', 'manifest.grammars[0].source.wasmPath', 'manifest.grammars[0].sha256.wasm',
       "manifest.grammars[1].language: duplicate 'go'", "manifest.grammars[1].wasmFile: duplicate 'go.wasm'", 'manifest.grammars[1].commit', 'manifest.grammars[1].source.generate', 'manifest.grammars[1].source.patches[0]', 'manifest.grammars[1].repo: required',
       'manifest.grammars[2].source.url', 'manifest.grammars[2].repo: required', 'manifest.grammars[2].commit: required', 'manifest.grammars[3].source.kind',
     ]) assert.ok(errors.some((e) => e.startsWith(expected)), `expected an error starting '${expected}' in:\n${errors.join('\n')}`);

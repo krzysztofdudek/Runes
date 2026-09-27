@@ -54,10 +54,11 @@ export interface GrammarPin {
 }
 export interface GrammarManifest {
     schema: typeof GRAMMAR_MANIFEST_SCHEMA;
-    /** The runtime every consumer must load, at exactly this version. */
+    /** The runtime every consumer must load, at exactly this version, with the sha256 of its `web-tree-sitter.wasm`: the version names the release, the hash proves the engine bytes. */
     runtime: {
         package: 'web-tree-sitter';
         version: string;
+        wasmSha256: string;
     };
     /** The tree-sitter CLI every `source` grammar is built with, at exactly this version. */
     cli: {

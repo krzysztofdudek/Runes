@@ -17,12 +17,12 @@ function onlyKeys(o, allowed, where, errors) {
         if (!allowed.includes(k))
             errors.push(`${where}: unknown key '${k}'`);
 }
-function exactPin(o, pkg, where, errors) {
+function exactPin(o, pkg, where, errors, extraKeys = []) {
     if (!isObj(o)) {
         errors.push(`${where}: missing`);
         return;
     }
-    onlyKeys(o, ['package', 'version'], where, errors);
+    onlyKeys(o, ['package', 'version', ...extraKeys], where, errors);
     if (o.package !== pkg)
         errors.push(`${where}.package: expected '${pkg}'`);
     if (typeof o.version !== 'string' || !EXACT_VERSION.test(o.version))
@@ -36,7 +36,9 @@ export function validateGrammarManifest(value) {
     onlyKeys(value, ['$schema', 'schema', 'runtime', 'cli', 'grammars'], 'manifest', errors);
     if (value.schema !== GRAMMAR_MANIFEST_SCHEMA)
         errors.push(`manifest.schema: expected '${GRAMMAR_MANIFEST_SCHEMA}'`);
-    exactPin(value.runtime, 'web-tree-sitter', 'manifest.runtime', errors);
+    exactPin(value.runtime, 'web-tree-sitter', 'manifest.runtime', errors, ['wasmSha256']);
+    if (isObj(value.runtime) && (typeof value.runtime.wasmSha256 !== 'string' || !SHA256.test(value.runtime.wasmSha256)))
+        errors.push('manifest.runtime.wasmSha256: expected 64 lower-case hex');
     exactPin(value.cli, 'tree-sitter-cli', 'manifest.cli', errors);
     const cliVersion = isObj(value.cli) ? value.cli.version : undefined;
     if (!Array.isArray(value.grammars)) {

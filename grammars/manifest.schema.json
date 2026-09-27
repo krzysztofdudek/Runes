@@ -19,11 +19,12 @@
       "const": "runes-grammars/1"
     },
     "runtime": {
-      "description": "The tree-sitter runtime every consumer must load, pinned to an exact version.",
+      "description": "The tree-sitter runtime every consumer must load, pinned to an exact version and to the sha256 of its web-tree-sitter.wasm.",
       "type": "object",
       "required": [
         "package",
-        "version"
+        "version",
+        "wasmSha256"
       ],
       "additionalProperties": false,
       "properties": {
@@ -32,6 +33,10 @@
         },
         "version": {
           "$ref": "#/$defs/exactVersion"
+        },
+        "wasmSha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "sha256 of the runtime package's web-tree-sitter.wasm."
         }
       }
     },
