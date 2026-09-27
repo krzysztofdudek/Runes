@@ -213,12 +213,84 @@ function writeBlock(text, block, fragment) {
   return text.slice(0, block.from) + (block.eol === '\r\n' ? body.replace(/\n/g, '\r\n') : body) + text.slice(block.to);
 }
 
+// The source with every comment blanked to spaces (newlines kept), so an import quoted in a comment is not taken for a real one. Strings, template literals (with nested `${}` code) and regular expression literals are copied as they stand: a // or /* inside them opens no comment. A / opens a regular expression where an operand is expected: at the start, after an operator or opening punctuation, or after a keyword such as return.
+function stripComments(text) {
+  let out = '';
+  let i = 0;
+  let prev = ''; // the last significant token: a punctuation character, a word, or 'x' for any operand
+  const braces = []; // one entry per open { : true when it closes a template's ${
+  const n = text.length;
+  const blank = (s) => s.replace(/[^\n\r]/g, ' ');
+  const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+  const regexAllowed = () => prev === '' || (/^[A-Za-z_$]/.test(prev) ? REGEX_AFTER_WORD.has(prev) : prev !== 'x' && prev !== ')' && prev !== ']' && prev !== '}');
+  // Copies a template literal's text from i (just after its opening backtick or a closing }) up to its end or the next ${.
+  const templateRun = () => {
+    while (i < n) {
+      const c = text[i];
+      if (c === '\\') { out += text.slice(i, i + 2); i += 2; continue; }
+      if (c === '`') { out += c; i++; prev = 'x'; return; }
+      if (c === '$' && text[i + 1] === '{') { out += '${'; i += 2; braces.push(true); prev = '{'; return; }
+      out += c; i++;
+    }
+  };
+  while (i < n) {
+    const c = text[i];
+    const d = text[i + 1];
+    if (c === '/' && d === '/') {
+      let e = i;
+      while (e < n && text[e] !== '\n' && text[e] !== '\r') e++;
+      out += blank(text.slice(i, e)); i = e; continue;
+    }
+    if (c === '/' && d === '*') {
+      const close = text.indexOf('*/', i + 2);
+      const e = close === -1 ? n : close + 2;
+      out += blank(text.slice(i, e)); i = e; continue;
+    }
+    if (c === '"' || c === "'") {
+      let e = i + 1;
+      while (e < n && text[e] !== c && text[e] !== '\n') e += text[e] === '\\' ? 2 : 1;
+      out += text.slice(i, e + 1); i = e + 1; prev = 'x'; continue;
+    }
+    if (c === '`') { out += c; i++; templateRun(); continue; }
+    if (c === '/' && regexAllowed()) {
+      let e = i + 1;
+      let cls = false;
+      while (e < n && text[e] !== '\n') {
+        const r = text[e];
+        if (r === '\\') { e += 2; continue; }
+        if (r === '[') cls = true;
+        else if (r === ']') cls = false;
+        else if (r === '/' && !cls) break;
+        e++;
+      }
+      e++;
+      while (e < n && /[A-Za-z]/.test(text[e])) e++;
+      out += text.slice(i, e); i = e; prev = 'x'; continue;
+    }
+    if (c === '{') { braces.push(false); out += c; i++; prev = '{'; continue; }
+    if (c === '}') {
+      out += c; i++;
+      if (braces.pop()) templateRun(); else prev = '}';
+      continue;
+    }
+    if (/[A-Za-z_$0-9]/.test(c)) {
+      let e = i;
+      while (e < n && /[A-Za-z_$0-9]/.test(text[e])) e++;
+      const word = text.slice(i, e);
+      out += word; i = e; prev = /^[0-9]/.test(word) ? 'x' : word; continue;
+    }
+    if (!/\s/.test(c)) prev = c;
+    out += c; i++;
+  }
+  return out;
+}
+
 function danglingImports(destDir, files) {
   const problems = [];
   const set = new Set(files);
   for (const f of files) {
     if (!/\.(mjs|js)$/.test(f)) continue;
-    const text = readFileSync(join(destDir, f), 'utf8');
+    const text = stripComments(readFileSync(join(destDir, f), 'utf8'));
     const re = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g;
     for (const m of text.matchAll(re)) {
       const target = posix.normalize(posix.join(posix.dirname(f), m[1]));
