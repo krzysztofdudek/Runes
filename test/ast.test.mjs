@@ -35,10 +35,20 @@ describe('createParserHost', () => {
     assert.equal(await host.withParsedFile('x.h', code, (t) => has(t, 'namespace_definition'), 'cpp'), true);
   });
 
-  test('concurrent first uses share one init and one grammar load', async () => {
-    const fresh = createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
-    const parsers = await Promise.all(Array.from({ length: 8 }, () => fresh.getParser('.py')));
+  test('concurrent first uses share one runtime init and one grammar load', async () => {
+    // Moved from Yggdrasil's parser-concurrency.test.ts: without the memoized in-flight promises, concurrent callers each re-ran Parser.init() and Language.load(), and one could observe a half-loaded language.
+    const calls = { init: 0, load: 0 };
+    const runtime = {
+      Parser: new Proxy(TreeSitter.Parser, { get: (target, key, receiver) => (key === 'init' ? (...a) => { calls.init++; return target.init(...a); } : Reflect.get(target, key, receiver)) }),
+      Language: { load: (input) => { calls.load++; return TreeSitter.Language.load(input); } },
+    };
+    const fresh = createParserHost({ runtime, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    const parsers = await Promise.all(Array.from({ length: 24 }, () => fresh.getParser('.py')));
     assert.equal(new Set(parsers).size, 1);
+    assert.equal(calls.load, 1, 'the grammar loads exactly once');
+    assert.equal(calls.init, 1, 'the runtime initializes exactly once');
+    await Promise.all([fresh.getParser('.py'), fresh.getParser('.go'), fresh.getParser('.go')]);
+    assert.deepEqual(calls, { init: 1, load: 2 });
   });
 
   test('the grammar digest folds the runtime identity and the grammar bytes; the identity function runs once', () => {

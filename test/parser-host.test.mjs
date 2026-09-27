@@ -55,20 +55,30 @@ describe('every grammar of the language table', () => {
 });
 
 describe('failure isolation', () => {
-  it('a parse that traps the grammar scanner fails only that file, never the next one or a concurrent one', async () => {
-    // tree-sitter-ruby's external scanner traps on a heredoc delimiter of 256+ characters, and the trap used to leave the cached parser unusable, so every later Ruby file failed too. Whether the pathological file itself parses depends on the grammar build; the file after it must parse either way.
-    const delimiter = 'A'.repeat(256);
-    const pathological = `x = <<~${delimiter}\nhello\n${delimiter}\n`;
-    await host.withParsedFile('bad.rb', pathological, () => {}).catch(() => undefined);
-    await host.withParsedFile('next.rb', 'y = Flag', (tree) => {
+  it('a parse that traps the grammar scanner fails only on that parser: the file is retried on a fresh one, the poisoned parser leaves the cache, the next file parses', async () => {
+    // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a 256+ character heredoc delimiter did), and the trap leaves that parser unusable: every later parse on it throws. The pinned Ruby grammar no longer traps, so the trap is simulated: the first parser the runtime makes throws on every parse.
+    let made = 0;
+    let poisoned;
+    const PoisonParser = new Proxy(TreeSitter.Parser, {
+      construct(target, args) {
+        const p = Reflect.construct(target, args);
+        if (made++ === 0) {
+          poisoned = p;
+          p.parse = () => { throw new Error('RuntimeError: unreachable (scanner trap)'); };
+        }
+        return p;
+      },
+    });
+    const h = createParserHost({ runtime: { Parser: PoisonParser, Language: TreeSitter.Language }, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    assert.equal(await h.withParsedFile('bad.rb', 'x = 1\n', (tree) => tree.rootNode.type), 'program', 'the trapped file is retried on a fresh parser');
+    assert.ok(poisoned, 'the first parser was the poisoned one');
+    assert.notEqual(h.loadedParserFor('.rb'), poisoned, 'the poisoned parser left the cache');
+    await h.withParsedFile('next.rb', 'y = Flag', (tree) => {
       assert.equal(tree.rootNode.type, 'program');
       assert.equal(tree.rootNode.text, 'y = Flag');
     });
-    // Concurrent callers may already hold the parser the pathological file poisons.
-    const outcomes = await Promise.all(
-      [pathological, 'a = One', 'b = Two'].map((code, i) => host.withParsedFile(`f${i}.rb`, code, (tree) => tree.rootNode.type).catch(() => 'failed')),
-    );
-    assert.deepEqual(outcomes.slice(1), ['program', 'program']);
+    const outcomes = await Promise.all(['a = One', 'b = Two'].map((code, i) => h.withParsedFile(`f${i}.rb`, code, (tree) => tree.rootNode.type)));
+    assert.deepEqual(outcomes, ['program', 'program']);
   });
 
   it('a failed grammar load is evicted so a later call retries', async () => {
