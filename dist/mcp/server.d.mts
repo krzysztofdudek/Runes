@@ -64,6 +64,17 @@ export interface ServerOptions {
     timeoutMs?: number | ((command: string) => number);
     /** A sentence added to the timeout answer: how to allow longer. */
     timeoutHint?: (command: string) => string;
+    /** Rewrites a call's fields before they are checked against the tool and turned into argv; may throw `InvalidParams`. The tool's schema is unchanged: a field the consumer resolves itself (a repository-relative path, say) is declared without `paths` and made absolute here. */
+    transformInput?: (call: {
+        command: string;
+        input: Record<string, unknown>;
+    }) => Record<string, unknown> | Promise<Record<string, unknown>>;
+    /** Rewrites the argv built from the checked fields, before it runs; may throw `InvalidParams`. */
+    transformArgv?: (call: {
+        command: string;
+        argv: string[];
+        input: Record<string, unknown>;
+    }) => string[] | Promise<string[]>;
     /** Runs before each call, after its fields are checked; may throw `InvalidParams`. */
     prepare?: (call: {
         command: string;
@@ -72,7 +83,7 @@ export interface ServerOptions {
     protocolVersions?: readonly string[];
     /** `instructions` in the `initialize` answer. */
     instructions?: string;
-    /** A refusal in JSON mode answers with the `<tool>-error/1` document. Default true; false answers with the message text. */
+    /** A refusal in JSON mode answers with the `<tool>-error/1` document. Default true; false answers with the message text. Either way it is the one block, notes in `_meta`. */
     errorDocuments?: boolean;
 }
 export interface ToolResult {

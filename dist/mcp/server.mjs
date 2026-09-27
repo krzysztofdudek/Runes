@@ -1,12 +1,14 @@
 /**
  * An MCP server generated from a command table: a protocol adapter over a tool's CLI, never a second implementation. Two executors run a call:
  *
- * - **in process** (`inProcess(run)`): the call's argv is parsed by the table's `parseArgs` and handed to `run`, which calls the tool's own dispatch function and returns what the CLI would print (`{ value, text, notes, exitCode }`) or throws its refusal. Cheap, and right for a tool whose commands are quick and synchronous. Such a run cannot be stopped midway: a timeout or a cancel only drops its answer, and the next call still waits for it to end.
+ * - **in process** (`inProcess(run)`): the call's argv is parsed by the table's `parseArgs` and handed to `run`, which calls the tool's own dispatch function and returns what the CLI would print (`{ value, text, notes, exitCode }`) or throws its refusal. Cheap, and right for a tool whose commands are quick. A **synchronous** `run` blocks the event loop while it runs: nothing else is read or answered until it returns, so `ping`, `tools/list`, a cancel and the timeout all wait for it, and a timeout can only fire after it has already finished. Only an **async** `run` that awaits and honours `ctx.signal` gets what the transport promises below (answers while it runs, a timeout or cancel that stops it). Either way a run cannot be killed: a timeout or a cancel drops its answer, and the next call waits for it to end.
  * - **spawn** (`spawnCli({ args: [bin] })`): the CLI itself runs as a child process; its stdout is the answer, its stderr the notes, a non-zero exit an error. The two surfaces are identical by construction, and a timeout or a cancel kills the CLI with its whole tree.
  *
- * Result shape. With a JSON answer (`json: true`, or a command that prints JSON unasked) the content is exactly one text block, the document, so a client that concatenates blocks can parse it; every note (the CLI's stderr, what `prepare` says) goes into `_meta` under `<tool>/<key>`. A refusal in JSON mode is the `<tool>-error/1` document as that one block. Without JSON, the answer is the first text block and each note a block after it. A refusal or a non-zero exit comes back with `isError: true`. Input that does not fit a tool is a JSON-RPC -32602 error, and nothing runs.
+ * Input transforms. `transformInput` rewrites a call's fields before they are checked and turned into argv (a path relative to a repository made absolute, a container path translated, a "bare name or absolute path" field validated by throwing `InvalidParams`); `transformArgv` rewrites the argv after. Both let a consumer keep its own path rules without forking the adapter.
  *
- * Transport (`serveStdio`): newline-delimited JSON-RPC 2.0 on stdin/stdout. Tool calls run one at a time, in order; `initialize`, `ping` and `tools/list` are answered at once, never behind a running call. `notifications/cancelled` stops a running call (killing its process tree) or drops a queued one, and the cancelled request gets no answer; a cancel for any other id is ignored, so an id reused later is answered as usual. Responses from the client are ignored. When stdin closes, or on SIGTERM, SIGINT or SIGHUP, every running call is stopped first; a signal then exits with 128 + its number.
+ * Result shape. With a JSON answer (`json: true`, or a command that prints JSON unasked) the content is exactly one text block, the document, so a client that concatenates blocks can parse it; every note (the CLI's stderr, what `prepare` says) goes into `_meta` under `<tool>/<key>`, never into a second block. A refusal in JSON mode is the `<tool>-error/1` document as that one block (with `errorDocuments: false`, the message text as that one block). Without JSON, the answer is the first text block and each note a block after it. A refusal or a non-zero exit comes back with `isError: true`. Input that does not fit a tool is a JSON-RPC -32602 error, and nothing runs.
+ *
+ * Transport (`serveStdio`): newline-delimited JSON-RPC 2.0 on stdin/stdout. Tool calls run one at a time, in order; `initialize`, `ping` and `tools/list` are answered at once, never queued behind a running call (a synchronous in-process run still blocks everything while it runs, see above). `notifications/cancelled` stops a running call (killing its process tree) or drops a queued one, and the cancelled request gets no answer. A cancel for any other id is ignored: one that arrives after its call was answered (a late cancel) does nothing, and a later request that reuses the id is answered as usual. Responses from the client are ignored. When stdin closes, or on SIGTERM, SIGINT or SIGHUP, every running call is stopped first; a signal then exits with 128 + its number.
  */
 import { createInterface } from 'node:readline';
 import { constants as osConstants } from 'node:os';
@@ -70,8 +72,10 @@ export function createServer(options) {
             return { content: [text(String(r.text ?? '')), ...(own ? [text(own)] : []), ...noteBlocks], isError };
         }
         if (o.kind === 'thrown') {
-            if (ctx.json && errorDocs)
-                return { content: [text(JSON.stringify(errorDocument(tool, o.error), null, 2))], isError: true, ...(Object.keys(notes).length ? { _meta: meta(notes) } : {}) };
+            if (ctx.json) {
+                const block = errorDocs ? JSON.stringify(errorDocument(tool, o.error), null, 2) : errorParts(o.error).what;
+                return { content: [text(block)], isError: true, ...(Object.keys(notes).length ? { _meta: meta(notes) } : {}) };
+            }
             return { content: [text(errorParts(o.error).what), ...noteBlocks], isError: true };
         }
         const lines = o.stderr.trim() ? o.stderr.trim().split(/\r?\n/) : [];
@@ -94,8 +98,15 @@ export function createServer(options) {
         const command = commandForTool(table, name, toolOptions);
         if (command === null)
             throw new InvalidParams(`Unknown tool: ${String(name)}`);
-        const argv = argvFor(table, command, input, toolOptions);
-        const fields = (input ?? {});
+        let fields = (input ?? {});
+        if (options.transformInput) {
+            if (typeof fields !== 'object' || Array.isArray(fields))
+                throw new InvalidParams(`${String(name)}: arguments must be an object`);
+            fields = await options.transformInput({ command, input: { ...fields } });
+        }
+        let argv = argvFor(table, command, fields, toolOptions);
+        if (options.transformArgv)
+            argv = await options.transformArgv({ command, argv: [...argv], input: fields });
         const prepared = (await options.prepare?.({ command, input: fields })) || {};
         const notes = prepared.notes ?? {};
         const ctrl = new AbortController();

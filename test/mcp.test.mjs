@@ -2,7 +2,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir, constants as osConstants } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildTools, argvFor, answersJson, commandForTool, toolName, createServer, inProcess, killTree, runProcess, InvalidParams, PROTOCOL_VERSION, PROTOCOL_VERSIONS,
@@ -119,6 +119,49 @@ describe('the protocol, without a transport', () => {
     const r = await server.handle({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'demo_write', arguments: { file: 'never' } } });
     assert.equal(r.error.code, -32602);
     assert.equal(existsSync(file), false);
+  });
+});
+
+describe('consumer hooks and JSON refusals without error documents', () => {
+  const run = inProcess(({ parsed }) => dispatch(parsed.command, parsed.args, parsed.flags));
+
+  test('errorDocuments: false answers a JSON refusal with the message as the one block; notes stay in _meta', async () => {
+    const server = createServer({ table: TABLE, version: '0', executor: run, errorDocuments: false, prepare: () => ({ notes: { loop: 'reached /somewhere' } }) });
+    const r = await server.callTool('demo_fail', { why: 'no', json: true });
+    assert.equal(r.isError, true);
+    assert.deepEqual(r.content, [{ type: 'text', text: 'refused: no' }]);
+    assert.deepEqual(r._meta, { 'demo/loop': 'reached /somewhere' });
+    const ok = await server.callTool('demo_note', { json: true });
+    assert.equal(ok.content.length, 1);
+    assert.deepEqual(ok._meta, { 'demo/notes': 'note: careful', 'demo/loop': 'reached /somewhere' });
+    const t = await server.callTool('demo_fail', { why: 'no' });
+    assert.deepEqual(t.content.map((c) => c.text), ['refused: no', 'reached /somewhere'], 'text mode keeps notes as blocks');
+  });
+
+  test('transformInput resolves a repository-relative path, validates a bare-name field, and translates; transformArgv rewrites the argv', async () => {
+    const repo = tmp;
+    const seen = [];
+    const server = createServer({
+      table: TABLE, version: '0', executor: inProcess(({ parsed, argv }) => { seen.push(argv); return dispatch(parsed.command, parsed.args, parsed.flags); }),
+      transformInput: ({ command, input }) => {
+        if (command === 'write' && typeof input.file === 'string') {
+          if (input.file.startsWith('/container/')) input.file = join(repo, input.file.slice('/container/'.length));
+          else if (!isAbsolute(input.file)) input.file = join(repo, input.file);
+        }
+        if (command === 'echo' && typeof input.text === 'string' && /[\\/]/.test(input.text) && !isAbsolute(input.text)) throw new InvalidParams('demo_echo: "text" must be a bare name or an absolute path');
+        return input;
+      },
+      transformArgv: ({ command, argv }) => (command === 'echo' ? ['echo', '--upper', ...argv.slice(1)] : argv),
+    });
+    await server.callTool('demo_write', { file: 'rel.txt', content: 'r' });
+    assert.equal(readFileSync(join(repo, 'rel.txt'), 'utf8'), 'r');
+    await server.callTool('demo_write', { file: '/container/cont.txt', content: 'c' });
+    assert.equal(readFileSync(join(repo, 'cont.txt'), 'utf8'), 'c');
+    assert.equal((await server.callTool('demo_echo', { text: 'shout' })).content[0].text, 'SHOUT');
+    assert.deepEqual(seen.at(-1), ['echo', '--upper', '--', 'shout']);
+    await assert.rejects(server.callTool('demo_echo', { text: 'a/b' }), (e) => e instanceof InvalidParams && /bare name/.test(e.message));
+    const rpc = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'demo_echo', arguments: { text: 'a/b' } } });
+    assert.equal(rpc.error.code, -32602);
   });
 });
 
