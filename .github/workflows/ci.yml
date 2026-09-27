@@ -25,7 +25,7 @@ jobs:
       - run: npm ci
       - name: Typecheck and build
         run: npm run build
-      # The relation tests parse with grammars the recipe builds (npm run grammars): a GitHub release download or a source build at a pinned commit, verified by sha256. Both land in a content-addressed cache, restored here so a warm run needs no network and no toolchain. A cold source build runs tree-sitter build --wasm, which uses Docker on the runner.
+      # The relation tests parse with grammars the recipe builds (npm run grammars): a GitHub release download or a source build at a pinned commit, verified by sha256. Both land in a content-addressed cache, restored here so a warm run needs no network and no toolchain. A cold source build runs tree-sitter build --wasm, which fetches its own wasi-sdk on first use; no Docker or emscripten is involved.
       - uses: actions/cache@v6
         with:
           path: ~/.cache/runes/grammars
