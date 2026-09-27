@@ -22,6 +22,8 @@ export interface BuildGrammarsOptions {
     offline?: boolean;
     /** Progress lines; silent when absent. */
     log?: (line: string) => void;
+    /** The platform the recipe runs on; `process.platform` when absent. A source build is refused on `win32` (see the module comment). */
+    platform?: NodeJS.Platform;
 }
 export interface BuiltGrammar {
     language: string;

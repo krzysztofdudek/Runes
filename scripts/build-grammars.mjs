@@ -3,6 +3,8 @@
 //   node scripts/build-grammars.mjs [--out <dir>] [--only <language>,... | --table]
 //
 // --table builds the grammars of the Runes language table (what the tests parse with); without --only or --table every pin is built, which needs every npm grammar package installed. --out defaults to .grammars/ (gitignored). RUNES_GRAMMAR_CACHE sets the content-addressed cache (default ~/.cache/runes/grammars), RUNES_GRAMMAR_REBUILD=1 ignores it and re-derives every non-npm grammar, RUNES_GRAMMAR_OFFLINE=1 forbids downloads and source builds.
+//
+// On Windows a grammar built from source never matches its pin (the Windows wasi-sdk labels its clang differently in the WASM producers section), so buildGrammars refuses the source build there and says so: build on Linux, macOS or WSL and bring the cache over (CI hands the Windows job the Ubuntu job's cache).
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { buildGrammars, LANGUAGES } from '../dist/grammars/index.mjs';

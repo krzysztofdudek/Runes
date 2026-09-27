@@ -5,6 +5,7 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 ## [0.1.2] - 2026-09-27
 
 - Windows: the guard reads CRLF sources (a string continued across a CRLF line break no longer ends early) and backslash paths, `check:dist` rebuilds without spawning `npm.cmd`, the vendor tool retries removing a clone Windows still holds open, and CI runs the suite on `windows-latest` with Node 22 and 24.
+- `grammars`: `buildGrammars` refuses a source build on Windows before any download and says why: the wasi-sdk tree-sitter-cli 0.27.0 fetches there labels its clang `23.1.0-rc3` in the WASM `producers` section (Linux and macOS: `23.1.0-wasi-sdk`, same LLVM commit), so the code is identical but the sha256 never matches the pin. On Windows the source-built grammars come from a cache filled on Linux, macOS or WSL; CI's Windows jobs read the Ubuntu `grammars` job's cache offline. New option `platform` (default `process.platform`).
 
 ## [0.1.1] - 2026-09-27
 

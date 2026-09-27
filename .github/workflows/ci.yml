@@ -39,13 +39,41 @@ jobs:
       - name: dist freshness
         run: npm run check:dist
 
-  # Windows: the family runs there too. The vendor tool's end-to-end tests exercise git, file:// clones and line endings on a real Windows checkout; dist freshness also proves .gitattributes keeps the committed output LF.
+  # The grammars the Windows job parses with, built on Linux. A grammar built from source on Windows has the same code but other bytes (the Windows wasi-sdk names its clang differently in the WASM producers section), so it never matches its pin and buildGrammars refuses the build there. This job fills the content-addressed cache on Ubuntu and hands it over as an artifact; the Windows job verifies every file against its sha256 as it would a local cache.
+  grammars:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/runes/grammars
+          key: grammars-${{ hashFiles('grammars/manifest.json', 'grammars/patches/**') }}
+      # build-grammars runs from the committed dist/, so no build step is needed here.
+      - name: Grammars
+        run: npm run grammars
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grammar-cache
+          path: ~/.cache/runes/grammars
+          if-no-files-found: error
+          retention-days: 1
+
+  # Windows: the family runs there too. The vendor tool's end-to-end tests exercise git, file:// clones and line endings on a real Windows checkout; dist freshness also proves .gitattributes keeps the committed output LF. The grammars come from the grammars job (see there) and are read offline, so a missing one fails here rather than starting a source build.
   test-windows:
+    needs: grammars
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
+    env:
+      RUNES_GRAMMAR_CACHE: ${{ github.workspace }}/../runes-grammar-cache
+      RUNES_GRAMMAR_OFFLINE: '1'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -55,10 +83,10 @@ jobs:
       - run: npm ci
       - name: Typecheck and build
         run: npm run build
-      - uses: actions/cache@v6
+      - uses: actions/download-artifact@v4
         with:
-          path: ~/.cache/runes/grammars
-          key: grammars-windows-${{ hashFiles('grammars/manifest.json', 'grammars/patches/**') }}
+          name: grammar-cache
+          path: ${{ github.workspace }}/../runes-grammar-cache
       - name: Grammars
         run: npm run grammars
       - name: Test, including the guard
