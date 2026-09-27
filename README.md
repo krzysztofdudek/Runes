@@ -4,7 +4,7 @@ Shared code for the Yggdrasil tool family.
 
 **Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
-Status: the subpaths exist and publish, the guard and the vendoring tool work, and the relation extractors, the parser host and the grammar recipe have moved in from Yggdrasil, with the 460-case relation catalogue and their unit tests. The shared file-system, CLI and MCP code move in with the next releases.
+Status: 0.1.0 (not yet published). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the 460-case relation catalogue and their unit tests, and the shared file-system, CLI and MCP code, the test kit and the first skill fragments are in.
 
 ## What goes in: the entry rule
 
@@ -18,10 +18,10 @@ Code enters Runes only when both hold:
 | `@chrisdudek/runes/relations` | per-language relation extractors (11 languages), the symbol table, the three-state resolver, path resolution, repository layout; files are grouped by an injected owner lookup | Yggdrasil (npm), Grain (vendor) |
 | `@chrisdudek/runes/ast` | `walk`, `closest`, the parse cache; a parser host over an injected tree-sitter runtime and runtime identity | Yggdrasil, Grain |
 | `@chrisdudek/runes/grammars` | the grammar manifest (23 grammar pins, the `web-tree-sitter` runtime pin, the `tree-sitter-cli` pin), the patches, the build recipe verified by sha256, and the language table | Yggdrasil, Grain |
-| `@chrisdudek/runes/fs` | `withLock`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
+| `@chrisdudek/runes/fs` | `withLock`, `withLockAsync`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
 | `@chrisdudek/runes/cli` | a command-table schema, `parseArgs`, the `<tool>-error/1` error document, the single `--json` block rule | Jarl, Grain, Horde |
 | `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain, Horde |
-| `@chrisdudek/runes/testkit` | the family guard and the runtime pin check; later the git test environment, CLI/MCP parity and `tools/list` measurement | all |
+| `@chrisdudek/runes/testkit` | the family guard, the runtime pin check, the git test environment, CLI/usage/MCP parity, `tools/list` measurement and a stdio MCP test client | all |
 | `skills/` | shared skill fragments, kept in consumers' `SKILL.md` between markers | Jarl, Grain, Horde |
 | `tools/vendor.mjs` | the vendoring tool and its gate | every vendoring consumer |
 
@@ -36,6 +36,101 @@ Code enters Runes only when both hold:
 - Executables: the package has no `bin`.
 - Network access at run time.
 - Runtime dependencies: `web-tree-sitter` is an optional peer dependency, for types only.
+
+## `fs`: locks, atomic writes, the root
+
+```js
+import { withLock, withLockAsync, writeAtomic, renameWithRetry, findRoot, mainCheckout } from '@chrisdudek/runes/fs';
+
+withLock(join(stateDir, '.lock'), () => writeAtomic(file, text));   // sync, re-entrant per path
+await withLockAsync(lockPath, async () => { /* ... */ });          // async, not re-entrant
+const root = findRoot(process.cwd(), { marker: '<state dir>' });    // a worktree without the marker resolves to its main checkout
+```
+
+- `withLock(lockPath, fn, options?)` takes the lock file with an exclusive create and writes `<pid> <host> <ISO time>` into it. A stale lock is broken and taken over: empty and older than 2 s, a holder on this host whose pid is gone (or older than 10 minutes, against pid reuse), or one from another host older than 30 s. Breaking is serialised behind `<lock>.break`, and only a lock whose content is still the one judged stale is removed. A live holder that does not let go within `waitMs` (20 s) throws `LockHeldError` (`code: 'ELOCKED'`) naming the holder; so does a stale lock that could not be taken over by the deadline (`stale: true`). A stale lock that cannot be removed at all (no permission on the lock, on `<lock>.break` or on the directory) throws `LockBreakError` (`code: 'ELOCKBREAK'`) at once, since waiting would not help. A missing directory throws `LockDirectoryMissingError`. Nothing runs without the lock. Every limit is an option. `withLock` is re-entrant for one path; `withLockAsync` is not: a nested `withLockAsync`, or a synchronous `withLock`, on the same path inside it waits for itself until `waitMs` and then throws `ELOCKED`.
+- `writeAtomic(path, data)` writes `.<name>.<pid>.<random>.tmp` beside the target and renames it over the target, so a reader never sees half a file; one ignore pattern, `.*.tmp`, covers the temporary files. `renameWithRetry` retries EPERM, EACCES and EBUSY on Windows (a file another process holds open) and EBUSY elsewhere, within a 2 s budget.
+- `findRoot(from, { marker })` is the nearest checkout (a directory holding `.git`, a directory or a worktree's file). When that checkout lacks `marker` and the main checkout, found through `git rev-parse --git-common-dir`, has it, the main checkout is the root. `checkoutRoot`, `mainCheckout`, `gitCommonDir` and `isLinkedWorktree` are the pieces.
+
+## `cli`: the command table, parsing, errors, one JSON block
+
+```js
+import { defineTable, parseArgs, renderResult, renderFailure, emit, readUsage } from '@chrisdudek/runes/cli';
+
+export const TABLE = defineTable({
+  tool: 'demo',
+  globalFlags: { json: 'bool', root: 'path' },
+  commands: {
+    new: { args: ['title'], flags: { tag: 'many', prio: 'number' }, writes: true, summary: 'File an issue.' },
+    'decide rm': { args: ['id'], writes: true, destructive: true },
+    sources: { args: ['files...?'], paths: ['files'] },
+  },
+  aliases: { seed: 'decide' },
+});
+
+try {
+  const { command, args, flags } = parseArgs(TABLE, process.argv.slice(2));
+  process.exitCode = emit(renderResult(run(command, args, flags), { json: flags.json === true }));
+} catch (e) {
+  process.exitCode = emit(renderFailure('demo', e, { json: process.argv.includes('--json') }));
+}
+```
+
+- **The table** is the one source of the CLI, the MCP tools and the parity tests. An argument is `name`, `name?`, `name...` (one or more) or `name...?` (any number); a flag is `bool`, `value`, `many`, `number` or `path`. A command key may hold a subcommand (`decide rm`); an alias may name a command or a whole group. `writes`, `destructive` and `idempotent` become the MCP annotations; `paths` names the fields resolved against the working directory; `stdoutJson` marks a command that prints JSON unasked; `internal` keeps a hook command off the tools and the usage text. `defineTable` throws on a malformed table (order of arguments, duplicate names, a flag whose kind differs from the global one, an alias to nothing).
+- **`parseArgs(table, argv)`** returns `{ command, words, args, flags }`. A value flag always takes the next word, even one that starts with `--`; a bare `--` ends the flags; only global flags may come before the command; an unknown flag names the ones the command takes; a single-value flag given twice, a missing required argument and surplus words are errors. Every refusal is a `UsageError` (code `usage`).
+- **The error document** `<tool>-error/1` is `{ schema, code, what, why, next: { command, text } | null }`: `code` a stable word, `next.command` the step as argv when it is a command of the tool a reader can run as given. `CliError(code, what, { why, next, exitCode })` carries the parts; anything else thrown reads as `command-error`.
+- **One JSON block**: with `--json`, stdout holds exactly one document, the answer or the error document, and every note goes to stderr. `renderResult`, `renderFailure` and `emit` do this; `isSingleJsonBlock` checks it.
+- **`readUsage(usage, table)`** reads a hand-written usage text (the section after `commands:` or `usage:`) into blocks per command, with each entry's synopsis, description and `--flags`, and lists entries that name no command.
+
+## `mcp`: a stdio server from the table
+
+```js
+import { createServer, serveStdio, inProcess, spawnCli, InvalidParams } from '@chrisdudek/runes/mcp';
+
+const server = createServer({
+  table: TABLE, version: '1.0.0',
+  executor: inProcess(({ parsed, data }) => dispatch(data.root, parsed.command, parsed.args, parsed.flags)),   // Jarl style
+  // executor: spawnCli({ args: [cliScript] }),                                                                // Grain style
+  tools: { help: USAGE },
+  timeoutMs: (command) => (command === 'propose' ? 3_600_000 : 600_000),
+  prepare: ({ command, input }) => ({ data: { root: input.root ?? found }, notes: input.root ? {} : { root: `reached ${found}` } }),
+});
+serveStdio(server);
+```
+
+- **Tools**: one per public command, `<tool>_<command>` (`grain_decide_steer`), one field per argument and flag, `readOnlyHint`, `destructiveHint` and `idempotentHint` from the table, and a `<tool>_help` tool with the usage text when `help` is given. `describe` and `fieldNote` shape the text; short descriptions keep `tools/list` small, and the help tool carries the rest.
+- **Input**: a call becomes the argv the CLI would get (flags inline, then `--`, then the arguments), so the CLI's parser reads it. Unknown fields, wrong types, a missing required argument, an argument after a gap, and a relative path in a field the table marks as a path are a JSON-RPC -32602 error, and nothing runs. `transformInput({ command, input })` rewrites the fields before that check (a repository-relative path made absolute, a container path translated, a "bare name or absolute path" field refused with `InvalidParams`), and `transformArgv({ command, argv, input })` rewrites the argv after it, so a consumer keeps its own path rules without forking the adapter. `prepare` may refuse with `InvalidParams` too.
+- **Executors**: `inProcess(run)` hands `run` the parsed call and takes back `{ value, text, notes, exitCode }` or a thrown refusal. A synchronous `run` blocks the event loop while it runs: `ping`, `tools/list`, a cancel and the timeout all wait until it returns, so a timeout can only answer after the work has finished. Only an async `run` that awaits and honours `ctx.signal` gets the transport's promises (answers while it runs, a timeout or cancel that stops it). No in-process run can be killed: a timeout or cancel drops its answer, and the next call waits for it to end. `spawnCli({ command, args })` runs the CLI as a child in its own process group; a timeout, a cancel, stdin closing or SIGTERM/SIGINT/SIGHUP kill the whole tree (`taskkill /T /F` on Windows, where there are no process groups).
+- **Answers**: a JSON answer is exactly one text block, notes in `_meta` under `<tool>/<key>`, never in a second block; a refusal in JSON mode is the `<tool>-error/1` document as that block, or with `errorDocuments: false` the message text as that block, notes still in `_meta`. A non-zero exit or a refusal is `isError: true`.
+- **Transport**: tool calls run one at a time, in order; `initialize`, `ping` and `tools/list` are never queued behind them (a synchronous in-process run still blocks everything while it runs). `notifications/cancelled` stops a running call or drops a queued one, without an answer. A cancel for any other id is ignored: a late cancel, arriving after its call was answered, does nothing, and a later request that reuses the id is answered as usual. Client responses are ignored. The protocol version a client asks for comes back when it is one of `2025-06-18`, `2025-03-26`, `2024-11-05`; any other gets the first.
+
+## `testkit`: tests every consumer runs
+
+```js
+import { gitEnv, makeTempRepo, assertParity, measureTools, formatToolsMeasure, listToolsOverStdio, startMcpClient } from '@chrisdudek/runes/testkit';
+
+const repo = makeTempRepo({ files: { 'src/a.ts': 'export {}\n' } });   // gitEnv: no user config, fixed identity and dates
+const tools = await listToolsOverStdio({ command: process.execPath, args: [serverScript] });
+assertParity({ table: TABLE, usage: USAGE, tools, toolOptions: { help: USAGE } });
+console.log(formatToolsMeasure(measureTools(tools, { label: 'demo' })));      // a warning over 8 500 tokens, never a failure
+```
+
+- **`gitEnv(base, { name, email, date, config })`** first drops every variable `git rev-parse --local-env-vars` names (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_CONFIG_PARAMETERS`, ...) and any inherited `GIT_CONFIG_*` entry, so a suite run from a git hook never reaches the outer repository. It then sets the test config as `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`: `maintenance.auto=false` and `gc.auto=0` (no background git holding files a test deletes, fatal on Windows), `init.defaultBranch=main`, no signing, `core.autocrlf=false`, and `core.hooksPath` at an empty directory; `GIT_CONFIG_GLOBAL` points at an empty file (both in a private temp directory, which works on every platform where `/dev/null` does not), `GIT_CONFIG_NOSYSTEM=1`, and a fixed identity and date, so commit ids repeat. `makeTempRepo({ files, env })` is a repository under the OS temp dir with it.
+- **`parityProblems` / `assertParity`** hold the table, the usage text and the tools together both ways: a command without a tool or a usage entry, a tool or an entry that names no command, a field the tool lacks or has beyond the command's arguments and flags, a field whose type or item type differs from what the table makes it, a different set of required fields, arguments listed out of the table's order, and a flag the usage does not mention or mentions without the command taking it.
+- **`measureTools(tools, { budgetTokens })`** measures what `tools/list` sends, estimating tokens at four characters each, and returns a warning when the server is over budget (default 8 500 tokens). CI prints it; it never fails the build.
+- **`startMcpClient` / `listToolsOverStdio`** drive a server over its real stdio in tests. `stop(graceMs)` closes stdin, waits for the server to leave (2 s by default), then kills it with everything it started.
+- **`checkRuntimePins`** checks a consumer's runtime and grammar packages against the manifest (see [Relations, syntax trees and grammars](#relations-syntax-trees-and-grammars) below).
+
+`testkit` imports `cli` and `mcp`; a vendoring consumer that takes `dist/testkit` takes those two as well (the vendor gate refuses a relative import of a file that is not vendored).
+
+## `skills/`: shared skill fragments
+
+A fragment is a piece of skill text more than one tool's `SKILL.md` carries word for word. It lives here as `skills/<name>.md` and in the consumer between `<!-- RUNES:<name>:START -->` and `<!-- RUNES:<name>:END -->`, filled and checked by `tools/vendor.mjs` (see below). Fragments are tool-neutral: they speak of "the tool", `<tool>_<command>` and "the coordinator", never of a family tool by name, so one text fits every consumer; the consumer's own text around the markers names itself.
+
+| Fragment | Says |
+|---|---|
+| `mcp-first` | call the tool's MCP tools first (fields, absolute paths, one JSON block, `<tool>-error/1`, -32602, timeouts); the CLI is the fallback |
+| `worker-worktree` | a worker works in its own worktree on its own branch, one issue per commit, state passed by the main checkout's absolute path, scratch outside the repository, the coordinator merges |
+| `evidence` | the `--ran`/`--saw` vocabulary: the exact command and what it printed, pairs by position, notes never prove, a fix shows red then green, evidence is appended |
 
 ## The guard
 
