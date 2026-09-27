@@ -54,9 +54,14 @@ test('the right version with other engine bytes is reported: the runtime WASM is
   try {
     const problems = checkRuntimePins({ resolveFrom: dir, languages: [] });
     assert.deepEqual(problems, [{ package: 'web-tree-sitter', role: 'runtime wasm', expected: pinnedWasm, installed: createHash('sha256').update(other).digest('hex') }]);
-    const missing = checkRuntimePins({ resolveFrom: fakeConsumer({ 'web-tree-sitter': '0.27.0' }), languages: [] });
-    assert.deepEqual(missing, [{ package: 'web-tree-sitter', role: 'runtime wasm', expected: pinnedWasm }]);
-    assert.match(formatRuntimePinReport(missing), /no web-tree-sitter\.wasm found/);
+    const noWasm = fakeConsumer({ 'web-tree-sitter': '0.27.0' });
+    try {
+      const missing = checkRuntimePins({ resolveFrom: noWasm, languages: [] });
+      assert.deepEqual(missing, [{ package: 'web-tree-sitter', role: 'runtime wasm', expected: pinnedWasm }]);
+      assert.match(formatRuntimePinReport(missing), /no web-tree-sitter\.wasm found/);
+    } finally {
+      rmSync(noWasm, { recursive: true, force: true });
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
