@@ -1,0 +1,7 @@
+# Places where the family guard is knowingly silenced in Runes' own src/. Reviewed like code: every entry says why, and an entry that silences nothing fails the guard test.
+# Format: <path> <rule> [<subject>]   # reason
+
+src/testkit/guard/config.mts state-path .yggdrasil   # the guard's own list of state directories it looks for; data, not a path
+src/testkit/guard/config.mts state-path .grain       # same
+src/testkit/guard/config.mts state-path .jarl        # same
+src/testkit/guard/config.mts state-path .horde       # same

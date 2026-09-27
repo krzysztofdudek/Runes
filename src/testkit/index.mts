@@ -7,3 +7,5 @@ export { RUNES_VERSION as version } from '../version.mjs';
 
 /** The subpath this module is published under. */
 export const subpath = 'testkit';
+
+export * from './guard/index.mjs';
