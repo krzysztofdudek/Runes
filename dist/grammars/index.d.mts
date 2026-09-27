@@ -6,3 +6,4 @@
 export { RUNES_VERSION as version } from '../version.mjs';
 /** The subpath this module is published under. */
 export declare const subpath = "grammars";
+export { GRAMMAR_MANIFEST_SCHEMA, validateGrammarManifest, parseGrammarManifest, type GrammarManifest, type GrammarPin, type GrammarSource } from './manifest.mjs';
