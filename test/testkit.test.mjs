@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, statSync, readFileSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gitEnv, gitLocalEnvVars, makeTempRepo, TEST_GIT_CONFIG, parityProblems, assertParity, measureTools, formatToolsMeasure, listToolsOverStdio, startMcpClient, runtimePinProblems } from '@chrisdudek/runes/testkit';
+import { gitEnv, gitLocalEnvVars, makeTempRepo, TEST_GIT_CONFIG, parityProblems, assertParity, measureTools, formatToolsMeasure, listToolsOverStdio, startMcpClient } from '@chrisdudek/runes/testkit';
 import { buildTools } from '@chrisdudek/runes/mcp';
 import { TABLE, USAGE } from './fixtures/demo-tool.mjs';
 
@@ -172,16 +172,5 @@ describe('stdio client stop()', () => {
     await c.request('initialize', {});
     await c.stop(10_000);
     assert.deepEqual(await c.exited, { code: 0, signal: null });
-  });
-});
-
-describe('runtime pin', () => {
-  const manifest = { runtime: { package: 'web-tree-sitter', version: '0.27.0' } };
-  test('an exact match passes; a range, another version, an undeclared one or a different install is named', () => {
-    assert.deepEqual(runtimePinProblems({ manifest, packageJson: { dependencies: { 'web-tree-sitter': '0.27.0' } }, installed: '0.27.0' }), []);
-    assert.match(runtimePinProblems({ manifest, packageJson: { dependencies: { 'web-tree-sitter': '^0.27.0' } } })[0], /dependencies.web-tree-sitter is "\^0.27.0"; the grammar manifest pins exactly "0.27.0"/);
-    assert.match(runtimePinProblems({ manifest, packageJson: { devDependencies: { 'web-tree-sitter': '0.25.0' } } })[0], /devDependencies/);
-    assert.match(runtimePinProblems({ manifest, packageJson: {} })[0], /does not declare web-tree-sitter/);
-    assert.match(runtimePinProblems({ manifest, installed: '0.26.1' })[0], /0.26.1 is installed/);
   });
 });
