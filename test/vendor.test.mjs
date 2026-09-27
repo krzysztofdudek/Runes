@@ -346,6 +346,15 @@ describe('vendor.mjs', () => {
     assert.ok(sameAs(baseline, snapshot()));
   });
 
+  test('a link git records but the checkout holds as a plain file (Git for Windows without core.symlinks) is refused all the same', () => {
+    const cfg = join(tmp, 'gitconfig-nosymlinks');
+    writeFileSync(cfg, '[core]\n\tsymlinks = false\n');
+    const r = run(['update', '--tag', 'v0.9.0-links'], { GIT_CONFIG_GLOBAL: cfg });
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.err, /'dist\/fs\/alias\.mjs' is a symbolic link/);
+    assert.ok(sameAs(baseline, snapshot()));
+  });
+
   test('update without --tag moves to the highest release tag, keeps CRLF in the target, and prints the changes and the changelog', () => {
     writeFileSync(join(consumer, 'SKILL.md'), crlf(read('SKILL.md')));
     const r = run(['update']);
