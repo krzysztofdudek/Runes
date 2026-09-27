@@ -55,6 +55,10 @@ jobs:
           if npm view "@chrisdudek/runes@${VERSION}" version > /dev/null 2>&1; then
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Version ${VERSION} is already on npm. Skipping publish and the GitHub release."
+          elif ! npm view "@chrisdudek/runes" name > /dev/null 2>&1; then
+            # Trusted publishing can only be configured for a package that exists, so the very first publish is the owner's manual step (README, "First publish"). Until then a tag only records the release for vendoring consumers.
+            echo "published=first" >> "$GITHUB_OUTPUT"
+            echo "::notice::@chrisdudek/runes is not on npm yet: the first publish is manual (README). Skipping publish and the GitHub release; the tag stays usable for vendoring."
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
