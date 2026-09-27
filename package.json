@@ -56,9 +56,10 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test \"test/**/*.test.mjs\"",
+    "test": "npm run build && npm run grammars && node --test \"test/**/*.test.mjs\"",
     "check:dist": "node scripts/check-dist.mjs",
-    "check": "npm test && npm run check:dist"
+    "check": "npm test && npm run check:dist",
+    "grammars": "node scripts/build-grammars.mjs --table"
   },
   "peerDependencies": {
     "web-tree-sitter": "0.27.0"
@@ -70,6 +71,11 @@
   },
   "devDependencies": {
     "@types/node": "22.20.4",
-    "typescript": "6.0.3"
+    "tree-sitter-cli": "0.27.0",
+    "tree-sitter-go": "0.25.0",
+    "tree-sitter-javascript": "0.25.0",
+    "tree-sitter-python": "0.25.0",
+    "typescript": "6.0.3",
+    "web-tree-sitter": "0.27.0"
   }
 }

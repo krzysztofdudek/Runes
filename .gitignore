@@ -2,3 +2,4 @@ node_modules/
 .runes/
 *.log
 .DS_Store
+.grammars/

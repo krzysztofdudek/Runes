@@ -2,26 +2,61 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/krzysztofdudek/Runes/grammars/manifest.schema.json",
   "title": "Runes grammar manifest",
-  "description": "Pins for the tree-sitter runtime and every grammar the family builds. Runes holds the recipe and the pins, never the WASM bytes; byte identity comes from sha256 and a reproducible build. The same rules are enforced in code by validateGrammarManifest in @chrisdudek/runes/grammars.",
+  "description": "Pins for the tree-sitter runtime, the tree-sitter CLI that builds grammars from source, and every grammar the family builds. Runes holds the recipe and the pins, never the WASM bytes; byte identity comes from sha256 and a reproducible build. The same rules are enforced in code by validateGrammarManifest in @chrisdudek/runes/grammars, which also checks what a schema cannot (unique languages and files, the source-kind requirements on repo, commit and cli).",
   "type": "object",
-  "required": ["schema", "runtime", "grammars"],
+  "required": [
+    "schema",
+    "runtime",
+    "cli",
+    "grammars"
+  ],
   "additionalProperties": false,
   "properties": {
-    "$schema": { "type": "string" },
-    "schema": { "const": "runes-grammars/1" },
+    "$schema": {
+      "type": "string"
+    },
+    "schema": {
+      "const": "runes-grammars/1"
+    },
     "runtime": {
       "description": "The tree-sitter runtime every consumer must load, pinned to an exact version.",
       "type": "object",
-      "required": ["package", "version"],
+      "required": [
+        "package",
+        "version"
+      ],
       "additionalProperties": false,
       "properties": {
-        "package": { "const": "web-tree-sitter" },
-        "version": { "$ref": "#/$defs/exactVersion" }
+        "package": {
+          "const": "web-tree-sitter"
+        },
+        "version": {
+          "$ref": "#/$defs/exactVersion"
+        }
+      }
+    },
+    "cli": {
+      "description": "The tree-sitter CLI every source grammar is built with, pinned to an exact version.",
+      "type": "object",
+      "required": [
+        "package",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "package": {
+          "const": "tree-sitter-cli"
+        },
+        "version": {
+          "$ref": "#/$defs/exactVersion"
+        }
       }
     },
     "grammars": {
       "type": "array",
-      "items": { "$ref": "#/$defs/grammar" }
+      "items": {
+        "$ref": "#/$defs/grammar"
+      }
     }
   },
   "$defs": {
@@ -33,63 +68,177 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "https": {
+      "type": "string",
+      "pattern": "^https://\\S+$"
+    },
+    "relPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9_./@-]+$"
+    },
     "grammar": {
       "type": "object",
-      "required": ["language", "wasmFile", "source", "sha256"],
+      "required": [
+        "language",
+        "wasmFile",
+        "source",
+        "sha256"
+      ],
       "additionalProperties": false,
       "properties": {
-        "language": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "description": "Language id, unique in the manifest." },
-        "wasmFile": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+\\.wasm$", "description": "File name the parser resolves, unique in the manifest." },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "Language id, unique in the manifest."
+        },
+        "wasmFile": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+\\.wasm$",
+          "description": "File name the grammar is written under and the parser loads, unique in the manifest; its node-types.json is written beside it as <name>.node-types.json."
+        },
+        "repo": {
+          "$ref": "#/$defs/https",
+          "description": "Upstream repository; required for github-release and source."
+        },
+        "commit": {
+          "$ref": "#/$defs/commit",
+          "description": "Commit of repo the WASM was built from; required for github-release and source."
+        },
+        "version": {
+          "type": "string",
+          "description": "Human-readable version."
+        },
+        "cli": {
+          "type": "string",
+          "description": "The tree-sitter CLI that produced the WASM; for a source build it must equal cli.version."
+        },
+        "abi": {
+          "type": "integer",
+          "description": "Parser ABI the loaded language reports."
+        },
+        "note": {
+          "type": "string",
+          "description": "Why this pin is what it is, when that is not obvious."
+        },
         "source": {
           "oneOf": [
             {
               "type": "object",
-              "required": ["kind", "package", "version", "path"],
+              "required": [
+                "kind",
+                "package",
+                "version",
+                "wasmPath",
+                "nodeTypesPath"
+              ],
               "additionalProperties": false,
               "properties": {
-                "kind": { "const": "npm" },
-                "package": { "type": "string", "minLength": 1 },
-                "version": { "$ref": "#/$defs/exactVersion" },
-                "path": { "type": "string", "minLength": 1, "description": "Path of the WASM inside the package." }
+                "kind": {
+                  "const": "npm"
+                },
+                "package": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "$ref": "#/$defs/exactVersion"
+                },
+                "wasmPath": {
+                  "$ref": "#/$defs/relPath"
+                },
+                "nodeTypesPath": {
+                  "$ref": "#/$defs/relPath"
+                }
               }
             },
             {
               "type": "object",
-              "required": ["kind", "repo", "tag", "asset"],
+              "required": [
+                "kind",
+                "url"
+              ],
               "additionalProperties": false,
               "properties": {
-                "kind": { "const": "github-release" },
-                "repo": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" },
-                "tag": { "type": "string", "minLength": 1 },
-                "asset": { "type": "string", "minLength": 1 }
+                "kind": {
+                  "const": "github-release"
+                },
+                "url": {
+                  "$ref": "#/$defs/https"
+                }
               }
             },
             {
               "type": "object",
-              "required": ["kind", "repo", "commit"],
+              "required": [
+                "kind",
+                "dir",
+                "generate"
+              ],
               "additionalProperties": false,
               "properties": {
-                "kind": { "const": "git" },
-                "repo": { "type": "string", "minLength": 1 },
-                "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-                "subdir": { "type": "string" }
+                "kind": {
+                  "const": "source"
+                },
+                "dir": {
+                  "$ref": "#/$defs/relPath"
+                },
+                "generate": {
+                  "type": "boolean"
+                },
+                "patches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^patches/[A-Za-z0-9_.-]+\\.patch$"
+                  },
+                  "description": "Patches applied in order before the build, relative to grammars/."
+                },
+                "deps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "repo",
+                      "commit"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "path": {
+                        "$ref": "#/$defs/relPath"
+                      },
+                      "repo": {
+                        "$ref": "#/$defs/https"
+                      },
+                      "commit": {
+                        "$ref": "#/$defs/commit"
+                      }
+                    }
+                  }
+                }
               }
             }
           ]
         },
         "sha256": {
           "type": "object",
-          "required": ["wasm", "nodeTypes"],
+          "required": [
+            "wasm",
+            "nodeTypes"
+          ],
           "additionalProperties": false,
           "properties": {
-            "wasm": { "$ref": "#/$defs/sha256" },
-            "nodeTypes": { "$ref": "#/$defs/sha256" }
+            "wasm": {
+              "$ref": "#/$defs/sha256"
+            },
+            "nodeTypes": {
+              "$ref": "#/$defs/sha256"
+            }
           }
-        },
-        "patches": {
-          "type": "array",
-          "items": { "type": "string", "pattern": "^patches/[A-Za-z0-9_./-]+\\.patch$" },
-          "description": "Patches applied before a source build, relative to grammars/."
         }
       }
     }
