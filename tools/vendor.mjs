@@ -6,10 +6,11 @@
 //   check --local         with RUNES_DIR=<Runes working tree>: a report of how the vendored copy differs from that tree; never a pass (exit 3)
 //   update [--tag vX.Y.Z] copy the configured paths from the tag (default: the highest release tag), rewrite the pin, print the changed files and the Runes CHANGELOG between the old and the new tag
 //
-// Options: --pin <file> (default: $RUNES_PIN, else ./runes.pin.json), --work-dir <dir> (default: <git toplevel>/.runes).
+// Options: --pin <file> (default: $RUNES_PIN, else ./runes.pin.json), --work-dir <dir> (default: <repository root>/.runes).
 // Exit codes: 0 pass, 1 gate failure, 2 usage or environment error, 3 local report (never green).
+// Environment: RUNES_GIT_TIMEOUT_MS bounds every git call (default 120000).
 //
-// The pin (JSON), with every consumer-side path relative to the pin file's directory:
+// The pin (JSON), with every consumer-side path relative to the pin file's directory and required to stay inside the consumer's repository:
 //   source     git URL of Runes
 //   tag, commit the vendored release and the commit its tag pointed at when vendored (written by update)
 //   dest       directory that holds the copy; files keep their Runes-relative paths under it
@@ -17,24 +18,29 @@
 //   fragments  [{ name, target, sha256 }]: skills/<name>.md lives in target between <!-- RUNES:<name>:START --> and <!-- RUNES:<name>:END -->
 //   tool       { path, sha256 }: where this file itself is vendored
 //   files      { <Runes-relative path>: <sha256> } (written by update)
+//
+// What the gate proves: the copy is byte for byte what the pinned tag holds. It catches accidents and hand edits; it does not stop a change that rewrites the pin and its source together, which is a review question.
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep, posix } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep, posix } from 'node:path';
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
 const EXIT_USAGE = 2;
 const EXIT_REPORT = 3;
 const TOOL_SOURCE = 'tools/vendor.mjs';
+const GIT_TIMEOUT_MS = Number(process.env.RUNES_GIT_TIMEOUT_MS) > 0 ? Number(process.env.RUNES_GIT_TIMEOUT_MS) : 120000;
 
 class UsageError extends Error {}
 
-const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 const toPosix = (p) => p.split(sep).join('/');
 const out = (s = '') => process.stdout.write(`${s}\n`);
 const err = (s) => process.stderr.write(`${s}\n`);
+const isLink = (p) => lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+const exists = (p) => lstatSync(p, { throwIfNoEntry: false }) !== undefined;
 
 function parseArgs(argv) {
   const args = { command: argv[0], flags: new Set(), values: {} };
@@ -50,15 +56,40 @@ function parseArgs(argv) {
 }
 
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
 }
 
-// A Runes-relative path from the pin must stay inside the tree it names.
-function safeRelative(p, what) {
-  if (typeof p !== 'string' || p === '' || p.startsWith('/') || /^[A-Za-z]:/.test(p) || posix.normalize(p).split('/').includes('..') || p.includes('\\')) {
-    throw new UsageError(`${what}: '${p}' must be a relative path inside the tree, with forward slashes`);
+function gitError(e) {
+  if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM') return `git timed out after ${GIT_TIMEOUT_MS} ms`;
+  return (e.stderr || e.message).toString().trim();
+}
+
+// The consumer's repository root: the nearest directory upward holding .git, found without running git. Without one, the pin's directory.
+function repositoryRoot(from) {
+  for (let d = from; ; d = dirname(d)) {
+    if (exists(join(d, '.git'))) return d;
+    if (dirname(d) === d) return from;
   }
-  return posix.normalize(p).replace(/\/$/, '');
+}
+
+// A Runes-relative path from the pin: relative, forward slashes, no escape, not the whole tree, never into .git.
+function safeRelative(p, what) {
+  const bad = typeof p !== 'string' || p === '' || p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.includes('\\');
+  const norm = bad ? '' : posix.normalize(p).replace(/\/$/, '');
+  if (bad || norm === '.' || norm.split('/').includes('..') || norm.split('/').includes('.git')) {
+    throw new UsageError(`${what}: '${p}' must be a relative path inside the tree, with forward slashes, not the tree itself and not into .git`);
+  }
+  return norm;
+}
+
+// A consumer-side path from the pin, relative to the pin's directory: it must resolve inside the repository, never to the root itself and never into .git.
+function consumerPath(p, what, base, root) {
+  if (typeof p !== 'string' || p === '' || isAbsolute(p) || /^[A-Za-z]:/.test(p)) throw new UsageError(`${what}: '${p}' must be a relative path`);
+  const full = resolve(base, p);
+  const rel = relative(root, full);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) throw new UsageError(`${what}: '${p}' must resolve inside the repository (${root}) and not to its root`);
+  if (rel.split(sep).includes('.git')) throw new UsageError(`${what}: '${p}' must not point into .git`);
+  return full;
 }
 
 function loadPin(pinArg) {
@@ -70,46 +101,72 @@ function loadPin(pinArg) {
   } catch (e) {
     throw new UsageError(`pin file ${pinPath} is not valid JSON: ${e.message}`);
   }
+  const base = dirname(pinPath);
+  const root = repositoryRoot(base);
   if (typeof pin.source !== 'string' || !pin.source) throw new UsageError('pin: source is required');
-  if (typeof pin.dest !== 'string' || !pin.dest || pin.dest === '.') throw new UsageError('pin: dest is required and must name a directory of its own');
+  if (pin.source.startsWith('-')) throw new UsageError('pin: source must not start with -');
+  const destDir = consumerPath(pin.dest, 'pin.dest', base, root);
   if (!Array.isArray(pin.paths) || pin.paths.length === 0) throw new UsageError('pin: paths must list at least one Runes path');
   pin.paths = pin.paths.map((p) => safeRelative(p, 'pin.paths'));
   pin.fragments = pin.fragments ?? [];
+  if (!Array.isArray(pin.fragments)) throw new UsageError('pin.fragments: expected an array');
+  const targets = new Map();
   for (const f of pin.fragments) {
     if (!f || typeof f.name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(f.name)) throw new UsageError('pin.fragments: each needs a name of letters, digits, - or _');
-    if (typeof f.target !== 'string' || !f.target) throw new UsageError(`pin.fragments[${f.name}]: target is required`);
+    targets.set(f, consumerPath(f.target, `pin.fragments[${f.name}].target`, base, root));
   }
-  if (pin.tool !== undefined && (typeof pin.tool !== 'object' || typeof pin.tool.path !== 'string')) throw new UsageError('pin.tool: expected { path, sha256 }');
+  let toolPath;
+  if (pin.tool !== undefined) {
+    if (typeof pin.tool !== 'object' || pin.tool === null) throw new UsageError('pin.tool: expected { path, sha256 }');
+    toolPath = consumerPath(pin.tool.path, 'pin.tool.path', base, root);
+  }
   for (const k of Object.keys(pin.files ?? {})) safeRelative(k, 'pin.files');
-  const base = dirname(pinPath);
-  return { pin, pinPath, base, destDir: resolve(base, pin.dest) };
+  return { pin, pinPath, base, root, destDir, targets, toolPath };
+}
+
+function warnings(ctx) {
+  if (!ctx.pin.tool) err('runes: warning: the pin has no tool entry, so this script itself is not checked; add "tool": { "path": "<where this script lives>" } and run update');
 }
 
 function isFilled(pin) {
   return typeof pin.tag === 'string' && /^[0-9a-f]{40}$/.test(pin.commit ?? '') && pin.files && typeof pin.files === 'object';
 }
 
-function listFiles(dir) {
-  const found = [];
+// Files under dir (relative, posix, sorted) and every symbolic link met on the way. .git is never entered.
+function listTree(dir) {
+  const files = [];
+  const links = [];
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.name === '.git') continue;
       const full = join(d, e.name);
-      if (e.isDirectory()) walk(full);
-      else if (e.isFile() || e.isSymbolicLink()) found.push(full);
+      if (e.isSymbolicLink()) links.push(full);
+      else if (e.isDirectory()) walk(full);
+      else if (e.isFile()) files.push(full);
     }
   };
-  if (existsSync(dir)) walk(dir);
-  return found.map((f) => toPosix(relative(dir, f))).sort();
+  if (exists(dir) && !isLink(dir)) walk(dir);
+  const rel = (list) => list.map((f) => toPosix(relative(dir, f))).sort();
+  return { files: rel(files), links: rel(links) };
 }
 
-// Every file of the given Runes-relative paths inside a tree (a clone or RUNES_DIR). A path that is absent is an error.
+// Every file of the given Runes-relative paths inside a tree (a clone or RUNES_DIR). An absent path or a symbolic link anywhere on the way is an error: a link would vendor whatever it points at.
 function filesUnder(tree, paths) {
   const files = [];
   for (const p of paths) {
+    const segments = p.split('/');
+    for (let i = 1; i <= segments.length; i++) {
+      const partial = segments.slice(0, i).join('/');
+      if (isLink(join(tree, partial))) throw new Error(`'${partial}' is a symbolic link in ${tree}; Runes paths must be real files`);
+    }
     const full = join(tree, p);
-    if (!existsSync(full)) throw new Error(`'${p}' does not exist in ${tree}`);
-    if (statSync(full).isDirectory()) files.push(...listFiles(full).map((f) => `${p}/${f}`));
-    else files.push(p);
+    const st = lstatSync(full, { throwIfNoEntry: false });
+    if (!st) throw new Error(`'${p}' does not exist in ${tree}`);
+    if (st.isDirectory()) {
+      const { files: found, links } = listTree(full);
+      if (links.length > 0) throw new Error(`'${p}/${links[0]}' is a symbolic link in ${tree}; Runes paths must be real files`);
+      files.push(...found.map((f) => `${p}/${f}`));
+    } else files.push(p);
   }
   return [...new Set(files)].sort();
 }
@@ -120,18 +177,40 @@ function markers(name) {
   return { start: `<!-- RUNES:${name}:START -->`, end: `<!-- RUNES:${name}:END -->` };
 }
 
+function countOf(text, needle) {
+  let n = 0;
+  for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) n++;
+  return n;
+}
+
+// A fragment as the pin hashes it: LF line endings and a final newline, so neither a CRLF checkout nor a missing last newline changes it.
+function canonical(text) {
+  const lf = text.replace(/\r\n/g, '\n');
+  return lf === '' || lf.endsWith('\n') ? lf : `${lf}\n`;
+}
+
 // The text between a fragment's markers: from the line after START up to the start of the END line.
 function readBlock(text, name) {
   const { start, end } = markers(name);
+  const starts = countOf(text, start);
+  const ends = countOf(text, end);
+  if (starts !== 1) return { error: starts === 0 ? `no ${start} marker` : `more than one ${start} marker` };
+  if (ends !== 1) return { error: ends === 0 ? `no ${end} marker` : `more than one ${end} marker` };
   const s = text.indexOf(start);
-  if (s === -1 || text.indexOf(start, s + 1) !== -1) return { error: s === -1 ? `no ${start} marker` : `more than one ${start} marker` };
-  const e = text.indexOf(end, s);
-  if (e === -1 || text.indexOf(end, e + 1) !== -1) return { error: e === -1 ? `no ${end} marker after START` : `more than one ${end} marker` };
+  const e = text.indexOf(end);
+  if (e < s) return { error: `${end} comes before ${start}` };
   const bodyStart = text.indexOf('\n', s);
-  if (bodyStart === -1 || bodyStart >= e) return { error: `${start} must end its line` };
+  if (bodyStart === -1 || bodyStart >= e || text.slice(s + start.length, bodyStart).trim() !== '') return { error: `${start} must end its line` };
   const lineStart = text.lastIndexOf('\n', e - 1) + 1;
   if (text.slice(lineStart, e).trim() !== '') return { error: `${end} must start its line` };
-  return { from: bodyStart + 1, to: lineStart, body: text.slice(bodyStart + 1, lineStart) };
+  const eol = text[bodyStart - 1] === '\r' ? '\r\n' : '\n';
+  return { from: bodyStart + 1, to: lineStart, body: text.slice(bodyStart + 1, lineStart), eol };
+}
+
+// Writes a fragment between its markers in the target's own line endings.
+function writeBlock(text, block, fragment) {
+  const body = canonical(fragment);
+  return text.slice(0, block.from) + (block.eol === '\r\n' ? body.replace(/\n/g, '\r\n') : body) + text.slice(block.to);
 }
 
 function danglingImports(destDir, files) {
@@ -151,59 +230,61 @@ function danglingImports(destDir, files) {
 
 // The offline gate: vendored bytes against the pin. Returns a list of problems.
 function offlineProblems(ctx) {
-  const { pin, base, destDir } = ctx;
+  const { pin, destDir } = ctx;
   if (!isFilled(pin)) return ['the pin has no tag, commit or files yet; run update'];
   const problems = [];
   const pinned = Object.keys(pin.files).sort();
+  const present = [];
   for (const f of pinned) {
     const full = join(destDir, f);
-    if (!existsSync(full)) problems.push(`missing: ${pin.dest}/${f}`);
-    else if (sha256(readFileSync(full)) !== pin.files[f]) problems.push(`modified: ${pin.dest}/${f} (hand edits are not allowed; change Runes and run update)`);
     if (!covered(f, pin.paths)) problems.push(`pin lists ${f}, which no entry of paths covers`);
+    if (!exists(full)) { problems.push(`missing: ${pin.dest}/${f}`); continue; }
+    if (isLink(full)) { problems.push(`symlink: ${pin.dest}/${f} must be a real file`); continue; }
+    present.push(f);
+    const data = readFileSync(full);
+    if (sha256(data) === pin.files[f]) continue;
+    const crlfOnly = data.includes(0x0d) && sha256(data.toString('utf8').replace(/\r\n/g, '\n')) === pin.files[f];
+    problems.push(crlfOnly
+      ? `line endings: ${pin.dest}/${f} was checked out with CRLF; add '${toPosix(relative(ctx.root, destDir))}/** -text' to .gitattributes and check it out again`
+      : `modified: ${pin.dest}/${f} (hand edits are not allowed; change Runes and run update)`);
   }
   const pinnedSet = new Set(pinned);
-  for (const f of listFiles(destDir)) if (!pinnedSet.has(f)) problems.push(`extra: ${pin.dest}/${f} is not in the pin`);
-  problems.push(...danglingImports(destDir, pinned.filter((f) => existsSync(join(destDir, f)))));
+  const tree = listTree(destDir);
+  for (const f of tree.files) if (!pinnedSet.has(f)) problems.push(`extra: ${pin.dest}/${f} is not in the pin`);
+  for (const l of tree.links) if (!pinnedSet.has(l)) problems.push(`symlink: ${pin.dest}/${l} is not allowed in the copy`);
+  problems.push(...danglingImports(destDir, present));
   for (const frag of pin.fragments) {
-    const target = resolve(base, frag.target);
+    const target = ctx.targets.get(frag);
     if (!existsSync(target)) { problems.push(`fragment ${frag.name}: target ${frag.target} does not exist`); continue; }
     const block = readBlock(readFileSync(target, 'utf8'), frag.name);
     if (block.error) problems.push(`fragment ${frag.name} in ${frag.target}: ${block.error}`);
-    else if (sha256(block.body) !== frag.sha256) problems.push(`fragment ${frag.name} in ${frag.target}: the block between the markers differs from skills/${frag.name}.md at ${pin.tag}`);
+    else if (sha256(canonical(block.body)) !== frag.sha256) problems.push(`fragment ${frag.name} in ${frag.target}: the block between the markers differs from skills/${frag.name}.md at ${pin.tag}`);
   }
-  if (pin.tool) {
-    const toolPath = resolve(base, pin.tool.path);
-    if (!existsSync(toolPath)) problems.push(`tool: ${pin.tool.path} does not exist`);
-    else if (sha256(readFileSync(toolPath)) !== pin.tool.sha256) problems.push(`tool: ${pin.tool.path} differs from ${TOOL_SOURCE} at ${pin.tag}`);
+  if (ctx.toolPath) {
+    if (!existsSync(ctx.toolPath)) problems.push(`tool: ${pin.tool.path} does not exist`);
+    else if (sha256(readFileSync(ctx.toolPath)) !== pin.tool.sha256) problems.push(`tool: ${pin.tool.path} differs from ${TOOL_SOURCE} at ${pin.tag}`);
   }
   return problems;
 }
 
 function workDir(ctx, flag) {
-  if (flag) return resolve(flag);
-  let top;
-  try {
-    top = git(['rev-parse', '--show-toplevel'], ctx.base);
-  } catch {
-    top = ctx.base;
-  }
-  return join(top, '.runes');
+  return flag ? resolve(flag) : join(ctx.root, '.runes');
 }
 
 function freshClone(source, tag, dir) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dirname(dir), { recursive: true });
   try {
-    git(['-c', 'advice.detachedHead=false', 'clone', '--quiet', '--depth', '1', '--branch', tag, source, dir]);
+    git(['-c', 'advice.detachedHead=false', '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'clone', '--quiet', '--depth', '1', '--branch', tag, '--', source, dir]);
   } catch (e) {
-    throw new Error(`could not clone ${source} at ${tag}: ${(e.stderr || e.message).toString().trim()}`);
+    throw new Error(`could not clone ${source} at ${tag}: ${gitError(e)}`);
   }
   return git(['rev-parse', 'HEAD'], dir);
 }
 
 // The CI gate: the pin against a fresh clone of its tag.
 function ciProblems(ctx, work) {
-  const { pin, base, destDir } = ctx;
+  const { pin, destDir } = ctx;
   const clone = join(work, 'check');
   const problems = [];
   try {
@@ -222,23 +303,22 @@ function ciProblems(ctx, work) {
       if (!upstreamSet.has(f)) { problems.push(`pin lists ${f}, which ${pin.tag} does not have`); continue; }
       const theirs = readFileSync(join(clone, f));
       const vendored = join(destDir, f);
-      if (existsSync(vendored) && !readFileSync(vendored).equals(theirs)) problems.push(`differs from ${pin.tag}: ${pin.dest}/${f}`);
+      if (exists(vendored) && !isLink(vendored) && !readFileSync(vendored).equals(theirs)) problems.push(`differs from ${pin.tag}: ${pin.dest}/${f}`);
       if (sha256(theirs) !== pin.files[f]) problems.push(`pin sha of ${f} does not match ${pin.tag}`);
     }
     for (const frag of pin.fragments) {
       const src = join(clone, 'skills', `${frag.name}.md`);
-      if (!existsSync(src)) { problems.push(`fragment ${frag.name}: ${pin.tag} has no skills/${frag.name}.md`); continue; }
-      const theirs = readFileSync(src, 'utf8');
+      if (!existsSync(src) || isLink(src)) { problems.push(`fragment ${frag.name}: ${pin.tag} has no skills/${frag.name}.md as a real file`); continue; }
+      const theirs = canonical(readFileSync(src, 'utf8'));
       if (sha256(theirs) !== frag.sha256) problems.push(`fragment ${frag.name}: pin sha does not match skills/${frag.name}.md at ${pin.tag}`);
-      const target = resolve(base, frag.target);
+      const target = ctx.targets.get(frag);
       const block = existsSync(target) ? readBlock(readFileSync(target, 'utf8'), frag.name) : { error: 'missing' };
-      if (!block.error && block.body !== theirs) problems.push(`fragment ${frag.name} in ${frag.target}: differs from skills/${frag.name}.md at ${pin.tag}`);
+      if (!block.error && canonical(block.body) !== theirs) problems.push(`fragment ${frag.name} in ${frag.target}: differs from skills/${frag.name}.md at ${pin.tag}`);
     }
-    if (pin.tool) {
+    if (ctx.toolPath) {
       const theirs = readFileSync(join(clone, TOOL_SOURCE));
-      const toolPath = resolve(base, pin.tool.path);
       if (sha256(theirs) !== pin.tool.sha256) problems.push(`tool: pin sha does not match ${TOOL_SOURCE} at ${pin.tag}`);
-      if (existsSync(toolPath) && !readFileSync(toolPath).equals(theirs)) problems.push(`tool: ${pin.tool.path} differs from ${TOOL_SOURCE} at ${pin.tag}`);
+      if (existsSync(ctx.toolPath) && !readFileSync(ctx.toolPath).equals(theirs)) problems.push(`tool: ${pin.tool.path} differs from ${TOOL_SOURCE} at ${pin.tag}`);
     }
   } finally {
     rmSync(clone, { recursive: true, force: true });
@@ -249,16 +329,17 @@ function ciProblems(ctx, work) {
 function cmdCheck(args) {
   const ctx = loadPin(args.values.pin);
   if (args.flags.has('local')) return localReport(ctx);
+  warnings(ctx);
   const ci = args.flags.has('ci') || (process.env.CI === 'true' && !args.flags.has('offline'));
   const problems = offlineProblems(ctx);
   if (ci && isFilled(ctx.pin)) problems.push(...ciProblems(ctx, workDir(ctx, args.values['work-dir'])));
   if (problems.length > 0) {
-    err(`runes: vendored copy FAILS the gate (${ctx.pin.tag ?? 'no tag'}${ci ? ', against a fresh clone' : ', offline'}):`);
+    err(`runes: vendored copy FAILS the gate (${ctx.pin.tag ?? 'no tag'} from ${ctx.pin.source}${ci ? ', against a fresh clone' : ', offline'}):`);
     for (const p of problems) err(`  - ${p}`);
     return EXIT_FAIL;
   }
   const n = Object.keys(ctx.pin.files).length;
-  out(`runes: ${n} vendored files, ${ctx.pin.fragments.length} skill fragments${ctx.pin.tool ? ' and the tool' : ''} match ${ctx.pin.tag} (${ctx.pin.commit.slice(0, 12)})${ci ? ', verified against a fresh clone' : ', offline sha check'}.`);
+  out(`runes: ${n} vendored files, ${ctx.pin.fragments.length} skill fragments${ctx.pin.tool ? ' and the tool' : ''} match ${ctx.pin.tag} (${ctx.pin.commit.slice(0, 12)}) from ${ctx.pin.source}${ci ? ', verified against a fresh clone' : ', offline sha check'}.`);
   return EXIT_PASS;
 }
 
@@ -266,7 +347,7 @@ function localReport(ctx) {
   const runesDir = process.env.RUNES_DIR;
   if (!runesDir) throw new UsageError('check --local needs RUNES_DIR set to a Runes working tree');
   const tree = resolve(runesDir);
-  const { pin, base, destDir } = ctx;
+  const { pin, destDir } = ctx;
   const lines = [];
   let local;
   try {
@@ -274,8 +355,9 @@ function localReport(ctx) {
   } catch (e) {
     throw new UsageError(`RUNES_DIR: ${e.message}`);
   }
-  const vendored = listFiles(destDir);
-  const all = [...new Set([...local, ...vendored])].sort();
+  const vendored = listTree(destDir);
+  for (const l of vendored.links) lines.push(`symlink in the copy: ${l}`);
+  const all = [...new Set([...local, ...vendored.files])].sort();
   let same = 0;
   for (const f of all) {
     const a = join(destDir, f);
@@ -287,14 +369,14 @@ function localReport(ctx) {
   }
   for (const frag of pin.fragments) {
     const src = join(tree, 'skills', `${frag.name}.md`);
-    const target = resolve(base, frag.target);
+    const target = ctx.targets.get(frag);
     const block = existsSync(target) ? readBlock(readFileSync(target, 'utf8'), frag.name) : { error: 'target missing' };
     if (!existsSync(src)) lines.push(`fragment ${frag.name}: RUNES_DIR has no skills/${frag.name}.md`);
     else if (block.error) lines.push(`fragment ${frag.name}: ${block.error}`);
-    else if (block.body !== readFileSync(src, 'utf8')) lines.push(`fragment ${frag.name}: differs`);
+    else if (canonical(block.body) !== canonical(readFileSync(src, 'utf8'))) lines.push(`fragment ${frag.name}: differs`);
   }
-  if (pin.tool && existsSync(join(tree, TOOL_SOURCE)) && existsSync(resolve(base, pin.tool.path)) && !readFileSync(join(tree, TOOL_SOURCE)).equals(readFileSync(resolve(base, pin.tool.path)))) lines.push('tool: differs');
-  out(`runes: local report against ${tree} (pin: ${pin.tag ?? 'none'})`);
+  if (ctx.toolPath && existsSync(join(tree, TOOL_SOURCE)) && existsSync(ctx.toolPath) && !readFileSync(join(tree, TOOL_SOURCE)).equals(readFileSync(ctx.toolPath))) lines.push('tool: differs');
+  out(`runes: local report against ${tree} (pin: ${pin.tag ?? 'none'} from ${pin.source})`);
   out(`  ${same} files identical`);
   for (const l of lines) out(`  ${l}`);
   out('This is a report, not a gate verdict. Only check and check --ci against a tag can pass.');
@@ -319,9 +401,9 @@ function compareVersions(a, b) {
 function latestTag(source) {
   let listing;
   try {
-    listing = git(['ls-remote', '--tags', '--refs', source]);
+    listing = git(['ls-remote', '--tags', '--refs', '--', source]);
   } catch (e) {
-    throw new Error(`could not list tags of ${source}: ${(e.stderr || e.message).toString().trim()}`);
+    throw new Error(`could not list tags of ${source}: ${gitError(e)}`);
   }
   const tags = listing.split('\n').map((l) => l.split('\trefs/tags/')[1]).filter((t) => t && /^v\d+\.\d+\.\d+$/.test(t)).sort(compareVersions);
   if (tags.length === 0) throw new Error(`${source} has no release tags (vX.Y.Z)`);
@@ -332,7 +414,7 @@ function latestTag(source) {
 function changelogBetween(text, from, to) {
   const sections = [];
   let current;
-  for (const line of text.split('\n')) {
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
     const m = /^##\s+\[?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]?/.exec(line);
     if (m) {
       current = { version: m[1], lines: [line] };
@@ -355,12 +437,36 @@ function removeEmptyDirs(dir, stopAt) {
 
 function writeFileMkdir(path, data) {
   mkdirSync(dirname(path), { recursive: true });
+  if (isLink(path)) rmSync(path);
   writeFileSync(path, data);
+}
+
+// Fragments grouped by target file, in pin order, so several fragments in one file are applied one after another to the same text.
+function fragmentsByTarget(ctx) {
+  const groups = new Map();
+  for (const frag of ctx.pin.fragments) {
+    const target = ctx.targets.get(frag);
+    if (!groups.has(target)) groups.set(target, []);
+    groups.get(target).push(frag);
+  }
+  return groups;
 }
 
 function cmdUpdate(args) {
   const ctx = loadPin(args.values.pin);
-  const { pin, pinPath, base, destDir } = ctx;
+  const { pin, pinPath, destDir } = ctx;
+  const groups = fragmentsByTarget(ctx);
+
+  // Fragment targets must carry their markers before anything is fetched or written, so a failed update leaves the copy untouched.
+  for (const [target, frags] of groups) {
+    if (!existsSync(target)) throw new UsageError(`fragment ${frags[0].name}: target ${frags[0].target} does not exist`);
+    const text = readFileSync(target, 'utf8');
+    for (const frag of frags) {
+      const block = readBlock(text, frag.name);
+      if (block.error) throw new UsageError(`fragment ${frag.name} in ${frag.target}: ${block.error}; add the marker lines where the fragment belongs`);
+    }
+  }
+
   const tag = args.values.tag ?? latestTag(pin.source);
   if (!parseVersion(tag)) throw new UsageError(`--tag: '${tag}' is not a vX.Y.Z tag`);
   const work = workDir(ctx, args.values['work-dir']);
@@ -368,18 +474,13 @@ function cmdUpdate(args) {
   try {
     const commit = freshClone(pin.source, tag, clone);
     const files = filesUnder(clone, pin.paths);
-
-    // Fragment targets must carry their markers before anything is written, so a failed update leaves the copy untouched.
-    const fragmentPlans = pin.fragments.map((frag) => {
+    const bodies = new Map();
+    for (const frag of pin.fragments) {
       const src = join(clone, 'skills', `${frag.name}.md`);
-      if (!existsSync(src)) throw new Error(`fragment ${frag.name}: ${tag} has no skills/${frag.name}.md`);
-      const target = resolve(base, frag.target);
-      if (!existsSync(target)) throw new Error(`fragment ${frag.name}: target ${frag.target} does not exist`);
-      const text = readFileSync(target, 'utf8');
-      const block = readBlock(text, frag.name);
-      if (block.error) throw new Error(`fragment ${frag.name} in ${frag.target}: ${block.error}; add the marker lines where the fragment belongs`);
-      return { frag, target, text, block, body: readFileSync(src, 'utf8') };
-    });
+      if (!existsSync(src) || isLink(src)) throw new Error(`fragment ${frag.name}: ${tag} has no skills/${frag.name}.md as a real file`);
+      bodies.set(frag, canonical(readFileSync(src, 'utf8')));
+    }
+    if (ctx.toolPath && isLink(join(clone, TOOL_SOURCE))) throw new Error(`${TOOL_SOURCE} is a symbolic link in ${tag}`);
 
     const oldFiles = pin.files ?? {};
     const newFiles = {};
@@ -398,20 +499,22 @@ function cmdUpdate(args) {
       removeEmptyDirs(dirname(join(destDir, f)), destDir);
     }
 
-    for (const plan of fragmentPlans) {
-      const next = plan.text.slice(0, plan.block.from) + plan.body + plan.text.slice(plan.block.to);
-      if (next !== plan.text) {
-        writeFileSync(plan.target, next);
-        changes.push(`F ${plan.frag.name} -> ${plan.frag.target}`);
+    for (const [target, frags] of groups) {
+      const original = readFileSync(target, 'utf8');
+      let text = original;
+      for (const frag of frags) {
+        const before = text;
+        text = writeBlock(text, readBlock(text, frag.name), bodies.get(frag));
+        if (text !== before) changes.push(`F ${frag.name} -> ${frag.target}`);
+        frag.sha256 = sha256(bodies.get(frag));
       }
-      plan.frag.sha256 = sha256(plan.body);
+      if (text !== original) writeFileSync(target, text);
     }
 
-    if (pin.tool) {
+    if (ctx.toolPath) {
       const data = readFileSync(join(clone, TOOL_SOURCE));
-      const toolPath = resolve(base, pin.tool.path);
-      if (!existsSync(toolPath) || !readFileSync(toolPath).equals(data)) changes.push(`T ${pin.tool.path}`);
-      writeFileMkdir(toolPath, data);
+      if (!existsSync(ctx.toolPath) || !readFileSync(ctx.toolPath).equals(data)) changes.push(`T ${pin.tool.path}`);
+      writeFileMkdir(ctx.toolPath, data);
       pin.tool.sha256 = sha256(data);
     }
 
@@ -419,7 +522,7 @@ function cmdUpdate(args) {
     const next = { ...pin, tag, commit, files: Object.fromEntries(Object.entries(newFiles).sort(([a], [b]) => (a < b ? -1 : 1))) };
     writeFileSync(pinPath, `${JSON.stringify(next, null, 2)}\n`);
 
-    out(`runes: ${oldTag ?? '(nothing)'} -> ${tag} (${commit.slice(0, 12)})`);
+    out(`runes: ${oldTag ?? '(nothing)'} -> ${tag} (${commit.slice(0, 12)}) from ${pin.source}`);
     if (changes.length === 0) out('  no vendored file changed');
     for (const c of changes) out(`  ${c}`);
     const changelogPath = join(clone, 'CHANGELOG.md');
@@ -430,6 +533,7 @@ function cmdUpdate(args) {
     }
     out();
     out('Commit the copy and the pin together, then run check.');
+    warnings(ctx);
     return EXIT_PASS;
   } finally {
     rmSync(clone, { recursive: true, force: true });
