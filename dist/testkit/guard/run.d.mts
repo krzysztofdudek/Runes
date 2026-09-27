@@ -1,3 +1,4 @@
+import * as nodePath from 'node:path';
 import { type GuardConfig } from './config.mjs';
 import { type GuardFinding } from './scan.mjs';
 import { type AllowEntry } from './allow.mjs';
@@ -20,6 +21,8 @@ export interface GuardReport {
     /** Files scanned, relative to root. */
     files: string[];
 }
+/** A scanned file's path relative to root, with forward slashes: the form findings and allow entries use on every OS. `path` is replaceable so the Windows form can be tested on any host. */
+export declare function relativePosix(root: string, full: string, path?: Pick<typeof nodePath, 'relative' | 'sep'>): string;
 /** Scans the configured directories and returns findings split by the allow file. */
 export declare function runGuard(options: GuardOptions): GuardReport;
 /** Whether a report is clean: no unallowed findings and no stale allow entries. */

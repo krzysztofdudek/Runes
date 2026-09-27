@@ -2,11 +2,12 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   tokenize, scanSource, listExports, identifierWords, domainWordsIn, parseAllow, runGuard, guardPassed, formatGuardReport, guardConfig, DEFAULT_DOMAIN_WORDS,
 } from '@chrisdudek/runes/testkit';
+import { relativePosix } from '../dist/testkit/guard/run.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const rules = (src, config) => scanSource(src, 'x.mts', config).map((f) => `${f.rule}:${f.subject}`);
@@ -174,5 +175,40 @@ describe('allow file', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Windows sources and paths', () => {
+  test('CRLF source: lines count the same, and a string continued across CRLF does not end early', () => {
+    const src = "const a = 'x\\\r\ny';\r\nconst b = 'z';\r\nspawn('jarl', []);\r\nconst t = `a\r\nb`;\r\nexport const ownerNode = 1;\r\n";
+    const toks = tokenize(src);
+    assert.deepEqual(toks.filter((t) => t.type === 'string').map((t) => [t.value, t.line]), [['xy', 1], ['z', 3], ['jarl', 4]]);
+    assert.deepEqual(toks.filter((t) => t.type === 'template').map((t) => t.value), ['a\nb']);
+    assert.deepEqual(scanSource(src, 'x.mts').map((f) => `${f.line}:${f.rule}:${f.subject}`), ['4:spawn:jarl', '7:export-word:ownerNode']);
+  });
+
+  test('Windows command paths and shims reach the tool: drive letters, backslashes, .cmd, .exe, any case', () => {
+    const src = [
+      "execFileSync('C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\npm\\\\yg.cmd', ['check']);",
+      "spawn('Grain.EXE', []);",
+      "execSync('npx.cmd jarl show 1');",
+    ].join('\n');
+    assert.deepEqual(rules(src), ['spawn:C:\\Users\\me\\AppData\\Roaming\\npm\\yg.cmd', 'spawn:Grain.EXE', 'spawn:jarl']);
+  });
+
+  test('a backslash path into a state directory is a state-path finding', () => {
+    assert.deepEqual(rules("const p = 'C:\\\\repo\\\\.jarl\\\\log.md';\nconst q = '.horde\\\\tickets';"), ['state-path:.jarl', 'state-path:.horde']);
+  });
+
+  test('an allow file saved with CRLF parses the same', () => {
+    assert.deepEqual(parseAllow('src/a.mts import @chrisdudek/yg # why\r\n\r\nsrc/** export-word\r\n'), [
+      { path: 'src/a.mts', rule: 'import', subject: '@chrisdudek/yg', line: 1, reason: 'why' },
+      { path: 'src/**', rule: 'export-word', line: 3 },
+    ]);
+  });
+
+  test('scanned paths are reported with forward slashes under win32 path rules', () => {
+    assert.equal(relativePosix('C:\\repo', 'C:\\repo\\src\\deep\\b.mjs', win32), 'src/deep/b.mjs');
+    assert.equal(relativePosix('C:\\repo', 'c:\\REPO\\src\\a.mts', win32), 'src/a.mts', 'win32 compares drive and folder case-insensitively');
   });
 });
