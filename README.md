@@ -4,7 +4,7 @@ Shared code for the Yggdrasil tool family.
 
 **Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
-Status: 0.1.0 is the skeleton. The subpaths exist and publish, the guard and the vendoring tool work, and the grammar manifest format is fixed. The relation extractor, the AST walker, the grammar build and the shared file-system, CLI and MCP code move in with the next releases.
+Status: the subpaths exist and publish, the guard and the vendoring tool work, and the relation extractors, the parser host and the grammar recipe have moved in from Yggdrasil, with the 460-case relation catalogue and their unit tests. The shared file-system, CLI and MCP code move in with the next releases.
 
 ## What goes in: the entry rule
 
@@ -15,13 +15,13 @@ Code enters Runes only when both hold:
 
 | Subpath | Holds | Consumers |
 |---|---|---|
-| `@chrisdudek/runes/relations` | per-language relation extractors, the symbol table, the three-state resolver, path resolution, repository layout | Yggdrasil (npm), Grain (vendor) |
-| `@chrisdudek/runes/ast` | `walk`; a parser with an injected parser factory and runtime identity | Yggdrasil, Grain |
-| `@chrisdudek/runes/grammars` | the grammar manifest: grammar pins, the `web-tree-sitter` runtime pin, patches, and a build recipe verified by sha256 | Yggdrasil, Grain |
+| `@chrisdudek/runes/relations` | per-language relation extractors (11 languages), the symbol table, the three-state resolver, path resolution, repository layout; files are grouped by an injected owner lookup | Yggdrasil (npm), Grain (vendor) |
+| `@chrisdudek/runes/ast` | `walk`, `closest`, the parse cache; a parser host over an injected tree-sitter runtime and runtime identity | Yggdrasil, Grain |
+| `@chrisdudek/runes/grammars` | the grammar manifest (23 grammar pins, the `web-tree-sitter` runtime pin, the `tree-sitter-cli` pin), the patches, the build recipe verified by sha256, and the language table | Yggdrasil, Grain |
 | `@chrisdudek/runes/fs` | `withLock`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
 | `@chrisdudek/runes/cli` | a command-table schema, `parseArgs`, the `<tool>-error/1` error document, the single `--json` block rule | Jarl, Grain, Horde |
 | `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain, Horde |
-| `@chrisdudek/runes/testkit` | the family guard; later the git test environment, CLI/MCP parity, `tools/list` measurement and the runtime pin check | all |
+| `@chrisdudek/runes/testkit` | the family guard and the runtime pin check; later the git test environment, CLI/MCP parity and `tools/list` measurement | all |
 | `skills/` | shared skill fragments, kept in consumers' `SKILL.md` between markers | Jarl, Grain, Horde |
 | `tools/vendor.mjs` | the vendoring tool and its gate | every vendoring consumer |
 
@@ -65,6 +65,39 @@ import { runGuard, guardPassed, formatGuardReport, guardConfig } from '@chrisdud
 const report = runGuard({ root: repoRoot, dirs: ['src'], config: guardConfig({ self: 'grain', edges: ['yggdrasil'], domainWords: [] }) });
 assert.ok(guardPassed(report), formatGuardReport(report));
 ```
+
+## Relations, syntax trees and grammars
+
+**No module imports `web-tree-sitter` by value.** The consumer loads the runtime (from npm or from a vendored copy) and injects it, so grammars, parsers and trees all come from one copy of the runtime. The consumer also passes the runtime's identity, which is folded into every grammar digest: a runtime upgrade can change trees just as a grammar upgrade can.
+
+```js
+import * as TreeSitter from 'web-tree-sitter';
+import { createRequire } from 'node:module';
+import { createParserHost, fileSha256 } from '@chrisdudek/runes/ast';
+import { extractorForLanguage } from '@chrisdudek/runes/relations';
+
+const host = createParserHost({
+  runtime: TreeSitter,
+  runtimeIdentity: () => fileSha256(createRequire(import.meta.url).resolve('web-tree-sitter/web-tree-sitter.wasm')),
+  grammarDirs: [grammarDir],          // where buildGrammars wrote the pinned grammars
+});
+await host.withParsedFile('src/a.kt', code, (tree) => {
+  const file = { path: 'src/a.kt', content: code, tree, language: 'kotlin', newParser: host.newParser };
+  return extractorForLanguage('kotlin').uses(file);
+});
+```
+
+The host gives `getParser`, `parseFile`, `withParsedFile`, `loadGrammarsFor`, `loadedParserFor`, `newParser`, `grammarWasmHash`, `grammarDigest` and `grammarDigestForLanguage`; a custom `languages` table parses languages the Runes table does not have. `ParsedFile.newParser` is the one other injection: the Kotlin extractor re-parses spans of a file with syntax errors, and a damaged Kotlin file without it throws rather than silently reading less.
+
+The resolver attributes a resolved file to an owner through an injected `ownerIndex: { ownerOf(file) }`: whatever unit the consumer groups files by. `makeResolvePathToFile(root, ownerOf, isExcluded)` resolves specifiers against the files on disk; a caller that resolves specifiers fresh from source passes an `isExcluded` built from the same exclusion set as `ownerOf`.
+
+**Grammars: the recipe and the pins, not the bytes.** `grammars/manifest.json` pins the union of the family's grammars (the 16 Yggdrasil reads, and 7 more Grain parses), the `web-tree-sitter` runtime (0.27.0, with the sha256 of its WASM) and the `tree-sitter-cli` (0.27.0) that builds grammars from source. Each pin carries the sha256 of the WASM and of its node-types.json. `buildGrammars({ outDir, only, resolveFrom })` materializes the pins: an npm pin is read from the installed package (at its pinned version), a `github-release` pin is downloaded, a `source` pin is checked out at its commit, patched (`grammars/patches/`), generated if asked, and built with `tree-sitter build --wasm`, which fetches the wasi-sdk it compiles with into `~/.cache/tree-sitter` on first use (no Docker, no emscripten). Nothing is written until every requested grammar matched its sha256. Downloads and builds land in a content-addressed cache (`RUNES_GRAMMAR_CACHE`, default `~/.cache/runes/grammars`). `verifyGrammarFiles(dir)` checks shipped or loaded grammars against the pins.
+
+PHP is the `php` grammar, not `php_only`: PHP runs only what sits between its tags, and `php` reads a file that way, while `php_only` reads the whole file as code (a template's HTML becomes syntax errors, and prose outside any tag can become a false dependency). The whole PHP catalogue passes on both grammars.
+
+**The runtime pin check.** `checkRuntimePins({ resolveFrom, languages })` from the test kit reports every package whose installed version differs from the manifest: the runtime, and the npm grammar packages of the given languages. It also hashes the runtime's `web-tree-sitter.wasm` against `runtime.wasmSha256`, so the right version with other engine bytes fails too (`versions` and `runtimeWasm` pass a vendored runtime's recorded version and its copy of the WASM, `cli: true` adds tree-sitter-cli). A consumer runs it in its tests, so the catalogue passing here means the same trees there.
+
+**The catalogue.** `reference/relations/<language>/<id>.md` holds 460 relation cases in 12 languages, each with its files and its expected edges or silence. `test/relations/reference-case-runner.mjs` drives the real extractors, symbol table and resolver over each case, one test per case in the matrix suites.
 
 ## Vendoring with `tools/vendor.mjs`
 
@@ -132,10 +165,10 @@ At a family release every pin points at the same Runes version.
 
 ```
 npm ci
-npm run check      # build, tests (with the guard and the vendor tool's end-to-end tests), dist freshness
+npm run check      # build, grammars, tests (with the guard, the catalogue and the vendor tool's end-to-end tests), dist freshness
 ```
 
-`dist/` is committed because vendoring copies it from a clone; `npm run check:dist` rebuilds and fails when the result differs from what git holds. Node 22 or later.
+`npm test` builds the grammars of the language table into `.grammars/` (gitignored) with the recipe before it runs the tests; a warm cache needs no network, a cold one downloads and builds from source (`tree-sitter build --wasm` fetches its own wasi-sdk on first use). `npm run grammars` does that step alone. `dist/` is committed because vendoring copies it from a clone; `npm run check:dist` rebuilds and fails when the result differs from what git holds. Node 22 or later.
 
 ## Releasing
 

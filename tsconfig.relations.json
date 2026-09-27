@@ -1,0 +1,9 @@
+{
+  "//": "The relation code moved from Yggdrasil was written without noUncheckedIndexedAccess and is proven by its test suite and the reference catalogue as it stands; it is compiled on its own so the rest of Runes keeps the stricter setting. Files it imports from elsewhere in src/ are strict-clean and emit identically under both configs.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/relations/**/*.mts"],
+  "exclude": []
+}
