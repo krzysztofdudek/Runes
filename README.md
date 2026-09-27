@@ -4,7 +4,7 @@ Shared code for the Yggdrasil tool family.
 
 **Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
-Status: 0.1.0 is the skeleton. The subpaths exist and publish, the guard and the vendoring tool work, and the grammar manifest format is fixed. The relation extractor, the AST walker, the grammar build and the shared file-system, CLI and MCP code move in with the next releases.
+Status: 0.1.0 is the skeleton: the subpaths exist and publish, the guard and the vendoring tool work, and the grammar manifest format is fixed. Since then, not yet released: the shared file-system, CLI and MCP code, the rest of the test kit, and the first skill fragments. The relation extractor, the AST walker and the grammar build move in next.
 
 ## What goes in: the entry rule
 
@@ -121,6 +121,16 @@ console.log(formatToolsMeasure(measureTools(tools, { label: 'demo' })));      //
 - **`runtimePinProblems`** compares a consumer's declared and installed `web-tree-sitter` with the grammar manifest's exact pin.
 
 `testkit` imports `cli` and `mcp`; a vendoring consumer that takes `dist/testkit` takes those two as well (the vendor gate refuses a relative import of a file that is not vendored).
+
+## `skills/`: shared skill fragments
+
+A fragment is a piece of skill text more than one tool's `SKILL.md` carries word for word. It lives here as `skills/<name>.md` and in the consumer between `<!-- RUNES:<name>:START -->` and `<!-- RUNES:<name>:END -->`, filled and checked by `tools/vendor.mjs` (see below). Fragments are tool-neutral: they speak of "the tool", `<tool>_<command>` and "the coordinator", never of a family tool by name, so one text fits every consumer; the consumer's own text around the markers names itself.
+
+| Fragment | Says |
+|---|---|
+| `mcp-first` | call the tool's MCP tools first (fields, absolute paths, one JSON block, `<tool>-error/1`, -32602, timeouts); the CLI is the fallback |
+| `worker-worktree` | a worker works in its own worktree on its own branch, one issue per commit, state passed by the main checkout's absolute path, scratch outside the repository, the coordinator merges |
+| `evidence` | the `--ran`/`--saw` vocabulary: the exact command and what it printed, pairs by position, notes never prove, a fix shows red then green, evidence is appended |
 
 ## The guard
 
