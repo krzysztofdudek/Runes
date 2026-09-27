@@ -241,8 +241,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::ui', 'examples/demo/main.rs', 'rust')).toBe('examples/demo/ui.rs');
   });
 
-  // A known defect, not a property of this port: on a case-insensitive file system `nm::Root` resolves to lib/Root.rs because the existence probe matches lib/root.rs; the same assertion fails in Yggdrasil on macOS. Skipped there until the resolver probes case-exactly.
-  it('resolves in-repo path dependencies: inline, table form, workspace-inherited, renamed, [lib] name', { skip: caseInsensitiveTmp() && 'case-insensitive file system: the Rust module probe is not case-exact' }, () => {
+  it('resolves in-repo path dependencies: inline, table form, workspace-inherited, renamed, [lib] name', () => {
     put('Cargo.toml', '[workspace]\nmembers = ["crates/*"]\n\n[workspace.dependencies]\n"shared-kit" = { path = "crates/shared", package = "shared" }\nremote = "1"\n');
     put('crates/core-lib/Cargo.toml', '[package]\nname = "core-lib"\n');
     put('crates/core-lib/src/lib.rs', 'pub struct Engine;\n');
@@ -278,7 +277,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('core_lib::Engine', from, 'rust')).toBe('crates/core-lib/src/lib.rs');
     expect(resolve('renamed::Engine', from, 'rust')).toBe('crates/core-lib/src/lib.rs');
     expect(resolve('tables::grid::Grid', from, 'rust')).toBe('crates/tables/src/grid/mod.rs');
-    expect(resolve('nm::Root', from, 'rust')).toBe('crates/named/lib/root.rs');
+    // Issue 482: on a case-insensitive file system (macOS, Windows) the module probe finds lib/root.rs under the name lib/Root.rs, so nm::Root resolves to lib/Root.rs. This assertion fails the same way in Yggdrasil on macOS; it runs where the file system tells the two names apart.
+    if (!caseInsensitiveTmp()) expect(resolve('nm::Root', from, 'rust')).toBe('crates/named/lib/root.rs');
     expect(resolve('shared_kit::kit::K', from, 'rust')).toBe('crates/shared/src/kit.rs');
     expect(resolve('core_lib', from, 'rust')).toBe('crates/core-lib/src/lib.rs');
     // Silence: registry dep, a dep whose path leaves the repo, a path with no crate, an
