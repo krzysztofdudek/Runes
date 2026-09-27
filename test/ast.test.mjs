@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as TreeSitter from 'web-tree-sitter';
 import { createParserHost, fileSha256, walk, closest } from '@chrisdudek/runes/ast';
+import { kotlinExtractor, kotlinView } from '@chrisdudek/runes/relations';
 import { GRAMMAR_DIR, host } from './helpers/tree-sitter.mjs';
 
 const require = createRequire(import.meta.url);
@@ -97,6 +98,26 @@ describe('walk and closest', () => {
       assert.equal(closest(call, 'function_definition')?.type, 'function_definition');
       assert.equal(closest(call, ['module', 'class_definition'])?.type, 'module');
       assert.equal(closest(tree.rootNode, 'module'), null);
+    });
+  });
+});
+
+describe('the injected parser factory in Kotlin recovery', () => {
+  const damaged = 'package p\ncontext(l: Logger)\nfun d() {}\nclass After\n';
+
+  test('a damaged Kotlin file without a parser factory throws instead of skipping recovery', async () => {
+    await host.withParsedFile('a.kt', damaged, (tree) => {
+      assert.throws(() => kotlinView(tree, damaged), /recovery needs a parser/);
+      assert.throws(() => kotlinExtractor.declarations({ path: 'a.kt', content: damaged, tree, language: 'kotlin' }), /ParsedFile\.newParser/);
+      const keys = kotlinExtractor.declarations({ path: 'a.kt', content: damaged, tree, language: 'kotlin', newParser: host.newParser }).map((d) => d.symbolKey);
+      assert.ok(keys.includes('p.After'), keys.join(', '));
+    });
+  });
+
+  test('a clean Kotlin file needs no parser factory', async () => {
+    const clean = 'package p\nclass A\n';
+    await host.withParsedFile('a.kt', clean, (tree) => {
+      assert.deepEqual(kotlinExtractor.declarations({ path: 'a.kt', content: clean, tree, language: 'kotlin' }).map((d) => d.symbolKey), ['p.A']);
     });
   });
 });
