@@ -1,8 +1,8 @@
 /**
- * A git environment for tests that is the same on every machine: no user or system config (hooks, signing, templates, autocrlf), a fixed identity and dates, and no background work (`maintenance.auto=false`, `gc.auto=0`), which otherwise starts detached processes that hold files a test wants to delete (fatal on Windows) and slow a suite down. Settings travel as `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, so every git process a test starts, directly or through the code under test, gets them.
+ * A git environment for tests that is the same on every machine and in every caller: none of git's repository-locating variables inherited from an outer git (a hook), no user or system config (hooks, signing, templates, autocrlf), a fixed identity and dates, and no background work (`maintenance.auto=false`, `gc.auto=0`), which otherwise starts detached processes that hold files a test wants to delete (fatal on Windows) and slow a suite down. Settings travel as `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, so every git process a test starts, directly or through the code under test, gets them.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -15,10 +15,44 @@ export interface GitEnvOptions {
   config?: Record<string, string>;
 }
 
-// Git for Windows maps the literal /dev/null to its null device in every file it opens, so one spelling works on every platform, where os.devNull (\\.\nul) would reach git as an odd path.
-const NULL_FILE = '/dev/null';
+/**
+ * The variables git reads to find a repository instead of the working directory (`git rev-parse --local-env-vars`). A test run inside a git hook (a consumer's pre-commit running its suite) inherits GIT_DIR, GIT_INDEX_FILE and the rest from the outer git, and without clearing them every git call in a temp repository would act on the outer repository instead. The list is git's own, read once, with this fallback when git cannot be asked.
+ */
+export const GIT_LOCAL_ENV_FALLBACK: readonly string[] = Object.freeze([
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_OBJECT_DIRECTORY', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE',
+  'GIT_GRAFT_FILE', 'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR',
+]);
 
-/** The config every test repository gets. */
+let localVars: string[] | null = null;
+/** Every variable `git rev-parse --local-env-vars` names, together with the fallback list. */
+export function gitLocalEnvVars(): string[] {
+  if (localVars) return localVars;
+  let listed: string[] = [];
+  try {
+    // Asked with the local variables already cleared, so an outer GIT_DIR cannot make the question itself fail.
+    const clean = { ...process.env };
+    for (const k of GIT_LOCAL_ENV_FALLBACK) delete clean[k];
+    listed = execFileSync('git', ['rev-parse', '--local-env-vars'], { env: clean, cwd: tmpdir(), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).toString().split(/\r?\n/).filter(Boolean);
+  } catch { /* git missing: the fallback list */ }
+  localVars = [...new Set([...GIT_LOCAL_ENV_FALLBACK, ...listed])];
+  return localVars;
+}
+
+// An empty file for the global config and an empty directory for hooks, in a private temp directory made once per process. A real empty file and directory work on every platform, where /dev/null or os.devNull as a config path does not.
+let nullPaths: { config: string; hooks: string } | null = null;
+function emptyPaths(): { config: string; hooks: string } {
+  if (nullPaths && existsSync(nullPaths.config) && existsSync(nullPaths.hooks)) return nullPaths;
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'runes-gitenv-')));
+  const config = join(dir, 'gitconfig');
+  const hooks = join(dir, 'hooks');
+  writeFileSync(config, '');
+  mkdirSync(hooks);
+  process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  nullPaths = { config, hooks };
+  return nullPaths;
+}
+
+/** The config every test repository gets (`core.hooksPath` is added by `gitEnv`: an empty directory). */
 export const TEST_GIT_CONFIG: Readonly<Record<string, string>> = Object.freeze({
   'maintenance.auto': 'false',
   'gc.auto': '0',
@@ -26,17 +60,20 @@ export const TEST_GIT_CONFIG: Readonly<Record<string, string>> = Object.freeze({
   'commit.gpgsign': 'false',
   'tag.gpgsign': 'false',
   'core.autocrlf': 'false',
-  'core.hooksPath': NULL_FILE,
 });
 
-/** `base` (default `process.env`) with the test config appended to any `GIT_CONFIG_*` entries it already has, user and system config cut off, and a fixed identity. */
+/** `base` (default `process.env`) without any variable of `git rev-parse --local-env-vars` or inherited `GIT_CONFIG_*` entry, with the test config, user and system config cut off, and a fixed identity. */
 export function gitEnv(base: NodeJS.ProcessEnv = process.env, options: GitEnvOptions = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
+  // Every repository-locating variable goes, GIT_CONFIG_COUNT and GIT_CONFIG_PARAMETERS (an outer `git -c`) included, with the numbered entries the count stood for; extra config goes through `options.config`.
+  for (const k of gitLocalEnvVars()) delete env[k];
+  for (const k of Object.keys(env)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(k)) delete env[k];
+  const empty = emptyPaths();
   const name = options.name ?? 'Runes Test';
   const email = options.email ?? 'test@example.com';
   const date = options.date ?? '2026-01-01T00:00:00Z';
-  const entries = { ...TEST_GIT_CONFIG, 'user.name': name, 'user.email': email, ...(options.config ?? {}) };
-  let n = Number(env.GIT_CONFIG_COUNT) || 0;
+  const entries = { ...TEST_GIT_CONFIG, 'core.hooksPath': empty.hooks, 'user.name': name, 'user.email': email, ...(options.config ?? {}) };
+  let n = 0;
   for (const [k, v] of Object.entries(entries)) {
     env[`GIT_CONFIG_KEY_${n}`] = k;
     env[`GIT_CONFIG_VALUE_${n}`] = v;
@@ -45,7 +82,7 @@ export function gitEnv(base: NodeJS.ProcessEnv = process.env, options: GitEnvOpt
   env.GIT_CONFIG_COUNT = String(n);
   Object.assign(env, {
     GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: NULL_FILE,
+    GIT_CONFIG_GLOBAL: empty.config,
     GIT_AUTHOR_NAME: name,
     GIT_AUTHOR_EMAIL: email,
     GIT_COMMITTER_NAME: name,
@@ -72,9 +109,9 @@ export interface TempRepo {
 }
 
 /** A fresh repository under the OS temp dir, with `gitEnv`. `files` are written and committed as a first commit when given. */
-export function makeTempRepo(options: GitEnvOptions & { files?: Record<string, string>; prefix?: string } = {}): TempRepo {
+export function makeTempRepo(options: GitEnvOptions & { files?: Record<string, string>; prefix?: string; env?: NodeJS.ProcessEnv } = {}): TempRepo {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), options.prefix ?? 'runes-repo-')));
-  const env = gitEnv(process.env, options);
+  const env = gitEnv(options.env ?? process.env, options);
   const git = (...args: string[]): string => execFileSync('git', args, { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).toString();
   const write = (path: string, content: string): void => {
     const full = join(dir, path);

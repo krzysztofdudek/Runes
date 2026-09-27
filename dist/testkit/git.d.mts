@@ -6,9 +6,15 @@ export interface GitEnvOptions {
     /** More `key: value` config entries. */
     config?: Record<string, string>;
 }
-/** The config every test repository gets. */
+/**
+ * The variables git reads to find a repository instead of the working directory (`git rev-parse --local-env-vars`). A test run inside a git hook (a consumer's pre-commit running its suite) inherits GIT_DIR, GIT_INDEX_FILE and the rest from the outer git, and without clearing them every git call in a temp repository would act on the outer repository instead. The list is git's own, read once, with this fallback when git cannot be asked.
+ */
+export declare const GIT_LOCAL_ENV_FALLBACK: readonly string[];
+/** Every variable `git rev-parse --local-env-vars` names, together with the fallback list. */
+export declare function gitLocalEnvVars(): string[];
+/** The config every test repository gets (`core.hooksPath` is added by `gitEnv`: an empty directory). */
 export declare const TEST_GIT_CONFIG: Readonly<Record<string, string>>;
-/** `base` (default `process.env`) with the test config appended to any `GIT_CONFIG_*` entries it already has, user and system config cut off, and a fixed identity. */
+/** `base` (default `process.env`) without any variable of `git rev-parse --local-env-vars` or inherited `GIT_CONFIG_*` entry, with the test config, user and system config cut off, and a fixed identity. */
 export declare function gitEnv(base?: NodeJS.ProcessEnv, options?: GitEnvOptions): NodeJS.ProcessEnv;
 export interface TempRepo {
     /** The repository's directory, with symbolic links resolved. */
@@ -27,4 +33,5 @@ export interface TempRepo {
 export declare function makeTempRepo(options?: GitEnvOptions & {
     files?: Record<string, string>;
     prefix?: string;
+    env?: NodeJS.ProcessEnv;
 }): TempRepo;

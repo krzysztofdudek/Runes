@@ -1,10 +1,10 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync, readFileSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gitEnv, makeTempRepo, TEST_GIT_CONFIG, parityProblems, assertParity, measureTools, formatToolsMeasure, listToolsOverStdio, startMcpClient, runtimePinProblems } from '@chrisdudek/runes/testkit';
+import { gitEnv, gitLocalEnvVars, makeTempRepo, TEST_GIT_CONFIG, parityProblems, assertParity, measureTools, formatToolsMeasure, listToolsOverStdio, startMcpClient, runtimePinProblems } from '@chrisdudek/runes/testkit';
 import { buildTools } from '@chrisdudek/runes/mcp';
 import { TABLE, USAGE } from './fixtures/demo-tool.mjs';
 
@@ -12,17 +12,38 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(here, 'fixtures', 'demo-mcp.mjs');
 
 describe('git environment', () => {
-  test('appends the test config after config entries already in the environment', () => {
-    const env = gitEnv({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'x.y', GIT_CONFIG_VALUE_0: 'z' }, { name: 'N', email: 'e@x' });
-    assert.equal(env.GIT_CONFIG_KEY_0, 'x.y');
+  test('drops every repository-locating variable and inherited config entry, then adds the test config', () => {
+    const env = gitEnv({ GIT_DIR: '/elsewhere/.git', GIT_INDEX_FILE: '/elsewhere/index', GIT_WORK_TREE: '/elsewhere', GIT_COMMON_DIR: '/x', GIT_OBJECT_DIRECTORY: '/y', GIT_CONFIG_PARAMETERS: "'a.b'='c'", GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'x.y', GIT_CONFIG_VALUE_0: 'z', KEEP: '1' }, { name: 'N', email: 'e@x', config: { 'x.y': 'mine' } });
+    for (const k of gitLocalEnvVars()) if (k !== 'GIT_CONFIG_COUNT') assert.equal(env[k], undefined, k);
+    assert.equal(env.KEEP, '1');
     const pairs = Object.fromEntries(Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]));
     assert.equal(pairs['maintenance.auto'], 'false');
     assert.equal(pairs['gc.auto'], '0');
     assert.equal(pairs['user.email'], 'e@x');
+    assert.equal(pairs['x.y'], 'mine');
+    assert.ok(existsSync(pairs['core.hooksPath']) && statSync(pairs['core.hooksPath']).isDirectory(), 'hooks: an empty directory');
+    assert.ok(statSync(env.GIT_CONFIG_GLOBAL).isFile() && readFileSync(env.GIT_CONFIG_GLOBAL, 'utf8') === '', 'global config: an empty file');
     assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
     assert.equal(env.GIT_AUTHOR_NAME, 'N');
     assert.equal(env.GIT_COMMITTER_EMAIL, 'e@x');
+    for (const v of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']) assert.ok(gitLocalEnvVars().includes(v), v);
     assert.deepEqual(Object.keys(TEST_GIT_CONFIG).slice(0, 2), ['maintenance.auto', 'gc.auto']);
+  });
+
+  test('makeTempRepo inside a hook-like environment (GIT_DIR and GIT_INDEX_FILE of another repository) commits into its own repository only', () => {
+    const outer = makeTempRepo({ files: { 'o.txt': 'outer\n' } });
+    try {
+      const head = outer.git('rev-parse', 'HEAD').trim();
+      const hookEnv = { ...process.env, GIT_DIR: join(outer.dir, '.git'), GIT_INDEX_FILE: join(outer.dir, '.git', 'index'), GIT_WORK_TREE: outer.dir };
+      const inner = makeTempRepo({ env: hookEnv, files: { 'i.txt': 'inner\n' } });
+      try {
+        assert.equal(inner.git('rev-list', '--count', 'HEAD').trim(), '1');
+        assert.equal(inner.git('ls-files').trim(), 'i.txt');
+        assert.equal(realpathSync(inner.git('rev-parse', '--show-toplevel').trim()), inner.dir);
+      } finally { inner.cleanup(); }
+      assert.equal(outer.git('rev-parse', 'HEAD').trim(), head, 'the outer repository got no commit');
+      assert.equal(outer.git('ls-files').trim(), 'o.txt', 'nor a staged file');
+    } finally { outer.cleanup(); }
   });
 
   test('git in a temp repository sees the settings, the identity, and nothing of the user config; commits repeat', () => {
