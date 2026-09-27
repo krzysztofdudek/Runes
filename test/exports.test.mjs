@@ -30,3 +30,8 @@ for (const sub of SUBPATHS) {
     assert.equal(mod.subpath, sub);
   });
 }
+
+test('the top CHANGELOG section is the package version', () => {
+  const top = /^## \[([^\]]+)\]/m.exec(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'));
+  assert.equal(top?.[1], pkg.version);
+});
