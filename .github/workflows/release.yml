@@ -31,10 +31,15 @@ jobs:
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          # A prerelease (X.Y.Z-<id>.N) publishes under its <id>; a stable X.Y.Z under 'latest'.
+          # A prerelease X.Y.Z-<id>.N publishes under <id> when <id> starts with a letter (alpha, beta, rc); a numeric prerelease such as X.Y.Z-1 publishes under 'next', because npm refuses a dist-tag that parses as a version range. A stable X.Y.Z publishes under 'latest'.
           if [[ "${VERSION}" == *-* ]]; then
             PRE="${VERSION#*-}"
-            echo "disttag=${PRE%%.*}" >> "$GITHUB_OUTPUT"
+            PRE="${PRE%%.*}"
+            if [[ "${PRE}" =~ ^[A-Za-z][A-Za-z0-9-]*$ ]]; then
+              echo "disttag=${PRE}" >> "$GITHUB_OUTPUT"
+            else
+              echo "disttag=next" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "disttag=latest" >> "$GITHUB_OUTPUT"
           fi
@@ -79,10 +84,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           registry-url: 'https://registry.npmjs.org'
-      # OIDC trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.x.
+      # OIDC trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.x. Pinned, so a new npm release cannot change how a tag publishes.
       - name: Use OIDC-capable npm
         if: steps.npm-check.outputs.published == 'false'
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.6.2
       - run: npm ci
         if: steps.npm-check.outputs.published == 'false'
       - name: Build and confirm dist/ is what the tag carries

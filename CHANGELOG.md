@@ -2,7 +2,7 @@
 
 All notable changes to Runes are recorded here, one line per change. Runes follows [Semantic Versioning](https://semver.org/); one version covers every subpath.
 
-## [0.1.0]
+## [0.1.0] - 2026-09-27
 
 - First release: the package skeleton with the subpaths `relations`, `ast`, `grammars`, `fs`, `cli`, `mcp` and `testkit`. Each holds a stub today; the relation extractor and the shared CLI, MCP and file-system code move in with later releases.
 - `testkit`: the family guard, which fails when code imports another family tool, runs its executable, builds a path into its state directory, or exports an identifier carrying a family domain word; with a reviewed allow file.

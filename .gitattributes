@@ -1,0 +1,5 @@
+# Consumers vendor dist/, skills/ and tools/ byte for byte and check them by sha256, so these files must reach every checkout with LF line endings, whatever core.autocrlf says.
+* text=auto eol=lf
+dist/** text eol=lf
+skills/** text eol=lf
+tools/** text eol=lf
