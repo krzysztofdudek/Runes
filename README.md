@@ -223,6 +223,8 @@ The pin names what to take; `update` fills in the rest. Consumer-side paths are 
 
 After `update` the pin also holds `tag`, `commit`, the sha256 of every vendored file in `files`, and the sha256 of each fragment and of the tool.
 
+A consumer that takes only skill fragments leaves out `paths` and `dest`: it has no `vendor/runes/` copy, and the pin, the tool and the blocks in its `SKILL.md` are the whole vendoring. A pin must name at least one path or one fragment.
+
 | Command | When | What it does |
 |---|---|---|
 | `node scripts/runes.mjs check` | always: `npm test`, pre-commit, offline | sha256 of every vendored file, skill fragment and the tool against the pin; a hand edit, a missing file, an extra file, or a relative import of a file that is not vendored exits 1 |

@@ -399,6 +399,30 @@ describe('vendor.mjs', () => {
     restore();
   });
 
+  test('a pin that carries only fragments needs no paths and no dest: update fills the blocks, check and check --ci pass, nothing is copied', () => {
+    const { source, fragments, tool } = pin();
+    rmSync(join(consumer, 'vendor/runes'), { recursive: true, force: true });
+    writePin({ source, fragments: fragments.map(({ name, target }) => ({ name, target })), tool: { path: tool.path } });
+    let r = run(['update', '--tag', 'v0.2.0']);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(pin().files, {});
+    assert.ok(!existsSync(join(consumer, 'vendor/runes')), 'no copy directory is made');
+    assert.match(read('SKILL.md'), /<!-- RUNES:worktree:START -->\nWork only in your own worktree\.\nNever push\.\n<!-- RUNES:worktree:END -->/);
+    r = run(['check']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /0 vendored files, 2 skill fragments and the tool match v0\.2\.0/);
+    assert.equal(run(['check', '--ci']).code, 0);
+    writeFileSync(join(consumer, 'SKILL.md'), read('SKILL.md').replace('Never push.', 'Push freely.'));
+    r = run(['check']);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /fragment worktree in \.\.\/SKILL\.md: the block between the markers differs/);
+    writePin({ source, paths: [], fragments: [], tool: { path: tool.path } });
+    r = run(['check']);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /paths or fragments must name at least one thing to vendor/);
+    restore();
+  });
+
   test('a moved tag fails --ci', () => {
     git(runes, 'tag', '-f', '-a', 'v0.1.0', '-m', 'moved', 'v0.2.0^{commit}');
     const r = run(['check', '--ci']);

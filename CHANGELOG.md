@@ -5,6 +5,7 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 ## [0.1.3] - 2026-09-27
 
 - `skills/`: `mcp-first` and `worker-worktree` state only what holds for every consumer: the absolute-path rule covers the fields a command would look up from the working directory, the `<tool>-error/1` document and the time limit apply where the tool has them, the CLI fallback leaves command-line parsing to the tool's own usage, and a worker passes the checks its brief names before reporting (rather than always the repository's full check) and never merges.
+- `tools/vendor.mjs`: a pin may carry only skill fragments, with no `paths` and no `dest`, so a consumer that shares no code vendors no file just to satisfy the tool; a pin that names neither a path nor a fragment is refused.
 
 ## [0.1.2] - 2026-09-27
 
