@@ -1,0 +1,75 @@
+{
+  "name": "@chrisdudek/runes",
+  "version": "0.1.0",
+  "description": "Shared code for the Yggdrasil tool family: relation extraction, AST walking, grammar pins, fs locking, CLI and MCP scaffolding, and a test kit. Vendored or installed; not a tool of its own.",
+  "license": "MIT",
+  "author": "Krzysztof Dudek",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krzysztofdudek/Runes.git"
+  },
+  "homepage": "https://github.com/krzysztofdudek/Runes#readme",
+  "bugs": "https://github.com/krzysztofdudek/Runes/issues",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./relations": {
+      "types": "./dist/relations/index.d.mts",
+      "import": "./dist/relations/index.mjs"
+    },
+    "./ast": {
+      "types": "./dist/ast/index.d.mts",
+      "import": "./dist/ast/index.mjs"
+    },
+    "./grammars": {
+      "types": "./dist/grammars/index.d.mts",
+      "import": "./dist/grammars/index.mjs"
+    },
+    "./grammars/manifest.json": "./grammars/manifest.json",
+    "./fs": {
+      "types": "./dist/fs/index.d.mts",
+      "import": "./dist/fs/index.mjs"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.mts",
+      "import": "./dist/cli/index.mjs"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.mts",
+      "import": "./dist/mcp/index.mjs"
+    },
+    "./testkit": {
+      "types": "./dist/testkit/index.d.mts",
+      "import": "./dist/testkit/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "grammars",
+    "skills",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"test/**/*.test.mjs\"",
+    "check:dist": "node scripts/check-dist.mjs",
+    "check": "npm test && npm run check:dist"
+  },
+  "peerDependencies": {
+    "web-tree-sitter": "0.27.0"
+  },
+  "peerDependenciesMeta": {
+    "web-tree-sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "6.0.3"
+  }
+}
