@@ -123,7 +123,7 @@ export function resolveRustPath(
     return resolveFromModuleDir(dep.srcDir, rest, exists, rootContext(dep.srcDir, dep.rootFiles, declares));
   }
 
-  // External crate (std/core/alloc, third-party) — not a graph-resolvable path.
+  // External crate (std/core/alloc, third-party) — not a resolvable path.
   return undefined;
 }
 

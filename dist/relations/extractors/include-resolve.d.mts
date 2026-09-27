@@ -8,7 +8,7 @@
  *
  * HEADER/IMPL SPLIT: an include always names the HEADER file, never the implementation
  * translation unit. The resolved header's OWNING NODE is the dependency target; a header
- * owned by no node maps to nothing and the dependency is SILENT (a coverage matter, never a
+ * owned by no one maps to nothing and the dependency is SILENT (a coverage matter, never a
  * violation) — the resolver's job ends at producing the file path.
  *
  * Resolution order, mirroring the compiler ([cpp.include], GCC/Clang search order):
@@ -52,7 +52,7 @@ export interface IncludeRoots {
     } | undefined;
     /** The probe roots used when there is no database: '' and every `include` directory. */
     probeRoots(): readonly string[];
-    /** Optional: true when the graph excludes this repo-relative POSIX path. */
+    /** Optional: true when the caller excludes this repo-relative POSIX path. */
     isExcluded?(repoRelPosix: string): boolean;
 }
 export declare function resolveIncludePath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, roots?: IncludeRoots): string | undefined;

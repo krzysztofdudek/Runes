@@ -9,7 +9,7 @@ export declare class SymbolTable {
     /** True when some `::`-qualified key ends in the segment `name` (e.g. `Admin::Order` for
      *  `Order`): a constant of that name is nested in some namespace. Ruby's lexical guard. */
     hasNestedTail(language: string, name: string): boolean;
-    /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. off-graph) → undefined. */
+    /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. unowned) → undefined. */
     resolveUnique(language: string, symbolKey: string): string | undefined;
     /** Number of distinct files declaring `symbolKey` in `language` (0 = absent, ≥2 = ambiguous).
      *  Lets the tri-state resolver tell an ambiguous candidate (≥2) from an absent one (0) —

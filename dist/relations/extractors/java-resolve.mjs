@@ -20,7 +20,7 @@ export function resolveJavaFqn(specifier, fromFile, deps) {
  * attribute, zero or 2+ → silence). A root whose directory exists but whose every file
  * is excluded does NOT end the search — it is treated exactly like an empty directory,
  * so the walk keeps climbing to the next ancestor root instead of committing to a
- * directory this graph enforces nothing in. Empty list = the package directory (or a
+ * directory the caller owns nothing in. Empty list = the package directory (or a
  * live file in it) was found nowhere.
  */
 export function resolveJavaPackageFiles(packageFqn, fromFile, deps) {

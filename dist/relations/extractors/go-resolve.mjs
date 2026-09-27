@@ -50,22 +50,21 @@ export function resolveGoImport(importPath, fromFile, deps) {
     // candidates only. Drop any excluded file from the candidate list FIRST,
     // then ask whether what remains has one owner or several — a single
     // representative file cannot stand in for a package whose surviving files
-    // belong to DIFFERENT graph nodes (a parent and child carving one
-    // directory, or two siblings) without fabricating or hiding a cross-node
+    // belong to DIFFERENT owners (a parent and child carving one
+    // directory, or two siblings) without fabricating or hiding a cross-owner
     // edge. Exactly one distinct owner among what remains → return a
     // (non-excluded, by construction) file that owner maps; 2+ distinct owners
-    // among what remains → still split → silence (undefined). Files no node
+    // among what remains → still split → silence (undefined). Files no owner
     // maps do not contribute an owner (a wholly-unmapped package falls through
-    // to the D7 unmapped-target silence downstream, unchanged).
+    // to the unowned-target silence downstream, unchanged).
     //
     // No `sole` owner is found in TWO distinct situations this loop cannot
     // itself tell apart: every candidate was excluded (`remaining` is empty),
-    // or `remaining` is non-empty but none of its files is node-mapped (a
-    // package that is type-covered only, under `coverage.type_level`, has no
-    // node owner for ANY file). Either way the representative pick below must
+    // or `remaining` is non-empty but none of its files is owned (a
+    // package no unit owns has no owner for ANY file). Either way the representative pick below must
     // still prefer a NON-EXCLUDED candidate when one exists — `remaining[0]`,
-    // not the raw `candidates[0]` — because a caller that is not the node owner
-    // index (the type-coverage lookup) still needs a live file to find the
+    // not the raw `candidates[0]` — because a caller that is not the owner
+    // index (a lookup by another grouping) still needs a live file to find the
     // package's matched type. Only when `remaining` is itself empty does the
     // pick fall back to `candidates[0]`, an excluded file, which is exactly the
     // "every file excluded" case both consumers correctly silence.

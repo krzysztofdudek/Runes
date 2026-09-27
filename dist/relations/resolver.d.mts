@@ -23,8 +23,8 @@ export interface ResolverDeps {
  *  - `ambiguous` — the hint names a key that WOULD bind here but has ≥2 definitions (a real
  *                  unresolvable ambiguity, symbol axis only). Stop the group with silence;
  *                  do NOT fall through to a farther candidate.
- *  - `absent`    — the hint resolves to no in-graph definition, or to an UNMAPPED file (the
- *                  D7 non-event). Continue to the next, farther candidate.
+ *  - `absent`    — the hint resolves to no in-repository definition, or to an UNMAPPED file (a
+ *                  non-event). Continue to the next, farther candidate.
  */
 export type Classification = {
     kind: 'resolved';
@@ -39,16 +39,16 @@ export interface TargetResolver {
     resolve(hint: TargetHint, fromFile: string, language: string): ResolvedTarget | undefined;
     classify(hint: TargetHint, fromFile: string, language: string): Classification;
     /**
-     * The raw resolved file for a candidate hint, independent of node ownership: 0 or ≥2
+     * The raw resolved file for a candidate hint, independent of ownership: 0 or ≥2
      * distinct files (unresolved or ambiguous) both yield undefined; exactly one file is
-     * returned regardless of whether `ownerIndex` maps it to a node. This is the SAME
+     * returned regardless of whether `ownerIndex` maps it to an owner. This is the SAME
      * file-resolution computation `classify` runs internally, minus its final
      * `ownerIndex.ownerOf` step — so a caller that already received `classify`'s `absent`
      * outcome for this SAME hint (which collapses "no file resolved" and "resolved to an
-     * unmapped file" into one non-committal answer, by design — D7) can distinguish the two
+     * unmapped file" into one non-committal answer, by design — an unowned target is a non-event) can distinguish the two
      * without a second, independent resolution algorithm. Used ONLY by the live
-     * type-relation gate's typed-edge construction (relations/pass.ts) to test whether an
-     * otherwise-unmapped candidate names a TYPE-COVERED file instead; the node-owned
+     * type-relation gate's typed-edge construction (the consumer's relation pass) to test whether an
+     * otherwise-unmapped candidate names a TYPE-COVERED file instead; the owner-bound
      * candidate walk (`resolveCandidateGroup`/`classify`) never calls this and is
      * unaffected by its existence.
      */
@@ -57,7 +57,7 @@ export interface TargetResolver {
 /**
  * The ordered first-unique-match-wins walk over a detected reference's candidate group:
  * nearest binding first (member → enclosing namespace → unique using-import → verbatim),
- * farther candidates last. Returns the owner node of the resolved binding, or undefined when
+ * farther candidates last. Returns the owner of the resolved binding, or undefined when
  * the group silences (a nearer candidate is present-but-ambiguous, or no candidate binds). For
  * a one-element group this is byte-identical to a single resolve.
  *
@@ -69,7 +69,7 @@ export declare function resolveCandidateGroup(candidates: readonly TargetHint[],
 /**
  * Resolve every detected reference of ONE file through {@link resolveCandidateGroup} and
  * return the bound edges, each `(line, owner)` at most once. Several references on one
- * line often bind to the same node (a Python `from m import a, b` offers the module and each
+ * line often bind to the same owner (a Python `from m import a, b` offers the module and each
  * name as candidates that all land in one file; a C# line names one type twice); they are one
  * dependency, so they are reported once. Shared by the live pass and the reference-case runner
  * so the two report the same rows.

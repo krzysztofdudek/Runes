@@ -24,7 +24,7 @@ import path from 'node:path';
  * nothing and is never flagged. A miss here is not yet final: the resolver then looks
  * the FQN up in the JVM symbol table (resolver.ts), which reaches a sibling module's
  * source root, `src/main` from `src/test`, and Kotlin declarations — still binding only
- * a FQN exactly one graph file declares.
+ * a FQN exactly one repository file declares.
  *
  * `deps.isExcluded`, when supplied, makes an excluded hit act as though it does
  * not exist, for BOTH resolvers: `resolveType` skips it and keeps walking (the
@@ -43,8 +43,8 @@ export interface JavaResolveDeps {
   /** Repo-relative POSIX paths of `.java` files directly in this directory (no recursion). */
   javaFilesIn(repoRelDir: string): string[];
   /**
-   * Optional. True when the graph excludes this repo-relative POSIX path (a nested
-   * project's own boundary, or a `coverage.excluded` root). See the file doc comment.
+   * Optional. True when the caller excludes this repo-relative POSIX path (for example a nested
+   * project or a root the caller leaves out). See the file doc comment.
    */
   isExcluded?(repoRelPosix: string): boolean;
 }
@@ -74,7 +74,7 @@ export function resolveJavaFqn(
  * attribute, zero or 2+ → silence). A root whose directory exists but whose every file
  * is excluded does NOT end the search — it is treated exactly like an empty directory,
  * so the walk keeps climbing to the next ancestor root instead of committing to a
- * directory this graph enforces nothing in. Empty list = the package directory (or a
+ * directory the caller owns nothing in. Empty list = the package directory (or a
  * live file in it) was found nowhere.
  */
 export function resolveJavaPackageFiles(

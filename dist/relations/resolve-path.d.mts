@@ -23,7 +23,7 @@
  *  through a file that is still there. A caller resolving a specifier fresh from source — the
  *  specifier can name any file on disk, excluded or not — must supply both `ownerOf` and an `isExcluded` built from the same exclusion set instead of calling this with `ownerOf` and no `isExcluded`:
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
- *  Java, still wins the walk), which can silence a real cross-node dependency reached through
+ *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate. */
 export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target

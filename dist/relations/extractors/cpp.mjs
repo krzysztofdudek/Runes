@@ -13,7 +13,7 @@ import { includeUses } from './c-cpp-shared.mjs';
  * Usage-site / definition work is DEFERRED to a later symbol/definition-index layer and is
  * NOT done here: class inheritance (`base_class_clause`), namespace-qualified references
  * (`qualified_identifier`), `using` declarations, ADL/overloaded calls, and virtual
- * dispatch all need overload resolution + a cross-node definition index this v1 layer does
+ * dispatch all need overload resolution + a cross-owner definition index this v1 layer does
  * not build. C++20 modules (`import foo;`) are unsupported by the bundled grammar (parse to
  * ERROR) and are out of scope. So this extractor performs NO usage-site refinement.
  *

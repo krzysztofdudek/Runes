@@ -40,7 +40,7 @@ export type TargetHint =
 /**
  * A detected reference carries an ORDERED list of alternative target hints, in the
  * language's name-binding order (nearest binding first, verbatim/top-level last). The
- * per-reference resolver (`pass.ts`) walks the list and takes the FIRST candidate that
+ * per-reference resolver (the consumer's relation pass) walks the list and takes the FIRST candidate that
  * binds to a unique mapped definition — that IS the binding — emits at most one edge, and
  * stops; a present-but-ambiguous nearer candidate silences the whole group.
  *

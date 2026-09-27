@@ -12,8 +12,8 @@ import path from 'node:path';
  *
  * `exists(repoRelPosix)` reports whether a candidate file exists in the resolution
  * universe (disk at --approve time; a fixed known-set in unit tests). PURE except
- * through `exists`. No directory listing, no graph access — the owner index downstream
- * maps the resolved file to a node; an unmapped resolved file is simply not a known
+ * through `exists`. No directory listing, no ownership lookup — the owner index downstream
+ * maps the resolved file to an owner; an unmapped resolved file is simply not a known
  * target (a coverage matter, never a violation).
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the false-positive guard: a

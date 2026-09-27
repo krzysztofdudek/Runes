@@ -9,8 +9,8 @@ import path from 'node:path';
  * `exists(repoRelPosix)` reports whether a candidate file exists in the resolution
  * universe (disk at --approve time; a fixed known-set in unit tests). PURE except
  * through `exists` and `isExcluded`. Resolution is a pure file-existence search — no
- * directory listing, no graph access. The owner index downstream maps the resolved
- * file to a node; an unmapped resolved file is simply not a known target.
+ * directory listing, no ownership lookup. The owner index downstream maps the resolved
+ * file to an owner; an unmapped resolved file is simply not a known target.
  *
  * `isExcluded`, when supplied, makes an excluded candidate act as though it does not
  * exist, in BOTH resolvers. In the absolute resolver this happens at two levels: per
@@ -26,10 +26,10 @@ import path from 'node:path';
  * unambiguous even when a second, now-excluded match also exists. The relative
  * resolver has no cross-root ambiguity to decide — only the same per-root priority
  * list — so it applies the same "skip an excluded hit, try the next candidate" rule
- * to that one list. Either way an excluded file is graph-told to not exist for this
+ * to that one list. Either way an excluded file is told by the caller to not exist for this
  * purpose: it can never BE the real target, so its match must not keep a real,
  * surviving candidate silenced merely because it once shared a name or a dotted
- * module with a file the graph no longer considers. This mirrors the Go/Java package
+ * module with a file the caller no longer considers. This mirrors the Go/Java package
  * resolvers' drop-then-decide rule. Absent → no candidate is ever dropped (today's
  * behavior, unaffected).
  *
@@ -91,10 +91,10 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  * standard library owns is never matched there. Discovered roots join the SAME distinct-
  * match count, so a module found under two roots still stays silent.
  *
- * An excluded match is dropped BEFORE that ambiguity count. It is graph-told to
+ * An excluded match is dropped BEFORE that ambiguity count. It is told by the caller to
  * not exist, so it can never be the genuine target and must not keep a real,
  * surviving match silenced merely because it once shared a dotted module name
- * with a file the graph no longer considers.
+ * with a file the caller no longer considers.
  */
 function resolveAbsolute(specifier, fromFile, exists, isExcluded, projectRoots) {
     const segments = specifier.split('.').filter((s) => s.length > 0);

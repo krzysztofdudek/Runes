@@ -26,7 +26,7 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     if (dep !== undefined) {
         return resolveFromModuleDir(dep.srcDir, rest, exists, rootContext(dep.srcDir, dep.rootFiles, declares));
     }
-    // External crate (std/core/alloc, third-party) — not a graph-resolvable path.
+    // External crate (std/core/alloc, third-party) — not a resolvable path.
     return undefined;
 }
 /** The crate-root name check: the deps' own, or "every name is declared" when absent. */

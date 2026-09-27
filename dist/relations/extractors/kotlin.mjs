@@ -42,7 +42,7 @@ import { kotlinView } from './kotlin-recover.mjs';
  * STAR IMPORTS: `import com.foo.*` emits the hint `com.foo.*` (the `*` kept as a marker the
  * resolver recognises). The resolver collapses it by owner exactly like Java's on-demand
  * import: the files declaring a direct top-level member of `com.foo` (or the classifier
- * `com.foo`, for a star import of an enum's entries / an object's members) → one owning node
+ * `com.foo`, for a star import of an enum's entries / an object's members) → one owner
  * → one edge; zero or two or more owners → silence. It is never expanded into per-name edges.
  *
  * ONE JVM NAMESPACE: Kotlin declares into, and resolves against, the same namespace as Java
@@ -64,7 +64,7 @@ import { kotlinView } from './kotlin-recover.mjs';
  * ambiguity the unreadable declarations might have created (fail closed).
  *
  * stdlib / external imports (`kotlin.*`, `kotlinx.*`, `java.*`, AndroidX, third-party)
- * still emit a symbol hint here — silence is the SymbolTable's job (an FQN no in-graph
+ * still emit a symbol hint here — silence is the SymbolTable's job (an FQN no in-repository
  * file declares resolves to undefined and is never flagged).
  *
  * INLINE FULLY-QUALIFIED TYPE references (`val x: app.dto.Req`, `: app.base.Base()`

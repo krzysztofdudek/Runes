@@ -34,7 +34,7 @@ import { makeRepoLayout } from './repo-layout.mjs';
  *  through a file that is still there. A caller resolving a specifier fresh from source — the
  *  specifier can name any file on disk, excluded or not — must supply both `ownerOf` and an `isExcluded` built from the same exclusion set instead of calling this with `ownerOf` and no `isExcluded`:
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
- *  Java, still wins the walk), which can silence a real cross-node dependency reached through
+ *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate. */
 export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
     const exists = (repoRelPosix) => existsSync(path.resolve(projectRoot, repoRelPosix));
@@ -77,13 +77,12 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
                 // No `sole` owner found covers TWO different situations: `files` is empty (the
                 // package was found nowhere live — `files[0]` is naturally `undefined`, the
                 // same silence a wholly-unmapped package gets), or `files` is non-empty but no
-                // node owns any of it (a package that is type-covered only, under
-                // `coverage.type_level`, has no node owner for ANY file — the ordinary case,
-                // not the exception). The fallback picks `files[0]` either way rather than
-                // returning `undefined` outright: a caller that is not the node owner index
-                // (the type-coverage lookup) still needs a live, non-excluded file to find the
+                // owner claims any of it (a package no unit owns has no owner for ANY file — an
+                // ordinary case, not the exception). The fallback picks `files[0]` either way rather than
+                // returning `undefined` outright: a caller that is not the owner index
+                // (a lookup by another grouping) still needs a live, non-excluded file to find the
                 // package's matched type — silencing unconditionally here made every wildcard
-                // import into a nodeless package invisible to that lookup, exclusion or not.
+                // import into an unowned package invisible to that lookup, exclusion or not.
                 const files = resolveJavaPackageFiles(specifier, fromFile, javaDeps);
                 let sole;
                 for (const f of files) {
@@ -116,7 +115,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
             // roots when one exists, else a conservative probe of the repository root and every
             // `include/` directory — with the exactly-one-hit rule (see include-resolve.ts's own
             // doc comment). An angle include resolves only under a database's -I roots. The
-            // header's owning node is the dependency target (header/impl share a node).
+            // header's owner is the dependency target (header and implementation share an owner).
             return resolveIncludePath(specifier, fromFile, exists, layout.includeRoots);
         }
         if (language === 'ruby') {
@@ -437,7 +436,7 @@ const PYTHON_ROOT_SCAN_SKIP = new Set(['node_modules', '__pycache__', 'site-pack
  * its `src/` child when that directory exists (the src layout), else the directory itself
  * (the flat layout). A uv workspace's members, a Poetry monorepo's packages and a
  * src-layout project's tests are all covered by this one rule, because each member is a
- * project with its own manifest. A manifest that is excluded from the graph contributes no
+ * project with its own manifest. A manifest that is excluded by the caller contributes no
  * root. Hidden directories, dependency trees, caches and virtual environments are skipped.
  *
  * NOTE: makeResolvePathToFile's deps are pure filesystem access; listing directories and

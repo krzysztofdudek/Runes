@@ -3,14 +3,14 @@ interface UsingScope {
     /** Namespace prefixes from plain `using Foo.Bar;` directives (file-local). */
     prefixes: string[];
     /** Namespace prefixes from `global using Foo.Bar;` declared in THIS file. Tracked apart
-     *  from `prefixes` only so the cross-file pre-pass (pass.ts) can aggregate them project-
+     *  from `prefixes` only so the cross-file pre-pass (the consumer's relation pass) can aggregate them project-
      *  wide; for THIS file's resolution they bind identically to a file-local plain using. */
     globalPrefixes: string[];
     /** alias local-name → aliased FQN from `using Alias = Foo.Bar;` (incl. `global using
      *  Alias = ...`, an alias is always file-local in effect for resolution). */
     aliases: Map<string, string>;
     /** alias local-name → aliased FQN from `global using Alias = Foo.Bar;` declared in THIS file
-     *  only. Tracked apart from `aliases` so the cross-file pre-pass (pass.ts) can aggregate them
+     *  only. Tracked apart from `aliases` so the cross-file pre-pass (the consumer's relation pass) can aggregate them
      *  project-wide (A12). The RHS FQN is the resolved alias target (C# resolves an alias RHS
      *  fully-qualified vs the global namespace, so the captured dotted text IS the target). */
     globalAliases: Map<string, string>;
@@ -26,7 +26,7 @@ interface UsingScope {
 }
 /**
  * Collect the `global using Foo.Bar;` namespace prefixes a C# file declares (project-wide
- * imports). Used by the cross-file pre-pass in pass.ts to aggregate the global usings of every
+ * imports). Used by the cross-file pre-pass in the consumer's relation pass to aggregate the global usings of every
  * file of a project before per-file resolution, so a `global using` in ANY file of the project
  * qualifies bare names in EVERY file of that project (R5, M6). Aliases and `using static` are file-local (per the C# spec, a `global using static`
  * / `global using alias` is still project-wide, but its members/alias are not a namespace
@@ -35,12 +35,12 @@ interface UsingScope {
 export declare function collectGlobalUsings(file: ParsedFile): string[];
 /**
  * Collect the `global using Alias = Foo.Bar;` aliases a C# file declares (project-wide
- * aliases, A12). Used by the cross-file pre-pass in pass.ts to aggregate every file's global
+ * aliases, A12). Used by the cross-file pre-pass in the consumer's relation pass to aggregate every file's global
  * aliases before per-file resolution, so a `global using` alias declared in ANY file is usable
  * in EVERY file. The alias RHS is resolved fully-qualified vs the global namespace (C# resolves
  * an alias RHS ignoring other usings and the enclosing namespace), so the captured dotted FQN
  * IS the resolved target in the declaring file's context — aggregating `[alias, fqn]` pairs is
- * sufficient. Returned as entries so pass.ts can union them into a project-wide alias map.
+ * sufficient. Returned as entries so the consumer's relation pass can union them into a project-wide alias map.
  */
 export declare function collectGlobalUsingAliases(file: ParsedFile): Array<[string, string]>;
 /** Options for `uses()` — the cross-file global-using scope injected by the pass-level
@@ -165,7 +165,7 @@ export declare function extractCsharpRefs(file: ParsedFile): CsharpExtract;
  */
 export declare function assembleCsharpCandidates(extract: CsharpExtract, options?: CsharpUsesOptions): DetectedDep[];
 /** The C# `uses` with the optional cross-file global-using scope — called directly by the
- *  pass-level pre-pass (pass.ts) to inject project-wide `global using` prefixes. The interface
+ *  pass-level pre-pass (the consumer's relation pass) to inject project-wide `global using` prefixes. The interface
  *  `uses` (1-arg) on `csharpExtractor` delegates here with no options. */
 export declare function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): DetectedDep[];
 export declare const csharpExtractor: DependencyExtractor;

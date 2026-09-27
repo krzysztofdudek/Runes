@@ -2,7 +2,7 @@ import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 /**
  * The ordered first-unique-match-wins walk over a detected reference's candidate group:
  * nearest binding first (member → enclosing namespace → unique using-import → verbatim),
- * farther candidates last. Returns the owner node of the resolved binding, or undefined when
+ * farther candidates last. Returns the owner of the resolved binding, or undefined when
  * the group silences (a nearer candidate is present-but-ambiguous, or no candidate binds). For
  * a one-element group this is byte-identical to a single resolve.
  *
@@ -24,7 +24,7 @@ export function resolveCandidateGroup(candidates, resolver, fromFile, language) 
 /**
  * Resolve every detected reference of ONE file through {@link resolveCandidateGroup} and
  * return the bound edges, each `(line, owner)` at most once. Several references on one
- * line often bind to the same node (a Python `from m import a, b` offers the module and each
+ * line often bind to the same owner (a Python `from m import a, b` offers the module and each
  * name as candidates that all land in one file; a C# line names one type twice); they are one
  * dependency, so they are reported once. Shared by the live pass and the reference-case runner
  * so the two report the same rows.
@@ -126,8 +126,8 @@ function rubyGate(hint, files, symbolTable) {
     if (files.size === 0) {
         return hint.rubyAnchor !== undefined && symbolTable.has('ruby', hint.rubyAnchor) ? 'ambiguous' : undefined;
     }
-    // >= 1, not === 1: several defining files of ONE node now bind too (owner-node ambiguity), and
-    // the inheritance hazard is the same however many files that node spreads the constant over.
+    // >= 1, not === 1: several defining files of ONE owner now bind too (owner ambiguity), and
+    // the inheritance hazard is the same however many files that owner spreads the constant over.
     if (files.size >= 1 && hint.rubyInheritGuard !== undefined && symbolTable.hasNestedTail('ruby', hint.rubyInheritGuard)) {
         return 'ambiguous';
     }
@@ -203,13 +203,13 @@ export function makeResolver(deps) {
     /**
      * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import
      * the source-root probe missed) in the shared JVM namespace: the verbatim key plus its guarded
-     * `+`-splits, counted by OWNER NODE like the generic symbol axis (B4, see symbolOutcome):
-     * 0 files → none; 1 file, or 2+ files that all belong to ONE owner node (Kotlin expect/actual,
+     * `+`-splits, counted by OWNER like the generic symbol axis (see symbolOutcome):
+     * 0 files → none; 1 file, or 2+ files that all belong to ONE owner (Kotlin expect/actual,
      * top-level overloads spread over files) → that file (the lexicographically first); 2+ owners,
      * or 2+ files including an unmapped one → ambiguous. Then the incompleteness markers: a marker
      * file other than the definers that could cover a binding key makes the lookup ambiguous (fail
-     * closed) — UNLESS it belongs to the same owner node as the definers, because an unreadable
-     * declaration in that node can only name that node again and can never flip the edge.
+     * closed) — UNLESS it belongs to the same owner as the definers, because an unreadable
+     * declaration in that owner can only name that owner again and can never flip the edge.
      */
     const jvmSymbolOutcome = (language, symbolKey) => {
         const keys = nestedSplitKeys(deps.symbolTable, language, symbolKey);
@@ -249,9 +249,9 @@ export function makeResolver(deps) {
      * package directory the source-root probe did not find): every file declaring a direct
      * top-level member of package `prefix`, plus the declaring file of a CLASSIFIER named `prefix`
      * (a star import of an enum's entries or an object's members), collapsed by owner exactly like
-     * Java's on-disk wildcard: one owning node → one of its files; two or more owners → ambiguous;
-     * no owner at all → a file anyway (so `resolveFile` can still see a type-covered target; the
-     * ownership step turns it into `absent`), or none when nothing in-graph declares into it.
+     * Java's on-disk wildcard: one owner → one of its files; two or more owners → ambiguous;
+     * no owner at all → a file anyway (so `resolveFile` can still see a target another grouping covers; the
+     * ownership step turns it into `absent`), or none when nothing in-repository declares into it.
      */
     const jvmStarOutcome = (language, prefix) => {
         const files = new Set(deps.symbolTable.filesInPackage(language, prefix));
@@ -304,13 +304,13 @@ export function makeResolver(deps) {
         return owner ? { kind: 'resolved', owner, resolvedFile: outcome.file } : { kind: 'absent' };
     };
     /**
-     * The symbol-axis outcome for a hint's distinct defining files, counted by OWNER NODE (B4):
+     * The symbol-axis outcome for a hint's distinct defining files, counted by OWNER:
      * one file → that file (mapped or not, as before); 2+ files that ALL belong to the same owner
-     * node → that node, reported with the lexicographically first file; 2+ files spanning 2+ owners,
+     * → that owner, reported with the lexicographically first file; 2+ files spanning 2+ owners,
      * or including any unmapped file → ambiguous. Language-agnostic: C# partial classes and the
      * `Result` / `Result<T>` split, Kotlin expect/actual and overloads spread over files, and any
-     * other declaration split across files of ONE node name exactly one dependency target — the
-     * ambiguity that must silence is between NODES, never between files of one node.
+     * other declaration split across files of ONE owner name exactly one dependency target — the
+     * ambiguity that must silence is between OWNERS, never between files of one owner.
      */
     const symbolOutcome = (files) => {
         if (files.size === 0)
@@ -318,7 +318,7 @@ export function makeResolver(deps) {
         const sorted = [...files].sort();
         if (sorted.length === 1) {
             const owner = deps.ownerIndex.ownerOf(sorted[0]);
-            // Resolved-but-UNMAPPED is the D7 non-event → absent (continue), never ambiguous.
+            // Resolved-but-UNMAPPED is the non-event of an unowned target → absent (continue), never ambiguous.
             return owner ? { kind: 'resolved', owner, resolvedFile: sorted[0] } : { kind: 'absent' };
         }
         const owners = new Set(sorted.map((f) => deps.ownerIndex.ownerOf(f)));
@@ -352,7 +352,7 @@ export function makeResolver(deps) {
         }
         const owner = deps.ownerIndex.ownerOf(file);
         if (!owner)
-            return undefined; // UNMAPPED target → coverage matter, never a violation (D7)
+            return undefined; // UNMAPPED target → coverage matter, never a violation (an unowned target is a non-event)
         return { owner, resolvedFile: file };
     };
     const classify = (hint, fromFile, language) => {
@@ -372,9 +372,9 @@ export function makeResolver(deps) {
             }
             // Symbol axis: collect the distinct files this hint maps to — the union across its `set`
             // members (CS0104 / co-definition), each honoring `nestedOnly` (R4), or the lone
-            // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owner nodes is a real
+            // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owners is a real
             // ambiguity (silence the group); 0 is absent (continue); one file or one owner binds
-            // (B4, see symbolOutcome).
+            // (see symbolOutcome).
             const files = hintFiles(hint, language);
             if (language === 'ruby') {
                 const forced = rubyGate(hint, files, deps.symbolTable);

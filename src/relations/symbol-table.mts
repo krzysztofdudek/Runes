@@ -39,7 +39,7 @@ export class SymbolTable {
   hasNestedTail(language: string, name: string): boolean {
     return this.nestedTails.has(this.key(language, name));
   }
-  /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. off-graph) → undefined. */
+  /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. unowned) → undefined. */
   resolveUnique(language: string, symbolKey: string): string | undefined {
     const s = this.defs.get(this.key(language, symbolKey));
     if (!s || s.size !== 1) return undefined;

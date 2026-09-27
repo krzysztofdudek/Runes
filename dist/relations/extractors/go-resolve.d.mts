@@ -2,7 +2,7 @@
  * Resolve a Go import PATH to a repo-relative POSIX `.go` source file, or undefined.
  *
  * A Go import path (`example.com/mod/foo/bar`) names a package DIRECTORY, not a
- * single file. Mapping it to a graph node requires:
+ * single file. Mapping it to an owner requires:
  *   (a) the module path from `go.mod` at the module root;
  *   (b) stripping that module prefix from the import path to get the repo-relative
  *       package DIRECTORY;
@@ -12,7 +12,7 @@
  * An import path that does NOT start with the module path (a stdlib package like
  * `fmt`/`os`, or an external module) resolves to NO mapped file → undefined. This
  * fail-to-silence is the single most important false-positive guard: only imports
- * under the repo's own module are graph-resolvable; everything else is silent.
+ * under the repo's own module are resolvable; everything else is silent.
  *
  * Dot-imports (`. "pkg"`) and blank imports (`_ "pkg"`) still name a real package
  * path, so the extractor emits the path normally and this resolver treats it like
@@ -66,14 +66,14 @@ export interface GoResolveDeps {
     /** Repo-relative POSIX paths of `.go` files directly in this directory (no recursion). */
     goFilesIn(repoRelDir: string): string[];
     /**
-     * Optional. Repo-relative POSIX file → owning node id, or undefined when no
-     * node maps it. When supplied, resolveGoImport becomes OWNER-SET-AWARE: it
+     * Optional. Repo-relative POSIX file → owner id, or undefined when no
+     * owner claims it. When supplied, resolveGoImport becomes OWNER-SET-AWARE: it
      * computes the owner of every production `.go` file the package directory
      * has left AFTER `isExcluded` below has removed any excluded one; all-one-owner
      * among what remains attributes that owner's representative file, 2+ distinct
      * owners among what remains silences the import entirely (package granularity —
-     * a split package has no single graph owner, so attributing it to any one
-     * file's owner would fabricate or hide a cross-node edge). Absent → today's
+     * a split package has no single owner, so attributing it to any one
+     * file's owner would fabricate or hide a cross-owner edge). Absent → today's
      * lexicographically-first pick, no owner check.
      *
      * Whether this is the raw index or one already guarded against an exclusion
@@ -83,8 +83,8 @@ export interface GoResolveDeps {
      */
     ownerOf?(repoRelPosix: string): string | undefined;
     /**
-     * Optional. True when the graph excludes this repo-relative POSIX path (a
-     * nested project's own boundary, or a `coverage.excluded` root). An excluded
+     * Optional. True when the caller excludes this repo-relative POSIX path (a
+     * nested project or a root the caller leaves out). An excluded
      * file is dropped from the package's candidate list BEFORE the owner-set
      * decision runs — the split-or-not question is answered from what remains,
      * never from the full, pre-exclusion file list. This is what keeps the

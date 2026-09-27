@@ -7,11 +7,11 @@ import { parseComposerAutoload } from './extractors/php-resolve.mjs';
  * importing file's own ancestors: every directory named `include` (the C/C++ probe roots),
  * every `composer.json` (the PHP autoload union), and the C/C++ compilation database.
  *
- * Everything is discovered LAZILY, at most once per factory instance (one `yg check` pass),
+ * Everything is discovered LAZILY, at most once per factory instance (one resolver run),
  * and only when a resolver actually needs it: a repository without C/C++ or PHP never walks.
  * The walk skips dot-directories, `node_modules` and `vendor` (third-party trees whose
  * `composer.json` files describe installed packages, not this repository's own autoload
- * map), directories the graph excludes, and anything deeper than {@link MAX_DEPTH}; it stops
+ * map), directories the caller excludes, and anything deeper than {@link MAX_DEPTH}; it stops
  * listing after {@link MAX_DIRS} directories so a pathological tree cannot stall a check.
  *
  * NOTE: like the other makeXResolveDeps factories this is pure filesystem access; it reads

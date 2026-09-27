@@ -16,16 +16,16 @@ import path from 'node:path';
  * A PSR-4 prefix value may be an ARRAY of directories (one prefix → several roots) —
  * each candidate directory is tried. When the class file exists under EXACTLY ONE of
  * them the resolution is unambiguous and that file is returned; when it exists under
- * 2+ of them the FQN genuinely maps to two distinct files (two candidate owner nodes)
+ * 2+ of them the FQN genuinely maps to two distinct files (two candidate owners)
  * and resolution is AMBIGUOUS → undefined (silence). PSR-4 forbids the same class in
  * two roots at runtime (the first autoloader hit wins arbitrarily), so a static tool
  * MUST NOT pick one — guessing a root would be a false positive. This mirrors the
  * Java/Go multi-target rule (2+ distinct targets → silence, never first-wins).
  *
  * `deps.isExcluded`, when supplied, drops an excluded hit from that ambiguity count
- * BEFORE the exactly-one check runs: an excluded file is graph-told to not exist, so
+ * BEFORE the exactly-one check runs: an excluded file is told by the caller to not exist, so
  * it can never be the genuine target, and it must not keep a real, surviving hit
- * silenced merely because the class also used to live under a root the graph no
+ * silenced merely because the class also used to live under a root the caller no
  * longer considers. Absent → no hit is ever dropped (today's behavior, unaffected).
  *
  * Longest-prefix matters because prefixes nest: with `App\` → `src/` and `App\Tests\` →
@@ -62,10 +62,10 @@ export interface PhpResolveDeps {
   /** Does a file exist at this repo-relative POSIX path? */
   exists(repoRelPosix: string): boolean;
   /**
-   * Optional. True when the graph excludes this repo-relative POSIX path (a nested
-   * project's own boundary, or a `coverage.excluded` root). A PSR-4 base-directory
+   * Optional. True when the caller excludes this repo-relative POSIX path (for example a nested
+   * project or a root the caller leaves out). A PSR-4 base-directory
    * hit that names an excluded file is dropped from the candidate set BEFORE the
-   * exactly-one-hit ambiguity check runs, so a class the graph no longer considers
+   * exactly-one-hit ambiguity check runs, so a class the caller no longer considers
    * cannot keep a real, surviving copy under another root silenced. Absent → no hit
    * is ever dropped (today's behavior, unaffected).
    */
