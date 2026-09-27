@@ -37,6 +37,8 @@ class UsageError extends Error {}
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 const toPosix = (p) => p.split(sep).join('/');
+// rmSync retries: on Windows a just-exited git or a virus scanner can still hold a handle in the clone (EBUSY, EPERM).
+const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
 const out = (s = '') => process.stdout.write(`${s}\n`);
 const err = (s) => process.stderr.write(`${s}\n`);
 const isLink = (p) => lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink() === true;
@@ -344,7 +346,7 @@ function workDir(ctx, flag) {
 }
 
 function freshClone(source, tag, dir) {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, RM);
   mkdirSync(dirname(dir), { recursive: true });
   try {
     git(['-c', 'advice.detachedHead=false', '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'clone', '--quiet', '--depth', '1', '--branch', tag, '--', source, dir]);
@@ -393,7 +395,7 @@ function ciProblems(ctx, work) {
       if (existsSync(ctx.toolPath) && !readFileSync(ctx.toolPath).equals(theirs)) problems.push(`tool: ${pin.tool.path} differs from ${TOOL_SOURCE} at ${pin.tag}`);
     }
   } finally {
-    rmSync(clone, { recursive: true, force: true });
+    rmSync(clone, RM);
   }
   return problems;
 }
@@ -608,7 +610,7 @@ function cmdUpdate(args) {
     warnings(ctx);
     return EXIT_PASS;
   } finally {
-    rmSync(clone, { recursive: true, force: true });
+    rmSync(clone, RM);
   }
 }
 

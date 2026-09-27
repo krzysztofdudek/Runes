@@ -9,14 +9,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
 const TOOL = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'vendor.mjs');
+// The global config is an empty file of the test's own rather than /dev/null, which only Git for Windows' own path translation makes work there; the system config (where Git for Windows sets core.autocrlf=true) is off, so the tests see the same git on every OS unless one sets autocrlf on purpose.
+const tmp = mkdtempSync(join(tmpdir(), 'runes-vendor-'));
+const EMPTY_GITCONFIG = join(tmp, 'gitconfig-empty');
+const CRLF_GITCONFIG = join(tmp, 'gitconfig-autocrlf');
+writeFileSync(EMPTY_GITCONFIG, '');
+writeFileSync(CRLF_GITCONFIG, '[core]\n\tautocrlf = true\n');
 const GIT_ENV = {
   GIT_AUTHOR_NAME: 'Runes Test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'Runes Test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
-  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: EMPTY_GITCONFIG,
 };
 const BASE_ENV = Object.fromEntries(Object.entries({ ...process.env, ...GIT_ENV }).filter(([k]) => k !== 'CI' && k !== 'RUNES_DIR' && k !== 'RUNES_PIN'));
 const SKILL = '# Skill\n\n<!-- RUNES:worktree:START -->\n<!-- RUNES:worktree:END -->\n\nMiddle.\n\n<!-- RUNES:evidence:START -->\n<!-- RUNES:evidence:END -->\n\nOutro.\n';
 
-let tmp;
 let runes;
 let consumer;
 let sourceUrl;
@@ -63,7 +68,6 @@ function run(args, env = {}) {
 }
 
 before(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'runes-vendor-'));
   runes = join(tmp, 'Runes');
   consumer = join(tmp, 'Consumer');
   sourceUrl = pathToFileURL(runes).href;
@@ -111,7 +115,7 @@ before(() => {
   });
 });
 
-after(() => rmSync(tmp, { recursive: true, force: true }));
+after(() => rmSync(tmp, { recursive: true, force: true, maxRetries: 5 }));
 
 describe('vendor.mjs', () => {
   test('check refuses an unfilled pin', () => {
@@ -370,6 +374,22 @@ describe('vendor.mjs', () => {
     assert.equal(run(['check']).code, 0);
   });
 
+  test('a user whose git has core.autocrlf=true still clones the committed LF bytes: check --ci passes', () => {
+    const r = run(['check', '--ci'], { GIT_CONFIG_GLOBAL: CRLF_GITCONFIG });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /verified against a fresh clone/);
+  });
+
+  test('Windows-shaped pin paths (drive letter, backslashes, UNC) are usage errors on every OS', () => {
+    for (const bad of ['C:/runes/dist', 'c:dist', 'dist\\fs', '..\\secrets', '//server/share/dist', '\\\\server\\share']) {
+      writePin({ ...pin(), paths: [bad] });
+      const r = run(['check']);
+      assert.equal(r.code, 2, `${bad}: ${r.err}`);
+      assert.match(r.err, /must be a relative path inside the tree, with forward slashes/);
+    }
+    restore();
+  });
+
   test('a moved tag fails --ci', () => {
     git(runes, 'tag', '-f', '-a', 'v0.1.0', '-m', 'moved', 'v0.2.0^{commit}');
     const r = run(['check', '--ci']);
@@ -377,4 +397,5 @@ describe('vendor.mjs', () => {
     assert.match(r.err, /tag v0\.1\.0 of .* resolves to [0-9a-f]{40}, the pin says [0-9a-f]{40}: the tag moved/);
     assert.equal(run(['check']).code, 0, 'offline the copy still matches its own pin');
   });
+
 });
