@@ -51,6 +51,36 @@ const root = findRoot(process.cwd(), { marker: '<state dir>' });    // a worktre
 - `writeAtomic(path, data)` writes `.<name>.<pid>.<random>.tmp` beside the target and renames it over the target, so a reader never sees half a file; one ignore pattern, `.*.tmp`, covers the temporary files. `renameWithRetry` retries EPERM, EACCES and EBUSY on Windows (a file another process holds open) and EBUSY elsewhere, within a 2 s budget.
 - `findRoot(from, { marker })` is the nearest checkout (a directory holding `.git`, a directory or a worktree's file). When that checkout lacks `marker` and the main checkout, found through `git rev-parse --git-common-dir`, has it, the main checkout is the root. `checkoutRoot`, `mainCheckout`, `gitCommonDir` and `isLinkedWorktree` are the pieces.
 
+## `cli`: the command table, parsing, errors, one JSON block
+
+```js
+import { defineTable, parseArgs, renderResult, renderFailure, emit, readUsage } from '@chrisdudek/runes/cli';
+
+export const TABLE = defineTable({
+  tool: 'demo',
+  globalFlags: { json: 'bool', root: 'path' },
+  commands: {
+    new: { args: ['title'], flags: { tag: 'many', prio: 'number' }, writes: true, summary: 'File an issue.' },
+    'decide rm': { args: ['id'], writes: true, destructive: true },
+    sources: { args: ['files...?'], paths: ['files'] },
+  },
+  aliases: { seed: 'decide' },
+});
+
+try {
+  const { command, args, flags } = parseArgs(TABLE, process.argv.slice(2));
+  process.exitCode = emit(renderResult(run(command, args, flags), { json: flags.json === true }));
+} catch (e) {
+  process.exitCode = emit(renderFailure('demo', e, { json: process.argv.includes('--json') }));
+}
+```
+
+- **The table** is the one source of the CLI, the MCP tools and the parity tests. An argument is `name`, `name?`, `name...` (one or more) or `name...?` (any number); a flag is `bool`, `value`, `many`, `number` or `path`. A command key may hold a subcommand (`decide rm`); an alias may name a command or a whole group. `writes`, `destructive` and `idempotent` become the MCP annotations; `paths` names the fields resolved against the working directory; `stdoutJson` marks a command that prints JSON unasked; `internal` keeps a hook command off the tools and the usage text. `defineTable` throws on a malformed table (order of arguments, duplicate names, a flag whose kind differs from the global one, an alias to nothing).
+- **`parseArgs(table, argv)`** returns `{ command, words, args, flags }`. A value flag always takes the next word, even one that starts with `--`; a bare `--` ends the flags; only global flags may come before the command; an unknown flag names the ones the command takes; a single-value flag given twice, a missing required argument and surplus words are errors. Every refusal is a `UsageError` (code `usage`).
+- **The error document** `<tool>-error/1` is `{ schema, code, what, why, next: { command, text } | null }`: `code` a stable word, `next.command` the step as argv when it is a command of the tool a reader can run as given. `CliError(code, what, { why, next, exitCode })` carries the parts; anything else thrown reads as `command-error`.
+- **One JSON block**: with `--json`, stdout holds exactly one document, the answer or the error document, and every note goes to stderr. `renderResult`, `renderFailure` and `emit` do this; `isSingleJsonBlock` checks it.
+- **`readUsage(usage, table)`** reads a hand-written usage text (the section after `commands:` or `usage:`) into blocks per command, with each entry's synopsis, description and `--flags`, and lists entries that name no command.
+
 ## The guard
 
 `@chrisdudek/runes/testkit` exports `runGuard`, which scans source files and fails when code shipped by one tool:
