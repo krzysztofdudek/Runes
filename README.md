@@ -21,7 +21,7 @@ Code enters Runes only when both hold:
 | `@chrisdudek/runes/fs` | `withLock`, `withLockAsync`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
 | `@chrisdudek/runes/cli` | a command-table schema, `parseArgs`, the `<tool>-error/1` error document, the single `--json` block rule | Jarl, Grain, Horde |
 | `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain, Horde |
-| `@chrisdudek/runes/testkit` | the family guard; later the git test environment, CLI/MCP parity, `tools/list` measurement and the runtime pin check | all |
+| `@chrisdudek/runes/testkit` | the family guard, the git test environment, CLI/usage/MCP parity, `tools/list` measurement, a stdio MCP test client, and the runtime pin check | all |
 | `skills/` | shared skill fragments, kept in consumers' `SKILL.md` between markers | Jarl, Grain, Horde |
 | `tools/vendor.mjs` | the vendoring tool and its gate | every vendoring consumer |
 
@@ -102,6 +102,25 @@ serveStdio(server);
 - **Executors**: `inProcess(run)` hands `run` the parsed call and takes back `{ value, text, notes, exitCode }` or a thrown refusal; it cannot be stopped midway, so a timeout or cancel drops its answer and the next call waits for it to end. `spawnCli({ command, args })` runs the CLI as a child in its own process group; a timeout, a cancel, stdin closing or SIGTERM/SIGINT/SIGHUP kill the whole tree (`taskkill /T /F` on Windows, where there are no process groups).
 - **Answers**: a JSON answer is exactly one text block, notes in `_meta` under `<tool>/<key>`; a refusal in JSON mode is the `<tool>-error/1` document as that block. A non-zero exit or a refusal is `isError: true`.
 - **Transport**: tool calls run one at a time, in order; `initialize`, `ping` and `tools/list` never wait behind them. `notifications/cancelled` stops a running call or drops a queued one, without an answer; a cancel for any other id is ignored. Client responses are ignored. The protocol version a client asks for comes back when it is one of `2025-06-18`, `2025-03-26`, `2024-11-05`; any other gets the first.
+
+## `testkit`: tests every consumer runs
+
+```js
+import { gitEnv, makeTempRepo, assertParity, measureTools, formatToolsMeasure, listToolsOverStdio, startMcpClient, runtimePinProblems } from '@chrisdudek/runes/testkit';
+
+const repo = makeTempRepo({ files: { 'src/a.ts': 'export {}\n' } });   // gitEnv: no user config, fixed identity and dates
+const tools = await listToolsOverStdio({ command: process.execPath, args: [serverScript] });
+assertParity({ table: TABLE, usage: USAGE, tools, toolOptions: { help: USAGE } });
+console.log(formatToolsMeasure(measureTools(tools, { label: 'demo' })));      // a warning over 8 500 tokens, never a failure
+```
+
+- **`gitEnv(base, { name, email, date })`** carries the test config as `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` after any entries already there: `maintenance.auto=false` and `gc.auto=0` (no background git holding files a test deletes, fatal on Windows), `init.defaultBranch=main`, no signing, no hooks, `core.autocrlf=false`; with `GIT_CONFIG_GLOBAL` at the null device and `GIT_CONFIG_NOSYSTEM=1`, and a fixed identity and date, so commit ids repeat. `makeTempRepo` is a repository under the OS temp dir with it.
+- **`parityProblems` / `assertParity`** hold the table, the usage text and the tools together both ways: a command without a tool or a usage entry, a tool or an entry that names no command, a field the tool lacks or has beyond the command's arguments and flags, a flag the usage does not mention or mentions without the command taking it.
+- **`measureTools(tools, { budgetTokens })`** measures what `tools/list` sends, estimating tokens at four characters each, and returns a warning when the server is over budget (default 8 500 tokens). CI prints it; it never fails the build.
+- **`startMcpClient` / `listToolsOverStdio`** drive a server over its real stdio in tests.
+- **`runtimePinProblems`** compares a consumer's declared and installed `web-tree-sitter` with the grammar manifest's exact pin.
+
+`testkit` imports `cli` and `mcp`; a vendoring consumer that takes `dist/testkit` takes those two as well (the vendor gate refuses a relative import of a file that is not vendored).
 
 ## The guard
 

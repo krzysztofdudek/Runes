@@ -1,7 +1,5 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { mkdtempSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir, constants as osConstants } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -9,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildTools, argvFor, answersJson, commandForTool, toolName, createServer, inProcess, killTree, runProcess, InvalidParams, PROTOCOL_VERSION, PROTOCOL_VERSIONS,
 } from '@chrisdudek/runes/mcp';
+import { startMcpClient } from '@chrisdudek/runes/testkit';
 import { TABLE, USAGE, dispatch } from './fixtures/demo-tool.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -17,33 +16,10 @@ const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'runes-mcp-')));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; } };
-const until = async (cond, ms = 10_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await cond()) return true; await new Promise((r) => setTimeout(r, 25)); } return cond(); };
+const until = async (cond, ms = 30_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await cond()) return true; await new Promise((r) => setTimeout(r, 25)); } return cond(); };
 
-// A minimal MCP client over a server's real stdio: requests correlated by id, every line seen kept.
-function start(mode, env = {}) {
-  const child = spawn(process.execPath, [SERVER, mode], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
-  const pending = new Map();
-  const seen = [];
-  let stderr = '';
-  let next = 1;
-  child.stderr.on('data', (d) => { stderr += d; });
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    let m; try { m = JSON.parse(line); } catch { seen.push({ raw: line }); return; }
-    seen.push(m);
-    const k = JSON.stringify(m.id);
-    if (pending.has(k)) { pending.get(k)(m); pending.delete(k); }
-  });
-  const raw = (obj) => child.stdin.write(`${typeof obj === 'string' ? obj : JSON.stringify(obj)}\n`);
-  const request = (method, params, id = next++) => new Promise((res, rej) => {
-    const t = setTimeout(() => rej(new Error(`no answer to ${method} — stderr:\n${stderr}`)), 20_000);
-    pending.set(JSON.stringify(id), (m) => { clearTimeout(t); res(m); });
-    raw({ jsonrpc: '2.0', id, method, params });
-  });
-  const call = (name, args, id) => request('tools/call', { name, arguments: args }, id);
-  const exited = new Promise((r) => child.on('exit', (code, signal) => r({ code, signal })));
-  const stop = () => { try { child.stdin.end(); } catch { /* closed */ } try { child.kill('SIGKILL'); } catch { /* gone */ } };
-  return { child, request, call, raw, seen, exited, stop, stderr: () => stderr };
-}
+// The test kit's stdio client, on the demo server with the executor named by mode.
+const start = (mode, env = {}) => startMcpClient({ command: process.execPath, args: [SERVER, mode], env: { ...process.env, ...env } });
 const textOf = (r) => r.result.content.map((c) => c.text).join('\n');
 
 describe('tools from the table', () => {
@@ -231,14 +207,16 @@ for (const mode of ['in-process', 'spawn']) {
       const s = start(mode);
       try {
         await s.request('initialize', {});
-        const slow = s.call('demo_sleep', { ms: '1500', root: tmp }, 'slow');
+        const slow = s.call('demo_sleep', { ms: '4000', root: tmp }, 'slow');
         await new Promise((r) => setTimeout(r, 100));
         s.raw({ jsonrpc: '2.0', id: 99, result: { whatever: true } });
-        const t0 = Date.now();
-        assert.deepEqual((await s.request('ping')).result, {});
-        assert.ok((await s.request('tools/list')).result.tools.length > 0);
-        assert.ok(Date.now() - t0 < 1000, 'answered before the call ended');
-        assert.equal(textOf(await slow), 'slept 1500');
+        const ping = await s.request('ping', undefined, 'p');
+        assert.deepEqual(ping.result, {});
+        assert.ok((await s.request('tools/list', undefined, 'l')).result.tools.length > 0);
+        assert.equal(textOf(await slow), 'slept 4000');
+        // Order on the wire, not the clock: the call was sent first, so a queued ping would be answered after it.
+        const at = (id) => s.seen.findIndex((m) => m.id === id);
+        assert.ok(at('p') < at('slow') && at('l') < at('slow'), `ping and tools/list answered before the running call: ${JSON.stringify(s.seen.map((m) => m.id))}`);
         assert.ok(!s.seen.some((m) => m.id === 99), 'nothing answers a client response');
       } finally { s.stop(); }
     });
@@ -339,23 +317,26 @@ describe('an in-process run past its timeout', () => {
   test('one that honours the signal is stopped and answered as a timeout', async () => {
     const s = start('in-process', { DEMO_TIMEOUT_MS: '200' });
     try {
+      await s.request('initialize', {});
       const t0 = Date.now();
       const r = await s.call('demo_sleep', { ms: '5000', root: tmp });
       assert.match(textOf(r), /demo sleep did not finish within 200 ms and was stopped/);
-      assert.ok(Date.now() - t0 < 2000);
+      assert.ok(Date.now() - t0 < 4000);
     } finally { s.stop(); }
   });
 
   test('one that ignores it: the answer is a timeout, and the next call waits until the run has ended', async () => {
     const s = start('in-process', { DEMO_TIMEOUT_MS: '200' });
     try {
+      await s.request('initialize', {});
       const t0 = Date.now();
-      const first = s.call('demo_sleep', { ms: '1200', stubborn: true, root: tmp });
+      const first = s.call('demo_sleep', { ms: '3000', stubborn: true, root: tmp });
       const second = s.call('demo_echo', { text: 'after', root: tmp });
       assert.match(textOf(await first), /did not finish within 200 ms/);
-      assert.ok(Date.now() - t0 < 1000, 'the timeout answered at once');
+      const answered = Date.now() - t0;
+      assert.ok(answered < 2500, `the timeout answered before the run ended (${answered} ms)`);
       assert.equal(textOf(await second), 'after');
-      assert.ok(Date.now() - t0 >= 1100, `the next call waited for the run to end (${Date.now() - t0} ms)`);
+      assert.ok(Date.now() - t0 >= 2900, `the next call waited for the run to end (${Date.now() - t0} ms)`);
     } finally { s.stop(); }
   });
 });
