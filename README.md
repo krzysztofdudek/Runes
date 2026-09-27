@@ -245,6 +245,8 @@ Options: `--pin <file>` (default `$RUNES_PIN`, else `./runes.pin.json`), `--work
 
 **Bootstrapping a consumer.** Copy `tools/vendor.mjs` from the tag you want into the consumer (for example to `scripts/runes.mjs`), write the pin as above, add `.runes/` to `.gitignore` and the copy to `.gitattributes` as `-text`, run `update --tag vX.Y.Z`, commit the copy and the pin together, and call `check` from the test suite.
 
+**Windows.** The tool needs only Node and `git` on `PATH`; it spawns no shell and no `.cmd` shim, and it takes pin paths with forward slashes only, so a pin written on one OS works on the others. Mark the consumer's copy of the tool `-text` as well (for example `scripts/runes.mjs -text`), because `check` compares it byte for byte; fragment targets need no entry, since the fragment comparison ignores CRLF.
+
 ## The change path
 
 A change to shared code travels one way:
@@ -263,7 +265,7 @@ npm ci
 npm run check      # build, grammars, tests (with the guard, the catalogue and the vendor tool's end-to-end tests), dist freshness
 ```
 
-`npm test` builds the grammars of the language table into `.grammars/` (gitignored) with the recipe before it runs the tests; a warm cache needs no network, a cold one downloads and builds from source (`tree-sitter build --wasm` fetches its own wasi-sdk on first use). `npm run grammars` does that step alone. `dist/` is committed because vendoring copies it from a clone; `npm run check:dist` rebuilds and fails when the result differs from what git holds. Node 22 or later.
+`npm test` builds the grammars of the language table into `.grammars/` (gitignored) with the recipe before it runs the tests; a warm cache needs no network, a cold one downloads and builds from source (`tree-sitter build --wasm` fetches its own wasi-sdk on first use). `npm run grammars` does that step alone. `dist/` is committed because vendoring copies it from a clone; `npm run check:dist` rebuilds and fails when the result differs from what git holds. Node 22 or later. CI runs the suite on Ubuntu and on Windows, Node 22 and 24 on both.
 
 ## Releasing
 
