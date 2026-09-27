@@ -253,6 +253,30 @@ describe('vendor.mjs', () => {
     restore();
   });
 
+  // Adds a vendored file straight into the copy and the pin, as update would have written it.
+  const vendorExtra = (rel, text) => {
+    const p = pin();
+    put(consumer, `vendor/runes/${rel}`, text);
+    p.files[rel] = createHash('sha256').update(text).digest('hex');
+    writePin(p);
+  };
+
+  test('an import quoted in a line or a block comment is not taken for a real one', () => {
+    vendorExtra('dist/fs/doc.mjs', "// A caller writes import('./x') or import './side-effect';\n/*\n * import { a } from './gone.mjs'\n * and import('../missing.mjs') stay prose.\n */\nexport { RUNES_VERSION } from '../version.mjs'; // import './trailing.mjs'\n");
+    const r = run(['check']);
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(r.err, /not vendored/);
+    restore();
+  });
+
+  test("a '//' or '/*' inside a string, template or regular expression hides no real import after it", () => {
+    vendorExtra('dist/fs/strings.mjs', "const s = '//'; import './after-string.mjs';\nconst t = `/* ${'x'} */`; import b from './after-template.mjs';\nconst r = /\\/\\/'/g; export { c } from './after-regex.mjs';\nimport {\n  d,\n} from './multi-line.mjs';\n");
+    const r = run(['check']);
+    assert.equal(r.code, 1);
+    for (const target of ['after-string', 'after-template', 'after-regex', 'multi-line']) assert.match(r.err, new RegExp(`dist/fs/strings\\.mjs imports '\\./${target}\\.mjs', which is not vendored`));
+    restore();
+  });
+
   test('check --local reports differences against RUNES_DIR and is never green', () => {
     let r = run(['check', '--local']);
     assert.equal(r.code, 2);

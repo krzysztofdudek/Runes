@@ -2,6 +2,10 @@
 
 All notable changes to Runes are recorded here, one line per change. Runes follows [Semantic Versioning](https://semver.org/); one version covers every subpath.
 
+## [0.1.1] - 2026-09-27
+
+- `tools/vendor.mjs`: the unvendored-import check skips comments, so an import quoted in a comment (as in `dist/relations/extractors/typescript.mjs`) no longer fails `check` for a consumer that vendors `dist/relations`; strings, template literals and regular expressions are kept, so a `//` inside them hides no real import.
+
 ## [0.1.0] - 2026-09-27
 
 - First release: the package with the subpaths `relations`, `ast`, `grammars`, `fs`, `cli`, `mcp` and `testkit`, each carrying code (below).
