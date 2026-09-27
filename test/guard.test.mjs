@@ -49,6 +49,11 @@ describe('rule: import', () => {
     ]);
   });
 
+  test('require.resolve and import.meta.resolve count as imports', () => {
+    const src = "const a = require.resolve('@chrisdudek/grain/package.json');\nconst b = import.meta.resolve('../jarl/record.mjs');\nconst c = path.resolve('x');";
+    assert.deepEqual(rules(src), ['import:@chrisdudek/grain/package.json', 'import:../jarl/record.mjs']);
+  });
+
   test('ignores unrelated imports, similar names, and words in comments', () => {
     const src = "// see jarl for details\nimport fs from 'node:fs';\nimport g from './grain-size.mjs';\nimport { walk } from '@chrisdudek/runes/ast';";
     assert.deepEqual(rules(src), []);
@@ -69,6 +74,16 @@ describe('rule: spawn', () => {
       "spawnSync('npx', ['horde', 'status']);",
     ].join('\n');
     assert.deepEqual(rules(src), ['spawn:yg', 'spawn:grain', 'spawn:jarl.mjs', 'spawn:horde']);
+  });
+
+  test('catches package and bin paths in any argument, shell operators, Worker, and tagged templates', () => {
+    const src = [
+      "execFileSync(process.execPath, ['node_modules/@chrisdudek/yg/dist/bin.js', 'check']);",
+      "execSync('git status&&grain survey');",
+      "new Worker(new URL('../horde/worker.mjs', import.meta.url));",
+      'await $`jarl show 1`;',
+    ].join('\n');
+    assert.deepEqual(rules(src), ['spawn:node_modules/@chrisdudek/yg/dist/bin.js', 'spawn:grain', 'spawn:../horde/worker.mjs', 'spawn:jarl']);
   });
 
   test('ignores other commands and regex .exec', () => {

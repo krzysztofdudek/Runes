@@ -23,7 +23,9 @@ export interface ExportedName {
   line: number;
 }
 
-const PROCESS_CALLS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork', 'execa', 'execaSync', 'execaNode', 'execaCommand', 'execaCommandSync']);
+const PROCESS_CALLS = new Set(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork', 'execa', 'execaSync', 'execaNode', 'execaCommand', 'execaCommandSync', 'Worker']);
+/** Tags that run their template as a command: zx's `$` and execa's tagged forms. */
+const PROCESS_TAGS = new Set(['$', 'execa', 'execaSync', 'execaCommand', 'execaCommandSync']);
 const DECL_MODIFIERS = new Set(['default', 'declare', 'async', 'abstract']);
 const DECL_KINDS = new Set(['function', 'class', 'const', 'let', 'var', 'interface', 'type', 'enum', 'namespace', 'module', 'using']);
 
@@ -71,6 +73,14 @@ export function importSpecifiers(tokens: Token[]): Array<{ specifier: string; li
     const next = tokens[k + 1];
     if (t.type !== 'ident' || !next) continue;
     const prev = tokens[k - 1];
+    const resolveCall = t.value === 'resolve' && prev && prev.type === 'punct' && prev.value === '.' && next.type === 'punct' && next.value === '(';
+    if (resolveCall) {
+      // require.resolve('x') and import.meta.resolve('x') name a module as surely as an import does.
+      const owner = tokens[k - 2];
+      const arg = tokens[k + 2];
+      if (owner && owner.type === 'ident' && (owner.value === 'require' || owner.value === 'meta') && arg && (arg.type === 'string' || arg.type === 'template')) out.push({ specifier: arg.value, line: arg.line });
+      continue;
+    }
     if (prev && prev.type === 'punct' && (prev.value === '.' || prev.value === '?.')) continue;
     if ((t.value === 'from' || t.value === 'import') && next.type === 'string') {
       out.push({ specifier: next.value, line: next.line });
@@ -221,6 +231,15 @@ function toolForCommandWord(word: string, tools: GuardTool[]): GuardTool | undef
   return tools.find((tool) => tool.commands.includes(base) || tool.modules.includes(base));
 }
 
+// A command-line string reaches a tool when one of its words (split on whitespace and shell operators) is the tool's executable or script, or names its package or a module path of it (a bin path under node_modules, for instance).
+function commandHit(value: string, tools: GuardTool[]): { word: string; tool: GuardTool } | undefined {
+  for (const word of value.split(/[\s;&|()<>`]+/).filter(Boolean)) {
+    const tool = toolForCommandWord(word, tools) ?? toolForSpecifier(word, tools);
+    if (tool) return { word, tool };
+  }
+  return undefined;
+}
+
 function stateDirIn(value: string, tools: GuardTool[]): { tool: GuardTool; dir: string } | undefined {
   for (const tool of tools) {
     for (const dir of tool.stateDirs) {
@@ -244,7 +263,15 @@ export function scanSource(text: string, file: string, config: GuardConfig = DEF
 
   for (let k = 0; k < tokens.length; k++) {
     const t = tokens[k]!;
-    if (t.type !== 'ident' || !PROCESS_CALLS.has(t.value)) continue;
+    if (t.type !== 'ident') continue;
+    const tagged = tokens[k + 1];
+    if (PROCESS_TAGS.has(t.value) && tagged && tagged.type === 'template') {
+      // A tagged template runs its static text as a command line; interpolated values stay invisible.
+      const hit = commandHit(tagged.value, tools);
+      if (hit) findings.push({ file, line: tagged.line, rule: 'spawn', subject: hit.word, target: hit.tool.name, message: `${t.value}\`...\` runs '${hit.word}', the executable of ${hit.tool.name}` });
+      continue;
+    }
+    if (!PROCESS_CALLS.has(t.value)) continue;
     const open = tokens[k + 1];
     if (!open || open.type !== 'punct' || open.value !== '(') continue;
     let depth = 0;
@@ -255,9 +282,9 @@ export function scanSource(text: string, file: string, config: GuardConfig = DEF
         depth--;
         if (depth === 0) break;
       } else if (a.type === 'string' || a.type === 'template') {
-        const hit = a.value.split(/\s+/).filter(Boolean).map((w) => ({ w, tool: toolForCommandWord(w, tools) })).find((x) => x.tool);
+        const hit = commandHit(a.value, tools);
         if (hit) {
-          findings.push({ file, line: a.line, rule: 'spawn', subject: hit.w, target: hit.tool!.name, message: `${t.value}() runs '${hit.w}', the executable of ${hit.tool!.name}` });
+          findings.push({ file, line: a.line, rule: 'spawn', subject: hit.word, target: hit.tool.name, message: `${t.value}() runs '${hit.word}', which reaches ${hit.tool.name}` });
           break;
         }
       }
