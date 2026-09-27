@@ -12,8 +12,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const rules = (src, config) => scanSource(src, 'x.mts', config).map((f) => `${f.rule}:${f.subject}`);
 
 describe('the guard over Runes itself', () => {
-  test('src/ reaches no family tool and exports no family domain word', () => {
-    const report = runGuard({ root });
+  test('src/, tools/ and scripts/ reach no family tool and exports no family domain word', () => {
+    const report = runGuard({ root, dirs: ['src', 'tools', 'scripts'] });
     assert.ok(report.files.length > 0);
     assert.ok(guardPassed(report), formatGuardReport(report));
   });
