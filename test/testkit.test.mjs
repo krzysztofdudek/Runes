@@ -81,6 +81,18 @@ describe('parity', () => {
     for (const want of ['command "check" has no tool demo_check', 'tool demo_echo lacks "upper"', 'tool demo_note has "extra"', 'tool demo_ghost stands for no command', 'tool demo_help is expected but not listed']) assert.ok(p.includes(want), `${want}\n${p}`);
   });
 
+  test('field types, required-ness and argument order are compared too', () => {
+    const t = structuredClone(tools);
+    const echo = t.find((x) => x.name === 'demo_echo');
+    echo.inputSchema.properties.upper.type = 'string';
+    echo.inputSchema.properties.tag.items.type = 'number';
+    echo.inputSchema.required = [];
+    const props = echo.inputSchema.properties;
+    echo.inputSchema.properties = { more: props.more, text: props.text, ...Object.fromEntries(Object.entries(props).filter(([k]) => k !== 'more' && k !== 'text')) };
+    const p = parityProblems({ table: TABLE, tools: t, toolOptions: { help: USAGE } }).join('\n');
+    for (const want of ['"upper" is ["string",null], the table makes it ["boolean",null]', '"tag" is ["array","number"]', 'tool demo_echo requires [], the table [text]', 'tool demo_echo lists its arguments as more, text, the table as text, more']) assert.ok(p.includes(want), `${want}\n${p}`);
+  });
+
   test('the usage side, both ways: a missing command, an unknown entry, a flag not mentioned, a flag not taken', () => {
     const usage = USAGE
       .replace(/^ {2}check .*\n/m, '')
@@ -133,8 +145,33 @@ describe('stdio client', () => {
       c.raw({ jsonrpc: '2.0', id: 'x', method: 'tools/call', params: { name: 'demo_sleep', arguments: { ms: '100', root: '/' } } });
       c.notify('notifications/cancelled', { requestId: 'x' });
       await assert.rejects(c.request('tools/call', { name: 'demo_sleep', arguments: { ms: '5000', root: '/' } }, 'late'), /no answer to tools\/call/);
-    } finally { c.stop(); }
+    } finally { await c.stop(); }
     assert.ok((await c.exited).signal !== undefined);
+  });
+});
+
+describe('stdio client stop()', () => {
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; } };
+  test('a server that ignores stdin closing is killed after the grace period, with the child it started', async () => {
+    const script = "const c = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' }); process.stdin.resume(); process.stdin.on('end', () => {}); console.log(JSON.stringify({ pids: [process.pid, c.pid] })); setInterval(() => {}, 1e9);";
+    const c = startMcpClient({ command: process.execPath, args: ['-e', script] });
+    const end = Date.now() + 30_000;
+    while (!c.seen.length && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    const pids = c.seen[0].pids;
+    assert.ok(pids.every(alive));
+    const t = Date.now();
+    await c.stop(300);
+    assert.ok(Date.now() - t >= 250, 'waited the grace period first');
+    const gone = Date.now() + 10_000;
+    while (pids.some(alive) && Date.now() < gone) await new Promise((r) => setTimeout(r, 25));
+    assert.deepEqual(pids.filter(alive), [], 'the server and its child are gone');
+  });
+
+  test('a server that leaves on stdin closing is not killed early', async () => {
+    const c = startMcpClient({ command: process.execPath, args: [SERVER, 'in-process'] });
+    await c.request('initialize', {});
+    await c.stop(10_000);
+    assert.deepEqual(await c.exited, { code: 0, signal: null });
   });
 });
 

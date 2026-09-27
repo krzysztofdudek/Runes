@@ -212,7 +212,7 @@ for (const mode of ['in-process', 'spawn']) {
 
         const h = await s.call('demo_help', {});
         assert.equal(textOf(h), USAGE);
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
 
     test('a refusal is isError: the <tool>-error/1 document as the one block in JSON, the message in text', async () => {
@@ -228,7 +228,7 @@ for (const mode of ['in-process', 'spawn']) {
         const c = await s.call('demo_check', { json: true, root: tmp });
         assert.equal(c.result.isError, true, 'a non-zero exit is isError');
         assert.deepEqual(JSON.parse(c.result.content[0].text), { ok: false });
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
 
     test('input that does not fit is -32602 and writes nothing; a write with an absolute path goes through', async () => {
@@ -243,7 +243,7 @@ for (const mode of ['in-process', 'spawn']) {
         const ok = await s.call('demo_write', { file, content: 'hello', root: tmp });
         assert.equal(ok.result.isError, false);
         assert.equal(readFileSync(file, 'utf8'), 'hello');
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
 
     test('ping and tools/list are answered while a call runs, never queued behind it; client responses are ignored', async () => {
@@ -261,7 +261,7 @@ for (const mode of ['in-process', 'spawn']) {
         const at = (id) => s.seen.findIndex((m) => m.id === id);
         assert.ok(at('p') < at('slow') && at('l') < at('slow'), `ping and tools/list answered before the running call: ${JSON.stringify(s.seen.map((m) => m.id))}`);
         assert.ok(!s.seen.some((m) => m.id === 99), 'nothing answers a client response');
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
 
     test('calls run one at a time, in order', async () => {
@@ -272,7 +272,7 @@ for (const mode of ['in-process', 'spawn']) {
         const b = s.call('demo_echo', { text: 'b', root: tmp }).then(() => order.push('b'));
         await Promise.all([a, b]);
         assert.deepEqual(order, ['a', 'b']);
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
 
     test('a cancelled call gets no answer; a cancel for an unknown id is ignored and a reused id is answered', async () => {
@@ -294,7 +294,7 @@ for (const mode of ['in-process', 'spawn']) {
         assert.equal(textOf(await s.call('demo_echo', { text: 'first', root: tmp }, 'd1')), 'first');
         s.raw({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 'd1' } });
         assert.equal(textOf(await s.call('demo_echo', { text: 'second', root: tmp }, 'd1')), 'second');
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
   });
 }
@@ -314,7 +314,7 @@ describe('stopping a spawned CLI with its tree', () => {
       assert.match(textOf(res), /demo tree did not finish within 6 s and was stopped\. Set DEMO_TIMEOUT_MS/);
       assert.ok(await until(() => !pids.some(alive)), `the CLI and its child are gone: ${pids.filter(alive)}`);
       assert.deepEqual((await s.request('ping')).result, {});
-    } finally { s.stop(); }
+    } finally { await s.stop(); }
   });
 
   test('cancelled: the tree is killed and the call gets no answer', async () => {
@@ -327,7 +327,7 @@ describe('stopping a spawned CLI with its tree', () => {
       assert.ok(await until(() => !pids.some(alive)), 'the CLI and its child are gone');
       assert.deepEqual((await s.request('ping')).result, {});
       assert.ok(!s.seen.some((m) => m.id === 'k'));
-    } finally { s.stop(); }
+    } finally { await s.stop(); }
   });
 
   test('the client closes stdin: the tree is killed and the server exits 0', async () => {
@@ -351,7 +351,7 @@ describe('stopping a spawned CLI with its tree', () => {
         const how = await s.exited;
         assert.deepEqual(how, { code: 128 + osConstants.signals[sig], signal: null }, 'handled, not the default action');
         assert.ok(await until(() => !pids.some(alive)), `the CLI and its child are gone: ${pids.filter(alive)}`);
-      } finally { s.stop(); }
+      } finally { await s.stop(); }
     });
   }
 });
@@ -365,7 +365,7 @@ describe('an in-process run past its timeout', () => {
       const r = await s.call('demo_sleep', { ms: '5000', root: tmp });
       assert.match(textOf(r), /demo sleep did not finish within 200 ms and was stopped/);
       assert.ok(Date.now() - t0 < 4000);
-    } finally { s.stop(); }
+    } finally { await s.stop(); }
   });
 
   test('one that ignores it: the answer is a timeout, and the next call waits until the run has ended', async () => {
@@ -380,6 +380,6 @@ describe('an in-process run past its timeout', () => {
       assert.ok(answered < 2500, `the timeout answered before the run ended (${answered} ms)`);
       assert.equal(textOf(await second), 'after');
       assert.ok(Date.now() - t0 >= 2900, `the next call waited for the run to end (${Date.now() - t0} ms)`);
-    } finally { s.stop(); }
+    } finally { await s.stop(); }
   });
 });

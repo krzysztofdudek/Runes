@@ -3,6 +3,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { killTree } from '../mcp/index.mjs';
 
 export interface ClientOptions {
   command: string;
@@ -27,13 +28,14 @@ export interface McpTestClient {
   stderr(): string;
   /** Resolves when the server exits. */
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
-  /** Closes stdin and kills the server. */
-  stop(): void;
+  /** Closes stdin, waits up to `graceMs` (default 2 000) for the server to exit, then kills it with everything it started. */
+  stop(graceMs?: number): Promise<void>;
 }
 
 /** Starts a server and connects to its stdio. */
 export function startMcpClient(options: ClientOptions): McpTestClient {
-  const child = spawn(options.command, options.args ?? [], { cwd: options.cwd, env: options.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  // Its own process group on POSIX, so stop() can kill the server together with whatever it started.
+  const child = spawn(options.command, options.args ?? [], { cwd: options.cwd, env: options.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
   const pending = new Map<string, (m: Record<string, any>) => void>();
   const seen: Record<string, any>[] = [];
   let err = '';
@@ -59,7 +61,14 @@ export function startMcpClient(options: ClientOptions): McpTestClient {
     call: (name, args = {}, id) => request('tools/call', { name, arguments: args }, id),
     notify: (method, params) => raw({ jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }) }),
     stderr: () => err,
-    stop: () => { try { child.stdin?.end(); } catch { /* closed */ } try { child.kill('SIGKILL'); } catch { /* gone */ } },
+    stop: async (graceMs = 2_000) => {
+      const done = (): boolean => child.exitCode !== null || child.signalCode !== null;
+      try { child.stdin?.end(); } catch { /* closed */ }
+      if (!done()) await Promise.race([exited, new Promise((r) => setTimeout(r, graceMs))]);
+      // Even a server that left: a child it started may still run in its group.
+      killTree(child.pid);
+      if (!done()) await exited;
+    },
   };
 }
 
@@ -72,5 +81,5 @@ export async function listToolsOverStdio(options: ClientOptions): Promise<Record
     const r = await c.request('tools/list');
     if (!Array.isArray(r.result?.tools)) throw new Error(`tools/list answered without tools: ${JSON.stringify(r)}`);
     return r.result.tools;
-  } finally { c.stop(); }
+  } finally { await c.stop(); }
 }

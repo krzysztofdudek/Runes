@@ -1,5 +1,5 @@
 /**
- * Parity, both ways, between a tool's command table, its hand-written usage text and its MCP tools. The table is the one source; the check proves that the usage text and the tools say the same thing as it, so a command, an argument or a flag added in one place and forgotten in another fails a test instead of shipping.
+ * Parity, both ways, between a tool's command table, its hand-written usage text and its MCP tools: names, and for the tools also each field's type, which fields are required, and the order of the arguments. The table is the one source; the check proves that the usage text and the tools say the same thing as it, so a command, an argument or a flag added in one place and forgotten in another fails a test instead of shipping.
  */
 import { type CommandTable, type UsageOptions } from '../cli/index.mjs';
 import { type McpTool, type ToolOptions } from '../mcp/index.mjs';

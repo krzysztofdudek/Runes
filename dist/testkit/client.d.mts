@@ -27,8 +27,8 @@ export interface McpTestClient {
         code: number | null;
         signal: NodeJS.Signals | null;
     }>;
-    /** Closes stdin and kills the server. */
-    stop(): void;
+    /** Closes stdin, waits up to `graceMs` (default 2 000) for the server to exit, then kills it with everything it started. */
+    stop(graceMs?: number): Promise<void>;
 }
 /** Starts a server and connects to its stdio. */
 export declare function startMcpClient(options: ClientOptions): McpTestClient;

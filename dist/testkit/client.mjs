@@ -3,9 +3,11 @@
  */
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { killTree } from '../mcp/index.mjs';
 /** Starts a server and connects to its stdio. */
 export function startMcpClient(options) {
-    const child = spawn(options.command, options.args ?? [], { cwd: options.cwd, env: options.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    // Its own process group on POSIX, so stop() can kill the server together with whatever it started.
+    const child = spawn(options.command, options.args ?? [], { cwd: options.cwd, env: options.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
     const pending = new Map();
     const seen = [];
     let err = '';
@@ -40,13 +42,19 @@ export function startMcpClient(options) {
         call: (name, args = {}, id) => request('tools/call', { name, arguments: args }, id),
         notify: (method, params) => raw({ jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }) }),
         stderr: () => err,
-        stop: () => { try {
-            child.stdin?.end();
-        }
-        catch { /* closed */ } try {
-            child.kill('SIGKILL');
-        }
-        catch { /* gone */ } },
+        stop: async (graceMs = 2_000) => {
+            const done = () => child.exitCode !== null || child.signalCode !== null;
+            try {
+                child.stdin?.end();
+            }
+            catch { /* closed */ }
+            if (!done())
+                await Promise.race([exited, new Promise((r) => setTimeout(r, graceMs))]);
+            // Even a server that left: a child it started may still run in its group.
+            killTree(child.pid);
+            if (!done())
+                await exited;
+        },
     };
 }
 /** Starts a server, initializes it, lists its tools and stops it. */
@@ -61,6 +69,6 @@ export async function listToolsOverStdio(options) {
         return r.result.tools;
     }
     finally {
-        c.stop();
+        await c.stop();
     }
 }

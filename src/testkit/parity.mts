@@ -1,8 +1,8 @@
 /**
- * Parity, both ways, between a tool's command table, its hand-written usage text and its MCP tools. The table is the one source; the check proves that the usage text and the tools say the same thing as it, so a command, an argument or a flag added in one place and forgotten in another fails a test instead of shipping.
+ * Parity, both ways, between a tool's command table, its hand-written usage text and its MCP tools: names, and for the tools also each field's type, which fields are required, and the order of the arguments. The table is the one source; the check proves that the usage text and the tools say the same thing as it, so a command, an argument or a flag added in one place and forgotten in another fails a test instead of shipping.
  */
 import { argSpec, publicCommands, readUsage, type CommandTable, type UsageOptions } from '../cli/index.mjs';
-import { toolFlags, toolName, prefixOf, type McpTool, type ToolOptions } from '../mcp/index.mjs';
+import { buildTools, toolFlags, toolName, prefixOf, type McpTool, type ToolOptions } from '../mcp/index.mjs';
 
 export interface ParityOptions {
   table: CommandTable;
@@ -32,6 +32,7 @@ export function parityProblems(options: ParityOptions): string[] {
     const prefix = prefixOf(table, toolOpts);
     const extra = new Set(options.extraTools ?? (toolOpts.help !== undefined ? [toolName(prefix, 'help')] : []));
     const byName = new Map(options.tools.map((t) => [t.name, t]));
+    const reference = new Map(buildTools(table, toolOpts).map((t) => [t.name, t]));
     const expected = new Set<string>();
     for (const c of commands) {
       const name = toolName(prefix, c);
@@ -44,6 +45,22 @@ export function parityProblems(options: ParityOptions): string[] {
       const surplus = have.filter((f) => !want.includes(f));
       if (missing.length) p.push(`tool ${name} lacks ${missing.map((f) => `"${f}"`).join(', ')}`);
       if (surplus.length) p.push(`tool ${name} has ${surplus.map((f) => `"${f}"`).join(', ')}, which command "${c}" does not take`);
+      // Beyond the names: each field's type (and item type), which fields are required, and the arguments in the table's order.
+      const ref = reference.get(name);
+      if (!ref) continue;
+      const props = (t.inputSchema?.properties ?? {}) as Record<string, Record<string, unknown>>;
+      const refProps = ref.inputSchema.properties;
+      for (const f of want) {
+        if (!props[f] || !refProps[f]) continue;
+        const shape = (x: Record<string, unknown>): string => JSON.stringify([x.type, (x.items as Record<string, unknown> | undefined)?.type ?? null]);
+        if (shape(props[f]) !== shape(refProps[f])) p.push(`tool ${name}: "${f}" is ${shape(props[f])}, the table makes it ${shape(refProps[f])}`);
+      }
+      const req = [...((t.inputSchema as { required?: string[] })?.required ?? [])].sort();
+      const refReq = [...(ref.inputSchema.required ?? [])].sort();
+      if (JSON.stringify(req) !== JSON.stringify(refReq)) p.push(`tool ${name} requires [${req.join(', ')}], the table [${refReq.join(', ')}]`);
+      const argNames = (table.commands[c]?.args ?? []).map((a) => argSpec(a).name);
+      const order = Object.keys(props).filter((f) => argNames.includes(f));
+      if (order.length === argNames.length && JSON.stringify(order) !== JSON.stringify(argNames)) p.push(`tool ${name} lists its arguments as ${order.join(', ')}, the table as ${argNames.join(', ')}`);
     }
     for (const name of byName.keys()) if (!expected.has(name) && !extra.has(name)) p.push(`tool ${name} stands for no command of the table`);
     for (const name of extra) if (!byName.has(name)) p.push(`tool ${name} is expected but not listed`);
