@@ -1,10 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  defineTable, tableProblems, argSpec, commandFlags, pathFields, publicCommands, resolveCommand, parseArgs,
-  CliError, UsageError, errorDocument, errorSchema, formatError, commandArgv,
-  renderResult, renderFailure, emit, jsonBlock, isSingleJsonBlock, readUsage,
+  defineTable, parseArgs, CliError, UsageError, errorDocument, renderResult, renderFailure, emit, isSingleJsonBlock,
 } from '@chrisdudek/runes/cli';
+import {
+  tableProblems, argSpec, commandFlags, pathFields, publicCommands, resolveCommand, errorSchema, formatError, commandArgv, jsonBlock, readUsage,
+} from './helpers/internal/cli.mjs';
 
 const TABLE = defineTable({
   tool: 'demo',

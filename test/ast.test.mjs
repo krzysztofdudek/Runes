@@ -6,7 +6,8 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as TreeSitter from 'web-tree-sitter';
 import { createParserHost, fileSha256, walk, closest } from '@chrisdudek/runes/ast';
-import { kotlinExtractor, kotlinView } from '@chrisdudek/runes/relations';
+import { kotlinExtractor } from '@chrisdudek/runes/relations';
+import { kotlinView } from './helpers/internal/relations.mjs';
 import { GRAMMAR_DIR, host } from './helpers/tree-sitter.mjs';
 
 const require = createRequire(import.meta.url);

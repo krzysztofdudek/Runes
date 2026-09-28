@@ -4,8 +4,9 @@ import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { makeResolvePathToFile, parseCargoManifest, rustFileDeclares } from '@chrisdudek/runes/relations';
-import { resolveRustPath } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { parseCargoManifest, rustFileDeclares } from '../../helpers/internal/relations.mjs';
+import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 
 // The Rust resolver maps a `::`-path → a `.rs` file through the crate module tree.
 // The crate root is the nearest ancestor of the importing file containing a

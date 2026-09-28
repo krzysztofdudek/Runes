@@ -1,5 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
-import { type CommandTable, type CommandResult, type ParsedArgs } from '../cli/index.mjs';
+import type { CommandTable } from '../cli/table.mjs';
+import { type ParsedArgs } from '../cli/parse.mjs';
+import { type CommandResult } from '../cli/output.mjs';
 import { type McpTool, type ToolOptions } from './tools.mjs';
 export declare const PROTOCOL_VERSION = "2025-06-18";
 /** The versions the server speaks: it uses nothing a later one added beyond tool annotations, which an older client ignores. A client asking for one of these gets it back; any other gets `PROTOCOL_VERSION`. */

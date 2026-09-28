@@ -6,6 +6,8 @@ Shared code for the Yggdrasil tool family.
 
 Status: 0.1.1 (not yet published). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the 460-case relation catalogue and their unit tests, and the shared file-system, CLI and MCP code, the test kit and the first skill fragments are in.
 
+**The stable API.** [docs/api.md](docs/api.md) lists every name the seven subpaths export, which family tool imports it, and what semver 1.x promises and does not; a test holds that page and the exports together.
+
 ## What goes in: the entry rule
 
 Code enters Runes only when both hold:
@@ -54,7 +56,7 @@ const root = findRoot(process.cwd(), { marker: '<state dir>' });    // a worktre
 ## `cli`: the command table, parsing, errors, one JSON block
 
 ```js
-import { defineTable, parseArgs, renderResult, renderFailure, emit, readUsage } from '@chrisdudek/runes/cli';
+import { defineTable, parseArgs, renderResult, renderFailure, emit } from '@chrisdudek/runes/cli';
 
 export const TABLE = defineTable({
   tool: 'demo',
@@ -75,11 +77,10 @@ try {
 }
 ```
 
-- **The table** is the one source of the CLI, the MCP tools and the parity tests. An argument is `name`, `name?`, `name...` (one or more) or `name...?` (any number); a flag is `bool`, `value`, `many`, `number` or `path`. A command key may hold a subcommand (`decide rm`); an alias may name a command or a whole group. `writes`, `destructive` and `idempotent` become the MCP annotations; `paths` names the fields resolved against the working directory; `stdoutJson` marks a command that prints JSON unasked; `internal` keeps a hook command off the tools and the usage text. `defineTable` throws on a malformed table (order of arguments, duplicate names, a flag whose kind differs from the global one, an alias to nothing).
+- **The table** is the one source of the CLI, the MCP tools and the parity tests. An argument is `name`, `name?`, `name...` (one or more) or `name...?` (any number); a flag is `bool`, `value`, `many`, `number` or `path`. A command key may hold a subcommand (`decide rm`); an alias may name a command or a whole group. `writes`, `destructive` and `idempotent` become the MCP annotations; `paths` names the fields resolved against the working directory; `stdoutJson` marks a command that prints JSON unasked; `internal` keeps a hook command off the tools and the usage text. `defineTable` throws on a malformed table (order of arguments, duplicate names, a flag whose kind differs from the global one, an alias to nothing, `destructive` or `idempotent` on a command that does not write).
 - **`parseArgs(table, argv)`** returns `{ command, words, args, flags }`. A value flag always takes the next word, even one that starts with `--`; a bare `--` ends the flags; only global flags may come before the command; an unknown flag names the ones the command takes; a single-value flag given twice, a missing required argument and surplus words are errors. Every refusal is a `UsageError` (code `usage`).
 - **The error document** `<tool>-error/1` is `{ schema, code, what, why, next: { command, text } | null }`: `code` a stable word, `next.command` the step as argv when it is a command of the tool a reader can run as given. `CliError(code, what, { why, next, exitCode })` carries the parts; anything else thrown reads as `command-error`.
 - **One JSON block**: with `--json`, stdout holds exactly one document, the answer or the error document, and every note goes to stderr. `renderResult`, `renderFailure` and `emit` do this; `isSingleJsonBlock` checks it.
-- **`readUsage(usage, table)`** reads a hand-written usage text (the section after `commands:` or `usage:`) into blocks per command, with each entry's synopsis, description and `--flags`, and lists entries that name no command.
 
 ## `mcp`: a stdio server from the table
 
@@ -116,7 +117,7 @@ console.log(formatToolsMeasure(measureTools(tools, { label: 'demo' })));      //
 ```
 
 - **`gitEnv(base, { name, email, date, config })`** first drops every variable `git rev-parse --local-env-vars` names (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_CONFIG_PARAMETERS`, ...) and any inherited `GIT_CONFIG_*` entry, so a suite run from a git hook never reaches the outer repository. It then sets the test config as `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`: `maintenance.auto=false` and `gc.auto=0` (no background git holding files a test deletes, fatal on Windows), `init.defaultBranch=main`, no signing, `core.autocrlf=false`, and `core.hooksPath` at an empty directory; `GIT_CONFIG_GLOBAL` points at an empty file (both in a private temp directory, which works on every platform where `/dev/null` does not), `GIT_CONFIG_NOSYSTEM=1`, and a fixed identity and date, so commit ids repeat. `makeTempRepo({ files, env })` is a repository under the OS temp dir with it.
-- **`parityProblems` / `assertParity`** hold the table, the usage text and the tools together both ways: a command without a tool or a usage entry, a tool or an entry that names no command, a field the tool lacks or has beyond the command's arguments and flags, a field whose type or item type differs from what the table makes it, a different set of required fields, arguments listed out of the table's order, and a flag the usage does not mention or mentions without the command taking it.
+- **`parityProblems` / `assertParity`** hold the table, the usage text and the tools together both ways: a command without a tool or a usage entry, a tool or an entry that names no command, a field the tool lacks or has beyond the command's arguments and flags, a field whose type or item type differs from what the table makes it, a different set of required fields, arguments listed out of the table's order, and a flag the usage does not mention or mentions without the command taking it. The usage text is read as the section after `commands:` or `usage:`, one block per command with each entry's synopsis, description and `--flags`, and an entry that names no command is reported.
 - **`measureTools(tools, { budgetTokens })`** measures what `tools/list` sends, estimating tokens at four characters each, and returns a warning when the server is over budget (default 8 500 tokens). CI prints it; it never fails the build.
 - **`startMcpClient` / `listToolsOverStdio`** drive a server over its real stdio in tests. `stop(graceMs)` closes stdin, waits for the server to leave (2 s by default), then kills it with everything it started.
 - **`checkRuntimePins`** checks a consumer's runtime and grammar packages against the manifest (see [Relations, syntax trees and grammars](#relations-syntax-trees-and-grammars) below).

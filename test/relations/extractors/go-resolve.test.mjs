@@ -4,8 +4,9 @@ import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { makeResolvePathToFile, parseGoModulePath, parseGoWorkUses } from '@chrisdudek/runes/relations';
-import { resolveGoImport, } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { parseGoModulePath, parseGoWorkUses } from '../../helpers/internal/relations.mjs';
+import { resolveGoImport } from '../../helpers/internal/relations.mjs';
 
 // The Go resolver maps an import PATH → a package directory → a representative
 // `.go` file. It reads go.mod for the module path and lists the package directory

@@ -4,10 +4,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  resolvePhpFqn,
   parsePsr4,
-  parseComposerAutoload,
 } from '@chrisdudek/runes/relations';
+import {
+  resolvePhpFqn, parseComposerAutoload,
+} from '../../helpers/internal/relations.mjs';
 import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
 
 // ---------------------------------------------------------------------------

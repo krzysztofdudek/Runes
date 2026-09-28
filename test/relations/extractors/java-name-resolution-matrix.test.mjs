@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runCase } from '../reference-case-runner.mjs';
 import { javaExtractor } from '@chrisdudek/runes/relations';
-import { resolveJavaFqn, } from '@chrisdudek/runes/relations';
+import { resolveJavaFqn } from '../../helpers/internal/relations.mjs';
 import { SymbolTable } from '@chrisdudek/runes/relations';
 import { makeResolver } from '@chrisdudek/runes/relations';
 import { withParsedFile } from '../../helpers/tree-sitter.mjs';

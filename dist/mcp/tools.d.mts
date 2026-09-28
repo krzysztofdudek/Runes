@@ -1,4 +1,4 @@
-import { type CommandSpec, type CommandTable, type FlagKind } from '../cli/index.mjs';
+import { type CommandSpec, type CommandTable, type FlagKind } from '../cli/table.mjs';
 /** A JSON-RPC "invalid params" refusal (-32602): the call's input does not fit the tool. */
 export declare class InvalidParams extends Error {
     readonly rpcCode = -32602;

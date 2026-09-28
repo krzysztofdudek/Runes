@@ -2,7 +2,7 @@
  * MCP tools generated from the command table: one tool per public command, `<prefix><command>` (a subcommand or a dash joins with `_`: `grain_decide_steer`), one field per argument and per flag under the flag's own name, and the annotations from the table. A call is turned back into the argv the CLI would get, so the CLI's own parser reads it exactly as it reads a command line.
  */
 import { isAbsolute } from 'node:path';
-import { argSpec, commandFlags, pathFields, publicCommands, type CommandSpec, type CommandTable, type FlagKind } from '../cli/index.mjs';
+import { argSpec, commandFlags, pathFields, publicCommands, type CommandSpec, type CommandTable, type FlagKind } from '../cli/table.mjs';
 
 /** A JSON-RPC "invalid params" refusal (-32602): the call's input does not fit the tool. */
 export class InvalidParams extends Error {

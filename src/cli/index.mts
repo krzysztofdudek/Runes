@@ -1,15 +1,11 @@
 /**
  * @chrisdudek/runes/cli
  *
- * CLI scaffolding: the command table and its checks, `parseArgs` driven by it, the `<tool>-error/1` error document, the one-block `--json` rule, and reading a hand-written usage text against the table.
+ * CLI scaffolding: the command table, `parseArgs` driven by it, the `<tool>-error/1` error document, and the one-block `--json` rule. This index is the stable 1.x surface (docs/api.md); the table's helper functions and the usage-text reader behind the test kit's parity check are internal.
  */
 export { RUNES_VERSION as version } from '../version.mjs';
 
-/** The subpath this module is published under. */
-export const subpath = 'cli';
-
-export { defineTable, tableProblems, argSpec, commandFlags, pathFields, publicCommands, resolveCommand, type CommandTable, type CommandSpec, type FlagKind, type ArgSpec } from './table.mjs';
+export { defineTable, type CommandTable, type CommandSpec, type FlagKind } from './table.mjs';
 export { parseArgs, type ParsedArgs, type ParseOptions, type FlagValue } from './parse.mjs';
-export { CliError, UsageError, errorDocument, errorSchema, errorParts, formatError, commandArgv, type ErrorDocument, type CliErrorOptions } from './error.mjs';
-export { renderResult, renderFailure, emit, jsonBlock, isSingleJsonBlock, type CommandResult, type Rendered, type FailureOptions, type Streams } from './output.mjs';
-export { readUsage, type UsageBlock, type UsageReading, type UsageOptions } from './usage.mjs';
+export { CliError, UsageError, errorDocument, type ErrorDocument, type CliErrorOptions } from './error.mjs';
+export { renderResult, renderFailure, emit, isSingleJsonBlock, type CommandResult, type Rendered, type FailureOptions, type Streams } from './output.mjs';

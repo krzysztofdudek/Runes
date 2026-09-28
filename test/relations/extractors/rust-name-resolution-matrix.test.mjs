@@ -3,7 +3,7 @@ import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runCase } from '../reference-case-runner.mjs';
 import {
   resolveRustPath,
-} from '@chrisdudek/runes/relations';
+} from '../../helpers/internal/relations.mjs';
 
 /**
  * RUST NAME-RESOLUTION IDENTIFICATION MATRIX — one runCase-backed test per

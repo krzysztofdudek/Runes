@@ -6,12 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 import { withParsedFiles } from '../helpers/tree-sitter.mjs';
 import {
-  csharpUses,
-  collectGlobalUsings,
-  collectGlobalUsingAliases,
-  extractCsharpRefs,
-  assembleCsharpCandidates,
+  extractCsharpRefs, assembleCsharpCandidates,
 } from '@chrisdudek/runes/relations';
+import {
+  csharpUses, collectGlobalUsings, collectGlobalUsingAliases,
+} from '../helpers/internal/relations.mjs';
 
 /**
  * Parity oracle for the C# extract/assemble split.

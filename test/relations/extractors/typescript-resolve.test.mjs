@@ -4,10 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs
 import os from 'node:os';
 import path from 'node:path';
 import {
-  resolveTsPath,
-  makeTsResolveDeps,
-  parseJsonc,
-} from '@chrisdudek/runes/relations';
+  resolveTsPath, makeTsResolveDeps, parseJsonc,
+} from '../../helpers/internal/relations.mjs';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([

@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
-import { parseCompileCommands } from '@chrisdudek/runes/relations';
+import { parseCompileCommands } from '../../helpers/internal/relations.mjs';
 
 // The C/C++ include resolver maps an `#include` name → a repo-relative file. A quoted include
 // resolves next to the includer first; then, with a compile_commands.json, under its

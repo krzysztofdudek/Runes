@@ -13,7 +13,10 @@
 import { createInterface } from 'node:readline';
 import { constants as osConstants } from 'node:os';
 import type { Readable, Writable } from 'node:stream';
-import { parseArgs, errorDocument, errorParts, isSingleJsonBlock, type CommandTable, type CommandResult, type ParsedArgs } from '../cli/index.mjs';
+import type { CommandTable } from '../cli/table.mjs';
+import { parseArgs, type ParsedArgs } from '../cli/parse.mjs';
+import { errorDocument, errorParts } from '../cli/error.mjs';
+import { isSingleJsonBlock, type CommandResult } from '../cli/output.mjs';
 import { buildTools, argvFor, answersJson, commandForTool, toolName, prefixOf, InvalidParams, type McpTool, type ToolOptions } from './tools.mjs';
 import { runProcess } from './process.mjs';
 

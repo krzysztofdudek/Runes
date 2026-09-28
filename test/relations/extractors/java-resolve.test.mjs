@@ -1,9 +1,8 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/java-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import {
-  resolveJavaFqn,
-  resolveJavaPackageFiles,
-} from '@chrisdudek/runes/relations';
+  resolveJavaFqn, resolveJavaPackageFiles,
+} from '../../helpers/internal/relations.mjs';
 
 // Fixed resolution universe (repo-relative POSIX). Two source roots are present —
 // a flat `src/main/java/...` Maven layout and a sibling `lib/...` root — to prove

@@ -1,7 +1,8 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/csharp.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { csharpExtractor, csharpUses } from '@chrisdudek/runes/relations';
+import { csharpExtractor } from '@chrisdudek/runes/relations';
+import { csharpUses } from '../../helpers/internal/relations.mjs';
 import { withParsedFile } from '../../helpers/tree-sitter.mjs';
 import { SymbolTable } from '@chrisdudek/runes/relations';
 import { makeResolver } from '@chrisdudek/runes/relations';

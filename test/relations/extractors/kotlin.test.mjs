@@ -5,7 +5,7 @@ import { kotlinExtractor } from '@chrisdudek/runes/relations';
 import { SymbolTable } from '@chrisdudek/runes/relations';
 import { makeResolver } from '@chrisdudek/runes/relations';
 import { withParsedFiles, } from '../../helpers/tree-sitter.mjs';
-import { kotlinView } from '@chrisdudek/runes/relations';
+import { kotlinView } from '../../helpers/internal/relations.mjs';
 
 const run = (code) => runExtractor(kotlinExtractor, 'kotlin', '.kt', code);
 

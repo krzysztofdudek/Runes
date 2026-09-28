@@ -1,6 +1,6 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/python-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import { resolvePythonModule } from '@chrisdudek/runes/relations';
+import { resolvePythonModule } from '../../helpers/internal/relations.mjs';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([

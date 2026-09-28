@@ -7,8 +7,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  validateGrammarManifest, parseGrammarManifest, GRAMMAR_MANIFEST_SCHEMA, loadGrammarManifest, shippedGrammarsDir, buildGrammars, verifyGrammarFiles, syntaxNodeTypesFile, LANGUAGES,
+  loadGrammarManifest, buildGrammars, verifyGrammarFiles, LANGUAGES,
 } from '@chrisdudek/runes/grammars';
+import {
+  validateGrammarManifest, parseGrammarManifest, GRAMMAR_MANIFEST_SCHEMA, shippedGrammarsDir, syntaxNodeTypesFile,
+} from './helpers/internal/grammars.mjs';
 
 const require = createRequire(import.meta.url);
 const root = fileURLToPath(new URL('..', import.meta.url));

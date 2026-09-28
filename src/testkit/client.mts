@@ -3,7 +3,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { killTree } from '../mcp/index.mjs';
+import { killTree } from '../mcp/process.mjs';
 
 export interface ClientOptions {
   command: string;

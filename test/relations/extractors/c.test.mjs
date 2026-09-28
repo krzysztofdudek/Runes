@@ -3,9 +3,8 @@ import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
 import { cExtractor } from '@chrisdudek/runes/relations';
 import {
-  evalPreprocessorCondition,
-  deadPreprocessorLines,
-} from '@chrisdudek/runes/relations';
+  evalPreprocessorCondition, deadPreprocessorLines,
+} from '../../helpers/internal/relations.mjs';
 
 const run = (code, ext = '.c') => runExtractor(cExtractor, 'c', ext, code);
 

@@ -4,7 +4,8 @@ import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { makeExactCaseCheck, makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { makeExactCaseCheck } from '../helpers/internal/relations.mjs';
 
 /** A stand-in case-insensitive, case-preserving file system: `exists` ignores case the way APFS and NTFS do, `readdirSync` lists the stored names. */
 function caseInsensitiveFs(files) {

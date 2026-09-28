@@ -12,7 +12,9 @@
  */
 import { createInterface } from 'node:readline';
 import { constants as osConstants } from 'node:os';
-import { parseArgs, errorDocument, errorParts, isSingleJsonBlock } from '../cli/index.mjs';
+import { parseArgs } from '../cli/parse.mjs';
+import { errorDocument, errorParts } from '../cli/error.mjs';
+import { isSingleJsonBlock } from '../cli/output.mjs';
 import { buildTools, argvFor, answersJson, commandForTool, toolName, prefixOf, InvalidParams } from './tools.mjs';
 import { runProcess } from './process.mjs';
 export const PROTOCOL_VERSION = '2025-06-18';

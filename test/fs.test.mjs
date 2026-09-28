@@ -5,10 +5,11 @@ import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import {
-  withLock, withLockAsync, lockIsStale, lockHolderText, pidRuns, LockHeldError, LockBreakError, LockDirectoryMissingError,
-  writeAtomic, renameWithRetry, transientRenameCodes, tempPathFor,
-  findRoot, checkoutRoot, mainCheckout, gitCommonDir, isLinkedWorktree,
+  withLock, withLockAsync, LockHeldError, LockBreakError, LockDirectoryMissingError, writeAtomic, renameWithRetry, findRoot, checkoutRoot, mainCheckout, gitCommonDir, isLinkedWorktree,
 } from '@chrisdudek/runes/fs';
+import {
+  lockIsStale, lockHolderText, pidRuns, transientRenameCodes, tempPathFor,
+} from './helpers/internal/fs.mjs';
 
 // realpathSync.native: git reports long names on Windows, where tmpdir() can hold an 8.3 short one (RUNNER~1).
 const temp = () => realpathSync.native(mkdtempSync(join(tmpdir(), 'runes-fs-')));

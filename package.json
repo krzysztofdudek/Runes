@@ -50,6 +50,7 @@
     "dist",
     "grammars",
     "skills",
+    "docs/api.md",
     "CHANGELOG.md"
   ],
   "sideEffects": false,

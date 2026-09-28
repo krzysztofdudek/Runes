@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, dirname, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  tokenize, scanSource, listExports, identifierWords, domainWordsIn, parseAllow, runGuard, guardPassed, formatGuardReport, guardConfig, DEFAULT_DOMAIN_WORDS,
+  tokenize, runGuard, guardPassed, formatGuardReport, guardConfig, DEFAULT_DOMAIN_WORDS,
 } from '@chrisdudek/runes/testkit';
+import {
+  scanSource, listExports, identifierWords, domainWordsIn, parseAllow,
+} from './helpers/internal/testkit.mjs';
 import { relativePosix } from '../dist/testkit/guard/run.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
