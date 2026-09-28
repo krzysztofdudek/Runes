@@ -17,9 +17,9 @@ export interface CommandSpec {
   summary?: string;
   /** The command writes something beyond a disposable cache. */
   writes?: boolean;
-  /** The command can remove or overwrite what is there. */
+  /** The command can remove or overwrite what is there. Only a command that writes can be; `defineTable` refuses it on one that does not. */
   destructive?: boolean;
-  /** Running the command twice with the same input has no further effect. Default: true for a command that does not write. */
+  /** Running the command twice with the same input has no further effect. Only said of a command that writes (one that does not is trivially so); `defineTable` refuses it on one that does not. */
   idempotent?: boolean;
   /** Arguments and `value`/`many` flags that name a file resolved against the working directory. A `path` flag is one already. Over MCP they must be absolute. */
   paths?: readonly string[];
@@ -111,6 +111,8 @@ export function tableProblems(table: CommandTable): string[] {
     for (const f of spec.paths ?? []) {
       if (!names.has(f) && !(Object.hasOwn(flags, f) && flags[f] !== 'bool' && flags[f] !== 'number')) p.push(`${at}: paths names "${f}", which is neither an argument nor a flag that takes a value`);
     }
+    if (!spec.writes && spec.destructive) p.push(`${at}: destructive, but it does not write`);
+    if (!spec.writes && spec.idempotent !== undefined) p.push(`${at}: idempotent is said only of a command that writes`);
     if (typeof spec.stdoutJson === 'string' && !Object.hasOwn(flags, spec.stdoutJson)) p.push(`${at}: stdoutJson names --${spec.stdoutJson}, which it does not take`);
   }
   for (const [alias, target] of Object.entries(table?.aliases ?? {})) {

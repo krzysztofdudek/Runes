@@ -18,8 +18,12 @@ export function requireParam(cond: unknown, message: string): asserts cond {
 export interface McpTool {
   name: string;
   description: string;
-  inputSchema: { type: 'object'; properties: Record<string, Record<string, unknown>>; required?: string[]; additionalProperties: false };
-  annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
+  /** The fields: one per argument and per flag. The schema is closed in practice rather than by `additionalProperties: false`: the server refuses a field it does not list with a -32602 error naming the fields it takes, so the keyword would cost every tool its bytes in `tools/list` to say what the refusal already says. */
+  inputSchema: { type: 'object'; properties: Record<string, Record<string, unknown>>; required?: string[] };
+  /**
+   * The MCP tool annotations, written only where they differ from the specification's defaults (`readOnlyHint` false, `destructiveHint` true, `idempotentHint` false, `openWorldHint` true), so an absent hint means its default. A read-only tool says `readOnlyHint: true` and nothing about destruction or idempotence, which the specification gives meaning only for a tool that writes; a tool that writes says `destructiveHint: false` unless the table marks it destructive and `idempotentHint: true` when the table marks it idempotent. Every tool says `openWorldHint: false`: it works on local files, not an open world.
+   */
+  annotations: { readOnlyHint?: true; destructiveHint?: false; idempotentHint?: true; openWorldHint: false };
 }
 
 export interface ToolOptions {
@@ -35,7 +39,8 @@ export interface ToolOptions {
   help?: string;
 }
 
-const ABS = ' An absolute path: the server does not run in your working directory.';
+/** The note a path field carries: the one description the adapter writes itself. */
+const ABS = 'An absolute path.';
 const DEFAULT_OMIT: readonly string[] = ['help'];
 
 /** A tool's name for a command. */
@@ -58,14 +63,19 @@ export function commandForTool(table: CommandTable, name: unknown, options: Tool
   return publicCommands(table).find((c) => toolName(prefix, c) === name) ?? null;
 }
 
-function flagSchema(name: string, kind: FlagKind): Record<string, unknown> {
+// A field's schema says only what its name and type do not: a flag's name is the field's name, its kind is the type (an array for a repeatable flag, a number for a number flag), and an argument's position and whether it is required are the table's business (argv order) and `required`'s. Only a path field carries a word, because "absolute" is a rule the type cannot say. Everything else a caller needs is in the help tool, said once instead of once per tool.
+function flagSchema(kind: FlagKind): Record<string, unknown> {
   switch (kind) {
-    case 'bool': return { type: 'boolean', description: `--${name}` };
-    case 'many': return { type: 'array', items: { type: 'string' }, description: `--${name}, repeatable: one item per value (a single string is one item).` };
-    case 'number': return { type: ['number', 'string'], description: `--${name} <number>` };
-    case 'path': return { type: 'string', description: `--${name} <path>.${ABS}` };
-    default: return { type: 'string', description: `--${name} <value>` };
+    case 'bool': return { type: 'boolean' };
+    case 'many': return { type: 'array', items: { type: 'string' } };
+    case 'number': return { type: ['number', 'string'] };
+    default: return { type: 'string' };
   }
+}
+
+function annotationsFor(spec: CommandSpec): McpTool['annotations'] {
+  if (!spec.writes) return { readOnlyHint: true, openWorldHint: false };
+  return { ...(spec.destructive ? {} : { destructiveHint: false as const }), ...(spec.idempotent ? { idempotentHint: true as const } : {}), openWorldHint: false };
 }
 
 function defaultDescription(_command: string, spec: CommandSpec): string {
@@ -82,34 +92,28 @@ export function buildTools(table: CommandTable, options: ToolOptions = {}): McpT
     const paths = pathFields(table, command);
     const properties: Record<string, Record<string, unknown>> = {};
     const required: string[] = [];
-    (spec.args ?? []).map(argSpec).forEach((a, i) => {
-      properties[a.name] = a.variadic
-        ? { type: 'array', items: { type: 'string' }, ...(a.optional ? {} : { minItems: 1 }), description: `Arguments ${i + 1} and on, one per item.` }
-        : { type: 'string', description: `Argument ${i + 1}${a.optional ? ' (optional)' : ''}.` };
+    for (const a of (spec.args ?? []).map(argSpec)) {
+      properties[a.name] = a.variadic ? { type: 'array', items: { type: 'string' }, ...(a.optional ? {} : { minItems: 1 }) } : { type: 'string' };
       if (!a.optional) required.push(a.name);
-    });
-    for (const [f, kind] of Object.entries(toolFlags(table, command, options))) {
-      properties[f] = flagSchema(f, kind);
-      if (f === 'json' && kind === 'bool') properties[f].description = 'Answer with the JSON document --json prints.';
     }
+    for (const [f, kind] of Object.entries(toolFlags(table, command, options))) properties[f] = flagSchema(kind);
     for (const [f, schema] of Object.entries(properties)) {
-      if (paths.has(f) && !String(schema.description).includes(ABS)) schema.description = `${schema.description}${ABS}`;
-      const note = options.fieldNote?.(command, f);
-      if (note) schema.description = `${schema.description} ${note}`;
+      const words = [paths.has(f) ? ABS : undefined, options.fieldNote?.(command, f)].filter(Boolean);
+      if (words.length) schema.description = words.join(' ');
     }
     tools.push({
       name: toolName(prefix, command),
       description: describe(command, spec),
-      inputSchema: { type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false },
-      annotations: { readOnlyHint: !spec.writes, destructiveHint: !!spec.destructive, idempotentHint: spec.idempotent ?? !spec.writes, openWorldHint: false },
+      inputSchema: { type: 'object', properties, ...(required.length ? { required } : {}) },
+      annotations: annotationsFor(spec),
     });
   }
   if (options.help !== undefined) {
     tools.push({
       name: toolName(prefix, 'help'),
-      description: 'Read-only. The CLI usage text: every command, flag and rule the tools are generated from.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      description: 'Read-only. The full usage text.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true, openWorldHint: false },
     });
   }
   return tools;

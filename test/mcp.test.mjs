@@ -4,8 +4,10 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, realpathSync } from 'nod
 import { tmpdir, constants as osConstants } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PassThrough } from 'node:stream';
+import { createInterface } from 'node:readline';
 import {
-  buildTools, argvFor, answersJson, commandForTool, toolName, createServer, inProcess, killTree, runProcess, InvalidParams, PROTOCOL_VERSION, PROTOCOL_VERSIONS,
+  buildTools, argvFor, answersJson, commandForTool, toolName, createServer, serveStdio, inProcess, spawnCli, killTree, runProcess, InvalidParams, PROTOCOL_VERSION, PROTOCOL_VERSIONS,
 } from '@chrisdudek/runes/mcp';
 import { startMcpClient } from '@chrisdudek/runes/testkit';
 import { TABLE, USAGE, dispatch } from './fixtures/demo-tool.mjs';
@@ -38,7 +40,7 @@ describe('tools from the table', () => {
     const e = by.demo_echo.inputSchema;
     assert.deepEqual(Object.keys(e.properties), ['text', 'more', 'json', 'root', 'upper', 'times', 'tag']);
     assert.deepEqual(e.required, ['text']);
-    assert.equal(e.additionalProperties, false);
+    assert.equal(e.additionalProperties, undefined, 'the server refuses an unknown field itself; the keyword would only cost tools/list bytes');
     assert.equal(e.properties.more.type, 'array');
     assert.equal(e.properties.more.minItems, undefined);
     assert.deepEqual(e.properties.times.type, ['number', 'string']);
@@ -46,11 +48,22 @@ describe('tools from the table', () => {
     assert.match(e.properties.root.description, /absolute path/);
     assert.match(by.demo_write.inputSchema.properties.file.description, /absolute path/);
     assert.match(by.demo_export.inputSchema.properties.out.description, /absolute path/);
+    // A field says only what its name and type cannot: a path field that it is absolute, nothing else. The json flag, the other flags and the arguments carry no description of their own (the help tool has the usage).
+    for (const f of ['text', 'more', 'json', 'upper', 'times', 'tag']) assert.equal(e.properties[f].description, undefined, f);
+    assert.equal(e.properties.root.description, 'An absolute path.');
+    const noted = buildTools(TABLE, { fieldNote: (c, f) => (f === 'root' ? 'The checkout.' : undefined) });
+    assert.equal(noted[0].inputSchema.properties.root.description, 'An absolute path. The checkout.');
+    assert.equal(noted[0].inputSchema.properties.text.description, undefined);
   });
 
   test('annotations from writes, destructive and idempotent; descriptions start with the effect', () => {
-    assert.deepEqual(by.demo_echo.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
-    assert.deepEqual(by.demo_store_rm.annotations, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
+    // Only what differs from the specification's defaults (readOnlyHint false, destructiveHint true, idempotentHint false, openWorldHint true).
+    assert.deepEqual(by.demo_echo.annotations, { readOnlyHint: true, openWorldHint: false });
+    assert.deepEqual(by.demo_store_rm.annotations, { openWorldHint: false });
+    assert.deepEqual(by.demo_write.annotations, { destructiveHint: false, openWorldHint: false });
+    assert.deepEqual(by.demo_help.annotations, { readOnlyHint: true, openWorldHint: false });
+    const idem = buildTools({ tool: 'x', commands: { put: { writes: true, idempotent: true }, add: { writes: true, idempotent: false } } });
+    assert.deepEqual(idem.map((t) => t.annotations), [{ destructiveHint: false, idempotentHint: true, openWorldHint: false }, { destructiveHint: false, openWorldHint: false }]);
     assert.equal(by.demo_write.description, 'WRITES. Write a file.');
     assert.equal(by.demo_echo.description, 'Read-only. Say it back.');
     const custom = buildTools(TABLE, { prefix: 'd_', describe: (c) => `do ${c}`, fieldNote: (c, f) => (c === 'echo' && f === 'text' ? 'Say anything.' : undefined), omitFlags: [] });
@@ -380,6 +393,148 @@ describe('an in-process run past its timeout', () => {
       assert.ok(answered < 2500, `the timeout answered before the run ended (${answered} ms)`);
       assert.equal(textOf(await second), 'after');
       assert.ok(Date.now() - t0 >= 2900, `the next call waited for the run to end (${Date.now() - t0} ms)`);
+    } finally { await s.stop(); }
+  });
+});
+
+describe('several calls at once', () => {
+  // serveStdio over streams and a server whose calls finish when the test says so: the scheduling alone, with no process and no clock.
+  const harness = (concurrency) => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const sent = [];
+    createInterface({ input: output }).on('line', (l) => sent.push(JSON.parse(l)));
+    const calls = new Map();   // id → { name, finish(), signal }
+    const started = [];
+    const server = {
+      tools: [],
+      idle: async () => {},
+      callTool: async () => { throw new Error('unused'); },
+      handle: (msg, signal) => new Promise((res) => {
+        started.push(msg.id);
+        calls.set(msg.id, { name: msg.params.name, signal, finish: () => res({ jsonrpc: '2.0', id: msg.id, result: { done: msg.id } }) });
+        signal.addEventListener('abort', () => res(null), { once: true });
+      }),
+      ...(concurrency ? { concurrency } : {}),
+    };
+    const handle = serveStdio(server, { input, output, signals: false, exit: () => {} });
+    const send = (id, name) => input.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } })}\n`);
+    const cancel = (id) => input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id } })}\n`);
+    const tick = () => new Promise((r) => setImmediate(r));
+    return { send, cancel, calls, started, sent, tick, close: () => { handle.close(); } };
+  };
+  const limits = (total, per = {}) => ({ total, perTool: (name) => ({ key: name, limit: per[name] ?? Infinity }) });
+
+  test('without concurrency a server runs one call at a time, in order', async () => {
+    const h = harness();
+    try {
+      h.send(1, 'a'); h.send(2, 'b'); h.send(3, 'a');
+      await h.tick();
+      assert.deepEqual(h.started, [1]);
+      h.calls.get(1).finish(); await h.tick(); await h.tick();
+      assert.deepEqual(h.started, [1, 2]);
+      h.calls.get(2).finish(); await h.tick(); await h.tick();
+      assert.deepEqual(h.started, [1, 2, 3]);
+    } finally { h.close(); }
+  });
+
+  test('total bounds the calls running together; the rest wait in arrival order; answers go out as calls finish', async () => {
+    const h = harness(limits(2));
+    try {
+      for (const id of [1, 2, 3, 4]) h.send(id, `t${id}`);
+      await h.tick();
+      assert.deepEqual(h.started, [1, 2]);
+      h.calls.get(2).finish(); await h.tick(); await h.tick();
+      assert.deepEqual(h.started, [1, 2, 3], 'the oldest waiting call takes the free place');
+      assert.deepEqual(h.sent.map((m) => m.id), [2], 'the call that finished first is answered first');
+      h.calls.get(1).finish(); h.calls.get(3).finish(); await h.tick(); await h.tick();
+      assert.deepEqual(h.started, [1, 2, 3, 4]);
+      h.calls.get(4).finish(); await h.tick();
+      assert.deepEqual(h.sent.map((m) => m.id).sort(), [1, 2, 3, 4]);
+    } finally { h.close(); }
+  });
+
+  test('perCommand holds back calls of one command without holding back the others', async () => {
+    const h = harness(limits(Infinity, { w: 1 }));
+    try {
+      h.send(1, 'w'); h.send(2, 'w'); h.send(3, 'r'); h.send(4, 'r');
+      await h.tick();
+      assert.deepEqual(h.started, [1, 3, 4], 'the second w waits for the first; the reads behind it do not');
+      h.calls.get(1).finish(); await h.tick(); await h.tick();
+      assert.deepEqual(h.started, [1, 3, 4, 2]);
+    } finally { h.close(); }
+  });
+
+  test('a cancel stops only its own call, running or waiting, and frees its place', async () => {
+    const h = harness(limits(2));
+    try {
+      h.send('a', 'x'); h.send('b', 'x'); h.send('c', 'x'); h.send('d', 'x');
+      await h.tick();
+      h.cancel('c');   // waiting: dropped without an answer
+      h.cancel('a');   // running: aborted, no answer, its place goes to d
+      await h.tick(); await h.tick();
+      assert.equal(h.calls.get('a').signal.aborted, true);
+      assert.equal(h.calls.get('b').signal.aborted, false);
+      assert.deepEqual(h.started, ['a', 'b', 'd']);
+      h.calls.get('b').finish(); h.calls.get('d').finish(); await h.tick();
+      assert.deepEqual(h.sent.map((m) => m.id).sort(), ['b', 'd']);
+    } finally { h.close(); }
+  });
+
+  test('createServer checks the limits and refuses concurrency with an in-process executor', () => {
+    const base = { table: TABLE, version: '1', executor: spawnCli({ args: ['x'] }) };
+    assert.throws(() => createServer({ ...base, concurrency: { total: 0 } }), /concurrency.total/);
+    assert.throws(() => createServer({ ...base, concurrency: { total: 1.5 } }), /concurrency.total/);
+    assert.throws(() => createServer({ ...base, concurrency: { perCommand: -1 } }), /concurrency.perCommand/);
+    assert.throws(() => createServer({ ...base, executor: inProcess(() => ({})), concurrency: { total: 2 } }), /spawn executor/);
+    assert.equal(createServer({ ...base, executor: inProcess(() => ({})), concurrency: { total: 1 } }).concurrency.total, 1);
+    const s = createServer({ ...base, concurrency: { total: Infinity, perCommand: (c) => (c === 'store rm' ? 1 : c === 'echo' ? 'x' : c === 'fail' ? (() => { throw new Error('no'); })() : 3) } });
+    assert.deepEqual(s.concurrency.perTool('demo_store_rm'), { key: 'store rm', limit: 1 });
+    assert.deepEqual(s.concurrency.perTool('demo_write'), { key: 'write', limit: 3 });
+    assert.deepEqual(s.concurrency.perTool('demo_echo'), { key: 'echo', limit: 1 }, 'an answer that is no limit counts as 1');
+    assert.deepEqual(s.concurrency.perTool('demo_fail'), { key: 'fail', limit: 1 }, 'a function that throws counts as 1');
+    assert.deepEqual(s.concurrency.perTool('demo_help'), { key: '', limit: Infinity });
+    assert.equal(createServer(base).concurrency.total, 1, 'one at a time unless asked');
+    assert.deepEqual(createServer(base).concurrency.perTool('demo_echo'), { key: 'echo', limit: Infinity });
+  });
+
+  test('spawned CLIs run side by side, each with its own time limit counted from its start', async () => {
+    const s = start('spawn', { DEMO_CONCURRENCY: JSON.stringify({ total: 3, perCommand: { sleep: 2 } }), DEMO_TIMEOUT_MS: '4000' });
+    try {
+      await s.request('initialize', {});
+      const t0 = Date.now();
+      const slow = [s.call('demo_sleep', { ms: '2500', root: tmp }, 's1'), s.call('demo_sleep', { ms: '2500', root: tmp }, 's2')];
+      const third = s.call('demo_sleep', { ms: '2500', root: tmp }, 's3');   // waits for a sleep place: perCommand 2
+      const echo = await s.call('demo_echo', { text: 'quick', root: tmp }, 'e');
+      assert.equal(textOf(echo), 'quick');
+      for (const r of await Promise.all(slow)) assert.equal(textOf(r), 'slept 2500');
+      const both = Date.now() - t0;
+      // The third waited about 2.5 s and then slept 2.5 s: past 4 s from its arrival, within 4 s of its start.
+      assert.equal(textOf(await third), 'slept 2500', 'the time limit counts from the start, not the arrival');
+      assert.ok(both < 4990, `the first two slept side by side (${both} ms)`);
+      const order = s.seen.map((m) => m.id).filter((id) => ['s1', 's2', 's3', 'e'].includes(id));
+      assert.equal(order[0], 'e', `the quick call was answered first: ${order}`);
+      assert.equal(order[3], 's3');
+    } finally { await s.stop(); }
+  });
+
+  test('a spawned call past its limit is stopped alone; one cancelled is stopped alone', async () => {
+    const pidFile = join(tmp, 'pids-parallel');
+    const s = start('spawn', { DEMO_CONCURRENCY: JSON.stringify({ total: 4 }), DEMO_TIMEOUT_MS: '3000', DEMO_PIDS: pidFile });
+    try {
+      await s.request('initialize', {});
+      const tree = s.call('demo_tree', { root: tmp }, 'tree');
+      s.raw({ jsonrpc: '2.0', id: 'gone', method: 'tools/call', params: { name: 'demo_sleep', arguments: { ms: '2500', root: tmp } } });
+      const kept = s.call('demo_sleep', { ms: '1000', root: tmp }, 'kept');
+      await new Promise((r) => setTimeout(r, 300));
+      s.raw({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 'gone' } });
+      assert.equal(textOf(await kept), 'slept 1000');
+      const t = await tree;
+      assert.equal(t.result.isError, true);
+      assert.match(textOf(t), /demo tree did not finish within 3 s/);
+      await new Promise((r) => setTimeout(r, 200));
+      assert.ok(!s.seen.some((m) => m.id === 'gone'), 'the cancelled call got no answer');
+      assert.deepEqual((await s.request('ping')).result, {});
     } finally { await s.stop(); }
   });
 });

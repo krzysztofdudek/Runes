@@ -16,6 +16,11 @@ const server = createServer({
   tools: { help: USAGE },
   timeoutMs: Number(process.env.DEMO_TIMEOUT_MS) || undefined,
   timeoutHint: () => 'Set DEMO_TIMEOUT_MS to allow longer.',
+  // DEMO_CONCURRENCY: { "total": n, "perCommand": { "<command>": n } } (a command left out has no limit of its own).
+  ...(process.env.DEMO_CONCURRENCY ? (() => {
+    const c = JSON.parse(process.env.DEMO_CONCURRENCY);
+    return { concurrency: { total: c.total, ...(c.perCommand ? { perCommand: (command) => c.perCommand[command] ?? Infinity } : {}) } };
+  })() : {}),
   prepare: ({ command, input }) => (input.root ? { data: { pidFile: process.env.DEMO_PIDS } } : { notes: { where: `no root given (${command})` }, data: { pidFile: process.env.DEMO_PIDS } }),
 });
 serveStdio(server);

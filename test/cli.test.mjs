@@ -38,11 +38,13 @@ describe('the table', () => {
         c: { args: ['x', 'x'], flags: { x: 'value', json: 'value', q: 'weird' } },
         d: { paths: ['nope'], stdoutJson: 'gone' },
         e: { args: ['json'] },
+        f: { destructive: true },
+        g: { idempotent: false },
       },
       aliases: { a: 'b', z: 'missing' },
     };
     const p = tableProblems(bad).join('\n');
-    for (const want of ['tool: "Demo"', '"Bad Cmd": not lower-case', 'variadic argument "x" is not last', 'required argument "y" after an optional', 'argument "x" twice', '"x" is both an argument and a flag', '--json is value here but bool', 'unknown kind "weird"', 'paths names "nope"', 'stdoutJson names --gone', '"json" is both an argument and a global flag', 'alias "a": is also a command', 'alias "z": names "missing"']) {
+    for (const want of ['tool: "Demo"', '"Bad Cmd": not lower-case', 'variadic argument "x" is not last', 'required argument "y" after an optional', 'argument "x" twice', '"x" is both an argument and a flag', '--json is value here but bool', 'unknown kind "weird"', 'paths names "nope"', 'stdoutJson names --gone', '"json" is both an argument and a global flag', 'alias "a": is also a command', 'alias "z": names "missing"', 'command "f": destructive, but it does not write', 'command "g": idempotent is said only of a command that writes']) {
       assert.ok(p.includes(want), `missing: ${want}\n${p}`);
     }
     assert.throws(() => defineTable(bad), /malformed/);
