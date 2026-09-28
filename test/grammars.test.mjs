@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  loadGrammarManifest, buildGrammars, verifyGrammarFiles, LANGUAGES,
+  loadGrammarManifest, buildGrammars, verifyGrammarFiles, LANGUAGES, EXTENSION_TO_LANGUAGE,
+  grammarExtensionForPath, getLanguageForExtension, relationLanguageForPath, primaryExtensionForLanguage, getGrammarForExtension, getLanguageDisplayName,
 } from '@chrisdudek/runes/grammars';
+import { makeTempRepo } from '@chrisdudek/runes/testkit';
 import {
   validateGrammarManifest, parseGrammarManifest, GRAMMAR_MANIFEST_SCHEMA, shippedGrammarsDir, syntaxNodeTypesFile,
 } from './helpers/internal/grammars.mjs';
@@ -209,11 +211,145 @@ describe('buildGrammars and verifyGrammarFiles', () => {
     }
   });
 
+  // A source pin built end to end, with the real git steps and a stand-in for tree-sitter-cli: the grammar repository is checked out at the pinned commit, patched, its dependency checked out beside it, generated and built, and the bytes verified and cached.
+  test('a source pin is checked out, patched, given its deps, generated, built, verified and cached', { skip: process.platform === 'win32' && 'the stand-in CLI is a shell script, and Windows refuses source builds anyway' }, async () => {
+    const out = tmp();
+    const grammar = makeTempRepo({ files: { 'g/grammar.txt': 'rules v1\n' } });
+    const dep = makeTempRepo({ files: { 'dep.txt': 'dep bytes\n' } });
+    try {
+      const patches = path.join(out, 'patches');
+      mkdirSync(patches);
+      grammar.write('g/grammar.txt', 'rules v2\n');
+      writeFileSync(path.join(patches, 'fix.patch'), grammar.git('diff'));
+      grammar.git('checkout', '--', '.');
+      const commit = grammar.git('rev-parse', 'HEAD').trim();
+      const depCommit = dep.git('rev-parse', 'HEAD').trim();
+      // The stand-in: --version answers the pinned version; generate writes node-types.json; build concatenates the grammar and its dependency.
+      const cliDir = path.join(out, 'proj', 'node_modules', 'tree-sitter-cli');
+      mkdirSync(cliDir, { recursive: true });
+      writeFileSync(path.join(cliDir, 'package.json'), JSON.stringify({ name: 'tree-sitter-cli', version: manifest.cli.version }));
+      writeFileSync(path.join(cliDir, 'tree-sitter'), `#!/bin/sh\ncase "$1" in\n  --version) echo "tree-sitter ${manifest.cli.version} (stand-in)";;\n  generate) mkdir -p src && echo '{"generated":true}' > src/node-types.json;;\n  build) cat "$5/grammar.txt" "$5/../deps/x/dep.txt" > "$4";;\nesac\n`, { mode: 0o755 });
+      const wasm = Buffer.from('rules v2\ndep bytes\n');
+      const nodeTypes = Buffer.from('{"generated":true}\n');
+      const m = { ...structuredClone(manifest), grammars: [{
+        language: 'toy', wasmFile: 'tree-sitter-toy.wasm', repo: grammar.dir, commit, version: '1', cli: manifest.cli.version, abi: 15,
+        source: { kind: 'source', dir: 'g', generate: true, patches: ['patches/fix.patch'], deps: [{ path: 'deps/x', repo: dep.dir, commit: depCommit }] },
+        sha256: { wasm: sha(wasm), nodeTypes: sha(nodeTypes) },
+      }] };
+      const cache = path.join(out, 'cache');
+      const logs = [];
+      const built = await buildGrammars({ outDir: path.join(out, 'g1'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'proj'), cacheDir: cache, log: (l) => logs.push(l) });
+      assert.deepEqual(built.map((b) => [b.language, b.from]), [['toy', 'source']]);
+      assert.deepEqual(readFileSync(path.join(out, 'g1', 'tree-sitter-toy.wasm')), wasm);
+      assert.deepEqual(readFileSync(path.join(out, 'g1', 'tree-sitter-toy.node-types.json')), nodeTypes);
+      assert.ok(logs.some((l) => l.includes(`building toy from ${grammar.dir} at ${commit}`)));
+      assert.ok(existsSync(path.join(cache, sha(wasm))), 'the cache holds the build under its sha256');
+      const again = await buildGrammars({ outDir: path.join(out, 'g2'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'proj'), cacheDir: cache, offline: true });
+      assert.deepEqual(again.map((b) => b.from), ['cache']);
+      // rebuild ignores the cache and derives the bytes again.
+      const audit = await buildGrammars({ outDir: path.join(out, 'g3'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'proj'), cacheDir: cache, rebuild: true });
+      assert.deepEqual(audit.map((b) => b.from), ['source']);
+      // The stand-in at another version is refused before any build; no tree-sitter-cli at all is refused with what to install.
+      writeFileSync(path.join(cliDir, 'tree-sitter'), '#!/bin/sh\necho "tree-sitter 0.1.0"\n', { mode: 0o755 });
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g4'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'proj'), cacheDir: path.join(out, 'cold') }), /pins tree-sitter-cli 0\.27\.0, but 0\.1\.0 is installed/);
+      mkdirSync(path.join(out, 'bare'));
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g5'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'bare'), cacheDir: path.join(out, 'cold') }), /needs tree-sitter-cli 0\.27\.0 installed/);
+    } finally {
+      grammar.cleanup(); dep.cleanup();
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  // A github-release pin downloads its WASM from the release and its node-types.json from the pinned commit; the fetch is stubbed, so the test needs no network.
+  test('a github-release pin is downloaded with retries on a server error, never on a client error, and verified', async () => {
+    const out = tmp();
+    const real = globalThis.fetch;
+    const wasm = Buffer.from('released wasm');
+    const nodeTypes = Buffer.from('[]');
+    const asked = [];
+    const answers = [];
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      const a = answers.shift() ?? 'ok';
+      if (a === 'throw') throw new Error('socket hang up');
+      if (typeof a === 'number') return new Response('no', { status: a });
+      return new Response(String(url).endsWith('node-types.json') ? nodeTypes : wasm, { status: 200 });
+    };
+    try {
+      const m = { ...structuredClone(manifest), grammars: [{
+        language: 'toy', wasmFile: 'tree-sitter-toy.wasm', repo: 'https://github.com/example/tree-sitter-toy', commit: 'a'.repeat(40), version: '1', cli: 'x', abi: 15,
+        source: { kind: 'github-release', url: 'https://github.com/example/tree-sitter-toy/releases/download/v1/tree-sitter-toy.wasm' },
+        sha256: { wasm: sha(wasm), nodeTypes: sha(nodeTypes) },
+      }] };
+      answers.push(503, 'throw');
+      const built = await buildGrammars({ outDir: path.join(out, 'g'), manifest: m, cacheDir: path.join(out, 'cache') });
+      assert.deepEqual(built.map((b) => b.from), ['download']);
+      assert.deepEqual(asked, [m.grammars[0].source.url, m.grammars[0].source.url, m.grammars[0].source.url, `https://raw.githubusercontent.com/example/tree-sitter-toy/${'a'.repeat(40)}/src/node-types.json`], 'a 503 and a network error are retried');
+      asked.length = 0;
+      answers.push(404);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'h'), manifest: m, cacheDir: path.join(out, 'cold') }), /grammar download failed: .*tree-sitter-toy\.wasm -> HTTP 404/);
+      assert.equal(asked.length, 1, 'a 404 is not retried');
+    } finally {
+      globalThis.fetch = real;
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
   test('--only with a language the manifest does not pin is an error', async () => {
     await assert.rejects(buildGrammars({ outDir: tmp(), only: ['cobol'], resolveFrom: root, offline: true }), /pins no grammar for: cobol/);
   });
 
   test('the grammars the tests parse with are the pinned bytes', () => {
     assert.deepEqual(verifyGrammarFiles(path.join(root, '.grammars'), { only: Object.keys(LANGUAGES) }), []);
+  });
+});
+
+describe('the language table', () => {
+  test('grammarExtensionForPath: the extension of the file name, .rb for the extension-less Ruby files, nothing for a dotfile or no dot', () => {
+    assert.equal(grammarExtensionForPath('src/a/B.Test.ts'), '.ts');
+    assert.equal(grammarExtensionForPath('src\\win\\x.PY'), '.PY');
+    assert.equal(grammarExtensionForPath('app/Rakefile'), '.rb');
+    assert.equal(grammarExtensionForPath('Gemfile'), '.rb');
+    assert.equal(grammarExtensionForPath('.eslintrc'), '');
+    assert.equal(grammarExtensionForPath('Makefile'), '');
+    assert.equal(grammarExtensionForPath(''), '');
+  });
+
+  test('getLanguageForExtension: case-insensitive, overrides first, never a key of Object.prototype', () => {
+    assert.equal(getLanguageForExtension('.TS'), 'typescript');
+    assert.equal(getLanguageForExtension('.h'), 'c');
+    assert.equal(getLanguageForExtension('.h', { '.h': 'cpp' }), 'cpp');
+    assert.equal(getLanguageForExtension('.xyz'), null);
+    assert.equal(getLanguageForExtension('constructor'), null);
+    assert.equal(getLanguageForExtension('toString', {}), null);
+    for (const [ext, lang] of Object.entries(EXTENSION_TO_LANGUAGE)) assert.ok(LANGUAGES[lang].extensions.includes(ext), `${ext} → ${lang}`);
+  });
+
+  test('relationLanguageForPath: a .h is C++ when its directory holds C++ sources and no .c; every other file keeps its extension', () => {
+    let asked = 0;
+    const names = (list) => () => { asked += 1; return list; };
+    assert.equal(relationLanguageForPath('a/x.h', names(['x.cpp', 'y.hpp', 'README'])), 'cpp');
+    assert.equal(relationLanguageForPath('a/x.h', names(['x.cpp', 'y.C', 'z.c'])), 'c');
+    assert.equal(relationLanguageForPath('a/x.h', names(['.hidden', 'x.h'])), 'c');
+    assert.equal(relationLanguageForPath('a/x.H', names(['x.cc'])), 'cpp');
+    const before = asked;
+    assert.equal(relationLanguageForPath('a/x.cpp', names(['x.c'])), 'cpp');
+    assert.equal(relationLanguageForPath('a/x.go', names([])), 'go');
+    assert.equal(relationLanguageForPath('a/x.unknown', names([])), null);
+    assert.equal(asked, before, 'the directory is listed only for a .h');
+  });
+
+  test('primaryExtensionForLanguage, getGrammarForExtension and getLanguageDisplayName', () => {
+    assert.equal(primaryExtensionForLanguage('cpp'), LANGUAGES.cpp.extensions[0]);
+    assert.equal(primaryExtensionForLanguage('nope'), undefined);
+    assert.equal(primaryExtensionForLanguage('toString'), undefined);
+    assert.deepEqual(getGrammarForExtension('.RS'), { wasmFile: LANGUAGES.rust.wasmFile });
+    assert.equal(getGrammarForExtension('.nope'), null);
+    assert.equal(getLanguageDisplayName('typescript'), 'TypeScript');
+    assert.equal(getLanguageDisplayName('csharp'), 'C#');
+    assert.equal(getLanguageDisplayName('go'), 'Go');
+    assert.equal(getLanguageDisplayName('madeup'), 'Madeup');
+    assert.equal(getLanguageDisplayName(''), '');
+    assert.equal(getLanguageDisplayName('constructor'), 'Constructor');
   });
 });

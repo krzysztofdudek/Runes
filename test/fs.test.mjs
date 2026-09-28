@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, utimesSync, realpathSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, utimesSync, realpathSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -221,6 +221,17 @@ describe('writeAtomic', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  test('mode sets the new file\'s permissions; a missing directory throws and leaves nothing', { skip: process.platform === 'win32' && 'POSIX permissions' }, () => {
+    const dir = temp();
+    try {
+      const f = join(dir, 'secret');
+      writeAtomic(f, 'x', { mode: 0o600 });
+      assert.equal(statSync(f).mode & 0o777, 0o600);
+      assert.throws(() => writeAtomic(join(dir, 'no', 'such', 'f'), 'x'), (e) => e.code === 'ENOENT');
+      assert.deepEqual(readdirSync(dir), ['secret']);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   test('the temporary name is hidden, beside the target, unique, and ends in .tmp', () => {
     const a = tempPathFor(join('d', 'x.md'));
     assert.match(a, new RegExp(`^d[\\\\/]\\.x\\.md\\.${process.pid}\\.[0-9a-f]{8}\\.tmp$`));
@@ -249,6 +260,12 @@ describe('renameWithRetry', () => {
     assert.throws(() => renameWithRetry('a', 'b', { platform: 'linux', rename: r }), /EPERM/);
     assert.equal(r.calls(), 1);
     assert.deepEqual([...transientRenameCodes('darwin')], ['EBUSY']);
+  });
+
+  test('an error without a code is let through at once', () => {
+    let n = 0;
+    assert.throws(() => renameWithRetry('a', 'b', { platform: 'win32', rename: () => { n += 1; throw new Error('odd'); } }), /odd/);
+    assert.equal(n, 1);
   });
 
   test('a failure that outlasts the budget is let through', () => {

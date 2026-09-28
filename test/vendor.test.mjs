@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { random, seedNote } from './helpers/prng.mjs';
 
 const TOOL = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'vendor.mjs');
 // The global config is an empty file of the test's own rather than /dev/null, which only Git for Windows' own path translation makes work there; the system config (where Git for Windows sets core.autocrlf=true) is off, so the tests see the same git on every OS unless one sets autocrlf on purpose.
@@ -152,6 +153,47 @@ describe('vendor.mjs', () => {
     assert.match(r.out, /3 vendored files, 2 skill fragments and the tool match v0\.1\.0 \([0-9a-f]{12}\) from file:\/\/\/nonexistent\/runes, offline/);
     assert.equal(r.err, '');
     restore();
+  });
+
+  // The gate's contract, over random edits: any byte changed in a vendored file, a file removed or added under the copy, the tool changed, or a fragment block changed fails check; an edit outside the blocks, or line endings turned to CRLF, passes.
+  test('property: every edit to the copy, the tool or a fragment block fails check; edits outside the blocks and CRLF do not', () => {
+    const r = random();
+    const vendored = [...baseline.keys()].filter((k) => k.replace(/\\/g, '/').startsWith('vendor/runes/'));
+    for (let i = 0; i < 30; i += 1) {
+      const kind = r.pick(['flip', 'delete', 'extra', 'tool', 'fragment', 'outside', 'crlf']);
+      const what = { kind };
+      if (kind === 'flip') {
+        const rel = r.pick(vendored);
+        const bytes = Buffer.from(readFileSync(join(consumer, rel)));
+        const at = r.int(0, bytes.length - 1);
+        bytes[at] ^= 1 << r.int(0, 6);
+        writeFileSync(join(consumer, rel), bytes);
+        Object.assign(what, { rel, at });
+      } else if (kind === 'delete') {
+        what.rel = r.pick(vendored);
+        rmSync(join(consumer, what.rel));
+      } else if (kind === 'extra') {
+        what.rel = join('vendor', 'runes', 'dist', r.pick(['fs', '.']), `${r.pick(['x', 'extra', 'index2'])}${r.pick(['.mjs', '.d.mts', '.json', ''])}`);
+        writeFileSync(join(consumer, what.rel), r.word());
+      } else if (kind === 'tool') {
+        appendFileSync(join(consumer, 'scripts/runes.mjs'), `// ${r.word()}x\n`);
+      } else if (kind === 'fragment') {
+        const text = read('SKILL.md');
+        const marker = r.pick(['<!-- RUNES:worktree:START -->\n', '<!-- RUNES:evidence:START -->\n']);
+        const at = text.indexOf(marker) + marker.length;
+        writeFileSync(join(consumer, 'SKILL.md'), `${text.slice(0, at)}${r.word(3)}x${text.slice(at)}`);
+        what.marker = marker.trim();
+      } else if (kind === 'outside') {
+        writeFileSync(join(consumer, 'SKILL.md'), read('SKILL.md').replace('Middle.', `Middle. ${r.word()}`).concat(r.bool() ? `${r.word()}\n` : ''));
+      } else {
+        writeFileSync(join(consumer, 'SKILL.md'), crlf(read('SKILL.md')));
+      }
+      const res = run(['check']);
+      const passes = kind === 'outside' || kind === 'crlf';
+      assert.equal(res.code, passes ? 0 : 1, `case ${i} ${JSON.stringify(what)} ${seedNote()}\n${res.err}`);
+      restore();
+    }
+    assert.equal(run(['check']).code, 0, 'restored');
   });
 
   test('mutation: a hand-edited vendored file fails check', () => {

@@ -271,7 +271,10 @@ At a family release every pin points at the same Runes version.
 ```
 npm ci
 npm run check      # build, grammars, tests (with the guard, the catalogue and the vendor tool's end-to-end tests), dist freshness
+npm run coverage   # the same suite under Node's coverage, failing below 98% lines, 92% branches, 97% functions of dist/
 ```
+
+The property tests (`test/properties.test.mjs`, and the gate property in `test/vendor.test.mjs`) draw a fresh seed each run and print it with any failure; `RUNES_PROPERTY_SEED=<n>` replays one. They hold the contracts on generated inputs: a tool call read back by `parseArgs` is the call itself for any table and any values, a command line parses the same whatever order its flags take, every malformed line is a `UsageError`, contending processes never hold the lock at once and `withLock` takes over exactly the locks the staleness rules call stale, and every edit to a vendored copy, the tool or a fragment block fails the gate while edits outside the blocks do not.
 
 `npm test` builds the grammars of the language table into `.grammars/` (gitignored) with the recipe before it runs the tests; a warm cache needs no network, a cold one downloads and builds from source (`tree-sitter build --wasm` fetches its own wasi-sdk on first use). `npm run grammars` does that step alone. `dist/` is committed because vendoring copies it from a clone; `npm run check:dist` rebuilds and fails when the result differs from what git holds. Node 22 or later. CI runs the suite on Ubuntu and on Windows, Node 22 and 24 on both; the Windows jobs read the grammars offline from a cache the Ubuntu `grammars` job builds and hands over as an artifact (see [Grammars on Windows](#relations-syntax-trees-and-grammars)).
 

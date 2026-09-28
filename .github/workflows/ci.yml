@@ -34,7 +34,12 @@ jobs:
         run: npm run grammars
       # The guard over Runes' own src/, tools/ and scripts/ runs inside the suite (test/guard.test.mjs), next to the vendor tool's end-to-end tests.
       - name: Test, including the guard
+        if: matrix.node != 24
         run: npm test
+      # On Node 24 the same suite runs under Node's own coverage, which fails the job when dist/ (what consumers install and vendor) falls below 98% of lines, 92% of branches or 97% of functions. Measured at 1.0.0: 98.7% lines, 93.5% branches, 98.5% functions. The vendor tool runs as copies inside throwaway consumers, where Node's coverage cannot attribute it to tools/vendor.mjs; its end-to-end and property tests cover it instead.
+      - name: Test with coverage thresholds, including the guard
+        if: matrix.node == 24
+        run: npm run coverage
       # dist/ is committed because consumers vendor it from a clone; a stale dist/ would ship code the tests never saw.
       - name: dist freshness
         run: npm run check:dist

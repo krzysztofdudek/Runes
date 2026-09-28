@@ -58,6 +58,7 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json && tsc -p tsconfig.relations.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.relations.json --noEmit",
     "test": "npm run build && npm run grammars && node --test \"test/**/*.test.mjs\"",
+    "coverage": "npm run build && npm run grammars && node --test --experimental-test-coverage --test-coverage-include=\"dist/**\" --test-coverage-lines=98 --test-coverage-branches=92 --test-coverage-functions=97 \"test/**/*.test.mjs\"",
     "check:dist": "node scripts/check-dist.mjs",
     "check": "npm test && npm run check:dist",
     "grammars": "node scripts/build-grammars.mjs --table"

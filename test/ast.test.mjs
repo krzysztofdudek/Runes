@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as TreeSitter from 'web-tree-sitter';
-import { createParserHost, fileSha256, walk, closest } from '@chrisdudek/runes/ast';
+import { createParserHost, fileSha256, walk, closest, destroyParseCache } from '@chrisdudek/runes/ast';
 import { kotlinExtractor } from '@chrisdudek/runes/relations';
 import { kotlinView } from './helpers/internal/relations.mjs';
 import { GRAMMAR_DIR, host } from './helpers/tree-sitter.mjs';
@@ -142,4 +142,19 @@ test('no module of the package imports web-tree-sitter by value', async () => {
   const offenders = files.filter((f) => /(?:from|import)\s*\(?\s*['"]web-tree-sitter['"]/.test(readFileSync(f, 'utf8')));
   assert.deepEqual(offenders, []);
   assert.ok(files.length > 10);
+});
+
+describe('destroyParseCache', () => {
+  test('deletes every tree in the cache and empties it', async () => {
+    const tree = await host.parseFile('a.go', 'package a\n');
+    const deleted = [];
+    const cache = new Map([
+      ['a.go', { content: 'package a\n', ast: tree }],
+      ['b.go', { content: 'x', ast: { delete: () => deleted.push('b.go') } }],
+    ]);
+    destroyParseCache(cache);
+    assert.equal(cache.size, 0);
+    assert.deepEqual(deleted, ['b.go']);
+    destroyParseCache(cache);   // an empty cache: nothing to do
+  });
 });
