@@ -20,13 +20,15 @@ test('zero runtime dependencies; web-tree-sitter only as an optional peer', () =
   assert.equal(pkg.engines.node, '>=22');
 });
 
+// `version` is exported where a family tool reads it (Yggdrasil keys its relation cache on the relations one and pins all three against its dependency), and nowhere else.
+const VERSIONED = ['relations', 'ast', 'grammars'];
 for (const sub of SUBPATHS) {
-  test(`@chrisdudek/runes/${sub} resolves, has types, and reports the package version`, async () => {
+  test(`@chrisdudek/runes/${sub} resolves, has types, and ${VERSIONED.includes(sub) ? 'reports the package version' : 'exports no version'}`, async () => {
     const entry = pkg.exports[`./${sub}`];
     assert.ok(existsSync(join(root, entry.types)), `missing ${entry.types}`);
     assert.ok(existsSync(join(root, entry.import)), `missing ${entry.import}`);
     const mod = await import(`@chrisdudek/runes/${sub}`);
-    assert.equal(mod.version, pkg.version);
+    assert.equal(mod.version, VERSIONED.includes(sub) ? pkg.version : undefined);
   });
 }
 

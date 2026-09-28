@@ -3,14 +3,14 @@ import { describe, it, expect } from '../helpers/expect.mjs';
 import { runExtractor } from '../helpers/tree-sitter.mjs';
 import { makeResolver } from '@chrisdudek/runes/relations';
 import { SymbolTable } from '@chrisdudek/runes/relations';
-import { typescriptExtractor } from '@chrisdudek/runes/relations';
-import { pythonExtractor } from '@chrisdudek/runes/relations';
-import { goExtractor } from '@chrisdudek/runes/relations';
-import { javaExtractor } from '@chrisdudek/runes/relations';
-import { phpExtractor } from '@chrisdudek/runes/relations';
-import { rustExtractor } from '@chrisdudek/runes/relations';
-import { cExtractor } from '@chrisdudek/runes/relations';
-import { cppExtractor } from '@chrisdudek/runes/relations';
+import { typescriptExtractor } from '../helpers/internal/relations.mjs';
+import { pythonExtractor } from '../helpers/internal/relations.mjs';
+import { goExtractor } from '../helpers/internal/relations.mjs';
+import { javaExtractor } from '../helpers/internal/relations.mjs';
+import { phpExtractor } from '../helpers/internal/relations.mjs';
+import { rustExtractor } from '../helpers/internal/relations.mjs';
+import { cExtractor } from '../helpers/internal/relations.mjs';
+import { cppExtractor } from '../helpers/internal/relations.mjs';
 
 /**
  * Candidate-group parity (Stage 1 of the unified name-resolution mechanism).

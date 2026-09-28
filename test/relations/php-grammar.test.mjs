@@ -1,7 +1,7 @@
 // Why PHP is parsed with the `php` grammar and not `php_only`. PHP executes only what sits between `<?php` (or `<?=`) and `?>`; everything outside is output, printed verbatim. The `php` grammar models exactly that: text outside the tags is a `text` node, and the PHP inside the tags gets the same syntax nodes php_only gives. php_only reads the whole file as PHP code, so a file without an opening tag, or the HTML around the tags, is read as code: prose that looks like `use A\B;` becomes a dependency PHP never has (a false edge), and a template's HTML becomes syntax errors. The whole PHP catalogue and the PHP extractor tests pass on both grammars (the recorded evidence of issue 467); these cases pin the difference.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { phpExtractor } from '@chrisdudek/runes/relations';
+import { phpExtractor } from '../helpers/internal/relations.mjs';
 import { host, parsedFile } from '../helpers/tree-sitter.mjs';
 
 const uses = (code) => host.withParsedFile('t.php', code, (tree) => ({

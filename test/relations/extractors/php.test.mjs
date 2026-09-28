@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/php.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { phpExtractor } from '@chrisdudek/runes/relations';
+import { phpExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code) => runExtractor(phpExtractor, 'php', '.php', code);
 

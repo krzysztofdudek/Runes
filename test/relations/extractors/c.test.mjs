@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/c.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { cExtractor } from '@chrisdudek/runes/relations';
+import { cExtractor } from '../../helpers/internal/relations.mjs';
 import {
   evalPreprocessorCondition, deadPreprocessorLines,
 } from '../../helpers/internal/relations.mjs';

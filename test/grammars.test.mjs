@@ -10,7 +10,7 @@ import {
   loadGrammarManifest, buildGrammars, verifyGrammarFiles, LANGUAGES, EXTENSION_TO_LANGUAGE,
   grammarExtensionForPath, getLanguageForExtension, relationLanguageForPath, primaryExtensionForLanguage, getGrammarForExtension, getLanguageDisplayName,
 } from '@chrisdudek/runes/grammars';
-import { makeTempRepo } from '@chrisdudek/runes/testkit';
+import { makeTempRepo } from './helpers/internal/testkit.mjs';
 import {
   validateGrammarManifest, parseGrammarManifest, GRAMMAR_MANIFEST_SCHEMA, shippedGrammarsDir, syntaxNodeTypesFile,
 } from './helpers/internal/grammars.mjs';

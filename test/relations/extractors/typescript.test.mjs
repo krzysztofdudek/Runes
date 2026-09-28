@@ -1,7 +1,8 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/typescript.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { typescriptExtractor, sfcScriptView } from '@chrisdudek/runes/relations';
+import { sfcScriptView } from '@chrisdudek/runes/relations';
+import { typescriptExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code, ext = '.ts', lang = 'typescript') =>
   runExtractor(typescriptExtractor, lang, ext, code);

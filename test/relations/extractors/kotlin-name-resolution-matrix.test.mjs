@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/kotlin-name-resolution-matrix.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runCase } from '../reference-case-runner.mjs';
-import { kotlinExtractor } from '@chrisdudek/runes/relations';
+import { kotlinExtractor } from '../../helpers/internal/relations.mjs';
 import { SymbolTable } from '@chrisdudek/runes/relations';
 import { makeResolver } from '@chrisdudek/runes/relations';
 import { withParsedFile } from '../../helpers/tree-sitter.mjs';

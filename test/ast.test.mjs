@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as TreeSitter from 'web-tree-sitter';
 import { createParserHost, fileSha256, walk, closest, destroyParseCache } from '@chrisdudek/runes/ast';
-import { kotlinExtractor } from '@chrisdudek/runes/relations';
+import { kotlinExtractor } from './helpers/internal/relations.mjs';
 import { kotlinView } from './helpers/internal/relations.mjs';
 import { GRAMMAR_DIR, host } from './helpers/tree-sitter.mjs';
 

@@ -6,12 +6,8 @@ import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
 import { createInterface } from 'node:readline';
-import {
-  buildTools, argvFor, answersJson, commandForTool, toolName, createServer, serveStdio, inProcess, spawnCli, killTree, InvalidParams, PROTOCOL_VERSION, PROTOCOL_VERSIONS,
-} from '@chrisdudek/runes/mcp';
-import {
-  runProcess,
-} from './helpers/internal/mcp.mjs';
+import { buildTools, argvFor, answersJson, commandForTool, toolName, createServer, serveStdio, spawnCli, killTree, InvalidParams, PROTOCOL_VERSION, PROTOCOL_VERSIONS } from '@chrisdudek/runes/mcp';
+import { inProcess, runProcess } from './helpers/internal/mcp.mjs';
 import { startMcpClient } from '@chrisdudek/runes/testkit';
 import { TABLE, USAGE, dispatch } from './fixtures/demo-tool.mjs';
 

@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/rust.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { rustExtractor } from '@chrisdudek/runes/relations';
+import { rustExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code) => runExtractor(rustExtractor, 'rust', '.rs', code);
 

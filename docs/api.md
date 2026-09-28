@@ -11,16 +11,20 @@ This is what `@chrisdudek/runes` promises under semantic versioning from 1.0.0 o
 
 ## What it does not cover
 
-- Every export of an internal module. The per-language resolution helpers, the table's helper functions, the command-line parser, the error document and the one-block `--json` rule, the usage-text reader, the guard's scanner and the git environment's constants stay in their modules for Runes' own code and tests; they may change in any release.
+- Every export of an internal module. The per-language extractors by name (all but `csharpExtractor`; `extractorForLanguage` is the promised way to one), the in-process MCP executor, the git test environment (`gitEnv`, `makeTempRepo`), the per-language resolution helpers, the table's helper functions, the command-line parser, the error document and the one-block `--json` rule, the usage-text reader, the guard's scanner and the git environment's constants stay in their modules for Runes' own code and tests; they may change in any release.
 - The file-system code under `dist/fs/` (the cross-process lock, atomic writes, the repository root). It ships and is tested, but no subpath exports it and no family tool uses it yet; it may change in any release until a 1.x minor exports it for a tool that adopts it.
 - Wording: error messages, tool and field descriptions, report lines. Codes (`code` in the error document, `ELOCKED`, `ELOCKBREAK`, `usage`) are stable; sentences are not.
 - The exact edges an extractor finds. An extractor fix changes what it reports for some source, in a minor or a patch release; the extractor's `rev` changes with it, so a consumer's cache keyed by `rev` drops what it computed before. The relation catalogue (`reference/relations/`) is the specification that fixes move towards.
 
-The Consumers column names the family tools that import each name on their `release/6.1.0` branches (a vendored copy counts), found by reading their imports; "—" means none does yet, and the name is kept because the README documents it as part of the subpath's job. The `cli` subpath is the exception: it holds only what a tool imports, `defineTable` and the shape it takes.
+The Consumers column names the family tools that import each name on their `release/6.1.0` branches (sources and tests; a vendored copy counts), found by reading their imports. Every value export is imported by at least one tool: 1.0.0 promises only what a family tool imports today, and a 1.x minor adds a name, additively, when a tool adopts it.
+
+A type marked "—" is imported by no tool and is kept because a kept export's signature reaches it: it is a parameter, a return value or a field of one, so without its name a TypeScript consumer could not write down what it passes to or gets back from a promised function (`TreeSitterRuntime` is what `ParserHostOptions.runtime` takes, `PrepareResult` what `ServerOptions.prepare` returns). Its fields are promised through that signature whether or not the name is exported, so exporting the name adds no promise. A type reached only through a removed name went with it (`InProcessExecutor`, `CallContext`, `GitEnvOptions`, `TempRepo`).
+
+`version` (the package version, the same value on each subpath that has it) is exported by `relations`, `ast` and `grammars`, where Yggdrasil reads it: it keys its relation cache on the `relations` one and pins all three against its dependency. `cli`, `mcp` and `testkit` export none, since no tool reads one there; a vendoring consumer that wants the version reads `RUNES_VERSION` from `dist/version.mjs`.
 
 ## `@chrisdudek/runes/relations`
 
-Relation extraction. Each language's extractor (also reached through `extractorForLanguage`) turns a parsed file into declared symbols and ordered candidate groups; `SymbolTable`, `makeResolver` and `resolveDetectedEdges` resolve them in three states; `makeResolvePathToFile` resolves specifiers against the files on disk. The C# project facts (`extractCsharpRefs`, `buildCsharpProjectScopes`, `assembleCsharpCandidates`), `includeUses`, `parsePsr4` and `sfcScriptView` are the pieces a consumer that runs its own pass (Grain) composes.
+Relation extraction. Each language's extractor, reached through `extractorForLanguage`, turns a parsed file into declared symbols and ordered candidate groups; `SymbolTable`, `makeResolver` and `resolveDetectedEdges` resolve them in three states; `makeResolvePathToFile` resolves specifiers against the files on disk. The C# project facts (`extractCsharpRefs`, `buildCsharpProjectScopes`, `assembleCsharpCandidates`), `includeUses`, `parsePsr4` and `sfcScriptView` are the pieces a consumer that runs its own pass (Grain) composes. Of the extractors only `csharpExtractor` is exported by name, because Yggdrasil's relation-pass test imports it; the other ten are internal modules, the same objects `extractorForLanguage` returns.
 
 | Export | Kind | Consumers |
 |---|---|---|
@@ -33,19 +37,9 @@ Relation extraction. Each language's extractor (also reached through `extractorF
 | `ParsedFile` | type | Yggdrasil |
 | `DependencyExtractor` | type | Yggdrasil |
 | `extractorForLanguage` | value | Grain, Yggdrasil |
-| `typescriptExtractor` | value | — |
 | `sfcScriptView` | value | Grain, Yggdrasil |
 | `SfcScriptView` | type | — |
-| `pythonExtractor` | value | — |
-| `goExtractor` | value | — |
-| `javaExtractor` | value | — |
-| `kotlinExtractor` | value | — |
-| `phpExtractor` | value | — |
 | `parsePsr4` | value | Grain |
-| `rustExtractor` | value | — |
-| `rubyExtractor` | value | — |
-| `cExtractor` | value | — |
-| `cppExtractor` | value | — |
 | `includeUses` | value | Grain |
 | `csharpExtractor` | value | Yggdrasil |
 | `extractCsharpRefs` | value | Grain, Yggdrasil |
@@ -115,7 +109,6 @@ The command table: `defineTable` and the shape it takes (`CommandTable`, `Comman
 
 | Export | Kind | Consumers |
 |---|---|---|
-| `version` | value | — |
 | `defineTable` | value | Grain, Horde, Jarl |
 | `CommandTable` | type | — |
 | `CommandSpec` | type | — |
@@ -123,11 +116,12 @@ The command table: `defineTable` and the shape it takes (`CommandTable`, `Comman
 
 ## `@chrisdudek/runes/mcp`
 
-The MCP server generated from a table, its two executors, the stdio transport, and the pieces a consumer with its own message handler reuses (`buildTools`, `argvFor`, `answersJson`, `commandForTool`, `toolName`, `InvalidParams`).
+The MCP server generated from a table, the spawn executor, the stdio transport, and the pieces a consumer with its own message handler reuses (`buildTools`, `argvFor`, `answersJson`, `commandForTool`, `toolName`, `InvalidParams`).
+
+The in-process executor is internal: `inProcess`, `InProcessExecutor`, `CallContext` and the `Executor` union are not exported, and an in-process value given as `ServerOptions.executor` is outside the promise. No tool runs one: Jarl dispatches in process through its own message handler and `serveStdio`, and builds its refusals itself, so it never goes through the adapter's error document. The in-process `run` answers with the CLI's internal `CommandResult` and throws its internal `CliError` to give a refusal its `why` and `next`; exporting the executor without those would let a consumer signal only a `code`. A 1.x minor exports the four with `CommandResult` and `CliError` when a tool adopts the executor.
 
 | Export | Kind | Consumers |
 |---|---|---|
-| `version` | value | — |
 | `buildTools` | value | Grain, Horde, Jarl |
 | `argvFor` | value | Grain, Jarl |
 | `answersJson` | value | Grain |
@@ -138,17 +132,13 @@ The MCP server generated from a table, its two executors, the stdio transport, a
 | `ToolOptions` | type | — |
 | `createServer` | value | Grain, Horde |
 | `serveStdio` | value | Grain, Horde, Jarl |
-| `inProcess` | value | — |
 | `spawnCli` | value | Grain, Horde |
 | `PROTOCOL_VERSION` | value | Grain, Jarl |
 | `PROTOCOL_VERSIONS` | value | Grain, Jarl |
 | `ServerOptions` | type | — |
 | `McpServer` | type | — |
 | `Concurrency` | type | — |
-| `Executor` | type | — |
-| `InProcessExecutor` | type | — |
 | `SpawnExecutor` | type | — |
-| `CallContext` | type | — |
 | `PrepareResult` | type | — |
 | `ToolResult` | type | — |
 | `StdioOptions` | type | — |
@@ -160,11 +150,10 @@ The MCP server generated from a table, its two executors, the stdio transport, a
 
 ## `@chrisdudek/runes/testkit`
 
-The family guard, the git test environment, parity between table, usage and tools, `tools/list` measurement, the stdio MCP test client, and the runtime pin check.
+The family guard, parity between table, usage and tools, `tools/list` measurement, the stdio MCP test client, and the runtime pin check.
 
 | Export | Kind | Consumers |
 |---|---|---|
-| `version` | value | — |
 | `runGuard` | value | Yggdrasil |
 | `guardPassed` | value | Yggdrasil |
 | `formatGuardReport` | value | Yggdrasil |
@@ -180,10 +169,6 @@ The family guard, the git test environment, parity between table, usage and tool
 | `GuardRule` | type | — |
 | `Token` | type | — |
 | `TokenType` | type | — |
-| `gitEnv` | value | — |
-| `makeTempRepo` | value | — |
-| `GitEnvOptions` | type | — |
-| `TempRepo` | type | — |
 | `parityProblems` | value | Grain, Horde, Jarl |
 | `assertParity` | value | Grain, Horde, Jarl |
 | `ParityOptions` | type | — |
@@ -205,10 +190,10 @@ The family guard, the git test environment, parity between table, usage and tool
 
 These were exported in 0.1.x and no consumer imported them. They are internal from 1.0.0 on (the code stays where Runes itself uses it); a 1.x minor may export one again, additively, when a family tool adopts it:
 
-- `relations`: `subpath`, `single`, `makeRepoLayout`, `makeExactCaseCheck`, `resolveCandidateGroup`, `collectGlobalUsings`, `collectGlobalUsingAliases`, `csharpUses`, `deadPreprocessorLines`, `evalPreprocessorCondition`, `kotlinView`, `isRubyExternalConstant`, `rubyUnderscore`, `makeTsResolveDeps`, `parseJsonc`, `parseCargoManifest`, `parseCompileCommands`, `parseComposerAutoload`, `parseGoModulePath`, `parseGoWorkUses`, `resolveGoImport`, `resolveIncludePath`, `resolveJavaFqn`, `resolveJavaPackageFiles`, `resolvePhpFqn`, `resolvePythonModule`, `resolveRubyRequireRelative`, `resolveRustPath`, `resolveTsPath`, `rustFileDeclares`, `rustTargetFor`, and the types that only these took.
+- `relations`: `subpath`, `typescriptExtractor`, `pythonExtractor`, `goExtractor`, `javaExtractor`, `kotlinExtractor`, `phpExtractor`, `rustExtractor`, `rubyExtractor`, `cExtractor`, `cppExtractor` (each still reached through `extractorForLanguage`), `single`, `makeRepoLayout`, `makeExactCaseCheck`, `resolveCandidateGroup`, `collectGlobalUsings`, `collectGlobalUsingAliases`, `csharpUses`, `deadPreprocessorLines`, `evalPreprocessorCondition`, `kotlinView`, `isRubyExternalConstant`, `rubyUnderscore`, `makeTsResolveDeps`, `parseJsonc`, `parseCargoManifest`, `parseCompileCommands`, `parseComposerAutoload`, `parseGoModulePath`, `parseGoWorkUses`, `resolveGoImport`, `resolveIncludePath`, `resolveJavaFqn`, `resolveJavaPackageFiles`, `resolvePhpFqn`, `resolvePythonModule`, `resolveRubyRequireRelative`, `resolveRustPath`, `resolveTsPath`, `rustFileDeclares`, `rustTargetFor`, and the types that only these took.
 - `ast`: `subpath`.
 - `grammars`: `subpath`, `GRAMMAR_MANIFEST_SCHEMA`, `validateGrammarManifest`, `parseGrammarManifest`, `syntaxNodeTypesFile`, `shippedGrammarsDir`.
 - `fs`: the whole subpath, `@chrisdudek/runes/fs`: `version`, `subpath`, `withLock`, `withLockAsync`, `LockHeldError`, `LockBreakError`, `LockDirectoryMissingError`, `writeAtomic`, `renameWithRetry`, `findRoot`, `checkoutRoot`, `mainCheckout`, `gitCommonDir`, `isLinkedWorktree`, `lockIsStale`, `lockHolderText`, `pidRuns`, `LOCK_DEFAULTS`, `transientRenameCodes`, `tempPathFor` (with `LockOptions`, `WriteAtomicOptions`, `RenameOptions`, `FindRootOptions`). The code stays in `dist/fs/`, tested, outside the promise.
-- `cli`: `subpath`, `parseArgs`, `CliError`, `UsageError`, `errorDocument`, `renderResult`, `renderFailure`, `emit`, `isSingleJsonBlock` (with `ParsedArgs`, `ParseOptions`, `FlagValue`, `ErrorDocument`, `CliErrorOptions`, `CommandResult`, `Rendered`, `FailureOptions`, `Streams`), `tableProblems`, `argSpec`, `commandFlags`, `pathFields`, `publicCommands`, `resolveCommand`, `errorSchema`, `errorParts`, `formatError`, `commandArgv`, `jsonBlock`, `readUsage` (with `ArgSpec`, `UsageBlock`, `UsageReading`; `UsageOptions` moved to `testkit`, where `ParityOptions` takes it).
-- `mcp`: `subpath`, `prefixOf`, `toolFlags`, `requireParam`, `runProcess` (with `RunOptions`, `RunOutcome`).
-- `testkit`: `subpath`, `FAMILY_TOOLS`, `DEFAULT_GUARD_CONFIG`, `scanSource`, `listExports`, `importSpecifiers`, `identifierWords`, `domainWordsIn`, `parseAllow`, `allowMatches`, `gitLocalEnvVars`, `TEST_GIT_CONFIG`, `GIT_LOCAL_ENV_FALLBACK` (with `ExportedName`, `AllowEntry`).
+- `cli`: `version`, `subpath`, `parseArgs`, `CliError`, `UsageError`, `errorDocument`, `renderResult`, `renderFailure`, `emit`, `isSingleJsonBlock` (with `ParsedArgs`, `ParseOptions`, `FlagValue`, `ErrorDocument`, `CliErrorOptions`, `CommandResult`, `Rendered`, `FailureOptions`, `Streams`), `tableProblems`, `argSpec`, `commandFlags`, `pathFields`, `publicCommands`, `resolveCommand`, `errorSchema`, `errorParts`, `formatError`, `commandArgv`, `jsonBlock`, `readUsage` (with `ArgSpec`, `UsageBlock`, `UsageReading`; `UsageOptions` moved to `testkit`, where `ParityOptions` takes it).
+- `mcp`: `version`, `subpath`, `inProcess` (with `InProcessExecutor`, `CallContext`, `Executor`), `prefixOf`, `toolFlags`, `requireParam`, `runProcess` (with `RunOptions`, `RunOutcome`).
+- `testkit`: `version`, `subpath`, `gitEnv`, `makeTempRepo` (with `GitEnvOptions`, `TempRepo`), `FAMILY_TOOLS`, `DEFAULT_GUARD_CONFIG`, `scanSource`, `listExports`, `importSpecifiers`, `identifierWords`, `domainWordsIn`, `parseAllow`, `allowMatches`, `gitLocalEnvVars`, `TEST_GIT_CONFIG`, `GIT_LOCAL_ENV_FALLBACK` (with `ExportedName`, `AllowEntry`).

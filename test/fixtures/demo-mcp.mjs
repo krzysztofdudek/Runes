@@ -1,6 +1,7 @@
 // The demo tool's MCP server, with the executor named by the first argument: in-process (dispatch in this process) or spawn (the CLI as a child).
 import { fileURLToPath } from 'node:url';
-import { createServer, serveStdio, inProcess, spawnCli } from '@chrisdudek/runes/mcp';
+import { createServer, serveStdio, spawnCli } from '@chrisdudek/runes/mcp';
+import { inProcess } from '../helpers/internal/mcp.mjs';
 import { TABLE, USAGE, dispatch } from './demo-tool.mjs';
 
 const mode = process.argv[2];

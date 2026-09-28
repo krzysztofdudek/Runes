@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/go.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { goExtractor } from '@chrisdudek/runes/relations';
+import { goExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code) => runExtractor(goExtractor, 'go', '.go', code);
 

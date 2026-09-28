@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/cpp.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { cppExtractor } from '@chrisdudek/runes/relations';
+import { cppExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code, ext = '.cpp') => runExtractor(cppExtractor, 'cpp', ext, code);
 
