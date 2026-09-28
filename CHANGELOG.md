@@ -4,7 +4,7 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 
 ## [0.1.4] - 2026-09-28
 
-- `relations`: `makeResolvePathToFile` accepts a candidate file only under the name its directory lists. On a case-insensitive file system (the macOS and Windows defaults) the probe used to find `lib/root.rs` as `lib/Root.rs`, so the Rust path `nm::Root` resolved to a file that is not there and a relation pointed at it; the same held for every language's path probe. New export `makeExactCaseCheck(projectRoot, fs?)`, the check behind it: each segment is compared (NFC-normalised) with the directory's listing, read once per resolver instance. The Rust resolver test that was skipped on such file systems runs everywhere again.
+- `relations`: `makeResolvePathToFile` accepts a candidate file only under the name its directory lists. On a case-insensitive file system (the macOS and Windows defaults) the probe used to find `lib/root.rs` as `lib/Root.rs`, so the Rust path `nm::Root` resolved to a file that is not there and a relation pointed at it; the same held for every language's path probe, and for the directory a Go import or a Java wildcard import lists (`ex.com/m/Pkg` took the files of `pkg/`). New export `makeExactCaseCheck(projectRoot, fs?)`, the check behind it: each segment is compared (NFC-normalised) with the directory's listing, read once per resolver instance; the Go package and Java package listings take the same check. The Rust resolver test that was skipped on such file systems runs everywhere again.
 
 ## [0.1.3] - 2026-09-27
 

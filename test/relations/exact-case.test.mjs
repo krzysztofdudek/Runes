@@ -4,7 +4,7 @@ import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { makeExactCaseCheck } from '@chrisdudek/runes/relations';
+import { makeExactCaseCheck, makeResolvePathToFile } from '@chrisdudek/runes/relations';
 
 /** A stand-in case-insensitive, case-preserving file system: `exists` ignores case the way APFS and NTFS do, `readdirSync` lists the stored names. */
 function caseInsensitiveFs(files) {
@@ -75,6 +75,23 @@ describe('makeExactCaseCheck', () => {
       expect(exact('lib/root.rs')).toBe(true);
       expect(exact('lib/Root.rs')).toBe(false);
       expect(exact('Lib/root.rs')).toBe(false);
+    });
+
+    it('resolves a Go package or a Java wildcard package only under the directory name the parent lists', () => {
+      mkdirSync(path.join(root, 'pkg'));
+      mkdirSync(path.join(root, 'cmd'));
+      mkdirSync(path.join(root, 'src', 'com', 'acme'), { recursive: true });
+      mkdirSync(path.join(root, 'src', 'app'), { recursive: true });
+      writeFileSync(path.join(root, 'go.mod'), 'module ex.com/m\n\ngo 1.21\n');
+      writeFileSync(path.join(root, 'pkg', 'a.go'), 'package pkg\n');
+      writeFileSync(path.join(root, 'cmd', 'main.go'), 'package main\n');
+      writeFileSync(path.join(root, 'src', 'com', 'acme', 'Foo.java'), 'package com.acme;\npublic class Foo {}\n');
+      writeFileSync(path.join(root, 'src', 'app', 'App.java'), 'package app;\npublic class App {}\n');
+      const resolve = makeResolvePathToFile(root);
+      expect(resolve('ex.com/m/pkg', 'cmd/main.go', 'go')).toBe('pkg/a.go');
+      expect(resolve('ex.com/m/Pkg', 'cmd/main.go', 'go')).toBe(undefined);
+      expect(resolve('com.acme', 'src/app/App.java', 'java', true)).toBe('src/com/acme/Foo.java');
+      expect(resolve('com.Acme', 'src/app/App.java', 'java', true)).toBe(undefined);
     });
   });
 });

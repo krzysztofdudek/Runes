@@ -46,8 +46,8 @@ export function makeResolvePathToFile(
   // A candidate exists only under the name its directory lists: on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs (issue 482).
   const exactCase = makeExactCaseCheck(projectRoot);
   const exists = (repoRelPosix: string): boolean => existsSync(path.resolve(projectRoot, repoRelPosix)) && exactCase(repoRelPosix);
-  const goDeps = makeGoResolveDeps(projectRoot, ownerOf, isExcluded);
-  const javaDeps = makeJavaResolveDeps(projectRoot, exists, isExcluded);
+  const goDeps = makeGoResolveDeps(projectRoot, ownerOf, isExcluded, exactCase);
+  const javaDeps = makeJavaResolveDeps(projectRoot, exists, isExcluded, exactCase);
   const layout = makeRepoLayout(projectRoot, isExcluded);
   const phpDeps = makePhpResolveDeps(projectRoot, exists, isExcluded, layout.composerMaps);
   const rustDeps = makeRustResolveDeps(projectRoot, exists);
@@ -513,6 +513,7 @@ function makeGoResolveDeps(
   projectRoot: string,
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
+  exactCase: (repoRelPosix: string) => boolean = () => true,
 ): GoResolveDeps {
   // Cache: go.mod directory (repo-rel POSIX, '' = root) → module path or undefined.
   const moduleByDir = new Map<string, string | undefined>();
@@ -621,13 +622,15 @@ function makeGoResolveDeps(
   function dirExists(repoRelDir: string): boolean {
     const abs = path.resolve(projectRoot, repoRelDir);
     try {
-      return statSync(abs).isDirectory();
+      // The package directory exists only under the name its parent lists (issue 482).
+      return statSync(abs).isDirectory() && exactCase(repoRelDir);
     } catch {
       return false;
     }
   }
 
   function goFilesIn(repoRelDir: string): string[] {
+    if (!exactCase(repoRelDir)) return [];
     const abs = path.resolve(projectRoot, repoRelDir);
     let entries: import('node:fs').Dirent[];
     try {
@@ -740,8 +743,11 @@ function makeJavaResolveDeps(
   projectRoot: string,
   exists: (repoRelPosix: string) => boolean,
   isExcluded?: (repoRelPosix: string) => boolean,
+  exactCase: (repoRelPosix: string) => boolean = () => true,
 ): JavaResolveDeps {
   function javaFilesIn(repoRelDir: string): string[] {
+    // A package directory listed under another spelling is not the package (issue 482).
+    if (!exactCase(repoRelDir)) return [];
     const abs = path.resolve(projectRoot, repoRelDir);
     let entries: import('node:fs').Dirent[];
     try {
