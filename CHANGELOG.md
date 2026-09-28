@@ -2,6 +2,10 @@
 
 All notable changes to Runes are recorded here, one line per change. Runes follows [Semantic Versioning](https://semver.org/); one version covers every subpath.
 
+## [0.1.4] - 2026-09-28
+
+- `relations`: `makeResolvePathToFile` accepts a candidate file only under the name its directory lists. On a case-insensitive file system (the macOS and Windows defaults) the probe used to find `lib/root.rs` as `lib/Root.rs`, so the Rust path `nm::Root` resolved to a file that is not there and a relation pointed at it; the same held for every language's path probe. New export `makeExactCaseCheck(projectRoot, fs?)`, the check behind it: each segment is compared (NFC-normalised) with the directory's listing, read once per resolver instance. The Rust resolver test that was skipped on such file systems runs everywhere again.
+
 ## [0.1.3] - 2026-09-27
 
 - `skills/`: `mcp-first` and `worker-worktree` state only what holds for every consumer: the absolute-path rule covers the fields a command would look up from the working directory, the `<tool>-error/1` document and the time limit apply where the tool has them, the CLI fallback leaves command-line parsing to the tool's own usage, and a worker passes the checks its brief names before reporting (rather than always the repository's full check) and never merges.

@@ -1,5 +1,5 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/rust-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
-import { caseInsensitiveTmp, describe, it, expect, beforeEach, afterEach } from '../../helpers/expect.mjs';
+import { describe, it, expect, beforeEach, afterEach } from '../../helpers/expect.mjs';
 import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -277,8 +277,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('core_lib::Engine', from, 'rust')).toBe('crates/core-lib/src/lib.rs');
     expect(resolve('renamed::Engine', from, 'rust')).toBe('crates/core-lib/src/lib.rs');
     expect(resolve('tables::grid::Grid', from, 'rust')).toBe('crates/tables/src/grid/mod.rs');
-    // Issue 482: on a case-insensitive file system (macOS, Windows) the module probe finds lib/root.rs under the name lib/Root.rs, so nm::Root resolves to lib/Root.rs. This assertion fails the same way in Yggdrasil on macOS; it runs where the file system tells the two names apart.
-    if (!caseInsensitiveTmp()) expect(resolve('nm::Root', from, 'rust')).toBe('crates/named/lib/root.rs');
+    // Issue 482: on a case-insensitive file system (macOS, Windows) lib/Root.rs used to be found as lib/root.rs, so nm::Root resolved to a file that is not there. The probe compares names as the directory lists them.
+    expect(resolve('nm::Root', from, 'rust')).toBe('crates/named/lib/root.rs');
     expect(resolve('shared_kit::kit::K', from, 'rust')).toBe('crates/shared/src/kit.rs');
     expect(resolve('core_lib', from, 'rust')).toBe('crates/core-lib/src/lib.rs');
     // Silence: registry dep, a dep whose path leaves the repo, a path with no crate, an

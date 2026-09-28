@@ -9,6 +9,7 @@ import { resolveRustPath, type RustResolveDeps, type RustCrateRoot } from './ext
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
+import { makeExactCaseCheck } from './exact-case.mjs';
 
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
  *  Checks existence against the project's files on disk. Symbol-resolved languages (and
@@ -42,7 +43,9 @@ export function makeResolvePathToFile(
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
 ): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined {
-  const exists = (repoRelPosix: string): boolean => existsSync(path.resolve(projectRoot, repoRelPosix));
+  // A candidate exists only under the name its directory lists: on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs (issue 482).
+  const exactCase = makeExactCaseCheck(projectRoot);
+  const exists = (repoRelPosix: string): boolean => existsSync(path.resolve(projectRoot, repoRelPosix)) && exactCase(repoRelPosix);
   const goDeps = makeGoResolveDeps(projectRoot, ownerOf, isExcluded);
   const javaDeps = makeJavaResolveDeps(projectRoot, exists, isExcluded);
   const layout = makeRepoLayout(projectRoot, isExcluded);
@@ -53,7 +56,7 @@ export function makeResolvePathToFile(
   // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
   const isFile = (repoRelPosix: string): boolean => {
     try {
-      return statSync(path.resolve(projectRoot, repoRelPosix)).isFile();
+      return statSync(path.resolve(projectRoot, repoRelPosix)).isFile() && exactCase(repoRelPosix);
     } catch {
       return false;
     }

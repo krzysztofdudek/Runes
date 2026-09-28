@@ -9,6 +9,7 @@ import { resolveRustPath } from './extractors/rust-resolve.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
+import { makeExactCaseCheck } from './exact-case.mjs';
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
  *  Checks existence against the project's files on disk. Symbol-resolved languages (and
  *  not-yet-implemented ones) return undefined here — they resolve via the SymbolTable.
@@ -37,7 +38,9 @@ import { makeRepoLayout } from './repo-layout.mjs';
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate. */
 export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
-    const exists = (repoRelPosix) => existsSync(path.resolve(projectRoot, repoRelPosix));
+    // A candidate exists only under the name its directory lists: on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs (issue 482).
+    const exactCase = makeExactCaseCheck(projectRoot);
+    const exists = (repoRelPosix) => existsSync(path.resolve(projectRoot, repoRelPosix)) && exactCase(repoRelPosix);
     const goDeps = makeGoResolveDeps(projectRoot, ownerOf, isExcluded);
     const javaDeps = makeJavaResolveDeps(projectRoot, exists, isExcluded);
     const layout = makeRepoLayout(projectRoot, isExcluded);
@@ -48,7 +51,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => {
         try {
-            return statSync(path.resolve(projectRoot, repoRelPosix)).isFile();
+            return statSync(path.resolve(projectRoot, repoRelPosix)).isFile() && exactCase(repoRelPosix);
         }
         catch {
             return false;

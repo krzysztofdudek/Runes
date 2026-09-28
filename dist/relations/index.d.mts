@@ -33,4 +33,5 @@ export * from './extractors/typescript.mjs';
 export * from './symbol-table.mjs';
 export * from './resolver.mjs';
 export * from './resolve-path.mjs';
+export * from './exact-case.mjs';
 export * from './repo-layout.mjs';
