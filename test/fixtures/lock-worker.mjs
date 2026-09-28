@@ -1,6 +1,6 @@
 // One contender for the lock property test: `rounds` increments of the counter file under the lock, each logged as "<who> in" and "<who> out", with a pause between reading and writing so an overlap would lose an update. Mode async runs two holders at once in this process through withLockAsync.
 import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
-import { withLock, withLockAsync } from '@chrisdudek/runes/fs';
+import { withLock, withLockAsync } from '../helpers/internal/fs.mjs';
 
 const [lock, counter, log, roundsText, mode, seedText] = process.argv.slice(2);
 const rounds = Number(roundsText);

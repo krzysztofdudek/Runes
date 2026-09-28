@@ -1,5 +1,5 @@
 // The demo tool's CLI: the table parses, dispatch runs, and the one-block rule prints.
-import { parseArgs, renderResult, renderFailure, emit } from '@chrisdudek/runes/cli';
+import { parseArgs, renderResult, renderFailure, emit } from '../helpers/internal/cli.mjs';
 import { TABLE, USAGE, dispatch } from './demo-tool.mjs';
 
 const argv = process.argv.slice(2);

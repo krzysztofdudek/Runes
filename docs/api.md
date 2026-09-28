@@ -4,18 +4,19 @@ This is what `@chrisdudek/runes` promises under semantic versioning from 1.0.0 o
 
 ## What the promise covers
 
-- **The names below**, from the seven subpaths, with the behaviour the README documents for them. Types are part of it: a type listed here keeps its fields (a minor release may add optional ones).
-- **The module files a vendoring consumer imports** without going through an index: `dist/version.mjs`, `dist/<subpath>/index.mjs` for each subpath, and in the test kit `dist/testkit/parity.mjs`, `dist/testkit/measure.mjs`, `dist/testkit/client.mjs` and `dist/testkit/runtime/index.mjs`, each with the names it exports today. A vendored copy takes whole directories or these files, so these paths are the vendoring surface; every other file under `dist/` may move in any release.
+- **The names below**, from the six subpaths, with the behaviour the README documents for them. Types are part of it: a type listed here keeps its fields (a minor release may add optional ones).
+- **The module files a vendoring consumer imports** without going through an index: `dist/version.mjs`, `dist/<subpath>/index.mjs` for each subpath, and in the test kit `dist/testkit/parity.mjs`, `dist/testkit/measure.mjs`, `dist/testkit/client.mjs` and `dist/testkit/runtime/index.mjs`, each with the names it exports today. A vendored copy takes whole directories or these files, so these paths are the vendoring surface; every other file under `dist/` may move in any release, and `dist/fs/` is not a subpath (see below).
 - **The documents and formats**: the `<tool>-error/1` error document; the grammar manifest (`grammars/manifest.json`, its schema id); the vendoring pin (`runes.pin.json`), the commands, options and exit codes of `tools/vendor.mjs`, and the skill fragment names and markers.
 - **The MCP wire shape** the adapter generates: tool names, one field per argument and flag with its type, which fields are required, what the annotations mean, one JSON block with notes in `_meta`, -32602 for input that does not fit, cancellation and time limits.
 
 ## What it does not cover
 
-- Every export of an internal module. The per-language resolution helpers, the lock's staleness test, the table's helper functions, the usage-text reader, the guard's scanner and the git environment's constants stay in their modules for Runes' own tests; they may change in any release.
+- Every export of an internal module. The per-language resolution helpers, the table's helper functions, the command-line parser, the error document and the one-block `--json` rule, the usage-text reader, the guard's scanner and the git environment's constants stay in their modules for Runes' own code and tests; they may change in any release.
+- The file-system code under `dist/fs/` (the cross-process lock, atomic writes, the repository root). It ships and is tested, but no subpath exports it and no family tool uses it yet; it may change in any release until a 1.x minor exports it for a tool that adopts it.
 - Wording: error messages, tool and field descriptions, report lines. Codes (`code` in the error document, `ELOCKED`, `ELOCKBREAK`, `usage`) are stable; sentences are not.
 - The exact edges an extractor finds. An extractor fix changes what it reports for some source, in a minor or a patch release; the extractor's `rev` changes with it, so a consumer's cache keyed by `rev` drops what it computed before. The relation catalogue (`reference/relations/`) is the specification that fixes move towards.
 
-The Consumers column names the family tools that import each name on their `release/6.1.0` branches (a vendored copy counts), found by reading their imports; "—" means none does yet, and the name is kept because the README documents it as part of the subpath's job.
+The Consumers column names the family tools that import each name on their `release/6.1.0` branches (a vendored copy counts), found by reading their imports; "—" means none does yet, and the name is kept because the README documents it as part of the subpath's job. The `cli` subpath is the exception: it holds only what a tool imports, `defineTable` and the shape it takes.
 
 ## `@chrisdudek/runes/relations`
 
@@ -108,33 +109,9 @@ The grammar manifest and its recipe (`buildGrammars`, `verifyGrammarFiles`, `loa
 | `getLanguageDisplayName` | value | Yggdrasil |
 | `LanguageDef` | type | Yggdrasil |
 
-## `@chrisdudek/runes/fs`
-
-The cross-process lock, atomic writes and the repository root. No consumer imports it yet; it is kept because the family design moves the tools' locks onto it, and its behaviour is specified and tested (README, `fs`).
-
-| Export | Kind | Consumers |
-|---|---|---|
-| `version` | value | — |
-| `withLock` | value | — |
-| `withLockAsync` | value | — |
-| `LockHeldError` | value | — |
-| `LockBreakError` | value | — |
-| `LockDirectoryMissingError` | value | — |
-| `LockOptions` | type | — |
-| `writeAtomic` | value | — |
-| `renameWithRetry` | value | — |
-| `WriteAtomicOptions` | type | — |
-| `RenameOptions` | type | — |
-| `findRoot` | value | — |
-| `checkoutRoot` | value | — |
-| `mainCheckout` | value | — |
-| `gitCommonDir` | value | — |
-| `isLinkedWorktree` | value | — |
-| `FindRootOptions` | type | — |
-
 ## `@chrisdudek/runes/cli`
 
-The command table and the CLI side of it: `parseArgs`, the `<tool>-error/1` document (`CliError`, `UsageError`, `errorDocument`) and the one-block `--json` rule (`renderResult`, `renderFailure`, `emit`, `isSingleJsonBlock`). Consumers build their table with `defineTable` today; `CliError` and `ParsedArgs` are also what an in-process MCP executor throws and receives.
+The command table: `defineTable` and the shape it takes (`CommandTable`, `CommandSpec`, `FlagKind`), the one source of a tool's CLI, its MCP tools and its parity tests. The parser, the `<tool>-error/1` document and the one-block `--json` rule are internal modules the MCP adapter and the test kit use; no tool imports them yet.
 
 | Export | Kind | Consumers |
 |---|---|---|
@@ -143,23 +120,6 @@ The command table and the CLI side of it: `parseArgs`, the `<tool>-error/1` docu
 | `CommandTable` | type | — |
 | `CommandSpec` | type | — |
 | `FlagKind` | type | — |
-| `parseArgs` | value | — |
-| `ParsedArgs` | type | — |
-| `ParseOptions` | type | — |
-| `FlagValue` | type | — |
-| `CliError` | value | — |
-| `UsageError` | value | — |
-| `errorDocument` | value | — |
-| `ErrorDocument` | type | — |
-| `CliErrorOptions` | type | — |
-| `renderResult` | value | — |
-| `renderFailure` | value | — |
-| `emit` | value | — |
-| `isSingleJsonBlock` | value | — |
-| `CommandResult` | type | — |
-| `Rendered` | type | — |
-| `FailureOptions` | type | — |
-| `Streams` | type | — |
 
 ## `@chrisdudek/runes/mcp`
 
@@ -243,12 +203,12 @@ The family guard, the git test environment, parity between table, usage and tool
 
 ## Removed in 1.0.0
 
-These were exported in 0.1.x and no consumer imported them. They are internal from 1.0.0 on (the code stays where Runes itself uses it):
+These were exported in 0.1.x and no consumer imported them. They are internal from 1.0.0 on (the code stays where Runes itself uses it); a 1.x minor may export one again, additively, when a family tool adopts it:
 
 - `relations`: `subpath`, `single`, `makeRepoLayout`, `makeExactCaseCheck`, `resolveCandidateGroup`, `collectGlobalUsings`, `collectGlobalUsingAliases`, `csharpUses`, `deadPreprocessorLines`, `evalPreprocessorCondition`, `kotlinView`, `isRubyExternalConstant`, `rubyUnderscore`, `makeTsResolveDeps`, `parseJsonc`, `parseCargoManifest`, `parseCompileCommands`, `parseComposerAutoload`, `parseGoModulePath`, `parseGoWorkUses`, `resolveGoImport`, `resolveIncludePath`, `resolveJavaFqn`, `resolveJavaPackageFiles`, `resolvePhpFqn`, `resolvePythonModule`, `resolveRubyRequireRelative`, `resolveRustPath`, `resolveTsPath`, `rustFileDeclares`, `rustTargetFor`, and the types that only these took.
 - `ast`: `subpath`.
 - `grammars`: `subpath`, `GRAMMAR_MANIFEST_SCHEMA`, `validateGrammarManifest`, `parseGrammarManifest`, `syntaxNodeTypesFile`, `shippedGrammarsDir`.
-- `fs`: `subpath`, `lockIsStale`, `lockHolderText`, `pidRuns`, `LOCK_DEFAULTS`, `transientRenameCodes`, `tempPathFor`.
-- `cli`: `subpath`, `tableProblems`, `argSpec`, `commandFlags`, `pathFields`, `publicCommands`, `resolveCommand`, `errorSchema`, `errorParts`, `formatError`, `commandArgv`, `jsonBlock`, `readUsage` (with `ArgSpec`, `UsageBlock`, `UsageReading`; `UsageOptions` moved to `testkit`, where `ParityOptions` takes it).
+- `fs`: the whole subpath, `@chrisdudek/runes/fs`: `version`, `subpath`, `withLock`, `withLockAsync`, `LockHeldError`, `LockBreakError`, `LockDirectoryMissingError`, `writeAtomic`, `renameWithRetry`, `findRoot`, `checkoutRoot`, `mainCheckout`, `gitCommonDir`, `isLinkedWorktree`, `lockIsStale`, `lockHolderText`, `pidRuns`, `LOCK_DEFAULTS`, `transientRenameCodes`, `tempPathFor` (with `LockOptions`, `WriteAtomicOptions`, `RenameOptions`, `FindRootOptions`). The code stays in `dist/fs/`, tested, outside the promise.
+- `cli`: `subpath`, `parseArgs`, `CliError`, `UsageError`, `errorDocument`, `renderResult`, `renderFailure`, `emit`, `isSingleJsonBlock` (with `ParsedArgs`, `ParseOptions`, `FlagValue`, `ErrorDocument`, `CliErrorOptions`, `CommandResult`, `Rendered`, `FailureOptions`, `Streams`), `tableProblems`, `argSpec`, `commandFlags`, `pathFields`, `publicCommands`, `resolveCommand`, `errorSchema`, `errorParts`, `formatError`, `commandArgv`, `jsonBlock`, `readUsage` (with `ArgSpec`, `UsageBlock`, `UsageReading`; `UsageOptions` moved to `testkit`, where `ParityOptions` takes it).
 - `mcp`: `subpath`, `prefixOf`, `toolFlags`, `requireParam`, `runProcess` (with `RunOptions`, `RunOutcome`).
 - `testkit`: `subpath`, `FAMILY_TOOLS`, `DEFAULT_GUARD_CONFIG`, `scanSource`, `listExports`, `importSpecifiers`, `identifierWords`, `domainWordsIn`, `parseAllow`, `allowMatches`, `gitLocalEnvVars`, `TEST_GIT_CONFIG`, `GIT_LOCAL_ENV_FALLBACK` (with `ExportedName`, `AllowEntry`).

@@ -1,9 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { defineTable } from '@chrisdudek/runes/cli';
 import {
-  defineTable, parseArgs, CliError, UsageError, errorDocument, renderResult, renderFailure, emit, isSingleJsonBlock,
-} from '@chrisdudek/runes/cli';
-import {
+  parseArgs, CliError, UsageError, errorDocument, renderResult, renderFailure, emit, isSingleJsonBlock,
   tableProblems, argSpec, commandFlags, pathFields, publicCommands, resolveCommand, errorSchema, formatError, commandArgv, jsonBlock, readUsage,
 } from './helpers/internal/cli.mjs';
 

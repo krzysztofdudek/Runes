@@ -1,7 +1,7 @@
 {
   "name": "@chrisdudek/runes",
   "version": "1.0.0",
-  "description": "Shared code for the Yggdrasil tool family: relation extraction, AST walking, grammar pins, fs locking, CLI and MCP scaffolding, and a test kit. Vendored or installed; not a tool of its own.",
+  "description": "Shared code for the Yggdrasil tool family: relation extraction, AST walking, grammar pins, the command table, MCP scaffolding, and a test kit. Vendored or installed; not a tool of its own.",
   "license": "MIT",
   "author": "Krzysztof Dudek",
   "repository": {
@@ -28,10 +28,6 @@
       "import": "./dist/grammars/index.mjs"
     },
     "./grammars/manifest.json": "./grammars/manifest.json",
-    "./fs": {
-      "types": "./dist/fs/index.d.mts",
-      "import": "./dist/fs/index.mjs"
-    },
     "./cli": {
       "types": "./dist/cli/index.d.mts",
       "import": "./dist/cli/index.mjs"

@@ -6,10 +6,11 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, utimesSyn
 import { tmpdir, hostname } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineTable, parseArgs, UsageError } from '@chrisdudek/runes/cli';
+import { defineTable } from '@chrisdudek/runes/cli';
+import { parseArgs, UsageError } from './helpers/internal/cli.mjs';
 import { argvFor, buildTools } from '@chrisdudek/runes/mcp';
-import { withLock, withLockAsync, LockHeldError } from '@chrisdudek/runes/fs';
-import { random, seedNote } from './helpers/prng.mjs';
+import { withLock, withLockAsync, LockHeldError } from './helpers/internal/fs.mjs';
+import { random, seedNote, seeded } from './helpers/prng.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'runes-props-')));
@@ -83,7 +84,7 @@ function expected(table, command, input) {
 }
 
 describe('properties of the command line', () => {
-  test('a tool call becomes argv that parseArgs reads back as exactly that call, for any table and any values', () => {
+  test('a tool call becomes argv that parseArgs reads back as exactly that call, for any table and any values', seeded(() => {
     const r = random();
     for (let i = 0; i < 400; i += 1) {
       const table = randomTable(r);
@@ -94,9 +95,10 @@ describe('properties of the command line', () => {
       const want = expected(table, command, input);
       assert.deepEqual({ command: parsed.command, args: parsed.args, flags: parsed.flags }, want, `case ${i} ${seedNote()}\ntable ${JSON.stringify(table)}\ninput ${JSON.stringify(input)}\nargv ${JSON.stringify(argv)}`);
     }
-  });
+  }));
 
-  test('a command line may put its flags anywhere after the command, as --f=v or --f v, and parses the same', () => {
+  test('a command line may put its flags anywhere after the command, as --f=v or --f v, and parses the same', seeded(() => {
+
     const r = random();
     for (let i = 0; i < 400; i += 1) {
       const table = randomTable(r);
@@ -126,9 +128,10 @@ describe('properties of the command line', () => {
       const parsed = parseArgs(table, line);
       assert.deepEqual({ command: parsed.command, args: parsed.args, flags: parsed.flags }, { command: canonical.command, args: canonical.args, flags: canonical.flags }, `case ${i} ${seedNote()}\nline ${JSON.stringify(line)}`);
     }
-  });
+  }));
 
-  test('every refusal of a malformed line is a UsageError, never another exception', () => {
+  test('every refusal of a malformed line is a UsageError, never another exception', seeded(() => {
+
     const r = random();
     for (let i = 0; i < 600; i += 1) {
       const table = randomTable(r);
@@ -137,9 +140,10 @@ describe('properties of the command line', () => {
         assert.ok(e instanceof UsageError && e.code === 'usage', `case ${i} ${seedNote()}: ${JSON.stringify(line)} threw ${e?.stack}`);
       }
     }
-  });
+  }));
 
-  test('every generated tool lists exactly the fields argvFor accepts, and nothing else passes', () => {
+  test('every generated tool lists exactly the fields argvFor accepts, and nothing else passes', seeded(() => {
+
     const r = random();
     for (let i = 0; i < 200; i += 1) {
       const table = randomTable(r);
@@ -150,12 +154,12 @@ describe('properties of the command line', () => {
         assert.throws(() => argvFor(table, command, { ...input, zzunknown: 'x' }), /unknown field "zzunknown"/);
       }
     }
-  });
+  }));
 });
 
 describe('properties of the lock', () => {
   // Mutual exclusion across processes: every child increments a counter under the lock with a read, a pause and a write; a lost update or two holders at once would show as a short count or an overlap in the log.
-  test('several processes and async holders never hold the lock at once', { timeout: 120_000 }, async () => {
+  test('several processes and async holders never hold the lock at once', { timeout: 120_000 }, seeded(async () => {
     const dir = mkdtempSync(join(tmp, 'mutex-'));
     const lock = join(dir, '.lock');
     const counter = join(dir, 'counter');
@@ -181,10 +185,10 @@ describe('properties of the lock', () => {
       assert.ok(inWhat === 'in' && outWhat === 'out' && inWho === outWho, `holders overlapped at line ${i}: ${lines.slice(i, i + 3).join(' | ')} ${seedNote()}`);
     }
     assert.ok(!existsSync(lock), 'the lock is released at the end');
-  });
+  }));
 
   // The staleness rules of the README, as a model: withLock takes over exactly the locks the model calls stale, and waits out (then refuses) the others without touching them.
-  test('withLock takes over exactly the locks the documented rules call stale, and never touches a live one', async () => {
+  test('withLock takes over exactly the locks the documented rules call stale, and never touches a live one', seeded(async () => {
     const dead = spawnSync(process.execPath, ['-e', '0']).pid;
     const limits = { emptyMs: 300, staleMs: 600, reusedPidMs: 900 };
     const model = ({ content, host, pid, age }) => {
@@ -219,5 +223,5 @@ describe('properties of the lock', () => {
         await assert.rejects(withLockAsync(lock, () => 1, { ...limits, waitMs: 60 }), (e) => e instanceof LockHeldError);
       }
     }
-  });
+  }));
 });

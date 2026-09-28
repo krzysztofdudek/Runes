@@ -221,7 +221,14 @@ export function createServer(options: ServerOptions): McpServer {
   }
 
   async function callTool(name: unknown, input: unknown, signal?: AbortSignal): Promise<ToolResult> {
-    if (helpName !== null && name === helpName) return { content: [text(toolOptions.help as string)], isError: false };
+    if (helpName !== null && name === helpName) {
+      // The help tool takes no fields; like every other tool it refuses one it does not list, since the schema no longer says additionalProperties: false.
+      const given = input ?? {};
+      if (typeof given !== 'object' || Array.isArray(given)) throw new InvalidParams(`${helpName}: arguments must be an object`);
+      const extra = Object.keys(given);
+      if (extra.length) throw new InvalidParams(`${helpName}: unknown field "${extra[0]}" — it takes no fields`);
+      return { content: [text(toolOptions.help as string)], isError: false };
+    }
     const command = commandForTool(table, name, toolOptions);
     if (command === null) throw new InvalidParams(`Unknown tool: ${String(name)}`);
     let fields = (input ?? {}) as Record<string, unknown>;

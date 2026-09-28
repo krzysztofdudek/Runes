@@ -138,6 +138,63 @@ describe('the protocol, without a transport', () => {
   });
 });
 
+describe('closed input without additionalProperties in the schema', () => {
+  // tools/list no longer says additionalProperties: false, so the server alone keeps a tool's input closed. Every tool, the help tool included, refuses a field it does not list with -32602, and the call reaches neither prepare nor the executor.
+  const minimal = (tool) => Object.fromEntries((tool.inputSchema.required ?? []).map((f) => [f, tool.inputSchema.properties[f].type === 'array' ? ['a'] : join(tmp, 'f')]));
+
+  test('in process: an unknown field on any tool is -32602, and nothing is prepared or run', async () => {
+    let prepared = 0; let ran = 0;
+    const server = createServer({ table: TABLE, version: '1', tools: { help: USAGE }, prepare: () => { prepared += 1; }, executor: inProcess(() => { ran += 1; return { text: 'ran' }; }) });
+    assert.equal(server.tools.some((t) => 'additionalProperties' in t.inputSchema), false);
+    for (const tool of server.tools) {
+      // Built as JSON text, as a client sends it, so "__proto__" is an own field and not the object's prototype.
+      for (const extra of ['"zz": 1', '"zz": null', '"constructor": "x"', '"__proto__": 1', '"__proto__": {"text": "y"}']) {
+        const base = JSON.stringify(minimal(tool)).slice(1, -1);
+        const input = JSON.parse(`{${base}${base ? ',' : ''}${extra}}`);
+        const r = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool.name, arguments: input } });
+        assert.equal(r.error?.code, -32602, `${tool.name} ${JSON.stringify(Object.keys(input))}`);
+        assert.match(r.error.message, /unknown field/);
+      }
+    }
+    assert.equal(prepared, 0);
+    assert.equal(ran, 0);
+    // The same inputs without the extra field go through.
+    assert.equal((await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'demo_help', arguments: {} } })).result.isError, false);
+    assert.equal((await server.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'demo_echo', arguments: { text: 'x' } } })).result.isError, false);
+    assert.equal(ran, 1);
+  });
+
+  test('spawn: an unknown field never starts the CLI', async () => {
+    const mark = join(tmp, 'spawn-ran');
+    const server = createServer({ table: TABLE, version: '1', executor: spawnCli({ args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(mark)}, 'ran')`] }) });
+    const bad = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'demo_echo', arguments: { text: 'x', zz: true } } });
+    assert.equal(bad.error.code, -32602);
+    assert.equal(existsSync(mark), false, 'the CLI did not run');
+    const ok = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'demo_echo', arguments: { text: 'x' } } });
+    assert.equal(ok.result.isError, false);
+    assert.equal(existsSync(mark), true, 'the same call without the field runs');
+  });
+});
+
+describe('annotations mean what they meant in 0.1.x', () => {
+  // 0.1.x wrote all four hints; 1.0.0 writes only those that differ from the MCP defaults. Read with the specification's defaults (readOnlyHint false, destructiveHint true, idempotentHint false, openWorldHint true; destructive and idempotent meaningful only when readOnlyHint is false), every table spec gives the same meaning both ways.
+  const DEFAULTS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+  const meaning = (a) => {
+    const m = { ...DEFAULTS, ...a };
+    return m.readOnlyHint ? { readOnly: true, openWorld: m.openWorldHint } : { readOnly: false, destructive: m.destructiveHint, idempotent: m.idempotentHint, openWorld: m.openWorldHint };
+  };
+  const old = (spec) => ({ readOnlyHint: !spec.writes, destructiveHint: !!spec.destructive, idempotentHint: spec.idempotent ?? !spec.writes, openWorldHint: false });
+
+  test('every combination of writes, destructive and idempotent that defineTable accepts', () => {
+    const specs = [{}, { writes: false }];
+    for (const destructive of [undefined, false, true]) for (const idempotent of [undefined, false, true]) specs.push({ writes: true, ...(destructive === undefined ? {} : { destructive }), ...(idempotent === undefined ? {} : { idempotent }) });
+    const commands = Object.fromEntries(specs.map((s, i) => [`c${i}`, s]));
+    const tools = buildTools({ tool: 'x', commands }, { help: 'usage' });
+    for (const [i, spec] of specs.entries()) assert.deepEqual(meaning(tools[i].annotations), meaning(old(spec)), JSON.stringify(spec));
+    assert.deepEqual(meaning(tools.at(-1).annotations), meaning({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }), 'the help tool');
+  });
+});
+
 describe('consumer hooks and JSON refusals without error documents', () => {
   const run = inProcess(({ parsed }) => dispatch(parsed.command, parsed.args, parsed.flags));
 

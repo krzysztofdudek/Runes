@@ -1,5 +1,7 @@
 // A seeded pseudo-random source for the property tests. Each run draws a fresh seed unless RUNES_PROPERTY_SEED names one, and every failure message carries the seed, so a counterexample found once can be replayed exactly.
-export const SEED = Number(process.env.RUNES_PROPERTY_SEED ?? Math.floor(Math.random() * 2 ** 31));
+const given = process.env.RUNES_PROPERTY_SEED;
+if (given !== undefined && !/^\d+$/.test(given.trim())) throw new Error(`RUNES_PROPERTY_SEED must be a whole number (got ${JSON.stringify(given)}); a seed that is not one would silently replay seed 0`);
+export const SEED = given !== undefined ? Number(given) : Math.floor(Math.random() * 2 ** 31);
 
 // mulberry32: small, fast, and good enough to spread test cases.
 export function random(seed = SEED) {
@@ -22,3 +24,11 @@ export function random(seed = SEED) {
 }
 
 export const seedNote = (extra = '') => `(RUNES_PROPERTY_SEED=${SEED}${extra ? `, ${extra}` : ''})`;
+
+// Wraps a property test's body so that any failure carries the seed, an unexpected exception as well as a failed assertion: the seed is what replays it.
+export const seeded = (fn) => async (...args) => {
+  try { return await fn(...args); } catch (e) {
+    if (e instanceof Error && !e.message.includes('RUNES_PROPERTY_SEED')) e.message = `${e.message} ${seedNote()}`;
+    throw e;
+  }
+};

@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import {
   withLock, withLockAsync, LockHeldError, LockBreakError, LockDirectoryMissingError, writeAtomic, renameWithRetry, findRoot, checkoutRoot, mainCheckout, gitCommonDir, isLinkedWorktree,
-} from '@chrisdudek/runes/fs';
-import {
   lockIsStale, lockHolderText, pidRuns, transientRenameCodes, tempPathFor,
 } from './helpers/internal/fs.mjs';
 
 // realpathSync.native: git reports long names on Windows, where tmpdir() can hold an 8.3 short one (RUNNER~1).
+// The lock module by URL, for the child processes below (fs is internal since 1.0.0, so no package subpath reaches it).
+const LOCK_MODULE = new URL('../dist/fs/lock.mjs', import.meta.url).href;
 const temp = () => realpathSync.native(mkdtempSync(join(tmpdir(), 'runes-fs-')));
 const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); return r.pid; };
 const old = (path, ms) => { const t = (Date.now() - ms) / 1000; utimesSync(path, t, t); };
@@ -149,7 +149,7 @@ describe('withLock', () => {
       const counter = join(dir, 'n');
       writeFileSync(counter, '0');
       const script = `
-        import { withLock } from '@chrisdudek/runes/fs';
+        import { withLock } from ${JSON.stringify(LOCK_MODULE)};
         import { readFileSync, writeFileSync } from 'node:fs';
         const [lock, file] = process.argv.slice(1);   // -e has no script path in argv
         for (let i = 0; i < 25; i += 1) withLock(lock, () => {

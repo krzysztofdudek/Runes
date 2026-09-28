@@ -1,7 +1,8 @@
 // A small tool for the MCP and parity tests: its command table, its usage text, and its dispatch, which both the CLI (demo-cli.mjs) and the in-process server run.
 import { writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { defineTable, CliError } from '@chrisdudek/runes/cli';
+import { defineTable } from '@chrisdudek/runes/cli';
+import { CliError } from '../helpers/internal/cli.mjs';
 
 export const TABLE = defineTable({
   tool: 'demo',

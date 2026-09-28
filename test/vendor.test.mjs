@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { random, seedNote } from './helpers/prng.mjs';
+import { random, seedNote, seeded } from './helpers/prng.mjs';
 
 const TOOL = join(dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'vendor.mjs');
 // The global config is an empty file of the test's own rather than /dev/null, which only Git for Windows' own path translation makes work there; the system config (where Git for Windows sets core.autocrlf=true) is off, so the tests see the same git on every OS unless one sets autocrlf on purpose.
@@ -156,7 +156,7 @@ describe('vendor.mjs', () => {
   });
 
   // The gate's contract, over random edits: any byte changed in a vendored file, a file removed or added under the copy, the tool changed, or a fragment block changed fails check; an edit outside the blocks, or line endings turned to CRLF, passes.
-  test('property: every edit to the copy, the tool or a fragment block fails check; edits outside the blocks and CRLF do not', () => {
+  test('property: every edit to the copy, the tool or a fragment block fails check; edits outside the blocks and CRLF do not', seeded(() => {
     const r = random();
     const vendored = [...baseline.keys()].filter((k) => k.replace(/\\/g, '/').startsWith('vendor/runes/'));
     for (let i = 0; i < 30; i += 1) {
@@ -194,7 +194,7 @@ describe('vendor.mjs', () => {
       restore();
     }
     assert.equal(run(['check']).code, 0, 'restored');
-  });
+  }));
 
   test('mutation: a hand-edited vendored file fails check', () => {
     appendFileSync(join(consumer, 'vendor/runes/dist/fs/index.mjs'), '// quick fix\n');

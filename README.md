@@ -4,9 +4,9 @@ Shared code for the Yggdrasil tool family.
 
 **Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
-Status: 1.0.0, the first release for npm (the 0.1.x tags were for vendoring only). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the 460-case relation catalogue and their unit tests, and the shared file-system, CLI and MCP code, the test kit and the skill fragments. What 1.x keeps stable is in [docs/api.md](docs/api.md).
+Status: 1.0.0, the first release for npm (the 0.1.x tags were for vendoring only). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the 460-case relation catalogue and their unit tests, and the command table, the MCP adapter, the test kit and the skill fragments. What 1.x keeps stable is in [docs/api.md](docs/api.md): only what a family tool imports today, so the file-system code and most of the CLI code ship as internal modules (below).
 
-**The stable API.** [docs/api.md](docs/api.md) lists every name the seven subpaths export, which family tool imports it, and what semver 1.x promises and does not; a test holds that page and the exports together.
+**The stable API.** [docs/api.md](docs/api.md) lists every name the six subpaths export, which family tool imports it, and what semver 1.x promises and does not; a test holds that page and the exports together.
 
 ## What goes in: the entry rule
 
@@ -20,8 +20,7 @@ Code enters Runes only when both hold:
 | `@chrisdudek/runes/relations` | per-language relation extractors (11 languages), the symbol table, the three-state resolver, path resolution, repository layout; files are grouped by an injected owner lookup | Yggdrasil (npm), Grain (vendor) |
 | `@chrisdudek/runes/ast` | `walk`, `closest`, the parse cache; a parser host over an injected tree-sitter runtime and runtime identity | Yggdrasil, Grain |
 | `@chrisdudek/runes/grammars` | the grammar manifest (23 grammar pins, the `web-tree-sitter` runtime pin, the `tree-sitter-cli` pin), the patches, the build recipe verified by sha256, and the language table | Yggdrasil, Grain |
-| `@chrisdudek/runes/fs` | `withLock`, `withLockAsync`, `writeAtomic`, the repository root through the git common dir | Jarl, Horde, Grain |
-| `@chrisdudek/runes/cli` | a command-table schema, `parseArgs`, the `<tool>-error/1` error document, the single `--json` block rule | Jarl, Grain, Horde |
+| `@chrisdudek/runes/cli` | the command table (`defineTable`), the one source of a tool's CLI, MCP tools and parity tests | Jarl, Grain, Horde |
 | `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain, Horde |
 | `@chrisdudek/runes/testkit` | the family guard, the runtime pin check, the git test environment, CLI/usage/MCP parity, `tools/list` measurement and a stdio MCP test client | all |
 | `skills/` | shared skill fragments, kept in consumers' `SKILL.md` between markers | Jarl, Grain, Horde |
@@ -39,11 +38,11 @@ Code enters Runes only when both hold:
 - Network access at run time.
 - Runtime dependencies: `web-tree-sitter` is an optional peer dependency, for types only.
 
-## `fs`: locks, atomic writes, the root
+## Internal: locks, atomic writes, the root (`dist/fs/`)
+
+No subpath exports this code in 1.x yet: no family tool uses it, and 1.0.0 promises only what a tool imports. It ships under `dist/fs/` and is tested like the rest (including the lock's property tests); a 1.x minor exports it, additively, when a tool adopts it, and until then it may change in any release. What it does:
 
 ```js
-import { withLock, withLockAsync, writeAtomic, renameWithRetry, findRoot, mainCheckout } from '@chrisdudek/runes/fs';
-
 withLock(join(stateDir, '.lock'), () => writeAtomic(file, text));   // sync, re-entrant per path
 await withLockAsync(lockPath, async () => { /* ... */ });          // async, not re-entrant
 const root = findRoot(process.cwd(), { marker: '<state dir>' });    // a worktree without the marker resolves to its main checkout
@@ -53,10 +52,12 @@ const root = findRoot(process.cwd(), { marker: '<state dir>' });    // a worktre
 - `writeAtomic(path, data)` writes `.<name>.<pid>.<random>.tmp` beside the target and renames it over the target, so a reader never sees half a file; one ignore pattern, `.*.tmp`, covers the temporary files. `renameWithRetry` retries EPERM, EACCES and EBUSY on Windows (a file another process holds open) and EBUSY elsewhere, within a 2 s budget.
 - `findRoot(from, { marker })` is the nearest checkout (a directory holding `.git`, a directory or a worktree's file). When that checkout lacks `marker` and the main checkout, found through `git rev-parse --git-common-dir`, has it, the main checkout is the root. `checkoutRoot`, `mainCheckout`, `gitCommonDir` and `isLinkedWorktree` are the pieces.
 
-## `cli`: the command table, parsing, errors, one JSON block
+## `cli`: the command table
+
+`@chrisdudek/runes/cli` exports `defineTable` and the shape it takes (`CommandTable`, `CommandSpec`, `FlagKind`). The parser, the error document and the one-block rule described after the table are internal modules in 1.x: the MCP adapter and the test kit run on them, so a tool's MCP tools read a call exactly as described here, but a tool does not import them yet (the example's second half shows the shape a later 1.x minor may export).
 
 ```js
-import { defineTable, parseArgs, renderResult, renderFailure, emit } from '@chrisdudek/runes/cli';
+import { defineTable } from '@chrisdudek/runes/cli';
 
 export const TABLE = defineTable({
   tool: 'demo',
@@ -69,6 +70,7 @@ export const TABLE = defineTable({
   aliases: { seed: 'decide' },
 });
 
+// internal in 1.x, not importable from the package:
 try {
   const { command, args, flags } = parseArgs(TABLE, process.argv.slice(2));
   process.exitCode = emit(renderResult(run(command, args, flags), { json: flags.json === true }));
@@ -78,9 +80,9 @@ try {
 ```
 
 - **The table** is the one source of the CLI, the MCP tools and the parity tests. An argument is `name`, `name?`, `name...` (one or more) or `name...?` (any number); a flag is `bool`, `value`, `many`, `number` or `path`. A command key may hold a subcommand (`decide rm`); an alias may name a command or a whole group. `writes`, `destructive` and `idempotent` become the MCP annotations; `paths` names the fields resolved against the working directory; `stdoutJson` marks a command that prints JSON unasked; `internal` keeps a hook command off the tools and the usage text. `defineTable` throws on a malformed table (order of arguments, duplicate names, a flag whose kind differs from the global one, an alias to nothing, `destructive` or `idempotent` on a command that does not write).
-- **`parseArgs(table, argv)`** returns `{ command, words, args, flags }`. A value flag always takes the next word, even one that starts with `--`; a bare `--` ends the flags; only global flags may come before the command; an unknown flag names the ones the command takes; a single-value flag given twice, a missing required argument and surplus words are errors. Every refusal is a `UsageError` (code `usage`).
-- **The error document** `<tool>-error/1` is `{ schema, code, what, why, next: { command, text } | null }`: `code` a stable word, `next.command` the step as argv when it is a command of the tool a reader can run as given. `CliError(code, what, { why, next, exitCode })` carries the parts; anything else thrown reads as `command-error`.
-- **One JSON block**: with `--json`, stdout holds exactly one document, the answer or the error document, and every note goes to stderr. `renderResult`, `renderFailure` and `emit` do this; `isSingleJsonBlock` checks it.
+- **`parseArgs(table, argv)`** (internal) returns `{ command, words, args, flags }`. A value flag always takes the next word, even one that starts with `--`; a bare `--` ends the flags; only global flags may come before the command; an unknown flag names the ones the command takes; a single-value flag given twice, a missing required argument and surplus words are errors. Every refusal is a `UsageError` (code `usage`).
+- **The error document** (internal code; the document itself is a stable format) `<tool>-error/1` is `{ schema, code, what, why, next: { command, text } | null }`: `code` a stable word, `next.command` the step as argv when it is a command of the tool a reader can run as given. `CliError(code, what, { why, next, exitCode })` carries the parts; anything else thrown reads as `command-error`.
+- **One JSON block** (internal code; the rule holds for the MCP answers): with `--json`, stdout holds exactly one document, the answer or the error document, and every note goes to stderr. `renderResult`, `renderFailure` and `emit` do this; `isSingleJsonBlock` checks it.
 
 ## `mcp`: a stdio server from the table
 
@@ -99,7 +101,7 @@ const server = createServer({
 serveStdio(server);
 ```
 
-- **Tools**: one per public command, `<tool>_<command>` (`grain_decide_steer`), one field per argument and flag, and a `<tool>_help` tool with the usage text when `help` is given. A field says only what its name and type cannot: a path field is described as `An absolute path.`, every other field has no description of its own unless `fieldNote` gives one, because the flag's name is the field's name, its kind is the type, and the usage lives in the help tool once instead of in every tool. The annotations say only what differs from the MCP defaults: `readOnlyHint: true` on a command that does not write; on one that writes, `destructiveHint: false` unless the table marks it destructive and `idempotentHint: true` when the table marks it idempotent; `openWorldHint: false` on every tool. The schema has no `additionalProperties: false`: the server refuses an unknown field itself (-32602, naming the fields the tool takes). `describe` shapes the tool's description. On the family's tables this keeps `tools/list` inside the 8 500-token budget: Horde's 81 tools measure about 8 000 tokens, Jarl's 38 about 7 000 and Grain's 27 about 5 300 (from 14 100, 9 600 and 7 600 before 1.0.0), with every field kept.
+- **Tools**: one per public command, `<tool>_<command>` (`grain_decide_steer`), one field per argument and flag, and a `<tool>_help` tool with the usage text when `help` is given. A field says only what its name and type cannot: a path field is described as `An absolute path.`, every other field has no description of its own unless `fieldNote` gives one, because the flag's name is the field's name, its kind is the type, and the usage lives in the help tool once instead of in every tool. The annotations say only what differs from the MCP defaults: `readOnlyHint: true` on a command that does not write; on one that writes, `destructiveHint: false` unless the table marks it destructive and `idempotentHint: true` when the table marks it idempotent; `openWorldHint: false` on every tool. The schema has no `additionalProperties: false`: the server refuses an unknown field itself on every tool, the help tool included (-32602, naming the fields the tool takes), before `prepare` or the executor runs. `describe` shapes the tool's description. On the family's tables this keeps `tools/list` inside the 8 500-token budget: Horde's 81 tools measure about 8 000 tokens, Jarl's 38 about 7 000 and Grain's 27 about 5 300 (from 14 100, 9 600 and 7 600 before 1.0.0), with every field kept.
 - **Input**: a call becomes the argv the CLI would get (flags inline, then `--`, then the arguments), so the CLI's parser reads it. Unknown fields, wrong types, a missing required argument, an argument after a gap, and a relative path in a field the table marks as a path are a JSON-RPC -32602 error, and nothing runs. `transformInput({ command, input })` rewrites the fields before that check (a repository-relative path made absolute, a container path translated, a "bare name or absolute path" field refused with `InvalidParams`), and `transformArgv({ command, argv, input })` rewrites the argv after it, so a consumer keeps its own path rules without forking the adapter. `prepare` may refuse with `InvalidParams` too.
 - **Executors**: `inProcess(run)` hands `run` the parsed call and takes back `{ value, text, notes, exitCode }` or a thrown refusal. A synchronous `run` blocks the event loop while it runs: `ping`, `tools/list`, a cancel and the timeout all wait until it returns, so a timeout can only answer after the work has finished. Only an async `run` that awaits and honours `ctx.signal` gets the transport's promises (answers while it runs, a timeout or cancel that stops it). No in-process run can be killed: a timeout or cancel drops its answer, and the next call waits for it to end. `spawnCli({ command, args })` runs the CLI as a child in its own process group; a timeout, a cancel, stdin closing or SIGTERM/SIGINT/SIGHUP kill the whole tree (`taskkill /T /F` on Windows, where there are no process groups).
 - **Answers**: a JSON answer is exactly one text block, notes in `_meta` under `<tool>/<key>`, never in a second block; a refusal in JSON mode is the `<tool>-error/1` document as that block, or with `errorDocuments: false` the message text as that block, notes still in `_meta`. A non-zero exit or a refusal is `isError: true`.
@@ -217,7 +219,7 @@ The pin names what to take; `update` fills in the rest. Consumer-side paths are 
 {
   "source": "https://github.com/krzysztofdudek/Runes.git",
   "dest": "runes",
-  "paths": ["dist/version.mjs", "dist/fs", "dist/cli"],
+  "paths": ["dist/version.mjs", "dist/cli", "dist/mcp"],
   "fragments": [{ "name": "worktree", "target": "../skills/tool/SKILL.md" }],
   "tool": { "path": "../scripts/runes.mjs" }
 }

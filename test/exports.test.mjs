@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const SUBPATHS = ['relations', 'ast', 'grammars', 'fs', 'cli', 'mcp', 'testkit'];
+const SUBPATHS = ['relations', 'ast', 'grammars', 'cli', 'mcp', 'testkit'];
 
 test('package.json declares exactly the agreed subpaths', () => {
   const code = Object.keys(pkg.exports).filter((k) => !k.endsWith('.json')).map((k) => k.slice(2));
@@ -56,6 +56,15 @@ for (const sub of SUBPATHS) {
     assert.deepEqual(types, [...doc].filter(([, k]) => k === 'type').map(([n]) => n).sort(), 'type exports');
   });
 }
+
+test('docs/api.md has a section for no subpath the package does not export', () => {
+  const sections = [...API.matchAll(/^## `@chrisdudek\/runes\/([^`]+)`/gm)].map((m) => m[1]);
+  assert.deepEqual(sections.sort(), [...SUBPATHS].sort());
+});
+
+test('the file-system code is not a subpath: @chrisdudek/runes/fs does not resolve', async () => {
+  await assert.rejects(import('@chrisdudek/runes/fs'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
+});
 
 test('the vendoring module paths docs/api.md promises exist and export what they did', async () => {
   const modules = {
