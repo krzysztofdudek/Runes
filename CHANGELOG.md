@@ -2,7 +2,20 @@
 
 All notable changes to Runes are recorded here, one line per change. Runes follows [Semantic Versioning](https://semver.org/); one version covers every subpath.
 
-## [Unreleased]
+## [1.0.0] - 2026-09-28
+
+The first release published to npm, and the first under the semver 1.x promise: `docs/api.md` lists every name the package keeps stable, the vendoring module paths, and what the promise does not cover. The 0.1.x tags were published for vendoring only; everything they brought is in 1.0.0:
+
+- `relations`: the relation extractors of 11 languages, the symbol table, the three-state resolver with an injected owner lookup, path resolution against the files on disk that accepts a file only under the name its directory lists, and the pieces a consumer composing its own pass needs; moved from Yggdrasil with the 460-case relation catalogue.
+- `ast`: `walk`, `closest`, the parse cache, and a parser host over an injected `web-tree-sitter` runtime and runtime identity.
+- `grammars`: the grammar manifest (23 grammars, the runtime and `tree-sitter-cli` 0.27.0), its patches, the build recipe verified by sha256 with a content-addressed cache, source builds refused on Windows with the reason, and the language table.
+- `fs`: the cross-process lock (`withLock`, `withLockAsync`), `writeAtomic` with a Windows-safe rename, and the repository root through the git common dir.
+- `cli`: the command table, `parseArgs`, the `<tool>-error/1` document and the one-block `--json` rule.
+- `mcp`: a stdio MCP server generated from the table, with in-process and spawn executors, time limits and cancels that kill a spawned tree (`taskkill /T /F` on Windows).
+- `testkit`: the family guard, the git test environment, table/usage/tools parity, `tools/list` measurement, a stdio MCP test client and the runtime pin check.
+- `skills/`: the shared fragments `mcp-first`, `worker-worktree` and `evidence`; `tools/vendor.mjs`: the vendoring tool and its gate, with fragment-only pins, symbolic links refused, and CRLF and Windows paths handled.
+
+Changed since 0.1.4:
 
 - The stable API: `docs/api.md` lists every name the seven subpaths export, the family tools that import each, the vendoring module paths, and what semver 1.x promises and does not; `test/exports.test.mjs` holds the page and the exports together both ways, value exports from the modules and type exports from the index declarations. The page ships in the package.
 - Breaking: names no consumer imported leave the subpath indexes and become internal (the code stays where Runes uses it): `subpath` everywhere; in `relations` the per-language resolution helpers (`resolveTsPath`, `resolveGoImport`, `parseCargoManifest`, `makeExactCaseCheck`, `makeRepoLayout`, `single` and 25 more); in `grammars` the manifest's validator and schema; in `fs` the lock's staleness helpers, `LOCK_DEFAULTS`, `tempPathFor` and `transientRenameCodes`; in `cli` the table helpers, `errorParts`, `formatError`, `commandArgv`, `jsonBlock` and `readUsage`; in `mcp` `prefixOf`, `toolFlags`, `requireParam` and `runProcess`; in `testkit` the guard's scanner pieces and the git environment's constants. `UsageOptions` moves from `cli` to `testkit`, beside `ParityOptions`, which takes it. The full list is in `docs/api.md`.

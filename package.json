@@ -1,6 +1,6 @@
 {
   "name": "@chrisdudek/runes",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "description": "Shared code for the Yggdrasil tool family: relation extraction, AST walking, grammar pins, fs locking, CLI and MCP scaffolding, and a test kit. Vendored or installed; not a tool of its own.",
   "license": "MIT",
   "author": "Krzysztof Dudek",
