@@ -284,15 +284,7 @@ Releases are the owner's step. Bump `version` in `package.json` and `RUNES_VERSI
 
 Publishing uses npm trusted publishing (OIDC); there is no npm token secret, and the workflow installs a pinned npm (11.6.2) that supports it. A prerelease `X.Y.Z-<id>.N` publishes under the dist-tag `<id>` when `<id>` starts with a letter, otherwise under `next`.
 
-**The first release is set up by hand, once, in this order:**
-
-1. Push `main` with the release commit (version, `RUNES_VERSION` and the dated CHANGELOG section already in it), and let CI go green.
-2. Publish 1.0.0 manually from a clean checkout of that commit: `npm ci && npm run check && npm publish --access public`. A trusted publisher can only be configured for a package that already exists on npm.
-3. On npmjs.com, configure a trusted publisher for `@chrisdudek/runes`: GitHub Actions, repository `krzysztofdudek/Runes`, workflow file `release.yml`.
-4. Push the tag `v1.0.0`. The workflow runs CI, finds 1.0.0 already on npm, and skips both the publish and the GitHub release.
-5. Create the GitHub release for `v1.0.0` by hand (for example `gh release create v1.0.0 --title v1.0.0 --notes-file <the 1.0.0 CHANGELOG section>`), because step 4 skipped it.
-
-From 1.0.1 on, pushing a tag is the whole release. The tags v0.1.0 to v0.1.4 predate npm and stay usable for vendoring only.
+The tags v0.1.0 to v0.1.4 predate npm and stay usable for vendoring only.
 
 ## License
 
