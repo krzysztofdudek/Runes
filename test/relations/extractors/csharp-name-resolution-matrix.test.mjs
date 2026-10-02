@@ -103,6 +103,8 @@ describe('MATRIX — SILENCE cases (must NOT bind / must silence)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — global:: prefix stripping', () => {
   it('csharp-global-qualifier-strip', () => runCase('csharp-global-qualifier-strip'));
+  it('csharp-global-qualifier-single-name-edge', () => runCase('csharp-global-qualifier-single-name-edge'));
+  it('csharp-global-qualifier-single-name-silence', () => runCase('csharp-global-qualifier-single-name-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +116,7 @@ describe('MATRIX — gap-close (research-audited missing forms)', () => {
   it('csharp-nested-type-deep-generic', () => runCase('csharp-nested-type-deep-generic'));
   it('csharp-nameof-no-edge-silence', () => runCase('csharp-nameof-no-edge-silence'));
   it('csharp-pointer-stackalloc-element', () => runCase('csharp-pointer-stackalloc-element'));
+  it('csharp-stackalloc-no-named-element-silence', () => runCase('csharp-stackalloc-no-named-element-silence'));
   it('csharp-default-sizeof-operand', () => runCase('csharp-default-sizeof-operand'));
   it('csharp-primary-constructor-param-type', () => runCase('csharp-primary-constructor-param-type'));
   it('csharp-record-positional-param-type', () => runCase('csharp-record-positional-param-type'));
@@ -225,6 +228,8 @@ describe('MATRIX — a comparison pair the grammar reads as a declaration', () =
   it('csharp-comparison-pair-argument-silence', () => runCase('csharp-comparison-pair-argument-silence'));
   it('csharp-comparison-pair-constructor-argument-silence', () => runCase('csharp-comparison-pair-constructor-argument-silence'));
   it('csharp-comparison-pair-indexer-argument-silence', () => runCase('csharp-comparison-pair-indexer-argument-silence'));
+  it('csharp-comparison-pair-qualified-argument-silence', () => runCase('csharp-comparison-pair-qualified-argument-silence'));
+  it('csharp-out-declaration-qualified-type-edge', () => runCase('csharp-out-declaration-qualified-type-edge'));
 });
 
 describe('MATRIX — an explicit global Program outranks the implicit one', () => {
@@ -233,4 +238,14 @@ describe('MATRIX — an explicit global Program outranks the implicit one', () =
 
 describe('MATRIX — a top-level file names its own Program', () => {
   it('csharp-top-level-program-self-reference-silence', () => runCase('csharp-top-level-program-self-reference-silence'));
+});
+
+describe('MATRIX — a type parameter shadows a type of the same name within its scope', () => {
+  it('csharp-type-parameter-shadows-type-silence', () => runCase('csharp-type-parameter-shadows-type-silence'));
+  it('csharp-type-parameter-scope-edge', () => runCase('csharp-type-parameter-scope-edge'));
+});
+
+describe('MATRIX — a tuple type with named elements as a type argument', () => {
+  it('csharp-tuple-type-argument-named-elements-edge', () => runCase('csharp-tuple-type-argument-named-elements-edge'));
+  it('csharp-tuple-type-argument-element-names-silence', () => runCase('csharp-tuple-type-argument-element-names-silence'));
 });

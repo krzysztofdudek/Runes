@@ -1039,3 +1039,95 @@ describe('csharp — a declaration expression names a type only where C# allows 
     expect(groups(uses)).toEqual([['Order'], ['Customer']]);
   });
 });
+
+describe('csharp — a type parameter in scope shadows a type of the same name (issue 138)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a class type parameter names nothing in a field, a return type, a parameter, a constraint, typeof, a cast, `is`, `as` or `new T[n]`', async () => {
+    const { uses } = await run(['class Repo<T> : Base<T> where T : class { T f; T M(T a) => (T)a ?? (a as T) ?? default(T); bool N(object o) => o is T; object K() => typeof(T); T[] P(int n) => new T[n]; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Base']]);
+  });
+  it('a method, local function, delegate, interface and record type parameter names nothing, a generic method call\'s type argument included', async () => {
+    const { uses } = await run([
+      'class C { U Get<U>(object sp) => sp.GetRequiredService<U>(); void L() { V F<V>(V v) => v; } }',
+      'delegate R D<R>(R r);',
+      'interface I<K> { K Next(); }',
+      'record E<B>(B Body);',
+      '',
+    ].join('\n'));
+    expect(groups(uses)).toEqual([['GetRequiredService()']]);
+  });
+  it('outside its declaration, and in the declaration\'s own attributes, the same name is a type reference', async () => {
+    const { uses } = await run(['[A(typeof(T))] class Box<T> { }', 'class S { T M<T>() => default(T); T Current; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['A', 'AAttribute'], ['T'], ['T']]);
+  });
+  it('a name with type arguments never names a type parameter', async () => {
+    const { uses } = await run(['class Repo<Entity> { Entity<int> keyed; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Entity']]);
+  });
+});
+
+describe('csharp — a qualified comparison pair the grammar reads as a declaration (issue 150)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('`x.i < A, j > B` and `a.b.i < A, j.k > B` in a call, constructor or indexer argument list emit nothing', async () => {
+    const { uses } = await run(['class C { object M(object x, object a, int j) => F(x.i < A, j > B) && new P(x.i < A, j > B) && this[a.b.i < A, j.k > B]; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['P']]);
+  });
+  it('a qualified generic `out` declaration and deconstruction element still emit the type and its arguments', async () => {
+    const { uses } = await run(['class C { void M(object c) { c.TryGet(out A.B<X, Y> v); (A.B<Z> p, int q) = c.Pair(); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['TryGet()'], ['A.B'], ['X'], ['Y'], ['A.B'], ['Z'], ['Pair()']]);
+  });
+});
+
+describe('csharp — the element type of a stackalloc (issue 139)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('`stackalloc Foo[n]` and `stackalloc Baz[] { … }` emit the element; a predefined element and `stackalloc[] { … }` emit nothing', async () => {
+    const { uses } = await run(['class C { unsafe void M(int n) { var s = stackalloc Foo[n]; var u = stackalloc Baz[] { 1 }; var a = stackalloc int[2]; var w = stackalloc[] { 1, 2 }; } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Foo'], ['Baz']]);
+  });
+});
+
+describe('csharp — `global::` with a single name binds the global namespace only (issue 156)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('`global::Settings` and `global::Box<Order>` are rooted: no enclosing namespace or using candidate; the type argument is an ordinary reference', async () => {
+    const { uses } = await run(['using Shop.Core;', 'namespace App;', 'class C : global::Base { global::Settings s; global::Box<Order> b; object M() => new global::Thing(); }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Base'], ['Settings'], ['Box'], ['App.Order', 'Shop.Core.Order', 'Order'], ['Thing']]);
+  });
+  it('`global::Program` falls back to the implicit Program; a type parameter `T` never shadows `global::T`', async () => {
+    const { uses } = await run(['namespace App;', 'class C<T> { global::Program p; global::T t; T u; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Program', '<Program>$'], ['T']]);
+  });
+  it('inside a file of top-level statements, `global::Program` is the file\'s own class and emits nothing', async () => {
+    const { uses } = await run(['var t = typeof(global::Program);', ''].join('\n'));
+    expect(groups(uses)).toEqual([]);
+  });
+});
+
+describe('csharp — a tuple type with named elements as a type argument (issue 161)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('the element types of a named tuple type argument followed by an initializer, arguments or a pattern designation are emitted; the element names never are', async () => {
+    const { uses } = await run([
+      'class C { object M(int n, object x) {',
+      '  var a = new List<(Order Item, int Index)> { };',
+      '  var b = new List<(Customer Who, (Line L, int N) Pair)>(n);',
+      '  var c = Make<(Shipment Parcel, int Index)>(n);',
+      '  return x is List<(Invoice Doc, int Count)> y;',
+      '} }',
+      '',
+    ].join('\n'));
+    expect(groups(uses)).toEqual([['Order'], ['List'], ['Customer'], ['Line'], ['List'], ['Shipment'], ['Invoice']]);
+  });
+  it('a bare unnamed element beside a named one is a type; a comparison with a plain tuple or a plain operand emits nothing', async () => {
+    const { uses } = await run(['class C { object M(int n, int i, int a, int b) => new List<(Foo F, Bar)>(n) ?? (i < (a, b)) ?? (i < a); }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Foo'], ['Bar'], ['List']]);
+  });
+});
