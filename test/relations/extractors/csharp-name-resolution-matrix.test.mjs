@@ -230,3 +230,7 @@ describe('MATRIX — a comparison pair the grammar reads as a declaration', () =
 describe('MATRIX — an explicit global Program outranks the implicit one', () => {
   it('csharp-top-level-program-explicit-partial-wins-edge', () => runCase('csharp-top-level-program-explicit-partial-wins-edge'));
 });
+
+describe('MATRIX — a top-level file names its own Program', () => {
+  it('csharp-top-level-program-self-reference-silence', () => runCase('csharp-top-level-program-self-reference-silence'));
+});
