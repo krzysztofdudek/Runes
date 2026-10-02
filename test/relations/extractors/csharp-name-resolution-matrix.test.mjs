@@ -234,3 +234,8 @@ describe('MATRIX — an explicit global Program outranks the implicit one', () =
 describe('MATRIX — a top-level file names its own Program', () => {
   it('csharp-top-level-program-self-reference-silence', () => runCase('csharp-top-level-program-self-reference-silence'));
 });
+
+describe('MATRIX — a type parameter shadows a type of the same name within its scope', () => {
+  it('csharp-type-parameter-shadows-type-silence', () => runCase('csharp-type-parameter-shadows-type-silence'));
+  it('csharp-type-parameter-scope-edge', () => runCase('csharp-type-parameter-scope-edge'));
+});

@@ -1039,3 +1039,31 @@ describe('csharp — a declaration expression names a type only where C# allows 
     expect(groups(uses)).toEqual([['Order'], ['Customer']]);
   });
 });
+
+describe('csharp — a type parameter in scope shadows a type of the same name (issue 138)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a class type parameter names nothing in a field, a return type, a parameter, a constraint, typeof, a cast, `is`, `as` or `new T[n]`', async () => {
+    const { uses } = await run(['class Repo<T> : Base<T> where T : class { T f; T M(T a) => (T)a ?? (a as T) ?? default(T); bool N(object o) => o is T; object K() => typeof(T); T[] P(int n) => new T[n]; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Base']]);
+  });
+  it('a method, local function, delegate, interface and record type parameter names nothing, a generic method call\'s type argument included', async () => {
+    const { uses } = await run([
+      'class C { U Get<U>(object sp) => sp.GetRequiredService<U>(); void L() { V F<V>(V v) => v; } }',
+      'delegate R D<R>(R r);',
+      'interface I<K> { K Next(); }',
+      'record E<B>(B Body);',
+      '',
+    ].join('\n'));
+    expect(groups(uses)).toEqual([['GetRequiredService()']]);
+  });
+  it('outside its declaration, and in the declaration\'s own attributes, the same name is a type reference', async () => {
+    const { uses } = await run(['[A(typeof(T))] class Box<T> { }', 'class S { T M<T>() => default(T); T Current; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['A', 'AAttribute'], ['T'], ['T']]);
+  });
+  it('a name with type arguments never names a type parameter', async () => {
+    const { uses } = await run(['class Repo<Entity> { Entity<int> keyed; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Entity']]);
+  });
+});
