@@ -38,8 +38,8 @@ import { walk } from '../../ast/walk.mjs';
  *    global-using prefixes — plus its MSBuild `<Using>` items and SDK implicit usings — and
  *    injects them into each file's `uses(file, { projectGlobalUsings })` as the lowest using tier. Then, for each type reference (detected across every syntactic
  *    type position — base/`new`, field/property/parameter/return/local types, generic base names
- *    and type arguments, member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
- *    cast operands, tuple/array/nullable element types, and a C#12 alias RHS's embedded named
+ *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
+ *    cast operands, tuple/array/nullable element types, the element type of `new T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
  *      [alias-expansion?]                              ← leftmost segment is a local alias
@@ -72,11 +72,7 @@ import { walk } from '../../ast/walk.mjs';
  *
  * SILENCE-ON-DOUBT (D8 — no waiver; a false positive blocks CI with no escape). All of
  * the following stay silent here, by construction:
- *   - DI-container registration / reflection (`Type.GetType`, `Activator.CreateInstance`)
- *     / source generators — they surface no resolvable qualified type, so any candidate FQN they
- *     do emit resolves to nothing. (Extension-method calls are NOT dynamic: C# binds them at
- *     compile time through the namespaces in scope, so they resolve against the `<ns>.<Name>()`
- *     extension keys — see `extensionKey`.)
+ *   - reflection (`Type.GetType`, `Activator.CreateInstance`) / source generators — they surface no resolvable qualified type, so any candidate FQN they do emit resolves to nothing. (Two forms are NOT dynamic: an extension-method call, which C# binds at compile time through the namespaces in scope, so it resolves against the `<ns>.<Name>()` extension keys — see `extensionKey`; and DI registration or service location such as `AddScoped<IFoo, Foo>()`, whose type arguments the compiler binds like any other type reference. Only what the container hands out at run time stays invisible.)
  *   - `using static X;` — skipped (no namespace prefix recorded).
  *   - IMPLICIT / SDK `global using`s — read from the project file when `<ImplicitUsings>` is on,
  *     but they name external namespaces, so a bare name they qualify resolves to nothing unless
@@ -209,6 +205,14 @@ function isFileLocalType(node) {
 function extensionKey(ns, name) {
     return ns === '' ? `${name}()` : `${ns}.${name}()`;
 }
+/**
+ * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
+ */
+const IMPLICIT_PROGRAM_KEY = '<Program>$';
+/** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
+function firstTopLevelStatement(root) {
+    return root.namedChildren.find((c) => c?.type === 'global_statement');
+}
 /** True when `node` has a `static` modifier child. */
 function hasStaticModifier(node) {
     for (let i = 0; i < node.childCount; i++) {
@@ -288,6 +292,8 @@ function extensionMethodName(node) {
  * cross-file index: it is visible only in its own file, so a cross-file reference to a
  * same-named type must never bind to it, and two files declaring same-named `file` types must
  * not mis-merge into one cross-file definition (zero-FP guard F5).
+ *
+ * A file with top-level statements also declares the class the compiler synthesizes for them, the global `Program`, under a fallback key that an explicit global `Program` always outranks (IMPLICIT_PROGRAM_KEY).
  */
 function declarations(file) {
     const out = [];
@@ -314,6 +320,11 @@ function declarations(file) {
         out.push({ symbolKey, line: node.startPosition.row + 1 });
         return undefined;
     });
+    // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
+    const firstStatement = firstTopLevelStatement(file.tree.rootNode);
+    if (firstStatement && !out.some((d) => d.symbolKey === 'Program')) {
+        out.push({ symbolKey: IMPLICIT_PROGRAM_KEY, line: firstStatement.startPosition.row + 1 });
+    }
     return out;
 }
 const NAMESPACE_NODE_TYPES = new Set([
@@ -337,6 +348,22 @@ function directiveNamespaceText(directive, skipName = null) {
             return stripGlobalQualifier(c.text);
     }
     return undefined;
+}
+/**
+ * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
+ */
+function declaresVariable(decl) {
+    const arg = decl.parent; // a declaration expression is always an argument's child
+    if (hasTokenChild(arg, 'out'))
+        return true;
+    let tuple = arg.parent;
+    while (tuple.type === 'tuple_expression' && tuple.parent.type === 'argument' && tuple.parent.parent.type === 'tuple_expression') {
+        tuple = tuple.parent.parent;
+    }
+    if (tuple.type !== 'tuple_expression')
+        return false;
+    const target = tuple.parent;
+    return (target.type === 'assignment_expression' || target.type === 'foreach_statement') && target.childForFieldName('left')?.id === tuple.id;
 }
 /** True when the directive has an anonymous token child of the given keyword type. */
 function hasTokenChild(directive, token) {
@@ -596,9 +623,14 @@ export function extractCsharpRefs(file) {
             return undefined;
         return instanceLikeReceiver(receiver) ? name : undefined;
     };
+    // In a file of top-level statements, a bare `Program` (and `Program.X`) names that file's own implicit class: C# finds it in the global namespace before any using or any other project's type, so such a reference binds nothing else and is not emitted. A reference from inside a namespace block of the same file, where a nearer `Ns.Program` could win, is dropped too (silence, never a wrong edge).
+    const ownsProgram = firstTopLevelStatement(file.tree.rootNode) !== undefined;
+    const namesOwnProgram = (ref) => ownsProgram && (ref === 'Program' || ref.startsWith('Program.'));
     /** Emit a plain reference descriptor (alias-unresolved). `enclosingNs` is precomputed from the
      *  node before the tree is destroyed; the alias/using expansion happens later, on assembly. */
     const pushRef = (ref, node, line, rooted = false) => {
+        if (namesOwnProgram(ref))
+            return;
         refs.push({
             kind: 'plain',
             ref,
@@ -985,6 +1017,9 @@ export function extractCsharpRefs(file) {
             const nm = node.childForFieldName('name');
             if (recoveredNew && nm !== null)
                 emitTypeNode(nm);
+            // A null-conditional generic call `sp?.Get<Ctx>()`: the type arguments, never the method name.
+            else if (nm?.type === 'generic_name')
+                emitTypeArguments(nm);
             return undefined;
         }
         // Member access through a TYPE name (M16): `Guard.NotNull(o)`, `OrderStatus.Paid`,
@@ -1008,17 +1043,26 @@ export function extractCsharpRefs(file) {
                     chain.push(nm.text);
                     cur = cur.parent;
                 }
-                refs.push({
-                    kind: 'receiver',
-                    chain,
-                    line: expr.startPosition.row + 1,
-                    enclosingNs: enclosingNamespaceChain(fileNs, node),
-                });
+                if (!namesOwnProgram(chain[0]))
+                    refs.push({
+                        kind: 'receiver',
+                        chain,
+                        line: expr.startPosition.row + 1,
+                        enclosingNs: enclosingNamespaceChain(fileNs, node),
+                    });
             }
+            // A generic member `sp.GetRequiredService<Ctx>()`, `Substitute.For<Ctx>()`: its type arguments are type references; the member name itself is a method, never a type.
+            const member = node.childForFieldName('name');
+            if (member.type === 'generic_name')
+                emitTypeArguments(member);
             return undefined;
         }
         // Extension-method call on an instance-like receiver (m27): `builder.Services.AddInfrastructure()`.
         if (node.type === 'invocation_expression') {
+            // A generic method called by its simple name, `Resolve<Ctx>()`: the type arguments are type references; the method name is not a type.
+            const fn = node.childForFieldName('function');
+            if (fn.type === 'generic_name')
+                emitTypeArguments(fn);
             const call = extensionCall(node);
             if (call !== undefined && !insideNameof(node)) {
                 refs.push({
@@ -1039,6 +1083,17 @@ export function extractCsharpRefs(file) {
         // Bare / generic / qualified type in `new T()`.
         if (node.type === 'object_creation_expression') {
             emitTypeNode(node.childForFieldName('type'));
+            return undefined;
+        }
+        // The element type of `new T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
+        if (node.type === 'array_creation_expression' || node.type === 'foreach_statement') {
+            emitTypeNode(node.childForFieldName('type'));
+            return undefined;
+        }
+        // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`), which names no type.
+        if (node.type === 'declaration_expression') {
+            if (declaresVariable(node))
+                emitTypeNode(node.childForFieldName('type'));
             return undefined;
         }
         return undefined;
@@ -1175,7 +1230,10 @@ export function assembleCsharpCandidates(extract, options = {}) {
         for (const m of usingMembers) {
             add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set: usingMembers });
         }
-        add({ kind: 'symbol', symbolKey: ref }); // verbatim / bare top-level — LAST
+        add({ kind: 'symbol', symbolKey: ref }); // verbatim / bare top-level — LAST of the explicit readings
+        // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
+        if (ref === 'Program')
+            add({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
         if (candidates.length === 0)
             return;
         out.push({ candidates, kind: 'import', line });
@@ -1285,7 +1343,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 3,
+    rev: 4,
     declarations,
     uses,
 };

@@ -206,3 +206,31 @@ describe('MATRIX — extension-method calls (bound at compile time)', () => {
   it('csharp-extension-via-owned-namespace', () => runCase('csharp-extension-via-owned-namespace'));
   it('csharp-extension-not-in-scope-silence', () => runCase('csharp-extension-not-in-scope-silence'));
 });
+
+describe('MATRIX — type arguments of generic methods and the remaining typed expressions', () => {
+  it('csharp-generic-method-type-argument-edge', () => runCase('csharp-generic-method-type-argument-edge'));
+  it('csharp-generic-local-method-type-argument-edge', () => runCase('csharp-generic-local-method-type-argument-edge'));
+  it('csharp-generic-method-name-not-a-type-silence', () => runCase('csharp-generic-method-name-not-a-type-silence'));
+  it('csharp-array-creation-element-edge', () => runCase('csharp-array-creation-element-edge'));
+  it('csharp-foreach-declared-type-edge', () => runCase('csharp-foreach-declared-type-edge'));
+  it('csharp-out-declaration-type-edge', () => runCase('csharp-out-declaration-type-edge'));
+});
+
+describe('MATRIX — the implicit Program of top-level statements', () => {
+  it('csharp-top-level-program-implicit-class-edge', () => runCase('csharp-top-level-program-implicit-class-edge'));
+  it('csharp-top-level-program-two-entries-silence', () => runCase('csharp-top-level-program-two-entries-silence'));
+});
+
+describe('MATRIX — a comparison pair the grammar reads as a declaration', () => {
+  it('csharp-comparison-pair-argument-silence', () => runCase('csharp-comparison-pair-argument-silence'));
+  it('csharp-comparison-pair-constructor-argument-silence', () => runCase('csharp-comparison-pair-constructor-argument-silence'));
+  it('csharp-comparison-pair-indexer-argument-silence', () => runCase('csharp-comparison-pair-indexer-argument-silence'));
+});
+
+describe('MATRIX — an explicit global Program outranks the implicit one', () => {
+  it('csharp-top-level-program-explicit-partial-wins-edge', () => runCase('csharp-top-level-program-explicit-partial-wins-edge'));
+});
+
+describe('MATRIX — a top-level file names its own Program', () => {
+  it('csharp-top-level-program-self-reference-silence', () => runCase('csharp-top-level-program-self-reference-silence'));
+});
