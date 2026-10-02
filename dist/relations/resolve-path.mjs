@@ -144,12 +144,12 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
  * ancestor of the importing file that contains a `Cargo.toml`; which CRATE of that package
  * the file belongs to follows Cargo's target auto-discovery (`src/lib.rs` / `src/main.rs`
  * for `src/**`, `src/bin/<x>.rs` and `src/bin/<x>/main.rs`, `tests/`, `examples/`,
- * `benches/`, `build.rs`) — see `rustTargetFor`. The package's crate name (`[lib].name`,
+ * `benches/`, `build.rs`) and the `path` of each `[[bin]]` table — see `rustTargetFor`. The package's crate name (`[lib].name`,
  * else `[package].name`, hyphens → underscores) addresses its library from any target.
  *
  * In-repo PATH DEPENDENCIES (`[dependencies]`, `[dev-dependencies]`,
  * `[build-dependencies]` and their `[target.*]` forms; inline `{ path = … }`, the
- * `[dependencies.<name>]` table form, and `{ workspace = true }` inherited from the nearest
+ * `[dependencies.<name>]` table form, the whole table as one inline table, and `{ workspace = true }` inherited from the nearest
  * `[workspace.dependencies]`) map the name code uses (`package =` renames honoured) to that
  * crate's library tree. A path that leaves the repository, or points at a directory with no
  * Cargo.toml, is ignored.
@@ -233,7 +233,7 @@ function makeRustResolveDeps(projectRoot, exists) {
         const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
         // Target sub-paths are package-relative and never climb, so a plain join is exact.
         const at = (sub) => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath);
+        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.binPaths);
         return {
             srcDir: at(target.srcDir),
             crateName,
@@ -307,8 +307,14 @@ function makeRustResolveDeps(projectRoot, exists) {
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
- *  crate declares it, so it gets the `tests/` tree with no root file to bind items to. */
-export function rustTargetFor(rel, existsInPackage, libPath) {
+ *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
+ *
+ *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a `[[bin]]` path or the library's path alike, not to the `src/` tree that holds no part of it. In that directory the library's root is probed first and one binary's after it, as `src/lib.rs` before `src/main.rs`; two or more binaries there give no binary root, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
+export function rustTargetFor(rel, existsInPackage, libPath, binPaths = []) {
+    const bins = [...new Set(binPaths.map((p) => path.posix.normalize(p)))];
+    const dirOfRoot = (root) => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
+    if (bins.includes(rel))
+        return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
     const segs = rel.split('/');
     if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3) {
         if (segs.length === 3)
@@ -332,6 +338,19 @@ export function rustTargetFor(rel, existsInPackage, libPath) {
     const mainRoot = 'src/main.rs';
     if (rel === libRoot || rel === mainRoot)
         return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
+    if (segs[0] !== 'src') {
+        let dir;
+        for (const root of [libRoot, ...bins]) {
+            const d = dirOfRoot(root);
+            if ((d === '' || rel.startsWith(`${d}/`)) && (dir === undefined || d.length > dir.length))
+                dir = d;
+        }
+        if (dir !== undefined) {
+            const binsHere = bins.filter((b) => dirOfRoot(b) === dir);
+            const rootFiles = [...(dirOfRoot(libRoot) === dir ? [libRoot] : []), ...(binsHere.length === 1 ? binsHere : [])];
+            return { srcDir: dir, rootFiles, fileIsRoot: false };
+        }
+    }
     return { srcDir: 'src', rootFiles: [libRoot, mainRoot], fileIsRoot: false };
 }
 function normalizeCrateName(name) {
@@ -349,8 +368,38 @@ function dependencyEntryAt(keyPath) {
         return undefined;
     return { workspace: false, crate: keyPath[table + 1], field: keyPath.slice(table + 2) };
 }
+/** Whether a key path lies above the crates of a dependency table, so a table written there as an inline table can hold dependency entries: a dependency table itself (`dependencies`, `target.<cfg>.dev-dependencies`, `workspace.dependencies`), or `target`, `target.<cfg>` or `workspace`. */
+function holdsDependencyEntries(keyPath) {
+    if (keyPath[0] === 'workspace')
+        return keyPath.length === 1 || (keyPath.length === 2 && keyPath[1] === 'dependencies');
+    const table = keyPath[0] === 'target' ? 2 : 0;
+    return keyPath.length <= table || (keyPath.length === table + 1 && DEP_TABLE_NAMES.has(keyPath[table]));
+}
 /** A physical line that opens a table header (`[name]`, `[name.…]`, `[[name]]`): a bare first segment, then dotted segments, then the closing bracket. Joining stops at one, so a bracket left open in invalid TOML loses its own entry instead of swallowing the next table. A nested array element such as `["a", "b"]` or `[1, 2]` does not match. */
 const TOML_HEADER_LINE = /^[ \t]*\[\[?[ \t]*[A-Za-z0-9_-]+(?:[ \t]*\.[ \t]*(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*'))*[ \t]*\]\]?[ \t]*(?:#.*)?$/;
+/** The index just past the TOML string that opens at `i`: basic (`"…"`, escapes), literal (`'…'`), or their multi-line forms (`"""…"""`, `'''…'''`). A one-line string left open ends at the line's end. */
+function tomlStringEnd(text, i) {
+    const c = text[i];
+    const multi = text.startsWith(c.repeat(3), i);
+    const close = multi ? c.repeat(3) : c;
+    let j = i + close.length;
+    while (j < text.length) {
+        if (!multi && text[j] === '\n')
+            break;
+        if (c === '"' && text[j] === '\\' && (multi || text[j + 1] !== '\n'))
+            j += 2;
+        else if (text.startsWith(close, j)) {
+            j += close.length;
+            // Up to two quotes right before the closing delimiter of a multi-line string are its content.
+            for (let extra = 0; multi && extra < 2 && text[j] === c; extra++)
+                j++;
+            break;
+        }
+        else
+            j++;
+    }
+    return j;
+}
 /** Cargo.toml text as logical lines, comments dropped. A line whose brackets stay open (a multi-line array, also inside an inline table) or whose multi-line string does not close there continues on the next lines, joined with spaces, so the fields after `features = [ … ]` spread over lines stay on the entry's line; joining stops before a line that opens a table header. Brackets and `#` inside a string are plain text. A CRLF line ending is a newline, as TOML defines it. */
 function tomlLogicalLines(source) {
     const text = source.replace(/\r\n/g, '\n');
@@ -376,25 +425,7 @@ function tomlLogicalLines(source) {
                 i++;
         }
         else if (c === '"' || c === "'") {
-            // A string: basic ("…", escapes), literal ('…'), or their multi-line forms ("""…""", '''…'''). A one-line string left open ends at the line's end.
-            const multi = text.startsWith(c.repeat(3), i);
-            const close = multi ? c.repeat(3) : c;
-            let j = i + close.length;
-            while (j < text.length) {
-                if (!multi && text[j] === '\n')
-                    break;
-                if (c === '"' && text[j] === '\\' && (multi || text[j + 1] !== '\n'))
-                    j += 2;
-                else if (text.startsWith(close, j)) {
-                    j += close.length;
-                    // Up to two quotes right before the closing delimiter of a multi-line string are its content.
-                    for (let extra = 0; multi && extra < 2 && text[j] === c; extra++)
-                        j++;
-                    break;
-                }
-                else
-                    j++;
-            }
+            const j = tomlStringEnd(text, i);
             line += text.slice(i, j).replace(/\n/g, ' ');
             i = j;
         }
@@ -410,11 +441,38 @@ function tomlLogicalLines(source) {
     lines.push(line);
     return lines;
 }
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** The members of the inline table `value` (`{ a = 1, b.c = { … } }`), each as its key and value text, split at the table's own commas: strings and nested brackets stay whole, and an empty member (a trailing comma) is skipped. Undefined when `value` is not one inline table. */
+function inlineTableMembers(value) {
+    const v = value.trim();
+    if (!v.startsWith('{') || !v.endsWith('}'))
+        return undefined;
+    const members = [];
+    let depth = 0;
+    let start = 1;
+    for (let i = 1; i < v.length - 1; i++) {
+        const c = v[i];
+        if (c === '"' || c === "'")
+            i = tomlStringEnd(v, i) - 1;
+        else if (c === '[' || c === '{')
+            depth++;
+        else if (c === ']' || c === '}')
+            depth--;
+        else if (c === ',' && depth === 0) {
+            members.push(v.slice(start, i).trim());
+            start = i + 1;
+        }
+    }
+    members.push(v.slice(start, v.length - 1).trim());
+    return members.filter((m) => m !== '');
+}
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]` table, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text) {
     let packageName;
     let libName;
     let libPath;
+    const binPaths = [];
+    // True inside one element of the `[[bin]]` array of tables.
+    let inBin = false;
     const dependencies = new Map();
     const workspaceDependencies = new Map();
     // The current table header's key segments ([] above the first header), and the same joined with dots.
@@ -453,6 +511,31 @@ export function parseCargoManifest(text) {
         }
         return declaredHere.has(id) ? into.get(entry.crate) : undefined;
     };
+    // One `key = value` at its full key path (the table header's segments, then the key's).
+    const assign = (keyPath, value) => {
+        const entry = dependencyEntryAt(keyPath);
+        if (entry === undefined) {
+            // An inline table above the crates (`dependencies = { kit = { path = "../kit" } }`, `workspace = { dependencies = { … } }`) is the table its key names: each member reads as the dotted key it stands for.
+            if (holdsDependencyEntries(keyPath))
+                for (const member of inlineTableMembers(value) ?? []) {
+                    const kv = KEY_VALUE.exec(member);
+                    if (kv)
+                        assign([...keyPath, ...keySegments(kv[1])], kv[2].trim());
+                }
+            return;
+        }
+        if (entry.field.length === 0) {
+            // `crate = value`: an inline table gives the fields, a version string only declares the crate; the first declaration keeps it.
+            const into = entry.workspace ? workspaceDependencies : dependencies;
+            if (!into.has(entry.crate))
+                into.set(entry.crate, value.startsWith('{') ? specOf(value) : { workspace: false });
+            return;
+        }
+        // `crate.field = value`, or `field = value` under `[dependencies.<crate>]`: the same entry as `crate = { field = value }`. A field other than path, package or workspace (version, features, git) only declares the crate.
+        const spec = declare(entry);
+        if (spec !== undefined && entry.field.length === 1)
+            setField(spec, entry.field[0], value);
+    };
     for (const logicalLine of tomlLogicalLines(text)) {
         const line = logicalLine.trim();
         if (line === '')
@@ -461,6 +544,7 @@ export function parseCargoManifest(text) {
         if (header) {
             sectionPath = keySegments(header[1]);
             section = sectionPath.join('.');
+            inBin = section === 'bin' && line.startsWith('[[');
             declaredHere = new Set();
             // `[dependencies.<name>]` (or a table below it) declares the crate; its lines are the crate's fields.
             const entry = dependencyEntryAt(sectionPath);
@@ -481,27 +565,16 @@ export function parseCargoManifest(text) {
             libName = unquote(value);
         else if (section === 'lib' && key === 'path')
             libPath = unquote(value);
-        else {
-            const entry = dependencyEntryAt([...sectionPath, ...segments]);
-            if (entry === undefined)
-                continue;
-            if (entry.field.length === 0) {
-                // `crate = value`: an inline table gives the fields, a version string only declares the crate; the first declaration keeps it.
-                const into = entry.workspace ? workspaceDependencies : dependencies;
-                if (!into.has(entry.crate))
-                    into.set(entry.crate, value.startsWith('{') ? specOf(value) : { workspace: false });
-                continue;
-            }
-            // `crate.field = value`, or `field = value` under `[dependencies.<crate>]`: the same entry as `crate = { field = value }`. A field other than path, package or workspace (version, features, git) only declares the crate.
-            const spec = declare(entry);
-            if (spec !== undefined && entry.field.length === 1)
-                setField(spec, entry.field[0], value);
-        }
+        else if (inBin && key === 'path')
+            binPaths.push(unquote(value));
+        else
+            assign([...sectionPath, ...segments], value);
     }
     const name = libName ?? packageName;
     return {
         crateName: name === undefined ? undefined : normalizeCrateName(name),
         libPath,
+        binPaths,
         dependencies,
         workspaceDependencies,
     };
