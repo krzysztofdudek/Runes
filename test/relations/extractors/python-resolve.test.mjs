@@ -330,3 +330,41 @@ describe('resolvePythonModule — a PEP 420 namespace directory is not a sys.pat
     expect(resolvePythonModule('logging', 'acme/core/service.py', (p) => atRoot.has(p))).toBe('logging.py');
   });
 });
+
+describe('resolvePythonModule — a pkgutil namespace package shared by several distributions (issue 073)', () => {
+  // Two workspace members ship the package `acme` (each with an `acme/__init__.py` that extends `__path__` with pkgutil); only core has `acme/settings.py`. Python finds acme.settings through the extended `__path__`, so the other member's `acme/__init__.py` (the parent-package fallback for `from acme import settings`) must not make the exact module ambiguous.
+  const roots = () => ['', 'core/src', 'plugin/src'];
+  const base = ['core/src/acme/__init__.py', 'core/src/acme/models/__init__.py', 'core/src/acme/models/user.py', 'plugin/src/acme/__init__.py', 'plugin/src/acme/x.py'];
+
+  it('the exact module at one root wins over a sibling distribution\'s parent package', () => {
+    const files = new Set([...base, 'core/src/acme/settings.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('acme.settings', 'core/src/acme/models/user.py', exists, undefined, roots)).toBe('core/src/acme/settings.py');
+    expect(resolvePythonModule('acme.settings', 'plugin/src/acme/x.py', exists, undefined, roots)).toBe('core/src/acme/settings.py');
+  });
+
+  it('control: a module found exactly under both roots stays silent', () => {
+    const files = new Set([...base, 'core/src/acme/settings.py', 'plugin/src/acme/settings.py']);
+    expect(resolvePythonModule('acme.settings', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+
+  it('control: a symbol of the module (from acme.settings import DEBUG) still resolves to the module', () => {
+    const files = new Set([...base, 'core/src/acme/settings.py']);
+    expect(resolvePythonModule('acme.settings.DEBUG', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBe('core/src/acme/settings.py');
+  });
+
+  it('control: with no exact module anywhere, the parent packages of both distributions stay ambiguous', () => {
+    const files = new Set(base);
+    expect(resolvePythonModule('acme.settings', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+
+  it('control: with no exact module anywhere, a single parent package is the fallback (from acme import NAME)', () => {
+    const files = new Set(['core/src/acme/__init__.py', 'core/src/acme/models/__init__.py', 'core/src/acme/models/user.py']);
+    expect(resolvePythonModule('acme.NAME', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBe('core/src/acme/__init__.py');
+  });
+
+  it('control: a parent MODULE file at another root still competes with the exact module (it cannot hold a submodule, so sys.path order decides)', () => {
+    const files = new Set(['core/src/acme/__init__.py', 'core/src/acme/settings.py', 'plugin/src/acme.py', 'apps/main.py']);
+    expect(resolvePythonModule('acme.settings', 'apps/main.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+});
