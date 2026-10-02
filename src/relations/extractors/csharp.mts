@@ -49,7 +49,7 @@ import type {
  *    injects them into each file's `uses(file, { projectGlobalUsings })` as the lowest using tier. Then, for each type reference (detected across every syntactic
  *    type position — base/`new`, field/property/parameter/return/local types, generic base names
  *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
- *    cast operands, tuple/array/nullable element types, the element type of `new T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
+ *    cast operands, tuple/array/nullable element types (a named tuple type argument the grammar misreads as comparisons included), the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
  *      [alias-expansion?]                              ← leftmost segment is a local alias
@@ -73,7 +73,7 @@ import type {
  *        (B a sub-namespace) — `using A;` imports the TYPES of exactly A, not A's namespaces.
  *      • the alias candidate carries a CO-DEFINITION set (R8): the alias target competes with a
  *        same-named enclosing-ns member; 2+ resolving → ambiguous → silence.
- *    A `global::`-rooted name (R12) is stripped and resolved from the root as its sole candidate;
+ *    A `global::`-rooted name (R12), a single name (`global::Settings`) as much as a dotted one, is stripped and resolved from the root as its sole candidate (a `global::Program` then falls back to the implicit `Program`);
  *    a non-`global` extern/using alias (`Lib::A.B`) is left intact (its `::` text cannot collide
  *    with a dot-only key → R13 silence-by-luck). Nested-type recovery is centralized in the
  *    resolver: for any dotted candidate it also tries the guarded `+`-boundary split (split
@@ -84,6 +84,7 @@ import type {
  * the following stay silent here, by construction:
  *   - reflection (`Type.GetType`, `Activator.CreateInstance`) / source generators — they surface no resolvable qualified type, so any candidate FQN they do emit resolves to nothing. (Two forms are NOT dynamic: an extension-method call, which C# binds at compile time through the namespaces in scope, so it resolves against the `<ns>.<Name>()` extension keys — see `extensionKey`; and DI registration or service location such as `AddScoped<IFoo, Foo>()`, whose type arguments the compiler binds like any other type reference. Only what the container hands out at run time stays invisible.)
  *   - `using static X;` — skipped (no namespace prefix recorded).
+ *   - a bare name that equals a type parameter in scope (`T x;`, `GetRequiredService<T>()` inside `M<T>()`, `Entity` inside `class Repository<Entity>`) — it names the type parameter, never a same-named type of the repository (`isTypeParameterInScope`).
  *   - IMPLICIT / SDK `global using`s — read from the project file when `<ImplicitUsings>` is on,
  *     but they name external namespaces, so a bare name they qualify resolves to nothing unless
  *     the repository declares it there → SILENCE. (DECLARED `global using`s are aggregated per
@@ -256,6 +257,28 @@ function enclosingTypeDecl(node: Node): Node | null {
   return null;
 }
 
+/** The declarations that may carry a type-parameter list: a generic type (`class Repository<T>`), method, local function, delegate, or C# 14 extension block. */
+const TYPE_PARAMETER_OWNERS = new Set([
+  ...TYPE_DECLARATION_TYPES,
+  'method_declaration',
+  'local_function_statement',
+  'delegate_declaration',
+  'extension_declaration',
+]);
+
+/**
+ * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because every type parameter is a declared name (`collectDeclaredNames`).
+ */
+function isTypeParameterInScope(name: string, node: Node): boolean {
+  let child = node;
+  for (let cur = node.parent; cur !== null; child = cur, cur = cur.parent) {
+    if (!TYPE_PARAMETER_OWNERS.has(cur.type) || child.type === 'attribute_list') continue;
+    const list = cur.namedChildren.find((c) => c!.type === 'type_parameter_list');
+    if (list !== undefined && list.namedChildren.some((p) => p!.childForFieldName('name')!.text === name)) return true;
+  }
+  return false;
+}
+
 /**
  * The name of the extension method `node` declares, or undefined when it declares none. Three
  * shapes are recognised, each inside a TOP-LEVEL (non-nested) `static` class that is not
@@ -388,7 +411,7 @@ function directiveNamespaceText(directive: Node, skipName: Node | null = null): 
 }
 
 /**
- * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
+ * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)` or `F(x.i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>` or `x.i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
  */
 function declaresVariable(decl: Node): boolean {
   const arg = decl.parent!; // a declaration expression is always an argument's child
@@ -782,6 +805,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       case 'identifier': {
         if (emitted.has(typeNode.id)) return;
         emitted.add(typeNode.id);
+        if (isTypeParameterInScope(typeNode.text, typeNode)) return; // `T x;`, `GetRequiredService<T>()` inside `M<T>()` name the type parameter
         pushRef(typeNode.text, typeNode, typeNode.startPosition.row + 1);
         return;
       }
@@ -797,8 +821,11 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         if (aliasField !== null && aliasField.text === 'global') {
           if (emitted.has(typeNode.id)) return;
           emitted.add(typeNode.id);
-          const nameField = typeNode.childForFieldName('name');
-          if (nameField !== null) emitTypeNode(nameField);
+          // `global::Settings` / `global::Box<T>`: the one name is looked up in the global namespace only, never in an enclosing namespace or a using, and no type parameter shadows it, so it is a rooted reference; the type arguments are ordinary references.
+          const nameField = typeNode.childForFieldName('name')!; // an alias-qualified name always has its name
+          const generic = nameField.type === 'generic_name';
+          pushRef((generic ? findChild(nameField, 'identifier')! : nameField).text, typeNode, typeNode.startPosition.row + 1, true);
+          if (generic) emitTypeArguments(nameField);
           return;
         }
         // `S::Tail` where `S` is an in-file `using S = N;` namespace alias (B5): the leftmost
@@ -1188,14 +1215,27 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       return undefined;
     }
 
-    // The element type of `new T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
-    if (node.type === 'array_creation_expression' || node.type === 'foreach_statement') {
+    // The element type of `new T[n]` and `stackalloc T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing, and so does the implicit `stackalloc[] { … }`; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
+    if (node.type === 'array_creation_expression' || node.type === 'stackalloc_expression' || node.type === 'foreach_statement') {
       emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
-    // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`), which names no type.
+    // A tuple type with named elements as a type argument, followed by arguments or an initializer (`new List<(Order Item, int Index)>(n)`, `new List<(Order Item, int Index)> { … }`, `Make<(Order Item, int Index)>(n)`): the grammar reads it as `G < (Order Item, int Index) > …`, comparisons around a tuple of declaration expressions. A tuple of declarations is never a valid operand, so after `<` it can only be that tuple type: each named element's type is read (its name never is), and so is a bare unnamed element beside a named one.
+    if (node.type === 'binary_expression' && node.childForFieldName('operator')!.type === '<') {
+      const tuple = node.childForFieldName('right')!;
+      const elements = tuple.type === 'tuple_expression' ? tuple.namedChildren.map((arg) => arg!.namedChild(0)!) : [];
+      if (elements.some((e) => e.type === 'declaration_expression')) {
+        for (const e of elements) {
+          if (e.type === 'declaration_expression') emitTypeNode(e.childForFieldName('type'));
+          else if (e.type === 'identifier') emitTypeNode(e);
+        }
+      }
+      return undefined;
+    }
+    // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
     if (node.type === 'declaration_expression') {
-      if (declaresVariable(node)) emitTypeNode(node.childForFieldName('type'));
+      if (!declaresVariable(node)) return false;
+      emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
 
@@ -1296,7 +1336,10 @@ export function assembleCsharpCandidates(
     // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
     // candidate.
     if (rooted) {
-      out.push({ candidates: [{ kind: 'symbol', symbolKey: ref }], kind: 'import', line });
+      const candidates: TargetHint[] = [{ kind: 'symbol', symbolKey: ref }];
+      // `global::Program` names the global `Program`, which may be the implicit class of a file of top-level statements (the fallback after an explicit one).
+      if (ref === 'Program') candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
+      out.push({ candidates, kind: 'import', line });
       return;
     }
 
@@ -1461,7 +1504,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 4,
+  rev: 5,
   declarations,
   uses,
 };
