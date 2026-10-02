@@ -8,7 +8,7 @@ cites: "npm/pnpm/yarn workspaces; Node package `exports` (root subpath)"
 
 ## Rule
 
-An in-repo package imported by its package.json `name` (`@acme/b`) is a workspace dependency. The resolver indexes every package.json outside `node_modules` by name and resolves the root import through `exports['.']`.
+An in-repo package imported by its package.json `name` (`@acme/b`) is a workspace dependency. In a repository that declares no workspace (no root `workspaces`, no pnpm-workspace.yaml), the resolver indexes every package.json outside `node_modules` by name; inside a declared workspace only its members count (see `typescript-workspace-fixture-outside-globs-silence`). The root import resolves through `exports['.']`.
 
 ## Files
 

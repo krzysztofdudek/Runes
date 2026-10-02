@@ -106,11 +106,14 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-tsconfig-paths-edge', () => runCase('typescript-tsconfig-paths-edge'));
   it('typescript-tsconfig-baseurl-edge', () => runCase('typescript-tsconfig-baseurl-edge'));
   it('typescript-tsconfig-extends-paths-edge', () => runCase('typescript-tsconfig-extends-paths-edge'));
+  it('typescript-tsconfig-references-paths-edge', () => runCase('typescript-tsconfig-references-paths-edge'));
   it('typescript-tsconfig-paths-multi-target-silence', () => runCase('typescript-tsconfig-paths-multi-target-silence'));
   it('typescript-tsconfig-alias-silence', () => runCase('typescript-tsconfig-alias-silence'));
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
   it('typescript-workspace-subpath-exports-edge', () => runCase('typescript-workspace-subpath-exports-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
+  it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
+  it('typescript-workspace-member-beats-fixture-edge', () => runCase('typescript-workspace-member-beats-fixture-edge'));
   it('typescript-package-imports-edge', () => runCase('typescript-package-imports-edge'));
   it('typescript-package-subpath-imports-silence', () => runCase('typescript-package-subpath-imports-silence'));
   it('typescript-bare-specifier-silence', () => runCase('typescript-bare-specifier-silence'));

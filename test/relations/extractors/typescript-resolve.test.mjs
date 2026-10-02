@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   resolveTsPath, makeTsResolveDeps, parseJsonc,
 } from '../../helpers/internal/relations.mjs';
+import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([
@@ -66,13 +67,17 @@ const roots = [];
 afterEach(() => {
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
 });
-function project(files) {
+function materialize(files) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'yg-tsres-'));
   roots.push(root);
   for (const [rel, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     writeFileSync(path.join(root, rel), text);
   }
+  return root;
+}
+function project(files, isExcluded) {
+  const root = materialize(files);
   const isFile = (p) => {
     try {
       return statSync(path.join(root, p)).isFile();
@@ -80,7 +85,7 @@ function project(files) {
       return false;
     }
   };
-  const deps = makeTsResolveDeps(root);
+  const deps = makeTsResolveDeps(root, isExcluded);
   return (spec, from) => resolveTsPath(spec, from, isFile, deps);
 }
 
@@ -213,10 +218,419 @@ describe('resolveTsPath — packages', () => {
   });
 });
 
+// Issue 011: a solution-style tsconfig.json (`files: []` plus `references`) gives a file the options of the referenced config that includes it; a Vue or Svelte component reads jsconfig.json as a JavaScript file does.
+describe('resolveTsPath — solution-style tsconfig references', () => {
+  const app = (paths, extra = {}) => JSON.stringify({ include: ['env.d.ts', 'src/**/*', 'src/**/*.vue'], exclude: ['src/**/__tests__/*'], ...extra, compilerOptions: { paths } });
+  it('takes paths from the referenced config whose include holds the file, and honours its exclude', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.app.json" }, { "path": "./tsconfig.vitest.json" }] }',
+      'tsconfig.node.json': '{ "include": ["vite.config.*"], "compilerOptions": { "paths": { "@/*": ["./build/*"] } } }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'tsconfig.vitest.json': '{ "extends": "./tsconfig.app.json", "include": ["src/**/__tests__/*"], "exclude": [], "compilerOptions": { "paths": { "@/*": ["./fixtures/*"] } } }',
+      'src/m.ts': '',
+      'build/m.ts': '',
+      'fixtures/m.ts': '',
+    });
+    expect(r('@/m', 'src/views/Home.ts')).toBe('src/m.ts');
+    expect(r('@/m', 'src/cart/Cart.vue')).toBe('src/m.ts');
+    expect(r('@/m', 'env.d.ts')).toBe('src/m.ts');
+    expect(r('@/m', 'vite.config.ts')).toBe('build/m.ts');
+    expect(r('@/m', 'src/cart/__tests__/cart.spec.ts')).toBe('fixtures/m.ts');
+  });
+  it('several referenced configs that include the file agree, or the file is silent', () => {
+    const files = (bPaths) => ({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./a.json" }, { "path": "./b.json" }] }',
+      'a.json': JSON.stringify({ include: ['src'], compilerOptions: { paths: { '@/*': ['./src/*'] } } }),
+      'b.json': JSON.stringify({ files: ['src/x.ts'], compilerOptions: { paths: bPaths } }),
+      'src/m.ts': '',
+      'lib/m.ts': '',
+    });
+    expect(project(files({ '@/*': ['./src/*'] }))('@/m', 'src/x.ts')).toBe('src/m.ts');
+    expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/x.ts')).toBeUndefined();
+    // A file only one of them includes takes that one's paths.
+    expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/y.ts')).toBe('src/m.ts');
+  });
+  it('follows a reference to a directory and nested solution configs, and skips a reference that is not there', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./missing.json" }, { "path": "./cfg" }, { "path": "./tsconfig.json" }, "bad", { "path": 1 }] }',
+      'cfg/tsconfig.json': '{ "files": [], "references": [{ "path": "./web.json" }, { "path": "../tsconfig.json" }] }',
+      'cfg/web.json': '{ "include": ["../web"], "compilerOptions": { "baseUrl": "../web/src" } }',
+      'web/src/lib/x.ts': '',
+    });
+    expect(r('lib/x', 'web/src/main.ts')).toBe('web/src/lib/x.ts');
+  });
+  it('a file no referenced config includes keeps the nearest config, and a config that includes the file ignores its references', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }], "compilerOptions": { "baseUrl": "." } }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'lib/x.ts': '',
+      'src/m.ts': '',
+    });
+    expect(r('lib/x', 'scripts/build.ts')).toBe('lib/x.ts');
+    expect(r('@/m', 'scripts/build.ts')).toBeUndefined();
+    const own = project({
+      'tsconfig.json': '{ "references": [{ "path": "./other.json" }], "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+      'other.json': '{ "include": ["src/**/*"], "compilerOptions": { "paths": { "@/*": ["./lib/*"] } } }',
+      'src/m.ts': '',
+      'lib/m.ts': '',
+    });
+    expect(own('@/m', 'src/a.ts')).toBe('src/m.ts');
+  });
+  it('a referenced config that cannot be read silences the file, which it may include', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./broken.json" }] }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'broken.json': '{ "include": [',
+      'src/m.ts': '',
+    });
+    expect(r('@/m', 'src/a.ts')).toBeUndefined();
+  });
+  // A config with neither `files` nor `include` holds everything under its directory, also when the directory name has a dot (`apps/web.v2`), as tsc reads it.
+  describe('a config without files or include holds its whole directory, dotted or not', () => {
+    it('a nearest config that holds the file by default keeps its own paths over a referenced one', () => {
+      const r = project({
+        'apps/web.v2/tsconfig.json': '{ "references": [{ "path": "./tsconfig.node.json" }], "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+        'apps/web.v2/tsconfig.node.json': '{ "include": ["**/*.ts"], "compilerOptions": { "paths": { "@/*": ["./build/*"] } } }',
+        'apps/web.v2/src/m.ts': '',
+        'apps/web.v2/build/m.ts': '',
+      });
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
+    });
+    it('a referenced config holding the file by default and another holding it by include disagree, so the file is silent', () => {
+      const r = project({
+        'apps/web.v2/tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.lint.json" }] }',
+        'apps/web.v2/tsconfig.app.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+        'apps/web.v2/tsconfig.lint.json': '{ "include": ["src/**/*.ts"], "compilerOptions": { "paths": { "@/*": ["./lint/*"] } } }',
+        'apps/web.v2/src/m.ts': '',
+        'apps/web.v2/lint/m.ts': '',
+      });
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBeUndefined();
+    });
+    it('the only referenced config, holding the file by default, gives its paths', () => {
+      const r = project({
+        'apps/web.v2/tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }',
+        'apps/web.v2/tsconfig.app.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+        'apps/web.v2/src/m.ts': '',
+      });
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
+    });
+  });
+  it('excludes a directory named in exclude, and reads include and files inherited through extends', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./cfg/app.json" }, { "path": "./legacy.json" }] }',
+      'cfg/base.json': '{ "include": ["../src"], "exclude": ["../src/legacy"] }',
+      'cfg/app.json': '{ "extends": "./base.json", "compilerOptions": { "paths": { "@/*": ["../src/*"] } } }',
+      'legacy.json': '{ "include": ["src/legacy/**/*.ts", "src/legacy/one?.ts"], "exclude": "nope", "compilerOptions": { "paths": { "@/*": ["./old/*"] } } }',
+      'src/m.ts': '',
+      'old/m.ts': '',
+    });
+    expect(r('@/m', 'src/a/b.ts')).toBe('src/m.ts');
+    expect(r('@/m', 'src/legacy/deep/c.ts')).toBe('old/m.ts');
+  });
+});
+
+describe('resolveTsPath — a Vue or Svelte component reads jsconfig.json', () => {
+  it('reads jsconfig.json for a .vue or .svelte importer, as for a JavaScript file', () => {
+    const r = project({ 'jsconfig.json': '{ "compilerOptions": { "baseUrl": "." } }', 'lib/x.js': '' });
+    expect(r('lib/x', 'src/Counter.vue')).toBe('lib/x.js');
+    expect(r('lib/x', 'src/Widget.svelte')).toBe('lib/x.js');
+    expect(r('lib/x', 'src/a.ts')).toBeUndefined();
+  });
+});
+
+// Issue 012: inside a declared workspace a bare name binds only to a workspace member, or to the package the importer's own package.json declares under that name with a local spec; a repository that declares no workspace keeps indexing every package.json.
+describe('resolveTsPath — workspace membership', () => {
+  it('a fixture outside the workspace globs is not importable by name; a member is (scenario B)', () => {
+    const r = project({
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/resolver/package.json': '{ "name": "@acme/resolver", "main": "./index.ts" }',
+      'packages/resolver/index.ts': '',
+      'packages/resolver/test/fixtures/lodash/package.json': '{ "name": "lodash", "main": "./index.js" }',
+      'packages/resolver/test/fixtures/lodash/index.js': '',
+    });
+    expect(r('lodash', 'packages/app/src/index.ts')).toBeUndefined();
+    expect(r('@acme/resolver', 'packages/app/src/index.ts')).toBe('packages/resolver/index.ts');
+    // A file of the workspace that belongs to no member (an e2e test) sees the members too, as Node does through the root node_modules.
+    expect(r('@acme/resolver', 'e2e/run.ts')).toBe('packages/resolver/index.ts');
+    expect(r('lodash', 'e2e/run.ts')).toBeUndefined();
+  });
+  it('without any workspace declaration every package.json still counts, as before', () => {
+    const r = project({
+      'packages/resolver/test/fixtures/lodash/package.json': '{ "name": "lodash", "main": "./index.js" }',
+      'packages/resolver/test/fixtures/lodash/index.js': '',
+    });
+    expect(r('lodash', 'packages/app/src/index.ts')).toBe('packages/resolver/test/fixtures/lodash/index.js');
+  });
+  it('two members with one name are ambiguous; a fixture copying a member name is not (scenario D1)', () => {
+    const files = {
+      'package.json': '{ "workspaces": { "packages": ["packages/*", "tools/*"] } }',
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./index.ts" }',
+      'packages/core/index.ts': '',
+      'fixtures/core/package.json': '{ "name": "@acme/core", "main": "./index.ts" }',
+      'fixtures/core/index.ts': '',
+    };
+    expect(project(files)('@acme/core', 'packages/app/a.ts')).toBe('packages/core/index.ts');
+    const twice = project({ ...files, 'tools/core/package.json': '{ "name": "@acme/core" }', 'tools/core/index.ts': '' });
+    expect(twice('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('reads pnpm-workspace.yaml, with ** globs and ! negation', () => {
+    const r = project({
+      'pnpm-workspace.yaml': "# the workspace\npackages:\n  - 'apps/**'\n  - \"libs/*\" # libraries\n  - '!**/test/**'\ncatalog:\n  react: ^18\n",
+      'apps/web/package.json': '{ "name": "web", "main": "./index.ts" }',
+      'apps/web/index.ts': '',
+      'apps/group/admin/package.json': '{ "name": "admin", "main": "./index.ts" }',
+      'apps/group/admin/index.ts': '',
+      'libs/ui/package.json': '{ "name": "ui", "main": "./index.ts" }',
+      'libs/ui/index.ts': '',
+      'libs/ui/nested/package.json': '{ "name": "nested", "main": "./index.ts" }',
+      'libs/ui/nested/index.ts': '',
+      'apps/web/test/mock/package.json': '{ "name": "mock", "main": "./index.ts" }',
+      'apps/web/test/mock/index.ts': '',
+    });
+    expect(r('web', 'libs/ui/a.ts')).toBe('apps/web/index.ts');
+    expect(r('admin', 'libs/ui/a.ts')).toBe('apps/group/admin/index.ts');
+    expect(r('ui', 'apps/web/a.ts')).toBe('libs/ui/index.ts');
+    expect(r('nested', 'apps/web/a.ts')).toBeUndefined();
+    expect(r('mock', 'apps/web/a.ts')).toBeUndefined();
+  });
+  it('expands brace globs in a workspace declaration, nested ones and negated ones too', () => {
+    const pkg = (name) => ({ [`${name}/package.json`]: JSON.stringify({ name: path.posix.basename(name), main: './index.ts' }), [`${name}/index.ts`]: '' });
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/{core,ui}", "apps/{web,{admin,docs}}", "tools/*", "!tools/{x,y}", "odd/{unclosed", "lit/{one}x{a,b}"] }',
+      ...pkg('packages/core'), ...pkg('packages/ui'), ...pkg('packages/other'),
+      ...pkg('apps/web'), ...pkg('apps/admin'), ...pkg('apps/docs'), ...pkg('apps/blog'),
+      ...pkg('tools/x'), ...pkg('tools/z'),
+      ...pkg('odd/{unclosed'), ...pkg('lit/{one}xb'),
+    });
+    for (const dir of ['packages/core', 'packages/ui', 'apps/web', 'apps/admin', 'apps/docs', 'tools/z', 'odd/{unclosed', 'lit/{one}xb']) expect(r(path.posix.basename(dir), 'src/main.ts')).toBe(`${dir}/index.ts`);
+    for (const outside of ['other', 'blog', 'x']) expect(r(outside, 'src/main.ts')).toBeUndefined();
+  });
+  it('reads a pnpm-workspace.yaml flow list; one with no packages list (catalog settings only) counts every package under it, as an undeclared repository does', () => {
+    const flow = project({
+      'pnpm-workspace.yaml': "packages: ['pkgs/?', \"!pkgs/x\"]\n",
+      'pkgs/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'pkgs/a/index.ts': '',
+      'pkgs/x/package.json': '{ "name": "x", "main": "./index.ts" }',
+      'pkgs/x/index.ts': '',
+      'pkgs/long/package.json': '{ "name": "long", "main": "./index.ts" }',
+      'pkgs/long/index.ts': '',
+    });
+    expect(flow('a', 'src/m.ts')).toBe('pkgs/a/index.ts');
+    expect(flow('x', 'src/m.ts')).toBeUndefined();
+    expect(flow('long', 'src/m.ts')).toBeUndefined();
+    const multiline = project({
+      'pnpm-workspace.yaml': "packages: [\n  './apps/web.v2/',\n  'tools/*'\n]\n",
+      'apps/web.v2/package.json': '{ "name": "web2", "main": "./index.ts" }',
+      'apps/web.v2/index.ts': '',
+      'apps/webXv2/package.json': '{ "name": "webx", "main": "./index.ts" }',
+      'apps/webXv2/index.ts': '',
+    });
+    expect(multiline('web2', 'src/m.ts')).toBe('apps/web.v2/index.ts');
+    expect(multiline('webx', 'src/m.ts')).toBeUndefined();
+    const all = project({
+      'pnpm-workspace.yaml': 'catalog:\n  react: ^18\n',
+      'deep/er/p/package.json': '{ "name": "p", "main": "./index.ts" }',
+      'deep/er/p/index.ts': '',
+    });
+    expect(all('p', 'src/m.ts')).toBe('deep/er/p/index.ts');
+  });
+  it('the root package is a member, and the nearest declaration above the importer is the workspace', () => {
+    const r = project({
+      'package.json': '{ "name": "root-pkg", "main": "./root.ts", "workspaces": ["packages/*", "e2e/demo"] }',
+      'root.ts': '',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'e2e/demo/package.json': '{ "name": "demo", "workspaces": ["libs/*"] }',
+      'e2e/demo/libs/inner/package.json': '{ "name": "inner", "main": "./index.ts" }',
+      'e2e/demo/libs/inner/index.ts': '',
+    });
+    expect(r('root-pkg', 'packages/a/x.ts')).toBe('root.ts');
+    expect(r('inner', 'e2e/demo/src/x.ts')).toBe('e2e/demo/libs/inner/index.ts');
+    expect(r('inner', 'packages/a/x.ts')).toBeUndefined();
+    expect(r('a', 'e2e/demo/src/x.ts')).toBeUndefined();
+  });
+  it('a malformed workspaces field is not a declaration', () => {
+    const r = project({
+      'package.json': '{ "workspaces": "packages/*" }',
+      'fixtures/f/package.json': '{ "name": "f", "main": "./index.ts" }',
+      'fixtures/f/index.ts': '',
+    });
+    expect(r('f', 'src/a.ts')).toBe('fixtures/f/index.ts');
+  });
+  it('a package the importer declares with a file:, link: or portal: spec binds under the dependency name', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/app/package.json': JSON.stringify({
+        name: 'app',
+        dependencies: { 'local-a': 'file:../../vendor/a', 'tarball': 'file:../../vendor/a.tgz', 'far': 'file:../../../elsewhere' },
+        devDependencies: { 'local-b': 'link:./tools/b' },
+        optionalDependencies: { 'local-c': 'portal:../../vendor/c' },
+        peerDependencies: { registry: '^1.0.0' },
+      }),
+      'vendor/a/package.json': '{ "name": "a-real-name", "main": "./index.ts" }',
+      'vendor/a/index.ts': '',
+      'vendor/a.tgz': '',
+      'packages/app/tools/b/package.json': '{ "name": "b" }',
+      'packages/app/tools/b/index.ts': '',
+      'vendor/c/package.json': '{ "name": "c", "main": "./index.ts" }',
+      'vendor/c/index.ts': '',
+      'vendor/registry/package.json': '{ "name": "registry", "main": "./index.ts" }',
+      'vendor/registry/index.ts': '',
+    });
+    expect(r('local-a', 'packages/app/src/x.ts')).toBe('vendor/a/index.ts');
+    expect(r('local-b', 'packages/app/src/x.ts')).toBe('packages/app/tools/b/index.ts');
+    expect(r('local-c', 'packages/app/src/x.ts')).toBe('vendor/c/index.ts');
+    // A local spec that names no in-repo package (a tarball, a path outside the repository) is silent.
+    expect(r('tarball', 'packages/app/src/x.ts')).toBeUndefined();
+    expect(r('far', 'packages/app/src/x.ts')).toBeUndefined();
+    // A registry range is the installed dependency; the in-repo copy outside the globs is not it.
+    expect(r('registry', 'packages/app/src/x.ts')).toBeUndefined();
+    // Only the importer's own package.json counts.
+    expect(r('local-a', 'packages/other/x.ts')).toBeUndefined();
+  });
+  it('the workspace: protocol binds a member by the dependency name, an alias, or a relative path', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/app/package.json': JSON.stringify({
+        name: 'app',
+        dependencies: { core: 'workspace:*', 'ui-alias': 'workspace:@acme/ui@^1.0.0', plain: 'workspace:plain-lib@*', near: 'workspace:../near', missing: 'workspace:nope@*' },
+      }),
+      'packages/core/package.json': '{ "name": "core", "main": "./index.ts" }',
+      'packages/core/index.ts': '',
+      'packages/ui/package.json': '{ "name": "@acme/ui", "main": "./index.ts" }',
+      'packages/ui/index.ts': '',
+      'packages/plain/package.json': '{ "name": "plain-lib", "main": "./index.ts" }',
+      'packages/plain/index.ts': '',
+      'packages/near/package.json': '{ "name": "near-real", "main": "./index.ts" }',
+      'packages/near/index.ts': '',
+    });
+    expect(r('core', 'packages/app/a.ts')).toBe('packages/core/index.ts');
+    expect(r('ui-alias', 'packages/app/a.ts')).toBe('packages/ui/index.ts');
+    expect(r('plain', 'packages/app/a.ts')).toBe('packages/plain/index.ts');
+    expect(r('near', 'packages/app/a.ts')).toBe('packages/near/index.ts');
+    expect(r('missing', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('a member under an excluded directory or with an excluded package.json is not a member', () => {
+    const files = {
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'packages/b/package.json': '{ "name": "b", "main": "./index.ts" }',
+      'packages/b/index.ts': '',
+    };
+    const r = project(files, (p) => p === 'packages/a' || p === 'packages/b/package.json');
+    expect(r('a', 'src/x.ts')).toBeUndefined();
+    expect(r('b', 'src/x.ts')).toBeUndefined();
+  });
+});
+
+// Issue 010: a verdict must be a function of the commit, so a file the caller excludes (git-ignored build output, a generated config) acts as though it does not exist, for every probe and every configuration read: the result with it on disk equals the result without it.
+describe('resolveTsPath — an excluded file acts as though it does not exist', () => {
+  const builtCore = {
+    'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js", "types": "./dist/index.d.ts", "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } } }',
+    'packages/core/src/index.ts': '',
+    'packages/app/src/main.ts': '',
+  };
+  const buildOutput = { 'packages/core/dist/index.js': '', 'packages/core/dist/index.d.ts': '' };
+  const ignoredDist = (p) => p.startsWith('packages/core/dist/');
+
+  it('a package whose exports point only into excluded build output resolves as in a clean checkout', () => {
+    const clean = project(builtCore, ignoredDist);
+    const built = project({ ...builtCore, ...buildOutput }, ignoredDist);
+    expect(clean('@acme/core', 'packages/app/src/main.ts')).toBeUndefined();
+    expect(built('@acme/core', 'packages/app/src/main.ts')).toBeUndefined();
+  });
+  it('the same holds through makeResolvePathToFile, the entry point a consumer calls', () => {
+    const root = materialize({ ...builtCore, ...buildOutput });
+    const resolve = makeResolvePathToFile(root, undefined, ignoredDist);
+    expect(resolve('@acme/core', 'packages/app/src/main.ts', 'typescript')).toBeUndefined();
+    // Without the exclusion the build output is a file like any other.
+    expect(makeResolvePathToFile(root)('@acme/core', 'packages/app/src/main.ts', 'typescript')).toBe('packages/core/dist/index.d.ts');
+  });
+  it('an excluded exports condition target is skipped, so the next condition wins as in a clean checkout', () => {
+    const conditions = {
+      'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "types": "./dist/index.d.ts", "development": "./src/index.ts" } } }',
+      'packages/core/src/index.ts': '',
+    };
+    expect(project(conditions, ignoredDist)('@acme/core', 'packages/app/src/main.ts')).toBe('packages/core/src/index.ts');
+    expect(project({ ...conditions, ...buildOutput }, ignoredDist)('@acme/core', 'packages/app/src/main.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('a main entry and a relative import into excluded output are silent, and a directory index skips an excluded file', () => {
+    const files = {
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }',
+      'packages/core/dist/index.js': '',
+      'gen/index.ts': '',
+      'gen/index.js': '',
+      'src/a.ts': '',
+    };
+    const excluded = (p) => p.startsWith('packages/core/dist/') || p === 'gen/index.ts';
+    const r = project(files, excluded);
+    expect(r('@acme/core', 'src/a.ts')).toBeUndefined();
+    expect(r('../packages/core/dist/index.js', 'src/a.ts')).toBeUndefined();
+    expect(r('../gen', 'src/a.ts')).toBe('gen/index.js');
+  });
+  it('a relative extends to an excluded generated tsconfig reads as missing (SvelteKit), so $lib stays silent either way', () => {
+    const svelte = {
+      'tsconfig.json': '{ "extends": "./.svelte-kit/tsconfig.json" }',
+      'src/lib/x.ts': '',
+      'src/routes/+page.server.ts': '',
+    };
+    const generated = { '.svelte-kit/tsconfig.json': '{ "compilerOptions": { "paths": { "$lib": ["../src/lib"], "$lib/*": ["../src/lib/*"] } } }' };
+    const ignored = (p) => p.startsWith('.svelte-kit/');
+    expect(project(svelte, ignored)('$lib/x', 'src/routes/+page.server.ts')).toBeUndefined();
+    expect(project({ ...svelte, ...generated }, ignored)('$lib/x', 'src/routes/+page.server.ts')).toBeUndefined();
+  });
+  it('an excluded tsconfig.json or package.json is not read: the next one up is', () => {
+    const r = project({
+      'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./shared/*"] } } }',
+      'apps/web/tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./gen/*"] } } }',
+      'apps/web/gen/m.ts': '',
+      'shared/m.ts': '',
+      'web/package.json': '{}',
+      'web/src/x.ts': '',
+    }, (p) => p === 'apps/web/tsconfig.json' || p === 'web/package.json');
+    expect(r('@/m', 'apps/web/a.ts')).toBe('shared/m.ts');
+    // The only package root was excluded, so a root-absolute import has none.
+    expect(r('/src/x', 'web/src/pages/a.ts')).toBeUndefined();
+  });
+});
+
 describe('parseJsonc', () => {
   it('strips comments and trailing commas, and leaves string contents alone', () => {
     expect(parseJsonc('{ // c\n "a": "x // y", /* b */ "b": [1, 2,], }')).toEqual({ a: 'x // y', b: [1, 2] });
     expect(parseJsonc('{ "a": "q\\"," }')).toEqual({ a: 'q",' });
     expect(parseJsonc('{ nope')).toBeUndefined();
+  });
+  it('reads a file that starts with a UTF-8 byte order mark, as tsc, Node and npm do', () => {
+    expect(parseJsonc('﻿{"a":1}')).toEqual({ a: 1 });
+    expect(parseJsonc('﻿// c\n{ "a": [1,], }')).toEqual({ a: [1] });
+    // Only a leading mark is a byte order mark; one anywhere else is still not JSON.
+    expect(parseJsonc('{"a":1}﻿﻿')).toBeUndefined();
+  });
+});
+
+describe('resolveTsPath — configuration files with a byte order mark', () => {
+  const BOM = '﻿';
+  it('reads the paths of a tsconfig.json saved with a BOM (issue 074, case 1)', () => {
+    const r = project({
+      'tsconfig.json': `${BOM}{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }`,
+      'src/b/b.ts': '',
+    });
+    expect(r('@/b/b', 'src/a/a.ts')).toBe('src/b/b.ts');
+  });
+  it('a tsconfig.json with a BOM does not silence a workspace package import (case 1b)', () => {
+    const r = project({
+      'tsconfig.json': `${BOM}{ "compilerOptions": { "strict": true } }`,
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./src/index.ts" }',
+      'packages/core/src/index.ts': '',
+    });
+    expect(r('@acme/core', 'main.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('a package.json with a BOM is still a workspace package (case 2)', () => {
+    const r = project({
+      'packages/core/package.json': `${BOM}{ "name": "@acme/core", "main": "./src/index.js" }`,
+      'packages/core/src/index.js': '',
+    });
+    expect(r('@acme/core', 'packages/app/src/index.js')).toBe('packages/core/src/index.js');
   });
 });
