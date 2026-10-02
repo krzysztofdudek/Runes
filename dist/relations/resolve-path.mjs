@@ -331,7 +331,7 @@ function normalizeCrateName(name) {
 }
 const DEP_TABLE = /^(?:target\..+\.)?(?:dependencies|dev-dependencies|dev_dependencies|build-dependencies|build_dependencies)$/;
 const DEP_SUBTABLE = /^(?:target\..+\.)?(?:dependencies|dev-dependencies|dev_dependencies|build-dependencies|build_dependencies)\.(.+)$/;
-/** A minimal, line-oriented Cargo.toml reader: `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries (inline tables, dotted keys such as `name.workspace = true`, and the `[dependencies.<name>]` table form) plus `[workspace.dependencies]`. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal, line-oriented Cargo.toml reader: `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries (inline tables, dotted keys such as `name.workspace = true`, and the `[dependencies.<name>]` table form) plus `[workspace.dependencies]`. The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text) {
     let packageName;
     let libName;
@@ -339,6 +339,7 @@ export function parseCargoManifest(text) {
     const dependencies = new Map();
     const workspaceDependencies = new Map();
     let section = '';
+    // Inside a `[dependencies.<name>]` table: the spec its lines fill, or null when an earlier declaration of the crate keeps it (the first declaration wins, whatever its form); undefined elsewhere.
     let subtable;
     // A `key = value` line, the key possibly dotted (`a.b`, `"a".b`, `a . b`), and one segment of such a key: double-quoted, single-quoted or bare.
     const KEY_VALUE = /^((?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+))*)\s*=\s*(.*)$/;
@@ -374,12 +375,13 @@ export function parseCargoManifest(text) {
             dottedInTable = new Set();
             const sub = DEP_SUBTABLE.exec(section);
             const wsSub = /^workspace\.dependencies\.(.+)$/.exec(section);
-            if (wsSub)
-                subtable = { into: workspaceDependencies, key: unquote(wsSub[1]) };
-            else if (sub)
-                subtable = { into: dependencies, key: unquote(sub[1]) };
-            if (subtable && !subtable.into.has(subtable.key))
-                subtable.into.set(subtable.key, { workspace: false });
+            const declared = wsSub ? { into: workspaceDependencies, key: unquote(wsSub[1]) } : sub ? { into: dependencies, key: unquote(sub[1]) } : undefined;
+            if (declared) {
+                if (declared.into.has(declared.key))
+                    subtable = null;
+                else
+                    declared.into.set(declared.key, (subtable = { workspace: false }));
+            }
             continue;
         }
         const kv = KEY_VALUE.exec(line);
@@ -389,8 +391,9 @@ export function parseCargoManifest(text) {
         const segments = [...kv[1].matchAll(KEY_SEGMENT)].map((m) => m[1] ?? m[2] ?? m[3]);
         const key = segments.join('.');
         const value = kv[2].trim();
-        if (subtable) {
-            setField(subtable.into.get(subtable.key), key, value);
+        if (subtable !== undefined) {
+            if (subtable)
+                setField(subtable, key, value);
             continue;
         }
         if (section === 'package' && key === 'name')

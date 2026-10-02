@@ -342,6 +342,19 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parseCargoManifest('[dependencies]\nkit = "1"\nkit.path = "../kit"\n').dependencies).toEqual(whole);
   });
 
+  it('keeps the first declaration of a crate against a later [dependencies.<name>] table too, so one rule holds for every form', () => {
+    // Issue 136: a `[dependencies.<name>]` table filled the entry an earlier declaration had made, while a later whole value or dotted line left it alone.
+    const first = new Map([['kit', { workspace: false }]]);
+    expect(parseCargoManifest('[dependencies]\nkit = "1"\n\n[dependencies.kit]\npath = "../kit"\n').dependencies).toEqual(first);
+    expect(parseCargoManifest('[dependencies]\nkit = "1"\n\n[dev-dependencies.kit]\npath = "../kit"\npackage = "kit-pkg"\n').dependencies).toEqual(first);
+    expect(parseCargoManifest('[dependencies]\nkit.version = "1"\n\n[build-dependencies.kit]\nworkspace = true\n').dependencies).toEqual(first);
+    expect(parseCargoManifest('[workspace.dependencies]\nkit = "1"\n\n[workspace.dependencies.kit]\npath = "libs/kit"\n').workspaceDependencies).toEqual(first);
+    // A table that declares the crate first keeps its own fields; a later table of the same crate extends nothing.
+    expect(parseCargoManifest('[dependencies.kit]\npath = "../kit"\n\n[dev-dependencies.kit]\npath = "../other"\npackage = "kit-pkg"\n').dependencies).toEqual(
+      new Map([['kit', { path: '../kit', workspace: false }]]),
+    );
+  });
+
   it('matches a declared or used name as a whole word only', () => {
     expect(rustFileDeclares('pub struct Engine;', 'Engine')).toBe(true);
     expect(rustFileDeclares('pub struct EngineRoom;', 'Engine')).toBe(false);
