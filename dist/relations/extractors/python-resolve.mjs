@@ -113,6 +113,7 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
         return found;
     };
     const below = new Map();
+    const fromTool = new Map();
     const underDiscovered = new Map();
     const ctx = {
         exists: has,
@@ -125,6 +126,15 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
                 below.set(dir, isBelow);
             }
             return isBelow;
+        },
+        toolRoot: (dir) => {
+            let runs = fromTool.get(dir);
+            if (runs === undefined) {
+                // pytest's rootdir rule inserts a conftest.py directory that is no package; Django runs manage.py from its own directory
+                runs = (has(joinUnder(dir, 'conftest.py')) && !has(joinUnder(dir, '__init__.py'))) || has(joinUnder(dir, 'manage.py'));
+                fromTool.set(dir, runs);
+            }
+            return runs;
         },
         matchesUnderDiscoveredRoots: (segments, modulePath, parentPath) => {
             let matches = underDiscovered.get(modulePath);
@@ -203,6 +213,8 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  * and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/`
  * when `acme/` is a namespace package.
  *
+ * Two conventions put a directory below a project root first on `sys.path` without any configuration, so for a name outside the standard library such a directory stays a root: one holding `conftest.py` and no `__init__.py` (pytest's rootdir rule inserts it), and one holding `manage.py` (Django runs from it). A directory put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not seen and is not searched.
+ *
  * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project
  * manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a
  * test outside `src/` or one workspace member importing another resolves although the
@@ -233,10 +245,8 @@ function resolveAbsolute(specifier, fromFile, ctx) {
     const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
     const found = emptyMatches();
     for (const dir of ancestorDirs(ownDir)) {
-        // An ancestor other than the importer's own directory is a root only when it is not a
-        // directory inside a project (strictly below a discovered root) and, for a standard-library
-        // name, only when it is the repository root (see the doc comment above).
-        const isRoot = dir === ownDir || (!(stdlibName && dir !== '') && !ctx.belowDiscoveredRoot(dir));
+        // An ancestor other than the importer's own directory is a root, for a standard-library name, only when it is the repository root; for any other name, when it is not a directory inside a project (strictly below a discovered root) or when pytest or Django runs from it (see the doc comment above).
+        const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
         if (isRoot && !ctx.insideRegularPackage(dir))
             probeRoot(dir, modulePath, parentPath, ctx, found);
     }
