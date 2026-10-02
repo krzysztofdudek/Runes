@@ -302,6 +302,46 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parseCargoManifest('[[bin]]\nname = "tool"\n').crateName).toBeUndefined();
   });
 
+  it('splits a dotted key in a dependency table into the crate and its field, as the inline-table form reads', () => {
+    // Issue 015: `shop-core.workspace = true` was stored as a dependency called `shop-core.workspace`.
+    const deps = (text) => parseCargoManifest(text).dependencies;
+    const inline = deps('[dependencies]\nshop-core = { workspace = true }\n');
+    expect(deps('[dependencies]\nshop-core.workspace = true\n')).toEqual(inline);
+    expect(deps('[dependencies]\nshop-core.workspace = true\n')).toEqual(new Map([['shop-core', { workspace: true }]]));
+    expect(deps('[dependencies]\nshop-core.path = "../core"\n')).toEqual(new Map([['shop-core', { path: '../core', workspace: false }]]));
+    expect(deps('[dev-dependencies]\nshop-core.workspace = true\n')).toEqual(new Map([['shop-core', { workspace: true }]]));
+    expect(deps("[target.'cfg(unix)'.build-dependencies]\nshop-core.path = '../core'\n")).toEqual(new Map([['shop-core', { path: '../core', workspace: false }]]));
+    // Quoted segments and whitespace around the dot are the same key.
+    expect(deps('[dependencies]\n"shop-core".path = "../core"\n')).toEqual(new Map([['shop-core', { path: '../core', workspace: false }]]));
+    expect(deps("[dependencies]\n'shop-core' . path = \"../core\"\n")).toEqual(new Map([['shop-core', { path: '../core', workspace: false }]]));
+    // A quoted key holding a dot stays one key.
+    expect(deps('[dependencies]\n"a.b" = { path = "../ab" }\n')).toEqual(new Map([['a.b', { path: '../ab', workspace: false }]]));
+    expect(parseCargoManifest('[workspace.dependencies]\nshop-core.path = "crates/core"\n').workspaceDependencies).toEqual(new Map([['shop-core', { path: 'crates/core', workspace: false }]]));
+  });
+
+  it('merges the dotted lines of one crate into one spec; another field only declares the crate', () => {
+    const { dependencies } = parseCargoManifest(
+      ['[dependencies]', 'kit.path = "../kit"', 'kit.version = "0.1"', 'kit.package = "kit-pkg"', 'kit.features = ["x"]', 'other.version = "1"', 'odd.path.deeper = "x"'].join('\n') + '\n',
+    );
+    expect(dependencies).toEqual(
+      new Map([
+        ['kit', { path: '../kit', package: 'kit-pkg', workspace: false }],
+        ['other', { workspace: false }],
+        ['odd', { workspace: false }],
+      ]),
+    );
+  });
+
+  it('keeps the first table that declares a crate, for dotted lines as for whole values', () => {
+    // A crate declared in [dependencies] is not extended by a later table, whichever form either uses.
+    const whole = parseCargoManifest('[dependencies]\nkit = "1"\n\n[dev-dependencies]\nkit = { path = "../kit" }\n').dependencies;
+    const dotted = parseCargoManifest('[dependencies]\nkit.version = "1"\n\n[dev-dependencies]\nkit.path = "../kit"\n').dependencies;
+    expect(whole).toEqual(new Map([['kit', { workspace: false }]]));
+    expect(dotted).toEqual(whole);
+    // A dotted line after a whole value of the same crate in the same table (invalid TOML) extends nothing either.
+    expect(parseCargoManifest('[dependencies]\nkit = "1"\nkit.path = "../kit"\n').dependencies).toEqual(whole);
+  });
+
   it('matches a declared or used name as a whole word only', () => {
     expect(rustFileDeclares('pub struct Engine;', 'Engine')).toBe(true);
     expect(rustFileDeclares('pub struct EngineRoom;', 'Engine')).toBe(false);
@@ -369,6 +409,21 @@ describe('resolveRustPath — manifest and target edge forms (disk-backed)', () 
     expect(resolve('anon::Anon', from, 'rust')).toBe('crates/anon/src/lib.rs');
     // `workspace = true` with no workspace entry anywhere → silence.
     expect(resolve('ghost::X', from, 'rust')).toBeUndefined();
+  });
+
+  it('resolves dependencies written with dotted keys: `.workspace = true`, `.path`, in [workspace.dependencies] and [dev-dependencies]', () => {
+    // Issue 015, the reproduction's cases A, D, F and G: each was silent while the inline-table form gave the edge.
+    put('Cargo.toml', '[workspace]\nmembers = ["crates/*"]\n\n[workspace.dependencies]\nshop-core.path = "crates/core"\n');
+    put('crates/core/Cargo.toml', '[package]\nname = "shop-core"\n');
+    put('crates/core/src/lib.rs', 'pub struct Order;\n');
+    put('crates/a/Cargo.toml', '[package]\nname = "a"\n\n[dependencies]\nshop-core.workspace = true\n');
+    put('crates/d/Cargo.toml', '[package]\nname = "d"\n\n[dependencies]\nshop-core.path = "../core"\n');
+    put('crates/f/Cargo.toml', '[package]\nname = "f"\n\n[dependencies]\nshop-core = { workspace = true }\n');
+    put('crates/g/Cargo.toml', '[package]\nname = "g"\n\n[dev-dependencies]\nshop-core.workspace = true\n');
+    const resolve = makeResolvePathToFile(ws);
+    for (const pkg of ['a', 'd', 'f', 'g']) {
+      expect(resolve('shop_core::Order', `crates/${pkg}/src/main.rs`, 'rust'), pkg).toBe('crates/core/src/lib.rs');
+    }
   });
 
   it('walks past an intermediate manifest to the workspace that defines an inherited dependency', () => {
