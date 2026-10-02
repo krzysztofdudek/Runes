@@ -115,6 +115,9 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
   it('typescript-workspace-member-beats-fixture-edge', () => runCase('typescript-workspace-member-beats-fixture-edge'));
   it('typescript-tsconfig-extends-workspace-member-edge', () => runCase('typescript-tsconfig-extends-workspace-member-edge'));
+  it('typescript-workspace-nested-declaration-member-edge', () => runCase('typescript-workspace-nested-declaration-member-edge'));
+  it('typescript-package-self-reference-edge', () => runCase('typescript-package-self-reference-edge'));
+  it('typescript-marker-package-json-local-dependency-edge', () => runCase('typescript-marker-package-json-local-dependency-edge'));
   it('typescript-package-imports-edge', () => runCase('typescript-package-imports-edge'));
   it('typescript-package-subpath-imports-silence', () => runCase('typescript-package-subpath-imports-silence'));
   it('typescript-bare-specifier-silence', () => runCase('typescript-bare-specifier-silence'));

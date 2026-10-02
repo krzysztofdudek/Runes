@@ -1,4 +1,4 @@
-// The relation reference catalogue (reference/relations/<language>/<id>.md, 493 cases) and the matrix suites that run it (extractors/*-name-resolution-matrix.test.mjs, one runCase('<id>') per case) correspond one to one: every case is run by exactly one test and every runCase names a case of its own language. Each case is well formed: its frontmatter, its files and its expectation parse, and its id is its file name.
+// The relation reference catalogue (reference/relations/<language>/<id>.md, 496 cases) and the matrix suites that run it (extractors/*-name-resolution-matrix.test.mjs, one runCase('<id>') per case) correspond one to one: every case is run by exactly one test and every runCase names a case of its own language. Each case is well formed: its frontmatter, its files and its expectation parse, and its id is its file name.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -9,8 +9,8 @@ import { listCases, loadCaseDoc } from './reference-case-runner.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cases = listCases();
 
-test('the catalogue holds 493 cases over 12 languages', () => {
-  assert.equal(cases.length, 493);
+test('the catalogue holds 496 cases over 12 languages', () => {
+  assert.equal(cases.length, 496);
   assert.equal(new Set(cases.map((c) => c.language)).size, 12);
 });
 
