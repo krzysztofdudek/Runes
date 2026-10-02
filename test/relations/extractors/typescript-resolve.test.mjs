@@ -218,6 +218,96 @@ describe('resolveTsPath — packages', () => {
   });
 });
 
+// Issue 011: a solution-style tsconfig.json (`files: []` plus `references`) gives a file the options of the referenced config that includes it; a Vue or Svelte component reads jsconfig.json as a JavaScript file does.
+describe('resolveTsPath — solution-style tsconfig references', () => {
+  const app = (paths, extra = {}) => JSON.stringify({ include: ['env.d.ts', 'src/**/*', 'src/**/*.vue'], exclude: ['src/**/__tests__/*'], ...extra, compilerOptions: { paths } });
+  it('takes paths from the referenced config whose include holds the file, and honours its exclude', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.app.json" }, { "path": "./tsconfig.vitest.json" }] }',
+      'tsconfig.node.json': '{ "include": ["vite.config.*"], "compilerOptions": { "paths": { "@/*": ["./build/*"] } } }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'tsconfig.vitest.json': '{ "extends": "./tsconfig.app.json", "include": ["src/**/__tests__/*"], "exclude": [], "compilerOptions": { "paths": { "@/*": ["./fixtures/*"] } } }',
+      'src/m.ts': '',
+      'build/m.ts': '',
+      'fixtures/m.ts': '',
+    });
+    expect(r('@/m', 'src/views/Home.ts')).toBe('src/m.ts');
+    expect(r('@/m', 'src/cart/Cart.vue')).toBe('src/m.ts');
+    expect(r('@/m', 'env.d.ts')).toBe('src/m.ts');
+    expect(r('@/m', 'vite.config.ts')).toBe('build/m.ts');
+    expect(r('@/m', 'src/cart/__tests__/cart.spec.ts')).toBe('fixtures/m.ts');
+  });
+  it('several referenced configs that include the file agree, or the file is silent', () => {
+    const files = (bPaths) => ({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./a.json" }, { "path": "./b.json" }] }',
+      'a.json': JSON.stringify({ include: ['src'], compilerOptions: { paths: { '@/*': ['./src/*'] } } }),
+      'b.json': JSON.stringify({ files: ['src/x.ts'], compilerOptions: { paths: bPaths } }),
+      'src/m.ts': '',
+      'lib/m.ts': '',
+    });
+    expect(project(files({ '@/*': ['./src/*'] }))('@/m', 'src/x.ts')).toBe('src/m.ts');
+    expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/x.ts')).toBeUndefined();
+    // A file only one of them includes takes that one's paths.
+    expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/y.ts')).toBe('src/m.ts');
+  });
+  it('follows a reference to a directory and nested solution configs, and skips a reference that is not there', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./missing.json" }, { "path": "./cfg" }, { "path": "./tsconfig.json" }, "bad", { "path": 1 }] }',
+      'cfg/tsconfig.json': '{ "files": [], "references": [{ "path": "./web.json" }, { "path": "../tsconfig.json" }] }',
+      'cfg/web.json': '{ "include": ["../web"], "compilerOptions": { "baseUrl": "../web/src" } }',
+      'web/src/lib/x.ts': '',
+    });
+    expect(r('lib/x', 'web/src/main.ts')).toBe('web/src/lib/x.ts');
+  });
+  it('a file no referenced config includes keeps the nearest config, and a config that includes the file ignores its references', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }], "compilerOptions": { "baseUrl": "." } }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'lib/x.ts': '',
+      'src/m.ts': '',
+    });
+    expect(r('lib/x', 'scripts/build.ts')).toBe('lib/x.ts');
+    expect(r('@/m', 'scripts/build.ts')).toBeUndefined();
+    const own = project({
+      'tsconfig.json': '{ "references": [{ "path": "./other.json" }], "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+      'other.json': '{ "include": ["src/**/*"], "compilerOptions": { "paths": { "@/*": ["./lib/*"] } } }',
+      'src/m.ts': '',
+      'lib/m.ts': '',
+    });
+    expect(own('@/m', 'src/a.ts')).toBe('src/m.ts');
+  });
+  it('a referenced config that cannot be read silences the file, which it may include', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./broken.json" }] }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'broken.json': '{ "include": [',
+      'src/m.ts': '',
+    });
+    expect(r('@/m', 'src/a.ts')).toBeUndefined();
+  });
+  it('excludes a directory named in exclude, and reads include and files inherited through extends', () => {
+    const r = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./cfg/app.json" }, { "path": "./legacy.json" }] }',
+      'cfg/base.json': '{ "include": ["../src"], "exclude": ["../src/legacy"] }',
+      'cfg/app.json': '{ "extends": "./base.json", "compilerOptions": { "paths": { "@/*": ["../src/*"] } } }',
+      'legacy.json': '{ "include": ["src/legacy/**/*.ts", "src/legacy/one?.ts"], "exclude": "nope", "compilerOptions": { "paths": { "@/*": ["./old/*"] } } }',
+      'src/m.ts': '',
+      'old/m.ts': '',
+    });
+    expect(r('@/m', 'src/a/b.ts')).toBe('src/m.ts');
+    expect(r('@/m', 'src/legacy/deep/c.ts')).toBe('old/m.ts');
+  });
+});
+
+describe('resolveTsPath — a Vue or Svelte component reads jsconfig.json', () => {
+  it('reads jsconfig.json for a .vue or .svelte importer, as for a JavaScript file', () => {
+    const r = project({ 'jsconfig.json': '{ "compilerOptions": { "baseUrl": "." } }', 'lib/x.js': '' });
+    expect(r('lib/x', 'src/Counter.vue')).toBe('lib/x.js');
+    expect(r('lib/x', 'src/Widget.svelte')).toBe('lib/x.js');
+    expect(r('lib/x', 'src/a.ts')).toBeUndefined();
+  });
+});
+
 // Issue 012: inside a declared workspace a bare name binds only to a workspace member, or to the package the importer's own package.json declares under that name with a local spec; a repository that declares no workspace keeps indexing every package.json.
 describe('resolveTsPath — workspace membership', () => {
   it('a fixture outside the workspace globs is not importable by name; a member is (scenario B)', () => {

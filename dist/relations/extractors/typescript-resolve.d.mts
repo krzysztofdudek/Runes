@@ -24,8 +24,11 @@
  *      the longest `*` pattern); a relative target resolves inside that package, a bare
  *      target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
- *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS), with its
- *         `extends` chain: the exact key, else the longest-prefix `*` pattern; each
+ *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a
+ *         Vue or Svelte component), with its `extends` chain; when that config is
+ *         solution-style (`references`, and its own `files`/`include`/`exclude` do not hold
+ *         the file), the referenced config that holds it, and silence when several hold it
+ *         and disagree. The exact key, else the longest-prefix `*` pattern; each
  *         substitution is probed like a relative path. Exactly one substitution naming a
  *         file → that file. Two or more naming DIFFERENT files → undefined (ambiguous).
  *         A matched pattern with no hit falls through to (c), as the compiler does.
@@ -54,9 +57,10 @@
 export declare function resolveTsPath(specifier: string, fromFile: string, existsAny: (repoRelPosix: string) => boolean, deps?: TsResolveDeps): string | undefined;
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
-    /** The tsconfig in effect for a file (its `extends` chain applied), `'unknown'` when it
-     *  cannot be read reliably (unparseable, or a relative `extends` that does not exist),
-     *  or undefined when the file has none. */
+    /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style
+     *  config, the referenced config that holds the file), `'unknown'` when it cannot be read
+     *  reliably (unparseable, a relative `extends` that does not exist, or referenced configs
+     *  that hold the file and disagree), or undefined when the file has none. */
     tsconfigFor(fromFile: string): TsPathConfig | 'unknown' | undefined;
     /** The nearest ancestor package of a file: its directory and parsed package.json. */
     nearestPackage(fromFile: string): TsPackage | undefined;

@@ -106,6 +106,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-tsconfig-paths-edge', () => runCase('typescript-tsconfig-paths-edge'));
   it('typescript-tsconfig-baseurl-edge', () => runCase('typescript-tsconfig-baseurl-edge'));
   it('typescript-tsconfig-extends-paths-edge', () => runCase('typescript-tsconfig-extends-paths-edge'));
+  it('typescript-tsconfig-references-paths-edge', () => runCase('typescript-tsconfig-references-paths-edge'));
   it('typescript-tsconfig-paths-multi-target-silence', () => runCase('typescript-tsconfig-paths-multi-target-silence'));
   it('typescript-tsconfig-alias-silence', () => runCase('typescript-tsconfig-alias-silence'));
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));

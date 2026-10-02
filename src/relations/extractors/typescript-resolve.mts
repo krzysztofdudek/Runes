@@ -27,8 +27,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
  *      the longest `*` pattern); a relative target resolves inside that package, a bare
  *      target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
- *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS), with its
- *         `extends` chain: the exact key, else the longest-prefix `*` pattern; each
+ *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a
+ *         Vue or Svelte component), with its `extends` chain; when that config is
+ *         solution-style (`references`, and its own `files`/`include`/`exclude` do not hold
+ *         the file), the referenced config that holds it, and silence when several hold it
+ *         and disagree. The exact key, else the longest-prefix `*` pattern; each
  *         substitution is probed like a relative path. Exactly one substitution naming a
  *         file → that file. Two or more naming DIFFERENT files → undefined (ambiguous).
  *         A matched pattern with no hit falls through to (c), as the compiler does.
@@ -97,9 +100,10 @@ export function resolveTsPath(
 
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
-  /** The tsconfig in effect for a file (its `extends` chain applied), `'unknown'` when it
-   *  cannot be read reliably (unparseable, or a relative `extends` that does not exist),
-   *  or undefined when the file has none. */
+  /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style
+   *  config, the referenced config that holds the file), `'unknown'` when it cannot be read
+   *  reliably (unparseable, a relative `extends` that does not exist, or referenced configs
+   *  that hold the file and disagree), or undefined when the file has none. */
   tsconfigFor(fromFile: string): TsPathConfig | 'unknown' | undefined;
   /** The nearest ancestor package of a file: its directory and parsed package.json. */
   nearestPackage(fromFile: string): TsPackage | undefined;
@@ -118,6 +122,14 @@ export interface TsPathConfig {
   baseUrl?: string;
   /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
   paths?: { base: string; map: Record<string, string[]> };
+}
+
+/** A loaded tsconfig: the options rule 4 reads, and which files its project holds. */
+interface LoadedConfig extends TsPathConfig {
+  /** `files`, `include` and `exclude`, repo-rel, when set anywhere in the `extends` chain. */
+  files?: string[];
+  include?: string[];
+  exclude?: string[];
 }
 
 export interface TsPackage {
@@ -439,11 +451,11 @@ const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
 
 /**
- * Whether a directory path, relative to a workspace root, matches one workspace glob (the
- * npm, yarn and pnpm dialect): `*` and `?` within one segment, `**` for any number of
- * segments, everything else literal.
+ * Whether a path matches one glob of the dialect npm, yarn and pnpm workspaces and tsconfig
+ * `include`/`exclude` share: `*` and `?` within one segment, `**` for any number of
+ * segments, everything else literal. Both sides are relative to the same directory.
  */
-function workspaceGlobMatches(glob: string, rel: string): boolean {
+function globMatches(glob: string, rel: string): boolean {
   const pattern = glob.split('/').filter((seg) => seg !== '' && seg !== '.');
   const segs = rel === '' ? [] : rel.split('/');
   const segment = (pat: string, seg: string): boolean => {
@@ -620,7 +632,7 @@ export function makeTsResolveDeps(
       if (pkg.dir === root) return true;
       if (root !== '' && !pkg.dir.startsWith(`${root}/`)) return false;
       const rel = root === '' ? pkg.dir : pkg.dir.slice(root.length + 1);
-      return include.some((g) => workspaceGlobMatches(g, rel)) && !exclude.some((g) => workspaceGlobMatches(g, rel));
+      return include.some((g) => globMatches(g, rel)) && !exclude.some((g) => globMatches(g, rel));
     });
     const index = indexByName(members);
     membersAt.set(root, index);
@@ -630,7 +642,7 @@ export function makeTsResolveDeps(
   // tsconfig chain: the resolved view of one config file (its own options merged over its
   // `extends` chain). `null` marks a file being resolved, so an `extends` cycle reads as
   // unknown instead of recursing forever.
-  const configCache = new Map<string, TsPathConfig | 'unknown' | null>();
+  const configCache = new Map<string, LoadedConfig | 'unknown' | null>();
   const resolveExtends = (fromDir: string, ext: string): string | 'unknown' | undefined => {
     if (ext.startsWith('.') || ext.startsWith('/')) {
       if (ext.startsWith('/')) return 'unknown';
@@ -658,17 +670,17 @@ export function makeTsResolveDeps(
     // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none.
     return undefined;
   };
-  const loadConfig = (file: string, leafDir: string): TsPathConfig | 'unknown' => {
+  const loadConfig = (file: string, leafDir: string): LoadedConfig | 'unknown' => {
     const key = `${file}\n${leafDir}`;
     const cached = configCache.get(key);
     if (cached === null) return 'unknown';
     if (cached !== undefined) return cached;
     configCache.set(key, null);
-    const result = ((): TsPathConfig | 'unknown' => {
+    const result = ((): LoadedConfig | 'unknown' => {
       const json = readJson(file);
       if (!isRecord(json)) return 'unknown';
       const dir = dirOf(file);
-      let merged: TsPathConfig = {};
+      let merged: LoadedConfig = {};
       const bases = json.extends === undefined ? [] : Array.isArray(json.extends) ? json.extends : [json.extends];
       for (const base of bases) {
         if (typeof base !== 'string') return 'unknown';
@@ -700,39 +712,110 @@ export function makeTsResolveDeps(
         }
         merged.paths = { base: dir, map };
       }
+      // `files`, `include` and `exclude` resolve from the config that spells them; a base's
+      // list is inherited whole unless the inheriting config sets its own.
+      for (const field of ['files', 'include', 'exclude'] as const) {
+        const list = json[field];
+        if (!Array.isArray(list)) continue;
+        merged[field] = list
+          .filter((p): p is string => typeof p === 'string')
+          .map((p) => joinConfigPath(dir, withConfigDir(p)))
+          .filter((p): p is string => p !== undefined);
+      }
       return merged;
     })();
     configCache.set(key, result);
     return result;
   };
 
-  const configByDir = new Map<string, TsPathConfig | 'unknown' | undefined>();
-  const tsconfigFor = (fromFile: string): TsPathConfig | 'unknown' | undefined => {
-    const isJs = /\.(?:[cm]?js|jsx)$/i.test(fromFile);
-    const startDir = dirOf(fromFile);
-    const cacheKey = `${isJs ? 'js' : 'ts'}\n${startDir}`;
-    if (configByDir.has(cacheKey)) return configByDir.get(cacheKey);
-    let found: TsPathConfig | 'unknown' | undefined;
-    for (const dir of ancestors(fromFile)) {
-      const names = isJs ? ['tsconfig.json', 'jsconfig.json'] : ['tsconfig.json'];
-      const file = names.map((nm) => (dir === '' ? nm : `${dir}/${nm}`)).find(isFile);
-      if (file === undefined) continue;
-      const config = loadConfig(file, dir);
-      if (config === 'unknown') {
-        found = 'unknown';
-      } else {
-        // `paths` resolve from the directory of the config that declares them unless a
-        // `baseUrl` is in effect (TypeScript 4.1+).
-        found = {
-          ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
-          ...(config.paths !== undefined
-            ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } }
-            : {}),
-        };
-      }
-      break;
+  // Whether a config's project holds a file, as tsc reads `files`, `include` and `exclude`:
+  // a listed file always; otherwise an `include` match that no `exclude` pattern matches.
+  // With neither `files` nor `include` set, `include` is everything under the config's
+  // directory; with only `files` set, it is nothing. An include pattern whose last segment
+  // has no extension and no wildcard names a directory, and an exclude pattern also covers
+  // everything under a directory it matches. Extensions are not filtered: a project holds
+  // whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
+  const holds = (config: LoadedConfig, configDir: string, file: string): boolean => {
+    if (config.files?.includes(file)) return true;
+    const include = config.include ?? (config.files === undefined ? [configDir] : []);
+    const asDirectory = (p: string): string => (/[*?.]/.test(p.slice(p.lastIndexOf('/') + 1)) ? p : `${p}/**/*`);
+    if (!include.some((p) => globMatches(asDirectory(p), file))) return false;
+    const segs = file.split('/');
+    return !(config.exclude ?? []).some((p) => segs.some((_, k) => globMatches(p, segs.slice(0, k + 1).join('/'))));
+  };
+  // The configs a tsconfig's own `references` name (never inherited): a config file, or a
+  // directory holding a tsconfig.json. A reference naming neither is skipped, as tsserver
+  // skips it.
+  const referencesOf = (file: string): string[] => {
+    const json = readJson(file);
+    const refs = isRecord(json) && Array.isArray(json.references) ? json.references : [];
+    const out: string[] = [];
+    for (const ref of refs) {
+      const target = isRecord(ref) && typeof ref.path === 'string' ? joinUnder(dirOf(file), ref.path) : undefined;
+      if (target === undefined) continue;
+      const found = [target, target === '' ? 'tsconfig.json' : `${target}/tsconfig.json`].find(isFile);
+      if (found !== undefined) out.push(found);
     }
-    configByDir.set(cacheKey, found);
+    return out;
+  };
+  // `paths` resolve from the directory of the config that declares them unless a `baseUrl`
+  // is in effect (TypeScript 4.1+).
+  const view = (config: LoadedConfig): TsPathConfig => ({
+    ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+    ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
+  });
+  // The options in effect for a file whose nearest config is `file`. A solution-style config
+  // (one with `references` whose own project does not hold the file, as `files: []` holds
+  // nothing) defers to the referenced configs that hold it, searched through the whole
+  // reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and
+  // `paths`, those; when they disagree, or one cannot be read (it may hold the file),
+  // 'unknown'; when none holds it, the nearest config's own options.
+  const configInEffect = (file: string, fromFile: string): TsPathConfig | 'unknown' => {
+    const own = loadConfig(file, dirOf(file));
+    if (own === 'unknown') return 'unknown';
+    const references = referencesOf(file);
+    if (references.length === 0 || holds(own, dirOf(file), fromFile)) return view(own);
+    const holding: TsPathConfig[] = [];
+    const seen = new Set([file]);
+    const search = (configs: string[]): boolean => {
+      for (const ref of configs) {
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        const loaded = loadConfig(ref, dirOf(ref));
+        if (loaded === 'unknown') return false;
+        if (holds(loaded, dirOf(ref), fromFile)) holding.push(view(loaded));
+        if (!search(referencesOf(ref))) return false;
+      }
+      return true;
+    };
+    if (!search(references)) return 'unknown';
+    if (holding.length === 0) return view(own);
+    const first = JSON.stringify(holding[0]);
+    return holding.every((v) => JSON.stringify(v) === first) ? holding[0] : 'unknown';
+  };
+
+  const nearestConfigByDir = new Map<string, string | undefined>();
+  const configByFile = new Map<string, TsPathConfig | 'unknown' | undefined>();
+  const tsconfigFor = (fromFile: string): TsPathConfig | 'unknown' | undefined => {
+    // A Vue or Svelte component reads jsconfig.json as a JavaScript file does: its language
+    // tools (Volar, svelte-check) take the nearest tsconfig.json or jsconfig.json.
+    const isJs = /\.(?:[cm]?js|jsx|vue|svelte)$/i.test(fromFile);
+    const kind = isJs ? 'js' : 'ts';
+    const fileKey = `${kind}\n${fromFile}`;
+    if (configByFile.has(fileKey)) return configByFile.get(fileKey);
+    const dirKey = `${kind}\n${dirOf(fromFile)}`;
+    if (!nearestConfigByDir.has(dirKey)) {
+      const names = isJs ? ['tsconfig.json', 'jsconfig.json'] : ['tsconfig.json'];
+      let nearest: string | undefined;
+      for (const dir of ancestors(fromFile)) {
+        nearest = names.map((nm) => (dir === '' ? nm : `${dir}/${nm}`)).find(isFile);
+        if (nearest !== undefined) break;
+      }
+      nearestConfigByDir.set(dirKey, nearest);
+    }
+    const nearest = nearestConfigByDir.get(dirKey);
+    const found = nearest === undefined ? undefined : configInEffect(nearest, fromFile);
+    configByFile.set(fileKey, found);
     return found;
   };
 
