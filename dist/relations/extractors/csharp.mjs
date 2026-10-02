@@ -74,6 +74,7 @@ import { walk } from '../../ast/walk.mjs';
  * the following stay silent here, by construction:
  *   - reflection (`Type.GetType`, `Activator.CreateInstance`) / source generators — they surface no resolvable qualified type, so any candidate FQN they do emit resolves to nothing. (Two forms are NOT dynamic: an extension-method call, which C# binds at compile time through the namespaces in scope, so it resolves against the `<ns>.<Name>()` extension keys — see `extensionKey`; and DI registration or service location such as `AddScoped<IFoo, Foo>()`, whose type arguments the compiler binds like any other type reference. Only what the container hands out at run time stays invisible.)
  *   - `using static X;` — skipped (no namespace prefix recorded).
+ *   - a bare name that equals a type parameter in scope (`T x;`, `GetRequiredService<T>()` inside `M<T>()`, `Entity` inside `class Repository<Entity>`) — it names the type parameter, never a same-named type of the repository (`isTypeParameterInScope`).
  *   - IMPLICIT / SDK `global using`s — read from the project file when `<ImplicitUsings>` is on,
  *     but they name external namespaces, so a bare name they qualify resolves to nothing unless
  *     the repository declares it there → SILENCE. (DECLARED `global using`s are aggregated per
@@ -240,6 +241,28 @@ function enclosingTypeDecl(node) {
         cur = cur.parent;
     }
     return null;
+}
+/** The declarations that may carry a type-parameter list: a generic type (`class Repository<T>`), method, local function, delegate, or C# 14 extension block. */
+const TYPE_PARAMETER_OWNERS = new Set([
+    ...TYPE_DECLARATION_TYPES,
+    'method_declaration',
+    'local_function_statement',
+    'delegate_declaration',
+    'extension_declaration',
+]);
+/**
+ * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because every type parameter is a declared name (`collectDeclaredNames`).
+ */
+function isTypeParameterInScope(name, node) {
+    let child = node;
+    for (let cur = node.parent; cur !== null; child = cur, cur = cur.parent) {
+        if (!TYPE_PARAMETER_OWNERS.has(cur.type) || child.type === 'attribute_list')
+            continue;
+        const list = cur.namedChildren.find((c) => c.type === 'type_parameter_list');
+        if (list !== undefined && list.namedChildren.some((p) => p.childForFieldName('name').text === name))
+            return true;
+    }
+    return false;
 }
 /**
  * The name of the extension method `node` declares, or undefined when it declares none. Three
@@ -667,6 +690,8 @@ export function extractCsharpRefs(file) {
                 if (emitted.has(typeNode.id))
                     return;
                 emitted.add(typeNode.id);
+                if (isTypeParameterInScope(typeNode.text, typeNode))
+                    return; // `T x;`, `GetRequiredService<T>()` inside `M<T>()` name the type parameter
                 pushRef(typeNode.text, typeNode, typeNode.startPosition.row + 1);
                 return;
             }
@@ -1343,7 +1368,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 4,
+    rev: 5,
     declarations,
     uses,
 };
