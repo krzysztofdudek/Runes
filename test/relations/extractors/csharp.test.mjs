@@ -1012,6 +1012,10 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
     const { uses } = await run(['namespace T;', 'class C { F<Program> f; }', ''].join('\n'));
     expect(groups(uses)).toEqual([['T.F', 'F'], ['T.Program', 'Program', '<Program>$']]);
   });
+  it('inside a file of top-level statements, `Program` and `Program.X` name the file\'s own class and emit nothing', async () => {
+    const { uses } = await run(['var s = AddUserSecrets<Program>();', 'var t = typeof(Program);', 'Program.Helper();', 'Program.Inner x = null;', 'Order o = null;', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Order']]);
+  });
   it('any other name, and a qualified `App.Program`, gets no fallback', async () => {
     const { uses } = await run(['class C { Programs a; App.Program b; global::App.Program c; }', ''].join('\n'));
     expect(groups(uses).flat()).not.toContain('<Program>$');

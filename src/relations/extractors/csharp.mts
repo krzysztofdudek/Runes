@@ -223,6 +223,11 @@ function extensionKey(ns: string, name: string): string {
  */
 const IMPLICIT_PROGRAM_KEY = '<Program>$';
 
+/** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
+function firstTopLevelStatement(root: Node): Node | undefined {
+  return root.namedChildren.find((c): c is Node => c?.type === 'global_statement');
+}
+
 /** True when `node` has a `static` modifier child. */
 function hasStaticModifier(node: Node): boolean {
   for (let i = 0; i < node.childCount; i++) {
@@ -330,7 +335,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   });
 
   // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
-  const firstStatement = file.tree.rootNode.namedChildren.find((c) => c?.type === 'global_statement');
+  const firstStatement = firstTopLevelStatement(file.tree.rootNode);
   if (firstStatement && !out.some((d) => d.symbolKey === 'Program')) {
     out.push({ symbolKey: IMPLICIT_PROGRAM_KEY, line: firstStatement.startPosition.row + 1 });
   }
@@ -728,9 +733,14 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return instanceLikeReceiver(receiver) ? name : undefined;
   };
 
+  // In a file of top-level statements, a bare `Program` (and `Program.X`) names that file's own implicit class: C# finds it in the global namespace before any using or any other project's type, so such a reference binds nothing else and is not emitted. A reference from inside a namespace block of the same file, where a nearer `Ns.Program` could win, is dropped too (silence, never a wrong edge).
+  const ownsProgram = firstTopLevelStatement(file.tree.rootNode) !== undefined;
+  const namesOwnProgram = (ref: string): boolean => ownsProgram && (ref === 'Program' || ref.startsWith('Program.'));
+
   /** Emit a plain reference descriptor (alias-unresolved). `enclosingNs` is precomputed from the
    *  node before the tree is destroyed; the alias/using expansion happens later, on assembly. */
   const pushRef = (ref: string, node: Node, line: number, rooted = false): void => {
+    if (namesOwnProgram(ref)) return;
     refs.push({
       kind: 'plain',
       ref,
@@ -1136,7 +1146,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           chain.push(nm.text);
           cur = cur.parent!;
         }
-        refs.push({
+        if (!namesOwnProgram(chain[0])) refs.push({
           kind: 'receiver',
           chain,
           line: expr.startPosition.row + 1,
