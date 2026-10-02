@@ -510,6 +510,42 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('near', 'packages/app/a.ts')).toBe('packages/near/index.ts');
     expect(r('missing', 'packages/app/a.ts')).toBeUndefined();
   });
+  // Issue 144: tsc reads a package `extends` from node_modules, where the package manager links members and local dependencies only, so the base config binds by the same rule as a bare import.
+  describe('a tsconfig extends naming a package binds by the same rule (issue 144)', () => {
+    const app = {
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/app/package.json': '{ "name": "app" }',
+      'packages/app/tsconfig.json': '{ "extends": "@acme/preset" }',
+      'packages/app/src/m.ts': '',
+    };
+    const member = {
+      'packages/preset/package.json': '{ "name": "@acme/preset" }',
+      'packages/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }',
+    };
+    const fixture = {
+      'packages/app/test/fixtures/preset/package.json': '{ "name": "@acme/preset" }',
+      'packages/app/test/fixtures/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["./fake/*"] } } }',
+      'packages/app/test/fixtures/preset/fake/m.ts': '',
+    };
+    it('a fixture outside the globs that copies the member name does not hide the member', () => {
+      expect(project({ ...app, ...member, ...fixture })('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+    });
+    it('a fixture outside the globs is never the base config, so its paths never apply', () => {
+      expect(project({ ...app, ...fixture })('~/m', 'packages/app/src/a.ts')).toBeUndefined();
+    });
+    it('a base the config package declares with a local spec binds there, and without a workspace any in-repo package still counts', () => {
+      const local = project({
+        ...app,
+        ...fixture,
+        'packages/app/package.json': '{ "name": "app", "devDependencies": { "@acme/preset": "file:../../tools/preset" } }',
+        'tools/preset/package.json': '{ "name": "@acme/preset" }',
+        'tools/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }',
+      });
+      expect(local('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+      const undeclared = project({ ...app, 'package.json': '{ "private": true }', ...fixture });
+      expect(undeclared('~/m', 'packages/app/src/a.ts')).toBe('packages/app/test/fixtures/preset/fake/m.ts');
+    });
+  });
   it('a member under an excluded directory or with an excluded package.json is not a member', () => {
     const files = {
       'package.json': '{ "workspaces": ["packages/*"] }',
