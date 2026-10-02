@@ -101,6 +101,8 @@ describe('MATRIX — source roots (ancestor packages are not roots; discovered p
   it('python-src-layout-tests-edge', () => runCase('python-src-layout-tests-edge'));
   it('python-workspace-member-edge', () => runCase('python-workspace-member-edge'));
   it('python-workspace-stdlib-name-silence', () => runCase('python-workspace-stdlib-name-silence'));
+  it('python-namespace-package-not-a-root-edge', () => runCase('python-namespace-package-not-a-root-edge'));
+  it('python-pkgutil-namespace-across-distributions-edge', () => runCase('python-pkgutil-namespace-across-distributions-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
