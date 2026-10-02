@@ -285,6 +285,62 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
     });
     expect(r('@/m', 'src/a.ts')).toBeUndefined();
   });
+  // Issue 155 (4): a referenced config whose extends chain cannot be read (a generated SvelteKit or Nuxt base absent from the commit) keeps its options unknowable, but tsc still reads it without that base, so it may hold only what lies under its own directory and what its readable configs name; a file outside both is not silenced by it.
+  describe('a referenced config whose extends chain cannot be read (issue 155, 4)', () => {
+    const monorepo = {
+      'package.json': '{ "private": true, "workspaces": ["apps/*", "packages/*"] }',
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./packages/core" }, { "path": "./apps/web/tsconfig.app.json" }] }',
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./src/index.ts" }',
+      'packages/core/tsconfig.json': '{ "include": ["src"] }',
+      'packages/core/src/index.ts': '',
+      'apps/web/package.json': '{ "name": "web" }',
+      'apps/web/tsconfig.app.json': '{ "extends": "./.svelte-kit/tsconfig.json" }',
+    };
+    it('a file outside its directory that no readable referenced config holds takes the nearest config\'s options', () => {
+      const r = project(monorepo);
+      expect(r('@acme/core', 'scripts/release.ts')).toBe('packages/core/src/index.ts');
+      expect(r('@acme/core', 'eslint.config.js')).toBe('packages/core/src/index.ts');
+      // The generated base on disk but excluded (git-ignored) reads the same.
+      const generated = project({ ...monorepo, 'apps/web/.svelte-kit/tsconfig.json': '{ "include": ["../../../scripts/**/*.ts"] }' }, (p) => p.includes('/.svelte-kit/'));
+      expect(generated('@acme/core', 'scripts/release.ts')).toBe('packages/core/src/index.ts');
+    });
+    it('a file under its directory stays silent: the base it cannot read may remap the import', () => {
+      expect(project(monorepo)('@acme/core', 'apps/web/src/routes/page.ts')).toBeUndefined();
+    });
+    it('a file its own include, or the include or files of a base it can read, names stays silent outside its directory too', () => {
+      const r = project({
+        ...monorepo,
+        'apps/web/tsconfig.app.json': '{ "extends": ["./base.json", "./.svelte-kit/tsconfig.json", "@acme/uninstalled-preset"], "include": ["src", "../../tools/**/*"] }',
+        'apps/web/base.json': '{ "extends": "./base2.json", "files": ["../../scripts/one.ts"] }',
+        'apps/web/base2.json': '{ "include": ["../../e2e"] }',
+      });
+      expect(r('@acme/core', 'tools/gen.ts')).toBeUndefined();
+      expect(r('@acme/core', 'scripts/one.ts')).toBeUndefined();
+      expect(r('@acme/core', 'e2e/smoke.ts')).toBeUndefined();
+      expect(r('@acme/core', 'scripts/two.ts')).toBe('packages/core/src/index.ts');
+    });
+    it('a base that does not parse names nothing, and an extends cycle ends', () => {
+      const r = project({
+        ...monorepo,
+        'apps/web/tsconfig.app.json': '{ "extends": ["./broken.json", "./cycle.json", 7] }',
+        'apps/web/broken.json': '{ "include": [',
+        'apps/web/cycle.json': '{ "extends": "./tsconfig.app.json" }',
+      });
+      expect(r('@acme/core', 'scripts/release.ts')).toBe('packages/core/src/index.ts');
+      expect(r('@acme/core', 'apps/web/src/a.ts')).toBeUndefined();
+    });
+    it('a referenced config that does not parse may hold anything, and the references of one that parses are still searched', () => {
+      const broken = project({ ...monorepo, 'apps/web/tsconfig.app.json': '{ "extends": ' });
+      expect(broken('@acme/core', 'scripts/release.ts')).toBeUndefined();
+      const r = project({
+        ...monorepo,
+        'apps/web/tsconfig.app.json': '{ "extends": "./.svelte-kit/tsconfig.json", "references": [{ "path": "../../tools" }] }',
+        'tools/tsconfig.json': '{ "include": ["../scripts"], "compilerOptions": { "paths": { "@acme/core": ["./core-stub.ts"] } } }',
+        'tools/core-stub.ts': '',
+      });
+      expect(r('@acme/core', 'scripts/release.ts')).toBe('tools/core-stub.ts');
+    });
+  });
   // A config with neither `files` nor `include` holds everything under its directory, also when the directory name has a dot (`apps/web.v2`), as tsc reads it.
   describe('a config without files or include holds its whole directory, dotted or not', () => {
     it('a nearest config that holds the file by default keeps its own paths over a referenced one', () => {

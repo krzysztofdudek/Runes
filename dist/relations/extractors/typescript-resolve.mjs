@@ -798,7 +798,31 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
         ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
         ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
     });
-    // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced configs that hold it, searched through the whole reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and `paths`, those; when they disagree, or one cannot be read (it may hold the file), 'unknown'; when none holds it, the nearest config's own options.
+    // Whether a referenced config whose options cannot be read may hold a file. tsc reads such a config without the bases it cannot read (a generated base absent from the commit), so it holds what the `files` and `include` of the configs in its chain it can read name, or by default what lies under its own directory; here its own directory always counts and every `exclude` is ignored, so the answer errs towards holding, which is towards silence. A referenced config that does not parse may hold anything.
+    const mayHold = (file, fromFile) => {
+        const dir = dirOf(file);
+        if (dir === '' || fromFile.startsWith(`${dir}/`))
+            return true;
+        const seen = new Set();
+        const names = (cfg) => {
+            if (seen.has(cfg))
+                return false;
+            seen.add(cfg);
+            const json = readJson(cfg);
+            if (!isRecord(json))
+                return cfg === file;
+            const own = ownLists(json, dirOf(cfg), dir);
+            if (own.files?.includes(fromFile) || own.include?.some((p) => includeMatches(p, fromFile)))
+                return true;
+            const bases = json.extends === undefined ? [] : Array.isArray(json.extends) ? json.extends : [json.extends];
+            return bases.some((base) => {
+                const baseFile = typeof base === 'string' ? resolveExtends(cfg, base) : undefined;
+                return baseFile !== undefined && baseFile !== 'unknown' && names(baseFile);
+            });
+        };
+        return names(file);
+    };
+    // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced configs that hold it, searched through the whole reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and `paths`, those; when they disagree, or one cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
     const configInEffect = (file, fromFile) => {
         const own = loadConfig(file, dirOf(file));
         if (own === 'unknown')
@@ -814,9 +838,11 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
                     continue;
                 seen.add(ref);
                 const loaded = loadConfig(ref, dirOf(ref));
-                if (loaded === 'unknown')
-                    return false;
-                if (holds(loaded, dirOf(ref), fromFile))
+                if (loaded === 'unknown') {
+                    if (mayHold(ref, fromFile))
+                        return false;
+                }
+                else if (holds(loaded, dirOf(ref), fromFile))
                     holding.push(view(loaded));
                 if (!search(referencesOf(ref)))
                     return false;
