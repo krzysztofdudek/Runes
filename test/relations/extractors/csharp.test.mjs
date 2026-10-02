@@ -1006,3 +1006,21 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
     expect(keys(declarations)).toEqual([['App.Startup', 2]]);
   });
 });
+
+describe('csharp — a declaration expression names a type only where C# allows one (issue 016, round 2)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a comparison pair in a call, constructor or indexer argument list emits nothing', async () => {
+    const { uses } = await run(['class C { object M(int i, int j) => F(i < A, j > B) && new P(i < A, j > B) && this[i < A, j > B]; }', ''].join('\n'));
+    expect(groups(uses).flat().filter((k) => ['i', 'A', 'j'].includes(k))).toEqual([]);
+  });
+  it('a declaration-shaped tuple that is not a deconstruction target emits nothing', async () => {
+    const { uses } = await run(['class C { void M() { var t = (Order a, Customer b); t = (Order c, Customer d); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([]);
+  });
+  it('a nested deconstruction target emits every typed element', async () => {
+    const { uses } = await run(['class C { void M() { ((Order a, int b), Customer c) = P(); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Order'], ['Customer']]);
+  });
+});

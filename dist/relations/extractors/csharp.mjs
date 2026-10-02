@@ -341,6 +341,22 @@ function directiveNamespaceText(directive, skipName = null) {
     }
     return undefined;
 }
+/**
+ * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
+ */
+function declaresVariable(decl) {
+    const arg = decl.parent; // a declaration expression is always an argument's child
+    if (hasTokenChild(arg, 'out'))
+        return true;
+    let tuple = arg.parent;
+    while (tuple.type === 'tuple_expression' && tuple.parent.type === 'argument' && tuple.parent.parent.type === 'tuple_expression') {
+        tuple = tuple.parent.parent;
+    }
+    if (tuple.type !== 'tuple_expression')
+        return false;
+    const target = tuple.parent;
+    return (target.type === 'assignment_expression' || target.type === 'foreach_statement') && target.childForFieldName('left')?.id === tuple.id;
+}
 /** True when the directive has an anonymous token child of the given keyword type. */
 function hasTokenChild(directive, token) {
     for (let i = 0; i < directive.childCount; i++) {
@@ -1055,9 +1071,15 @@ export function extractCsharpRefs(file) {
             emitTypeNode(node.childForFieldName('type'));
             return undefined;
         }
-        // The element type of `new T[n]` (an array_type, unwrapped through every rank), the explicitly typed iteration variable of `foreach (T x in …)`, and a declaration expression `out T x` or a typed deconstruction `(T a, U b) = …`. `var` is an implicit_type and names nothing; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
-        if (node.type === 'array_creation_expression' || node.type === 'foreach_statement' || node.type === 'declaration_expression') {
+        // The element type of `new T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
+        if (node.type === 'array_creation_expression' || node.type === 'foreach_statement') {
             emitTypeNode(node.childForFieldName('type'));
+            return undefined;
+        }
+        // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`), which names no type.
+        if (node.type === 'declaration_expression') {
+            if (declaresVariable(node))
+                emitTypeNode(node.childForFieldName('type'));
             return undefined;
         }
         return undefined;
