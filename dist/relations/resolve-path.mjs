@@ -341,7 +341,63 @@ function dependencyEntryAt(keyPath) {
         return undefined;
     return { workspace: false, crate: keyPath[table + 1], field: keyPath.slice(table + 2) };
 }
-/** A minimal, line-oriented Cargo.toml reader: `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** Cargo.toml text as logical lines, comments dropped. A line whose brackets stay open (a multi-line array, also inside an inline table) or whose multi-line string does not close there continues on the next lines, joined with spaces, so the fields after `features = [ … ]` spread over lines stay on the entry's line. Brackets and `#` inside a string are plain text. */
+function tomlLogicalLines(text) {
+    const lines = [];
+    let line = '';
+    let depth = 0;
+    let i = 0;
+    while (i < text.length) {
+        const c = text[i];
+        if (c === '\n') {
+            if (depth > 0)
+                line += ' ';
+            else {
+                lines.push(line);
+                line = '';
+            }
+            i++;
+        }
+        else if (c === '#') {
+            while (i < text.length && text[i] !== '\n')
+                i++;
+        }
+        else if (c === '"' || c === "'") {
+            // A string: basic ("…", escapes), literal ('…'), or their multi-line forms ("""…""", '''…'''). A one-line string left open ends at the line's end.
+            const multi = text.startsWith(c.repeat(3), i);
+            const close = multi ? c.repeat(3) : c;
+            let j = i + close.length;
+            while (j < text.length) {
+                if (!multi && text[j] === '\n')
+                    break;
+                if (c === '"' && text[j] === '\\' && (multi || text[j + 1] !== '\n'))
+                    j += 2;
+                else if (text.startsWith(close, j)) {
+                    j += close.length;
+                    // Up to two quotes right before the closing delimiter of a multi-line string are its content.
+                    for (let extra = 0; multi && extra < 2 && text[j] === c; extra++)
+                        j++;
+                    break;
+                }
+                else
+                    j++;
+            }
+            line += text.slice(i, j).replace(/\r?\n/g, ' ');
+            i = j;
+        }
+        else {
+            if (c === '[' || c === '{')
+                depth++;
+            else if ((c === ']' || c === '}') && depth > 0)
+                depth--;
+            line += c;
+            i++;
+        }
+    }
+    lines.push(line);
+    return lines;
+}
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text) {
     let packageName;
     let libName;
@@ -384,9 +440,9 @@ export function parseCargoManifest(text) {
         }
         return declaredHere.has(id) ? into.get(entry.crate) : undefined;
     };
-    for (const rawLine of text.split('\n')) {
-        const line = rawLine.replace(/\s+#.*$/, '').trim();
-        if (line === '' || line.startsWith('#'))
+    for (const logicalLine of tomlLogicalLines(text)) {
+        const line = logicalLine.trim();
+        if (line === '')
             continue;
         const header = /^\[\[?\s*([^\]]+?)\s*\]\]?$/.exec(line);
         if (header) {

@@ -378,6 +378,46 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parsed('package.name = "x"\nworkspace.members = ["a"]\n[workspace]\nresolver = "2"\n').dependencies).toEqual(new Map());
   });
 
+  it('reads the fields written after a multi-line array inside an inline table (the zed shape)', () => {
+    // Issue 149: the line-by-line reader stopped at the first line of `features = [`, so `package` (zed's reqwest and xim) or a `path` after the array was lost.
+    const { dependencies, workspaceDependencies } = parseCargoManifest(
+      [
+        '[workspace.dependencies]',
+        'reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", default-features = false, features = [',
+        '    "charset",',
+        '    "http2",',
+        '], package = "zed-reqwest", version = "0.12.15-zed" }',
+        'next = { path = "crates/next" }',
+        '',
+        '[dependencies]',
+        'kit = { git = "https://example.com/a[b{c", features = [ # a comment with ] and }',
+        '  "a]",',
+        "  ['nested', \"}\"],",
+        '], path = "../kit" }',
+        'tail = { path = "../tail" }',
+        'list.features = [',
+        '  "x",',
+        ']',
+        'list.path = "../list"',
+      ].join('\n') + '\n',
+    );
+    expect(workspaceDependencies).toEqual(
+      new Map([
+        ['reqwest', { path: undefined, package: 'zed-reqwest', workspace: false }],
+        ['next', { path: 'crates/next', package: undefined, workspace: false }],
+      ]),
+    );
+    expect(dependencies).toEqual(
+      new Map([
+        ['kit', { path: '../kit', package: undefined, workspace: false }],
+        ['tail', { path: '../tail', package: undefined, workspace: false }],
+        ['list', { path: '../list', workspace: false }],
+      ]),
+    );
+    // Joining lines follows strings: a multi-line string is one value, so its content is never read as a table header or an entry.
+    expect(parseCargoManifest('[package]\nname = "app"\ndescription = """\n[dependencies]\nghost = { path = "../ghost" }\n"""\n').dependencies).toEqual(new Map());
+  });
+
   it('matches a declared or used name as a whole word only', () => {
     expect(rustFileDeclares('pub struct Engine;', 'Engine')).toBe(true);
     expect(rustFileDeclares('pub struct EngineRoom;', 'Engine')).toBe(false);
@@ -460,6 +500,15 @@ describe('resolveRustPath — manifest and target edge forms (disk-backed)', () 
     for (const pkg of ['a', 'd', 'f', 'g']) {
       expect(resolve('shop_core::Order', `crates/${pkg}/src/main.rs`, 'rust'), pkg).toBe('crates/core/src/lib.rs');
     }
+  });
+
+  it('resolves a path dependency whose path follows a multi-line features array in its inline table', () => {
+    // Issue 149: `path` after `features = [ … ]` spread over lines was never read, so the import was silent.
+    put('Cargo.toml', '[package]\nname = "app"\n\n[dependencies]\nkit = { version = "0.1", features = [\n    "x",\n    "y",\n], path = "libs/kit" }\n');
+    put('libs/kit/Cargo.toml', '[package]\nname = "kit"\n');
+    put('libs/kit/src/lib.rs', 'pub struct Engine;\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('kit::Engine', 'src/main.rs', 'rust')).toBe('libs/kit/src/lib.rs');
   });
 
   it('walks past an intermediate manifest to the workspace that defines an inherited dependency', () => {
