@@ -587,19 +587,9 @@ export type CsharpRefDescriptor =
   /** A `using static N.C;` / `global using static N.C;` TARGET edge — the concrete type whose
    *  static members are imported. Resolves verbatim-from-root as its sole candidate (A8/A11). */
   | { kind: 'static'; fqn: string; line: number }
-  /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional
-   *  `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a
-   *  `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. */
+  /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. */
   | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; rooted?: boolean }
-  /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`,
-   *  `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the
-   *  accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one
-   *  reading, concatenated in that order into ONE group — C# binds the leftmost simple name first
-   *  and only reads further segments when it names a namespace. Emitted only when the leftmost
-   *  identifier is not a name this file declares (a local, parameter, field, property, method…),
-   *  so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver
-   *  written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no
-   *  declared name shadows it. */
+  /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
   | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; rooted?: boolean }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
    *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the imported
