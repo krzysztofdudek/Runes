@@ -54,7 +54,7 @@ import { kotlinView } from './kotlin-recover.mjs';
  * LOCAL DECLARATIONS (inside a function body, lambda, `init` block, accessor, secondary
  * constructor, or object expression) have no FQN and are not importable: they are NOT keyed.
  *
- * PARSE RECOVERY: the shipped grammar predates Kotlin 2.2 and turns a when-guard, a multi-dollar string or a context-parameter clause into an ERROR that runs to the end of the file; it also reads some annotated top-level declarations of Kotlin 1.x (`@Keep annotation class X`, `@Keep const val X = 1`) as script statements, with no ERROR at all. Both walks go through `kotlinView` (kotlin-recover.ts), which blanks those forms and re-parses, re-parses what is still damaged one top-level declaration at a time, reads a misread declaration from its leading tokens, and reports what it could not read. Unreadable parts become INCOMPLETENESS MARKERS: `<package>.*` (the file may declare anything in its package) and `<package>.<Type>+*` (some members of `Type` are unreadable). A marker never binds anything; the resolver uses it only to keep the ambiguity the unreadable declarations might have created (fail closed).
+ * PARSE RECOVERY: the shipped grammar predates Kotlin 2.2 and turns a when-guard, a multi-dollar string or a context-parameter clause into an ERROR that runs to the end of the file; it also reads some annotated top-level declarations of Kotlin 1.x (`@Keep annotation class X`, `@Keep const val X = 1`) as script statements, with no ERROR at all, and inside a class body it cuts a nested class from a primary constructor on the line below its header (an ERROR only when a parameter is `val` or `var`). Both walks go through `kotlinView` (kotlin-recover.ts), which blanks those forms, joins such a class to its constructor and re-parses, re-parses what is still damaged one top-level declaration at a time, reads a misread declaration from its leading tokens, and reports what it could not read. Unreadable parts become INCOMPLETENESS MARKERS: `<package>.*` (the file may declare anything in its package) and `<package>.<Type>+*` (some members of `Type` are unreadable). A marker never binds anything; the resolver uses it only to keep the ambiguity the unreadable declarations might have created (fail closed).
  *
  * stdlib / external imports (`kotlin.*`, `kotlinx.*`, `java.*`, AndroidX, third-party)
  * still emit a symbol hint here — silence is the SymbolTable's job (an FQN no in-repository
@@ -378,7 +378,7 @@ function declarationsOf(file, view) {
 }
 export const kotlinExtractor = {
     languages: new Set(['kotlin']),
-    rev: 4,
+    rev: 5,
     declarations,
     uses,
 };

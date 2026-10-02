@@ -15,7 +15,7 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *
  * WHAT: `kotlinView` turns a parsed file into the set of trustworthy parse nodes to walk, plus
  * what could only be read lexically:
- *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work beyond step 5; zero-width MISSING tokens alone do not count, see `damaged`).
+ *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work beyond step 5; zero-width MISSING tokens alone do not count, see `damaged`), unless a nested class in it is cut from its next-line constructor without an ERROR (see `cutClasses`): then only step 2's join runs, and a clean re-parse replaces the tree.
  *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every row and column stays put — a nested class header is joined to its primary constructor on the next line by moving one newline (only the class name changes row, see `constructorJoins`), and the file is re-parsed. A clean re-parse is used as-is.
  *   3. Whatever is still damaged is split into top-level declarations by a small lexer (a
  *      declaration starts on a column-0 line at bracket depth 0) and each one is re-parsed on
@@ -26,9 +26,9 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *      whose name is unreadable, or a lexer that lost track of the brackets) or one type's
  *      members (a class whose body did not parse). The extractor turns these into marker
  *      declarations the resolver uses to fail closed — see resolver.ts `incompletenessMarkers`.
- *   5. Among the nodes to walk, a top-level script statement whose leading tokens read as a declaration is a misread declaration (see `misreadDeclaration`). Its name is read from those tokens, as for a damaged declaration, and a type's members are marked incomplete.
+ *   5. Among the nodes to walk, a top-level script statement whose leading tokens read as a declaration is a misread declaration (see `misreadDeclaration`). Its name is read from those tokens, as for a damaged declaration, and a type's members are marked incomplete. A nested class still cut from its constructor (no join fitted its header) marks the members of its top-level type incomplete.
  *
- * The rewriting of step 2 (blanking and joining) runs ONLY on a file that already failed to parse, so a wrong guess can never disturb a file the grammar reads correctly; the worst it can do is leave a damaged file damaged, which step 3 and 4 then handle.
+ * The rewriting of step 2 (blanking and joining) runs ONLY on a file that already failed to parse, or, joining alone, on a file with a cut class, so a wrong guess can never disturb a file the grammar reads correctly; the worst it can do is leave a damaged file damaged, which step 3 and 4 then handle, or a cut class cut, which step 5 marks.
  *
  * THE GRAMMAR SITUATION (why this is recovery, not a grammar fix): the shipped
  * `@tree-sitter-grammars/tree-sitter-kotlin` 1.1.0 (2025-01) is a fork that stopped moving (its
