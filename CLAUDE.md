@@ -4,7 +4,7 @@ Runes is shared code for the Yggdrasil tool family (Yggdrasil, Grain, Jarl, Hord
 
 ## Check command
 
-`npm run check` runs everything CI runs: the TypeScript build, the grammar build into `.grammars/` (the recipe, from the cache in `~/.cache/runes/grammars` when warm), the test suite (which includes the guard over this repository's own `src/`, `tools/` and `scripts/`, the 460-case relation catalogue, and the vendor tool's end-to-end tests), and the dist freshness check. Run it before every commit. `npm test` alone builds and tests without the freshness check, for use while `dist/` changes are still uncommitted.
+`npm run check` runs everything CI runs: the TypeScript build, the grammar build into `.grammars/` (the recipe, from the cache in `~/.cache/runes/grammars` when warm), the test suite (which includes the guard over this repository's own `src/`, `tools/` and `scripts/`, the 522-case relation catalogue, and the vendor tool's end-to-end tests), and the dist freshness check. Run it before every commit. `npm test` alone builds and tests without the freshness check, for use while `dist/` changes are still uncommitted.
 
 ## Conventions
 
