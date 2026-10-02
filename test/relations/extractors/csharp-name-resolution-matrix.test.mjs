@@ -103,6 +103,8 @@ describe('MATRIX — SILENCE cases (must NOT bind / must silence)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — global:: prefix stripping', () => {
   it('csharp-global-qualifier-strip', () => runCase('csharp-global-qualifier-strip'));
+  it('csharp-global-qualifier-single-name-edge', () => runCase('csharp-global-qualifier-single-name-edge'));
+  it('csharp-global-qualifier-single-name-silence', () => runCase('csharp-global-qualifier-single-name-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

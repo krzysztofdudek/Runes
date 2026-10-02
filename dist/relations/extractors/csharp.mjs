@@ -63,7 +63,7 @@ import { walk } from '../../ast/walk.mjs';
  *        (B a sub-namespace) — `using A;` imports the TYPES of exactly A, not A's namespaces.
  *      • the alias candidate carries a CO-DEFINITION set (R8): the alias target competes with a
  *        same-named enclosing-ns member; 2+ resolving → ambiguous → silence.
- *    A `global::`-rooted name (R12) is stripped and resolved from the root as its sole candidate;
+ *    A `global::`-rooted name (R12), a single name (`global::Settings`) as much as a dotted one, is stripped and resolved from the root as its sole candidate (a `global::Program` then falls back to the implicit `Program`);
  *    a non-`global` extern/using alias (`Lib::A.B`) is left intact (its `::` text cannot collide
  *    with a dot-only key → R13 silence-by-luck). Nested-type recovery is centralized in the
  *    resolver: for any dotted candidate it also tries the guarded `+`-boundary split (split
@@ -709,9 +709,12 @@ export function extractCsharpRefs(file) {
                     if (emitted.has(typeNode.id))
                         return;
                     emitted.add(typeNode.id);
-                    const nameField = typeNode.childForFieldName('name');
-                    if (nameField !== null)
-                        emitTypeNode(nameField);
+                    // `global::Settings` / `global::Box<T>`: the one name is looked up in the global namespace only, never in an enclosing namespace or a using, and no type parameter shadows it, so it is a rooted reference; the type arguments are ordinary references.
+                    const nameField = typeNode.childForFieldName('name'); // an alias-qualified name always has its name
+                    const generic = nameField.type === 'generic_name';
+                    pushRef((generic ? findChild(nameField, 'identifier') : nameField).text, typeNode, typeNode.startPosition.row + 1, true);
+                    if (generic)
+                        emitTypeArguments(nameField);
                     return;
                 }
                 // `S::Tail` where `S` is an in-file `using S = N;` namespace alias (B5): the leftmost
@@ -1215,7 +1218,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
         // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
         // candidate.
         if (rooted) {
-            out.push({ candidates: [{ kind: 'symbol', symbolKey: ref }], kind: 'import', line });
+            const candidates = [{ kind: 'symbol', symbolKey: ref }];
+            // `global::Program` names the global `Program`, which may be the implicit class of a file of top-level statements (the fallback after an explicit one).
+            if (ref === 'Program')
+                candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
+            out.push({ candidates, kind: 'import', line });
             return;
         }
         const lead = ref.split('.')[0];
