@@ -7,7 +7,8 @@ import { runCase } from '../reference-case-runner.mjs';
  * reference/relations/javascript/. JavaScript shares the TypeScript extractor and path
  * resolver; these cases pin what is specific to `.js`/`.mjs`/`.cjs`/`.jsx` sources and the
  * JavaScript grammar (JSX in `.js`, CommonJS, JSDoc comments, the grammar's ERROR on
- * re-export attributes).
+ * re-export attributes), and a Vue or Svelte component reading jsconfig.json as a
+ * JavaScript file does.
  */
 
 describe('MATRIX — JavaScript sources', () => {
@@ -16,4 +17,6 @@ describe('MATRIX — JavaScript sources', () => {
   it('javascript-jsdoc-import-silence', () => runCase('javascript-jsdoc-import-silence'));
   it('javascript-jsx-in-js-edge', () => runCase('javascript-jsx-in-js-edge'));
   it('javascript-mjs-import-edge', () => runCase('javascript-mjs-import-edge'));
+  it('javascript-vue-sfc-jsconfig-paths-edge', () => runCase('javascript-vue-sfc-jsconfig-paths-edge'));
+  it('javascript-svelte-jsconfig-paths-edge', () => runCase('javascript-svelte-jsconfig-paths-edge'));
 });
