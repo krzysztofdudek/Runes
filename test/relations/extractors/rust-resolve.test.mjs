@@ -418,6 +418,35 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parseCargoManifest('[package]\nname = "app"\ndescription = """\n[dependencies]\nghost = { path = "../ghost" }\n"""\n').dependencies).toEqual(new Map());
   });
 
+  it('joins the lines of a CRLF file the same way, so an entry with a multi-line array keeps the fields before and after it', () => {
+    // Issue 149, round 2: the join kept each `\r`, the joined line no longer matched `key = value`, and the whole entry was dropped.
+    const lf = '[dependencies]\nkit = { path = "../kit", features = [\n    "a",\n    "b", # comment\n], package = "kit-pkg" }\nnext = { path = "../next" }\n';
+    const crlf = lf.replace(/\n/g, '\r\n');
+    const expected = new Map([
+      ['kit', { path: '../kit', package: 'kit-pkg', workspace: false }],
+      ['next', { path: '../next', package: undefined, workspace: false }],
+    ]);
+    expect(parseCargoManifest(lf).dependencies).toEqual(expected);
+    expect(parseCargoManifest(crlf).dependencies).toEqual(expected);
+  });
+
+  it('stops joining at a line that opens a table header, so a bracket left open in invalid TOML can lose an entry but never invent one', () => {
+    // A `]` missing from `features` would otherwise swallow the next table and hand `bar`'s path to `foo`.
+    const text = '[dependencies]\nfoo = { version = "1", features = ["a" }\n\n[dev-dependencies]\nbar = { path = "../bar" }\n';
+    for (const t of [text, text.replace(/\n/g, '\r\n')]) {
+      expect(parseCargoManifest(t).dependencies).toEqual(
+        new Map([
+          ['foo', { path: undefined, package: undefined, workspace: false }],
+          ['bar', { path: '../bar', package: undefined, workspace: false }],
+        ]),
+      );
+    }
+    // The same for a one-line string left open inside an inline table, and for a header written below a nested table.
+    expect(parseCargoManifest('[dependencies]\nfoo = { git = "https://x, features = [\n[target.\'cfg(unix)\'.dependencies]\nbar.path = "../bar"\n').dependencies.get('bar')).toEqual({ path: '../bar', workspace: false });
+    // A nested array element that is not a header keeps the join.
+    expect(parseCargoManifest('[dependencies]\nkit = { features = [\n  ["a", "b"],\n  [1, 2]\n], path = "../kit" }\n').dependencies.get('kit')).toEqual({ path: '../kit', package: undefined, workspace: false });
+  });
+
   it('matches a declared or used name as a whole word only', () => {
     expect(rustFileDeclares('pub struct Engine;', 'Engine')).toBe(true);
     expect(rustFileDeclares('pub struct EngineRoom;', 'Engine')).toBe(false);

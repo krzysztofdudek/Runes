@@ -357,8 +357,12 @@ function dependencyEntryAt(keyPath: readonly string[]): { workspace: boolean; cr
   return { workspace: false, crate: keyPath[table + 1], field: keyPath.slice(table + 2) };
 }
 
-/** Cargo.toml text as logical lines, comments dropped. A line whose brackets stay open (a multi-line array, also inside an inline table) or whose multi-line string does not close there continues on the next lines, joined with spaces, so the fields after `features = [ … ]` spread over lines stay on the entry's line. Brackets and `#` inside a string are plain text. */
-function tomlLogicalLines(text: string): string[] {
+/** A physical line that opens a table header (`[name]`, `[name.…]`, `[[name]]`): a bare first segment, then dotted segments, then the closing bracket. Joining stops at one, so a bracket left open in invalid TOML loses its own entry instead of swallowing the next table. A nested array element such as `["a", "b"]` or `[1, 2]` does not match. */
+const TOML_HEADER_LINE = /^[ \t]*\[\[?[ \t]*[A-Za-z0-9_-]+(?:[ \t]*\.[ \t]*(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*'))*[ \t]*\]\]?[ \t]*(?:#.*)?$/;
+
+/** Cargo.toml text as logical lines, comments dropped. A line whose brackets stay open (a multi-line array, also inside an inline table) or whose multi-line string does not close there continues on the next lines, joined with spaces, so the fields after `features = [ … ]` spread over lines stay on the entry's line; joining stops before a line that opens a table header. Brackets and `#` inside a string are plain text. A CRLF line ending is a newline, as TOML defines it. */
+function tomlLogicalLines(source: string): string[] {
+  const text = source.replace(/\r\n/g, '\n');
   const lines: string[] = [];
   let line = '';
   let depth = 0;
@@ -366,10 +370,12 @@ function tomlLogicalLines(text: string): string[] {
   while (i < text.length) {
     const c = text[i];
     if (c === '\n') {
-      if (depth > 0) line += ' ';
+      const end = depth > 0 ? text.indexOf('\n', i + 1) : -1;
+      if (depth > 0 && !TOML_HEADER_LINE.test(text.slice(i + 1, end === -1 ? undefined : end))) line += ' ';
       else {
         lines.push(line);
         line = '';
+        depth = 0;
       }
       i++;
     } else if (c === '#') {
@@ -389,7 +395,7 @@ function tomlLogicalLines(text: string): string[] {
           break;
         } else j++;
       }
-      line += text.slice(i, j).replace(/\r?\n/g, ' ');
+      line += text.slice(i, j).replace(/\n/g, ' ');
       i = j;
     } else {
       if (c === '[' || c === '{') depth++;
@@ -497,10 +503,7 @@ function stripRustComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait /
- *  type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of
- *  `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope
- *  with a `use`? */
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
 export function rustFileDeclares(text: string, name: string): boolean {
   const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const decl = new RegExp(

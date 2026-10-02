@@ -50,10 +50,7 @@ interface CargoManifest {
 }
 /** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export declare function parseCargoManifest(text: string): CargoManifest;
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait /
- *  type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of
- *  `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope
- *  with a `use`? */
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
 export declare function rustFileDeclares(text: string, name: string): boolean;
 /** The module path declared by go.mod text: `module x`, `module "x"`, ``module `x` ``, or
  *  the block form `module ( x )`. The first declaration wins; undefined when there is none. */
