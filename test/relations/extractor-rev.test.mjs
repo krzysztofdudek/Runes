@@ -11,7 +11,7 @@ describe('extractor rev', () => {
   });
   it('seeds preserve current history', () => {
     expect(extractorForLanguage('java').rev).toBe(3);
-    expect(extractorForLanguage('csharp').rev).toBe(4); // 4: the type arguments of a generic method call, `new T[n]`, a typed `foreach` and a declaration expression give an edge
+    expect(extractorForLanguage('csharp').rev).toBe(4); // 4: the type arguments of a generic method call, `new T[n]`, a typed `foreach` and a declaration expression give an edge, and a file of top-level statements declares `Program`
     expect(extractorForLanguage('typescript').rev).toBe(3); // 3: every type-only reference and a module augmentation give an edge; 2: bare specifiers, new URL(), ERROR-region recovery
   });
 });

@@ -284,6 +284,8 @@ function extensionMethodName(node) {
  * cross-file index: it is visible only in its own file, so a cross-file reference to a
  * same-named type must never bind to it, and two files declaring same-named `file` types must
  * not mis-merge into one cross-file definition (zero-FP guard F5).
+ *
+ * A file with top-level statements also declares the class the compiler synthesizes for them, the global `Program`.
  */
 function declarations(file) {
     const out = [];
@@ -310,6 +312,11 @@ function declarations(file) {
         out.push({ symbolKey, line: node.startPosition.row + 1 });
         return undefined;
     });
+    // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish its key at the first statement, unless the file declares a global `Program` itself (`public partial class Program { }`). Several such files in different owners make the key ambiguous, so a bare `Program` stays silent there.
+    const firstStatement = file.tree.rootNode.namedChildren.find((c) => c?.type === 'global_statement');
+    if (firstStatement && !out.some((d) => d.symbolKey === 'Program')) {
+        out.push({ symbolKey: 'Program', line: firstStatement.startPosition.row + 1 });
+    }
     return out;
 }
 const NAMESPACE_NODE_TYPES = new Set([
