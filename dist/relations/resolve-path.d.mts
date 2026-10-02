@@ -32,7 +32,7 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
  *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
  *
- *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`), and a file outside `src/` below its directory belongs to that binary's tree (the deepest such directory), not to the `src/` tree that holds no part of it. A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
+ *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a `[[bin]]` path or the library's path alike, not to the `src/` tree that holds no part of it. In that directory the library's root is probed first and one binary's after it, as `src/lib.rs` before `src/main.rs`; two or more binaries there give no binary root, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
 export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, binPaths?: readonly string[]): {
     srcDir: string;
     rootFiles: string[];

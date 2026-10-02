@@ -309,14 +309,14 @@ function makeRustResolveDeps(
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
  *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
  *
- *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`), and a file outside `src/` below its directory belongs to that binary's tree (the deepest such directory), not to the `src/` tree that holds no part of it. A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
+ *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a `[[bin]]` path or the library's path alike, not to the `src/` tree that holds no part of it. In that directory the library's root is probed first and one binary's after it, as `src/lib.rs` before `src/main.rs`; two or more binaries there give no binary root, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
 export function rustTargetFor(
   rel: string,
   existsInPackage: (sub: string) => boolean,
   libPath?: string,
   binPaths: readonly string[] = [],
 ): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } {
-  const bins = binPaths.map((p) => path.posix.normalize(p));
+  const bins = [...new Set(binPaths.map((p) => path.posix.normalize(p)))];
   const dirOfRoot = (root: string): string => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
   if (bins.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
   const segs = rel.split('/');
@@ -338,12 +338,16 @@ export function rustTargetFor(
   const mainRoot = 'src/main.rs';
   if (rel === libRoot || rel === mainRoot) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
   if (segs[0] !== 'src') {
-    let bin: string | undefined;
-    for (const b of bins) {
-      const dir = dirOfRoot(b);
-      if ((dir === '' || rel.startsWith(`${dir}/`)) && (bin === undefined || dir.length > dirOfRoot(bin).length)) bin = b;
+    let dir: string | undefined;
+    for (const root of [libRoot, ...bins]) {
+      const d = dirOfRoot(root);
+      if ((d === '' || rel.startsWith(`${d}/`)) && (dir === undefined || d.length > dir.length)) dir = d;
     }
-    if (bin !== undefined) return { srcDir: dirOfRoot(bin), rootFiles: [bin], fileIsRoot: false };
+    if (dir !== undefined) {
+      const binsHere = bins.filter((b) => dirOfRoot(b) === dir);
+      const rootFiles = [...(dirOfRoot(libRoot) === dir ? [libRoot] : []), ...(binsHere.length === 1 ? binsHere : [])];
+      return { srcDir: dir, rootFiles, fileIsRoot: false };
+    }
   }
   return { srcDir: 'src', rootFiles: [libRoot, mainRoot], fileIsRoot: false };
 }
