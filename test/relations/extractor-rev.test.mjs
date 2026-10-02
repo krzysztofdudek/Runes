@@ -11,7 +11,7 @@ describe('extractor rev', () => {
   });
   it('seeds preserve current history', () => {
     expect(extractorForLanguage('java').rev).toBe(3);
-    expect(extractorForLanguage('csharp').rev).toBe(5); // 5: a bare name that equals a type parameter in scope names that type parameter, not a type of the repository, `stackalloc T[n]` names its element type, and `global::X` binds only a type of the global namespace; 4: the type arguments of a generic method call, `new T[n]`, a typed `foreach` and a declaration expression give an edge, and a file of top-level statements declares `Program`
+    expect(extractorForLanguage('csharp').rev).toBe(5); // 5: a bare name that equals a type parameter in scope names that type parameter, not a type of the repository, `stackalloc T[n]` names its element type, `global::X` binds only a type of the global namespace, and the element types of a named tuple type argument give an edge; 4: the type arguments of a generic method call, `new T[n]`, a typed `foreach` and a declaration expression give an edge, and a file of top-level statements declares `Program`
     expect(extractorForLanguage('typescript').rev).toBe(3); // 3: every type-only reference and a module augmentation give an edge; 2: bare specifiers, new URL(), ERROR-region recovery
     expect(extractorForLanguage('kotlin').rev).toBe(4); // 4: annotated top-level declarations the grammar misreads as script statements are declared, and a nested class with its primary constructor on the next line keeps its members
   });

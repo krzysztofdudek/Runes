@@ -1109,3 +1109,25 @@ describe('csharp — `global::` with a single name binds the global namespace on
     expect(groups(uses)).toEqual([]);
   });
 });
+
+describe('csharp — a tuple type with named elements as a type argument (issue 161)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('the element types of a named tuple type argument followed by an initializer, arguments or a pattern designation are emitted; the element names never are', async () => {
+    const { uses } = await run([
+      'class C { object M(int n, object x) {',
+      '  var a = new List<(Order Item, int Index)> { };',
+      '  var b = new List<(Customer Who, (Line L, int N) Pair)>(n);',
+      '  var c = Make<(Shipment Parcel, int Index)>(n);',
+      '  return x is List<(Invoice Doc, int Count)> y;',
+      '} }',
+      '',
+    ].join('\n'));
+    expect(groups(uses)).toEqual([['Order'], ['List'], ['Customer'], ['Line'], ['List'], ['Shipment'], ['Invoice']]);
+  });
+  it('a bare unnamed element beside a named one is a type; a comparison with a plain tuple or a plain operand emits nothing', async () => {
+    const { uses } = await run(['class C { object M(int n, int i, int a, int b) => new List<(Foo F, Bar)>(n) ?? (i < (a, b)) ?? (i < a); }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Foo'], ['Bar'], ['List']]);
+  });
+});

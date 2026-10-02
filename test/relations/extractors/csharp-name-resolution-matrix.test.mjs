@@ -244,3 +244,8 @@ describe('MATRIX — a type parameter shadows a type of the same name within its
   it('csharp-type-parameter-shadows-type-silence', () => runCase('csharp-type-parameter-shadows-type-silence'));
   it('csharp-type-parameter-scope-edge', () => runCase('csharp-type-parameter-scope-edge'));
 });
+
+describe('MATRIX — a tuple type with named elements as a type argument', () => {
+  it('csharp-tuple-type-argument-named-elements-edge', () => runCase('csharp-tuple-type-argument-named-elements-edge'));
+  it('csharp-tuple-type-argument-element-names-silence', () => runCase('csharp-tuple-type-argument-element-names-silence'));
+});
