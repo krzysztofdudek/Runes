@@ -732,7 +732,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
     const holds = (config, configDir, file) => {
         if (config.files?.includes(file))
             return true;
-        const include = config.include ?? (config.files === undefined ? [configDir] : []);
+        const include = config.include ?? (config.files === undefined ? [configDir === '' ? '**/*' : `${configDir}/**/*`] : []);
         const asDirectory = (p) => (/[*?.]/.test(p.slice(p.lastIndexOf('/') + 1)) ? p : `${p}/**/*`);
         if (!include.some((p) => globMatches(asDirectory(p), file)))
             return false;
