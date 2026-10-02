@@ -23,7 +23,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it, and silence when several hold it and disagree. The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the one the importer's own package.json declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -74,7 +74,7 @@ export function resolveTsPath(
 
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
-  /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, or referenced configs that hold the file and disagree), or undefined when the file has none. */
+  /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, referenced configs that hold the file and disagree, or a referenced config that may hold the file and cannot be read), or undefined when the file has none. */
   tsconfigFor(fromFile: string): TsPathConfig | 'unknown' | undefined;
   /** The nearest ancestor package of a file: its directory and parsed package.json. */
   nearestPackage(fromFile: string): TsPackage | undefined;
@@ -99,6 +99,9 @@ interface LoadedConfig extends TsPathConfig {
   files?: string[];
   include?: string[];
   exclude?: string[];
+  /** `outDir` and `declarationDir`, repo-rel, when set anywhere in the chain inside the repository: tsc's default `exclude`. */
+  outDir?: string;
+  declarationDir?: string;
 }
 
 export interface TsPackage {
@@ -418,14 +421,14 @@ const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
 
 /**
- * Whether a path matches one glob of the dialect npm, yarn and pnpm workspaces and tsconfig `include`/`exclude` share: `*` and `?` within one segment, `**` for any number of segments, everything else literal. Both sides are relative to the same directory.
+ * Whether a path matches one glob of the dialect npm, yarn and pnpm workspaces and tsconfig `exclude` share: `*` and `?` within one segment, `**` for any number of segments, everything else literal. Both sides are relative to the same directory.
  */
 function globMatches(glob: string, rel: string): boolean {
   const pattern = glob.split('/').filter((seg) => seg !== '' && seg !== '.');
   const segs = rel === '' ? [] : rel.split('/');
   const segment = (pat: string, seg: string): boolean => {
     let source = '';
-    for (const c of pat) source += c === '*' ? '[^/]*' : c === '?' ? '[^/]' : c.replace(/[\\^$.|+()[\]{}]/g, '\\$&');
+    for (const c of pat) source += c === '*' ? '[^/]*' : c === '?' ? '[^/]' : escapeRegex(c);
     return new RegExp(`^${source}$`).test(seg);
   };
   const match = (i: number, j: number): boolean => {
@@ -434,6 +437,52 @@ function globMatches(glob: string, rel: string): boolean {
     return j < segs.length && segment(pattern[i], segs[j]) && match(i + 1, j + 1);
   };
   return match(0, 0);
+}
+
+function escapeRegex(c: string): string {
+  return c.replace(/[\\^$.|+()[\]{}]/g, '\\$&');
+}
+
+/**
+ * Whether a repo-rel file matches a tsconfig `include` pattern (repo-rel too) the way tsc's file matcher reads it: a last segment with no `.`, `*` or `?` names a directory and matches everything under it; a pattern ending in `**` matches nothing (tsc rejects it); `*` and `?` stay within a segment and `**` spans any number of segments, but a wildcard that opens a segment, and every segment `**` spans, never matches a name starting with `.`, no wildcard matches a `node_modules`, `bower_components` or `jspm_packages` segment, and a `*` in the file name never spans the dot that opens a trailing `.min.js`. A segment written out matches itself, dotted or not.
+ */
+function includeMatches(pattern: string, file: string): boolean {
+  const pat = pattern.split('/').filter((seg) => seg !== '');
+  const last = pat.length === 0 ? '' : pat[pat.length - 1];
+  if (last === '**') return false;
+  if (!/[.*?]/.test(last)) pat.push('**', '*');
+  const segs = file.split('/');
+  const segment = (p: string, seg: string, isName: boolean): boolean => {
+    if (!/[*?]/.test(p)) return p === seg;
+    if (SKIPPED_DIRS.has(seg)) return false;
+    const star = isName ? '(?:[^./]|\\.(?!min\\.js$))*' : '[^/]*';
+    let source = '';
+    let rest = p;
+    if (rest.startsWith('*')) {
+      source = `(?:[^./]${star})?`;
+      rest = rest.slice(1);
+    } else if (rest.startsWith('?')) {
+      source = '[^./]';
+      rest = rest.slice(1);
+    }
+    for (const c of rest) source += c === '*' ? star : c === '?' ? '[^/]' : escapeRegex(c);
+    return new RegExp(`^${source}$`).test(seg);
+  };
+  const spanned = (seg: string): boolean => !seg.startsWith('.') && !SKIPPED_DIRS.has(seg);
+  const match = (i: number, j: number): boolean => {
+    if (i === pat.length) return j === segs.length;
+    if (pat[i] === '**') return match(i + 1, j) || (j < segs.length && spanned(segs[j]) && match(i, j + 1));
+    return j < segs.length && segment(pat[i], segs[j], j === segs.length - 1) && match(i + 1, j + 1);
+  };
+  return match(0, 0);
+}
+
+/** Whether an `include` or `exclude` spec climbs out with `..` after a `**`, which tsc rejects (so it matches nothing). */
+function dotDotAfterRecursion(spec: string): boolean {
+  const at = spec.startsWith('**/') ? 0 : spec.indexOf('/**/');
+  if (at === -1) return false;
+  const dots = spec.endsWith('/..') ? spec.length : spec.lastIndexOf('/../');
+  return dots > at;
 }
 
 /** The globs a workspace glob's brace alternatives stand for (`packages/{core,ui}`, nested ones too), as npm's minimatch and pnpm's globber expand them; a brace with no comma or no closing partner is literal. tsconfig `include` and `exclude` have no braces, so only workspace globs go through this. */
@@ -591,19 +640,21 @@ export function makeTsResolveDeps(
     declaredAt.set(dir, globs);
     return globs;
   };
-  // The members of the workspace rooted at `root`, by name: the root package and every package whose directory a positive glob matches and no `!` glob does, braces expanded.
+  // Whether a directory is a member of the workspace rooted at `root`: the root itself, or a directory a positive glob matches and no `!` glob does, braces expanded.
+  const isMemberDir = (root: string, globs: string[], dir: string): boolean => {
+    if (dir === root) return true;
+    if (root !== '' && !dir.startsWith(`${root}/`)) return false;
+    const rel = root === '' ? dir : dir.slice(root.length + 1);
+    const include = globs.filter((g) => !g.startsWith('!')).flatMap(expandBraces);
+    const exclude = globs.filter((g) => g.startsWith('!')).flatMap((g) => expandBraces(g.slice(1)));
+    return include.some((g) => globMatches(g, rel)) && !exclude.some((g) => globMatches(g, rel));
+  };
+  // The members of the workspace rooted at `root`, by name.
   const membersAt = new Map<string, Map<string, TsPackage | 'ambiguous'>>();
   const workspaceMembers = (root: string, globs: string[]): Map<string, TsPackage | 'ambiguous'> => {
     const cached = membersAt.get(root);
     if (cached !== undefined) return cached;
-    const include = globs.filter((g) => !g.startsWith('!')).flatMap(expandBraces);
-    const exclude = globs.filter((g) => g.startsWith('!')).flatMap((g) => expandBraces(g.slice(1)));
-    const members = inRepoPackages().filter((pkg) => {
-      if (pkg.dir === root) return true;
-      if (root !== '' && !pkg.dir.startsWith(`${root}/`)) return false;
-      const rel = root === '' ? pkg.dir : pkg.dir.slice(root.length + 1);
-      return include.some((g) => globMatches(g, rel)) && !exclude.some((g) => globMatches(g, rel));
-    });
+    const members = inRepoPackages().filter((pkg) => isMemberDir(root, globs, pkg.dir));
     const index = indexByName(members);
     membersAt.set(root, index);
     return index;
@@ -613,7 +664,8 @@ export function makeTsResolveDeps(
   // `extends` chain). `null` marks a file being resolved, so an `extends` cycle reads as
   // unknown instead of recursing forever.
   const configCache = new Map<string, LoadedConfig | 'unknown' | null>();
-  const resolveExtends = (fromDir: string, ext: string): string | 'unknown' | undefined => {
+  const resolveExtends = (configFile: string, ext: string): string | 'unknown' | undefined => {
+    const fromDir = dirOf(configFile);
     if (ext.startsWith('.') || ext.startsWith('/')) {
       if (ext.startsWith('/')) return 'unknown';
       const joined = joinUnder(fromDir, ext);
@@ -621,12 +673,11 @@ export function makeTsResolveDeps(
       for (const cand of [joined, `${joined}.json`, `${joined}/tsconfig.json`]) if (isFile(cand)) return cand;
       return 'unknown'; // a relative base that is not there: its options are unknowable
     }
-    // A package base (`@tsconfig/node20/tsconfig.json`, `@acme/tsconfig`): an in-repo
-    // package first, then an installed one under an ancestor node_modules.
+    // A package base (`@tsconfig/node20/tsconfig.json`, `@acme/tsconfig`): an in-repo package first, bound by rule 4c as a bare import from the config would be (tsc reads it from node_modules, where the package manager links only members and local dependencies, so a fixture with the name is never it), then an installed one under an ancestor node_modules.
     const split = splitPackageSpecifier(ext);
     if (split !== undefined) {
       const [name, sub] = split;
-      const local = packageIndex().get(name);
+      const local = packageNamed(name, configFile);
       const roots: string[] = [];
       if (local !== undefined && local !== 'ambiguous') roots.push(local.dir);
       for (const d of ancestors(fromDir === '' ? 'x' : `${fromDir}/x`)) roots.push(d === '' ? `node_modules/${name}` : `${d}/node_modules/${name}`);
@@ -639,6 +690,22 @@ export function makeTsResolveDeps(
     // Not installed: a published preset (the only kind a repository extends without
     // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none.
     return undefined;
+  };
+  // `${configDir}` (TypeScript 5.5) is the directory of the tsconfig in effect for the file — the leaf of the chain, not the base that spells it. A value using it is rewritten to a repo-root-anchored path (leading '/'), which `joinConfigPath` reads.
+  const withConfigDir = (p: string, leafDir: string): string =>
+    p.includes('${configDir}') ? `/${p.split('${configDir}').join(leafDir === '' ? '.' : leafDir)}` : p;
+  // `files`, `include` and `exclude` as one config spells them, repo-rel: each resolves from the config's own directory, and an `include` or `exclude` spec tsc rejects (a `..` after `**`) is dropped.
+  const ownLists = (json: Record<string, unknown>, dir: string, leafDir: string): Pick<LoadedConfig, 'files' | 'include' | 'exclude'> => {
+    const out: Pick<LoadedConfig, 'files' | 'include' | 'exclude'> = {};
+    for (const field of ['files', 'include', 'exclude'] as const) {
+      const list = json[field];
+      if (!Array.isArray(list)) continue;
+      out[field] = list
+        .filter((p): p is string => typeof p === 'string' && (field === 'files' || !dotDotAfterRecursion(p)))
+        .map((p) => joinConfigPath(dir, withConfigDir(p, leafDir)))
+        .filter((p): p is string => p !== undefined);
+    }
+    return out;
   };
   const loadConfig = (file: string, leafDir: string): LoadedConfig | 'unknown' => {
     const key = `${file}\n${leafDir}`;
@@ -654,7 +721,7 @@ export function makeTsResolveDeps(
       const bases = json.extends === undefined ? [] : Array.isArray(json.extends) ? json.extends : [json.extends];
       for (const base of bases) {
         if (typeof base !== 'string') return 'unknown';
-        const baseFile = resolveExtends(dir, base);
+        const baseFile = resolveExtends(file, base);
         if (baseFile === 'unknown') return 'unknown';
         if (baseFile === undefined) continue;
         const inherited = loadConfig(baseFile, leafDir);
@@ -663,13 +730,8 @@ export function makeTsResolveDeps(
       }
       const options = json.compilerOptions;
       if (options !== undefined && !isRecord(options)) return 'unknown';
-      // `${configDir}` (TypeScript 5.5) is the directory of the tsconfig in effect for the
-      // file — the leaf of the chain, not the base that spells it. A value using it is
-      // rewritten to a repo-root-anchored path (leading '/'), which `joinConfigPath` reads.
-      const withConfigDir = (p: string): string =>
-        p.includes('${configDir}') ? `/${p.split('${configDir}').join(leafDir === '' ? '.' : leafDir)}` : p;
       if (options !== undefined && typeof options.baseUrl === 'string') {
-        const base = joinConfigPath(dir, withConfigDir(options.baseUrl));
+        const base = joinConfigPath(dir, withConfigDir(options.baseUrl, leafDir));
         if (base === undefined) return 'unknown';
         merged.baseUrl = base;
       }
@@ -678,33 +740,33 @@ export function makeTsResolveDeps(
         const map: Record<string, string[]> = {};
         for (const [k, v] of Object.entries(options.paths)) {
           if (!Array.isArray(v) || v.some((s) => typeof s !== 'string')) return 'unknown';
-          map[k] = (v as string[]).map(withConfigDir);
+          map[k] = (v as string[]).map((p) => withConfigDir(p, leafDir));
         }
         merged.paths = { base: dir, map };
       }
-      // `files`, `include` and `exclude` resolve from the config that spells them; a base's list is inherited whole unless the inheriting config sets its own.
-      for (const field of ['files', 'include', 'exclude'] as const) {
-        const list = json[field];
-        if (!Array.isArray(list)) continue;
-        merged[field] = list
-          .filter((p): p is string => typeof p === 'string')
-          .map((p) => joinConfigPath(dir, withConfigDir(p)))
-          .filter((p): p is string => p !== undefined);
+      // `outDir` and `declarationDir` resolve from the config that sets them, like every path option; one outside the repository excludes nothing in it.
+      for (const field of ['outDir', 'declarationDir'] as const) {
+        const value = options?.[field];
+        if (typeof value !== 'string') continue;
+        const at = joinConfigPath(dir, withConfigDir(value, leafDir));
+        if (at === undefined) delete merged[field];
+        else merged[field] = at;
       }
-      return merged;
+      // A base's `files`, `include` or `exclude` list is inherited whole unless the inheriting config sets its own.
+      return { ...merged, ...ownLists(json, dir, leafDir) };
     })();
     configCache.set(key, result);
     return result;
   };
 
-  // Whether a config's project holds a file, as tsc reads `files`, `include` and `exclude`: a listed file always; otherwise an `include` match that no `exclude` pattern matches. With neither `files` nor `include` set, `include` is everything under the config's directory; with only `files` set, it is nothing. An include pattern whose last segment has no extension and no wildcard names a directory, and an exclude pattern also covers everything under a directory it matches. Extensions are not filtered: a project holds whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
+  // Whether a config's project holds a file, as tsc reads `files`, `include` and `exclude`: a listed file always; otherwise an `include` match (tsc's matcher, {@link includeMatches}) that no `exclude` pattern matches. With neither `files` nor `include` set, `include` is everything under the config's directory; with only `files` set, it is nothing. With no `exclude` anywhere in the chain, `outDir` and `declarationDir` are excluded. An exclude pattern also covers everything under a directory it matches, the config's own directory included. Extensions are not filtered: a project holds whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
   const holds = (config: LoadedConfig, configDir: string, file: string): boolean => {
     if (config.files?.includes(file)) return true;
     const include = config.include ?? (config.files === undefined ? [configDir === '' ? '**/*' : `${configDir}/**/*`] : []);
-    const asDirectory = (p: string): string => (/[*?.]/.test(p.slice(p.lastIndexOf('/') + 1)) ? p : `${p}/**/*`);
-    if (!include.some((p) => globMatches(asDirectory(p), file))) return false;
+    if (!include.some((p) => includeMatches(p, file))) return false;
+    const exclude = config.exclude ?? [config.outDir, config.declarationDir].filter((d): d is string => d !== undefined);
     const segs = file.split('/');
-    return !(config.exclude ?? []).some((p) => segs.some((_, k) => globMatches(p, segs.slice(0, k + 1).join('/'))));
+    return !exclude.some((p) => p === '' || segs.some((_, k) => globMatches(p, segs.slice(0, k + 1).join('/'))));
   };
   // The configs a tsconfig's own `references` name (never inherited): a config file, or a directory holding a tsconfig.json. A reference naming neither is skipped, as tsserver skips it.
   const referencesOf = (file: string): string[] => {
@@ -724,7 +786,27 @@ export function makeTsResolveDeps(
     ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
     ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
   });
-  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced configs that hold it, searched through the whole reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and `paths`, those; when they disagree, or one cannot be read (it may hold the file), 'unknown'; when none holds it, the nearest config's own options.
+  // Whether a referenced config whose options cannot be read may hold a file. tsc reads such a config without the bases it cannot read (a generated base absent from the commit), so it holds what the `files` and `include` of the configs in its chain it can read name, or by default what lies under its own directory; here its own directory always counts and every `exclude` is ignored, so the answer errs towards holding, which is towards silence. A referenced config that does not parse may hold anything.
+  const mayHold = (file: string, fromFile: string): boolean => {
+    const dir = dirOf(file);
+    if (dir === '' || fromFile.startsWith(`${dir}/`)) return true;
+    const seen = new Set<string>();
+    const names = (cfg: string): boolean => {
+      if (seen.has(cfg)) return false;
+      seen.add(cfg);
+      const json = readJson(cfg);
+      if (!isRecord(json)) return cfg === file;
+      const own = ownLists(json, dirOf(cfg), dir);
+      if (own.files?.includes(fromFile) || own.include?.some((p) => includeMatches(p, fromFile))) return true;
+      const bases = json.extends === undefined ? [] : Array.isArray(json.extends) ? json.extends : [json.extends];
+      return bases.some((base) => {
+        const baseFile = typeof base === 'string' ? resolveExtends(cfg, base) : undefined;
+        return baseFile !== undefined && baseFile !== 'unknown' && names(baseFile);
+      });
+    };
+    return names(file);
+  };
+  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced configs that hold it, searched through the whole reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and `paths`, those; when they disagree, or one cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
   const configInEffect = (file: string, fromFile: string): TsPathConfig | 'unknown' => {
     const own = loadConfig(file, dirOf(file));
     if (own === 'unknown') return 'unknown';
@@ -737,8 +819,9 @@ export function makeTsResolveDeps(
         if (seen.has(ref)) continue;
         seen.add(ref);
         const loaded = loadConfig(ref, dirOf(ref));
-        if (loaded === 'unknown') return false;
-        if (holds(loaded, dirOf(ref), fromFile)) holding.push(view(loaded));
+        if (loaded === 'unknown') {
+          if (mayHold(ref, fromFile)) return false;
+        } else if (holds(loaded, dirOf(ref), fromFile)) holding.push(view(loaded));
         if (!search(referencesOf(ref))) return false;
       }
       return true;
@@ -781,10 +864,24 @@ export function makeTsResolveDeps(
     return undefined;
   };
 
-  // Rule 4c. A local spec in the importer's own package.json is what the package manager links under that name; otherwise the nearest workspace declaration above the importer decides which in-repo packages are linked by name at all.
+  // The package whose dependencies a file sees: the nearest package.json that names a package, declares dependencies or declares a workspace. One that does none of these (a `{"type": "module"}` marker) installs nothing, so the files under it see the dependencies of the package around it.
+  const dependencyOwner = (fromFile: string): TsPackage | undefined => {
+    for (const dir of ancestors(fromFile)) {
+      const pkg = packageAt(dir);
+      if (pkg === undefined) continue;
+      const { manifest } = pkg;
+      if (typeof manifest.name === 'string' || manifest.workspaces !== undefined || DEPENDENCY_FIELDS.some((f) => manifest[f] !== undefined)) return pkg;
+    }
+    return undefined;
+  };
+
+  // Rule 4c. A package resolves its own name through its `exports` before anything else, as Node and TypeScript self-reference; a local spec in the importer's own package.json is what the package manager links under that name; otherwise the workspace declarations above the importer decide which in-repo packages are linked by name at all.
   const packageNamed = (name: string, fromFile: string): TsPackage | 'ambiguous' | undefined => {
+    // Self-reference reads the package scope, the nearest package.json (a marker included, as Node reads it), and only one with `exports` resolves its own name.
+    const scope = nearestPackage(fromFile);
+    if (scope !== undefined && scope.manifest.name === name && scope.manifest.exports !== undefined && scope.manifest.exports !== null) return scope;
     let lookup = name;
-    const own = nearestPackage(fromFile);
+    const own = dependencyOwner(fromFile);
     const field = own === undefined ? undefined : DEPENDENCY_FIELDS.map((f) => own.manifest[f]).find((d) => isRecord(d) && Object.hasOwn(d, name));
     const spec = isRecord(field) ? field[name] : undefined;
     if (own !== undefined && typeof spec === 'string') {
@@ -797,11 +894,19 @@ export function makeTsResolveDeps(
       const alias = /^workspace:((?:@[^/@]+\/)?[^/@]+)@/.exec(spec);
       if (alias !== null) lookup = alias[1];
     }
+    // The nearest workspace declaration above the importer, then each enclosing one while the declaring directory is a member of it: npm and pnpm install a member from the enclosing root and ignore its own declaration, and yarn links nested worktrees into one project, so the enclosing members are linked too. A name two of them bind to different packages is ambiguous (npm takes the enclosing one, yarn refuses the pair). A declaration that is no member of the one above is a project installed on its own, whose node_modules may hold a registry package under any name, so nothing above it is looked at.
+    let found: TsPackage | 'ambiguous' | undefined;
+    let declared: string | undefined;
     for (const dir of ancestors(fromFile)) {
       const globs = workspaceGlobs(dir);
-      if (globs !== undefined) return workspaceMembers(dir, globs).get(lookup);
+      if (globs === undefined) continue;
+      if (declared !== undefined && !isMemberDir(dir, globs, declared)) break;
+      const hit = workspaceMembers(dir, globs).get(lookup);
+      if (hit !== undefined && found !== undefined && hit !== found) return 'ambiguous';
+      found ??= hit;
+      declared = dir;
     }
-    return packageIndex().get(lookup);
+    return declared !== undefined ? found : packageIndex().get(lookup);
   };
 
   return {
