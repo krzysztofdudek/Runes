@@ -12,12 +12,12 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  * when one of those declarations was a duplicate of a key another file also declares, the
  * other file became the unique definer and an ambiguity flipped into a WRONG edge.
  *
+ * The same grammar also misreads some ordinary Kotlin 1.x without giving up: at the top level, an annotation followed by a soft-keyword modifier (`@Keep annotation class X`, `@Serializable enum class X { A }`, `@Keep data object X`, `@Keep const val X = 1`) reads as a script statement, an `annotated_expression` or an `assignment`, and no ERROR node marks the declaration it lost.
+ *
  * WHAT: `kotlinView` turns a parsed file into the set of trustworthy parse nodes to walk, plus
  * what could only be read lexically:
- *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work;
- *      zero-width MISSING tokens alone do not count, see `damaged`).
- *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every
- *      row and column stays put — and the file is re-parsed. A clean re-parse is used as-is.
+ *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work beyond step 5; zero-width MISSING tokens alone do not count, see `damaged`).
+ *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every row and column stays put — a nested class header is joined to its primary constructor on the next line by moving one newline (only the class name changes row, see `constructorJoins`), and the file is re-parsed. A clean re-parse is used as-is.
  *   3. Whatever is still damaged is split into top-level declarations by a small lexer (a
  *      declaration starts on a column-0 line at bracket depth 0) and each one is re-parsed on
  *      its own, padded so its rows and columns match the file. A clean declaration is walked
@@ -27,10 +27,9 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *      whose name is unreadable, or a lexer that lost track of the brackets) or one type's
  *      members (a class whose body did not parse). The extractor turns these into marker
  *      declarations the resolver uses to fail closed — see resolver.ts `incompletenessMarkers`.
+ *   5. Among the nodes to walk, a top-level script statement whose leading tokens read as a declaration is a misread declaration (see `misreadDeclaration`). Its name is read from those tokens, as for a damaged declaration, and a type's members are marked incomplete.
  *
- * The blanking runs ONLY on a file that already failed to parse, so a wrong guess can never
- * disturb a file the grammar reads correctly; the worst it can do is leave a damaged file
- * damaged, which step 3 and 4 then handle.
+ * The rewriting of step 2 (blanking and joining) runs ONLY on a file that already failed to parse, so a wrong guess can never disturb a file the grammar reads correctly; the worst it can do is leave a damaged file damaged, which step 3 and 4 then handle.
  *
  * THE GRAMMAR SITUATION (why this is recovery, not a grammar fix): the shipped
  * `@tree-sitter-grammars/tree-sitter-kotlin` 1.1.0 (2025-01) is a fork that stopped moving (its
@@ -228,7 +227,7 @@ const MODIFIERS = new Set([
 
 const DECL_KEYWORDS = new Set(['class', 'interface', 'object', 'fun', 'val', 'var', 'typealias', 'constructor', 'init', 'import', 'package']);
 
-// ── blanking the three known forms ────────────────────────────────────────────
+// ── rewriting the known forms ─────────────────────────────────────────────────
 
 /** Index of the token closing the bracket opened at `open`, or -1. */
 function matching(toks: Tok[], open: number): number {
@@ -330,10 +329,43 @@ function blankRanges(toks: Tok[]): Array<[number, number]> {
   return out;
 }
 
-function applyBlanks(text: string, ranges: Array<[number, number]>): string {
-  if (ranges.length === 0) return text;
+/**
+ * Newline moves `[from, end, to]` that join a nested class header to its primary constructor on the next line (`class Options` over `private constructor(val s: String)`, the ktfmt style): blank `[from, end)`, the end of the header line with its newline (and a CRLF's `\r`), and put the newline at `to`, the blank after `class`. Kotlin attaches a constructor on the next line to the class above it, but inside a class body the shipped grammar ends the class at the newline and reads the constructor as a secondary constructor of the enclosing class, whose `val` parameters are an ERROR; the enclosing class then lost every member. After the move (`class` over `Options private constructor(…)`) the file parses as Kotlin reads it: only the class name and its type parameters move, onto the constructor's row, and the class still starts on the row of its `class` keyword. Type parameters qualify only as plain names with `in`/`out` (`<T>`, `<in A, out B>`): a bound or an annotation there (`<T : a.Bound>`, `<@a.Ann T>`) is a use, which the move would report one line too low, so such a header is left unjoined and its enclosing class falls back to its header. So every declaration and use keeps its line. Only a header with nothing but blanks after its name or type parameters, directly above `constructor(` (after annotations and modifiers), qualifies, and only below the top level: a top-level class of this shape already parses, and the move would put its name at column 0, where the declaration splitter cuts.
+ */
+function constructorJoins(toks: Tok[], text: string): Array<[number, number, number]> {
+  const out: Array<[number, number, number]> = [];
+  let depth = 0;
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.kind === 'p' && OPEN.has(t.text)) depth++;
+    else if (t.kind === 'p' && CLOSE.has(t.text)) depth--;
+    if (depth === 0 || t.kind !== 'id' || t.text !== 'class' || toks[i + 1]?.kind !== 'id') continue;
+    let j = i + 2;
+    if (toks[j]?.kind === 'p' && toks[j].text === '<') {
+      j++;
+      while (toks[j]?.kind === 'id' || (toks[j]?.kind === 'p' && toks[j].text === ',')) j++;
+      if (toks[j]?.kind !== 'p' || toks[j].text !== '>') continue;
+      j++;
+    }
+    const nl = toks[j];
+    if (nl?.kind !== 'nl' || toks[j + 1]?.kind === 'nl') continue;
+    const k = skipPrefix(toks, j + 1);
+    if (k === undefined || toks[k]?.text !== 'constructor' || toks[k + 1]?.text !== '(') continue;
+    if (!/^[ \t]+$/.test(text.slice(t.end, toks[i + 1].start)) || !/^[ \t\r]*$/.test(text.slice(toks[j - 1].end, nl.start))) continue;
+    out.push([toks[j - 1].end, nl.end, t.end]);
+  }
+  return out;
+}
+
+/** Blank the `ranges` (newlines kept) and move each joined newline; the text keeps its length and its number of lines. */
+function applyRewrites(text: string, ranges: Array<[number, number]>, joins: Array<[number, number, number]>): string {
+  if (ranges.length === 0 && joins.length === 0) return text;
   const chars = text.split('');
   for (const [s, e] of ranges) for (let k = s; k < e; k++) if (chars[k] !== '\n') chars[k] = ' ';
+  for (const [from, end, to] of joins) {
+    for (let k = from; k < end; k++) chars[k] = ' ';
+    chars[to] = '\n';
+  }
   return chars.join('');
 }
 
@@ -391,16 +423,8 @@ function skipAngles(toks: Tok[], i: number): number {
   return toks.length;
 }
 
-/**
- * Read the declaration a chunk's leading tokens name: annotations and modifiers, then
- * `class|interface|object|fun interface` + name (a TYPE), `typealias` + name, `fun` [`<…>`]
- * [receiver `.`] name `(` or `val|var` [`<…>`] [receiver `.`] name (a CALLABLE). Returns
- * `null` for a destructuring `val (a, b)` (declares no key), `undefined` when the header is not
- * readable.
- */
-function readHeader(chunk: Chunk): LexicalDecl | null | undefined {
-  const toks = chunk.toks.filter((t) => t.kind !== 'nl');
-  let i = 0;
+/** The index of the first token at or after `i` that is not an annotation, a modifier or a newline; undefined when an annotation's brackets do not close. */
+function skipPrefix(toks: Tok[], i: number): number | undefined {
   while (i < toks.length) {
     const t = toks[i];
     if (t.kind === 'p' && t.text === '@') {
@@ -416,9 +440,23 @@ function readHeader(chunk: Chunk): LexicalDecl | null | undefined {
       if (toks[i]?.kind === 'p' && toks[i].text === '(') { const m = matching(toks, i); if (m === -1) return undefined; i = m + 1; }
       continue;
     }
-    if (t.kind === 'id' && MODIFIERS.has(t.text)) { i++; continue; }
+    if (t.kind === 'nl' || (t.kind === 'id' && MODIFIERS.has(t.text))) { i++; continue; }
     break;
   }
+  return i;
+}
+
+/**
+ * Read the declaration a chunk's leading tokens name: annotations and modifiers, then
+ * `class|interface|object|fun interface` + name (a TYPE), `typealias` + name, `fun` [`<…>`]
+ * [receiver `.`] name `(` or `val|var` [`<…>`] [receiver `.`] name (a CALLABLE). Returns
+ * `null` for a destructuring `val (a, b)` (declares no key), `undefined` when the header is not
+ * readable.
+ */
+function readHeader(chunk: Chunk): LexicalDecl | null | undefined {
+  const toks = chunk.toks.filter((t) => t.kind !== 'nl');
+  const i = skipPrefix(toks, 0);
+  if (i === undefined) return undefined;
   const kw = toks[i];
   if (kw === undefined || kw.kind !== 'id') return undefined;
   const line = kw.line + 1;
@@ -483,6 +521,34 @@ function coveringNodes(chunk: Chunk, clean: Node[]): Node[] | undefined {
   return used;
 }
 
+// ── declarations misread without an ERROR ─────────────────────────────────────
+
+/** The top-level node types the shipped grammar turns an annotated declaration into when it reads it as a script statement. */
+const MISREAD_TYPES = new Set(['annotated_expression', 'assignment']);
+
+/**
+ * The declaration a top-level `node` really is when the shipped grammar misread it as a script statement: undefined when it is none, null for a destructuring `val (a, b)` (no key). The grammar reads an annotation followed by a soft-keyword modifier (`@Keep annotation class X`, `@Serializable enum class X { A }`, `@Keep data object X`, `@Keep expect class X`) as an `annotated_expression`, and `@Keep const val X = 1` or `@Keep actual typealias X = Y` as an `assignment`, cleanly: no ERROR node marks the loss. A genuine script statement (`version = "1.0"`, `@Suppress("x") run()`) has no declaration keyword after its annotations and modifiers, so its header does not read.
+ */
+function misreadDeclaration(node: Node): LexicalDecl | null | undefined {
+  if (!MISREAD_TYPES.has(node.type)) return undefined;
+  const row = node.startPosition.row;
+  const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row }));
+  return readHeader({ start: node.startIndex, end: node.endIndex, toks });
+}
+
+/** Read every misread top-level declaration among the view's roots (a whole file's root, or a top-level node of it) into the view's lexical declarations, a type with its members marked incomplete. The misread node itself stays a root: it holds no declaration node the walkers could key, and its annotations are read right, so the uses walk still finds their types. */
+function readMisread(view: KotlinView): void {
+  for (const root of view.roots) {
+    const top = root.type === 'source_file' ? root.children : [root];
+    for (const node of top) {
+      const decl = misreadDeclaration(node);
+      if (!decl) continue;
+      view.lexical.push(decl);
+      if (decl.kind === 'type') view.incompleteTypes.add(decl.name);
+    }
+  }
+}
+
 // ── the view ──────────────────────────────────────────────────────────────────
 
 /**
@@ -520,7 +586,9 @@ function parseAt(parser: Parser, text: string, start: number, end: number): Tree
 export function kotlinView(tree: Tree, content: string, newParser?: () => Parser): KotlinView {
   const root = tree.rootNode;
   if (!damaged(root)) {
-    return { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => {} };
+    const view: KotlinView = { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => {} };
+    readMisread(view);
+    return view;
   }
   if (newParser === undefined) {
     throw new Error('kotlinView: this Kotlin file has syntax errors and recovery needs a parser; pass ParsedFile.newParser (for example the parser host\'s newParser)');
@@ -539,14 +607,14 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
   try {
     parser.setLanguage(tree.language);
     const { toks, unbalanced: lexUnbalanced } = tokenize(content);
-    const text = applyBlanks(content, blankRanges(toks));
+    const text = applyRewrites(content, blankRanges(toks), constructorJoins(toks, content));
     let base = tree;
     if (text !== content) {
       const reparsed = parser.parse(text);
       if (reparsed !== null) { owned.push(reparsed); base = reparsed; }
     }
     const view: KotlinView = { roots: [], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose };
-    if (!damaged(base.rootNode)) { view.roots.push(base.rootNode); return view; }
+    if (!damaged(base.rootNode)) { view.roots.push(base.rootNode); readMisread(view); return view; }
     // From here on the split into declarations rests on the lexer; a literal or comment it saw
     // run off the end means it cannot be trusted to have found every declaration.
     if (lexUnbalanced) view.packageIncomplete = true;
@@ -584,6 +652,7 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
       view.lexical.push(header);
       if (header.kind === 'type') view.incompleteTypes.add(header.name);
     }
+    readMisread(view);
     return view;
   } catch (err) {
     dispose();
