@@ -347,10 +347,7 @@ function normalizeCrateName(name: string): string {
 const DEP_TABLE = /^(?:target\..+\.)?(?:dependencies|dev-dependencies|dev_dependencies|build-dependencies|build_dependencies)$/;
 const DEP_SUBTABLE = /^(?:target\..+\.)?(?:dependencies|dev-dependencies|dev_dependencies|build-dependencies|build_dependencies)\.(.+)$/;
 
-/** A minimal, line-oriented Cargo.toml reader: `[package].name`, `[lib].name` / `.path`,
- *  and the path / package / workspace fields of dependency entries (inline tables and the
- *  `[dependencies.<name>]` table form) plus `[workspace.dependencies]`. Anything it does
- *  not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal, line-oriented Cargo.toml reader: `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries (inline tables, dotted keys such as `name.workspace = true`, and the `[dependencies.<name>]` table form) plus `[workspace.dependencies]`. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text: string): CargoManifest {
   let packageName: string | undefined;
   let libName: string | undefined;
@@ -359,6 +356,9 @@ export function parseCargoManifest(text: string): CargoManifest {
   const workspaceDependencies = new Map<string, CargoDependencySpec>();
   let section = '';
   let subtable: { into: Map<string, CargoDependencySpec>; key: string } | undefined;
+  // A `key = value` line, the key possibly dotted (`a.b`, `"a".b`, `a . b`), and one segment of such a key: double-quoted, single-quoted or bare.
+  const KEY_VALUE = /^((?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"[^"]+"|'[^']+'|[A-Za-z0-9_-]+))*)\s*=\s*(.*)$/;
+  const KEY_SEGMENT = /"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+)/g;
 
   const unquote = (v: string): string => v.trim().replace(/^["']|["']$/g, '');
   const stringField = (body: string, field: string): string | undefined => {
@@ -370,6 +370,13 @@ export function parseCargoManifest(text: string): CargoManifest {
     package: stringField(body, 'package'),
     workspace: /(?:^|[\s,{])workspace\s*=\s*true\b/.test(body),
   });
+  const setField = (spec: CargoDependencySpec, field: string, value: string): void => {
+    if (field === 'path') spec.path = unquote(value);
+    else if (field === 'package') spec.package = unquote(value);
+    else if (field === 'workspace') spec.workspace = value === 'true';
+  };
+  // Crates a dotted key (`kit.path = "../kit"`) declared in the current dependency table: their later dotted lines merge into the same spec, as TOML reads them as one table.
+  let dottedInTable = new Set<string>();
 
   for (const rawLine of text.split('\n')) {
     const line = rawLine.replace(/\s+#.*$/, '').trim();
@@ -378,6 +385,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (header) {
       section = header[1].split('.').map((p) => unquote(p)).join('.');
       subtable = undefined;
+      dottedInTable = new Set<string>();
       const sub = DEP_SUBTABLE.exec(section);
       const wsSub = /^workspace\.dependencies\.(.+)$/.exec(section);
       if (wsSub) subtable = { into: workspaceDependencies, key: unquote(wsSub[1]) };
@@ -385,15 +393,14 @@ export function parseCargoManifest(text: string): CargoManifest {
       if (subtable && !subtable.into.has(subtable.key)) subtable.into.set(subtable.key, { workspace: false });
       continue;
     }
-    const kv = /^("[^"]+"|'[^']+'|[A-Za-z0-9_.-]+)\s*=\s*(.*)$/.exec(line);
+    const kv = KEY_VALUE.exec(line);
     if (!kv) continue;
-    const key = unquote(kv[1]);
+    // A key is one or more segments joined by dots (TOML dotted keys), each bare or quoted.
+    const segments = [...kv[1].matchAll(KEY_SEGMENT)].map((m) => m[1] ?? m[2] ?? m[3]);
+    const key = segments.join('.');
     const value = kv[2].trim();
     if (subtable) {
-      const spec = subtable.into.get(subtable.key)!;
-      if (key === 'path') spec.path = unquote(value);
-      else if (key === 'package') spec.package = unquote(value);
-      else if (key === 'workspace') spec.workspace = value === 'true';
+      setField(subtable.into.get(subtable.key)!, key, value);
       continue;
     }
     if (section === 'package' && key === 'name') packageName = unquote(value);
@@ -401,7 +408,16 @@ export function parseCargoManifest(text: string): CargoManifest {
     else if (section === 'lib' && key === 'path') libPath = unquote(value);
     else if (DEP_TABLE.test(section) || section === 'workspace.dependencies') {
       const into = section === 'workspace.dependencies' ? workspaceDependencies : dependencies;
-      if (!into.has(key)) into.set(key, value.startsWith('{') ? specOf(value) : { workspace: false });
+      if (segments.length === 1) {
+        if (!into.has(key)) into.set(key, value.startsWith('{') ? specOf(value) : { workspace: false });
+        continue;
+      }
+      // `crate.field = value`: the same entry as `crate = { field = value }`. The first table that declares a crate keeps it, as for a whole value; a field other than path, package or workspace (version, features, git) only declares the crate.
+      const crate = segments[0];
+      if (into.has(crate) && !dottedInTable.has(crate)) continue;
+      if (!into.has(crate)) into.set(crate, { workspace: false });
+      dottedInTable.add(crate);
+      if (segments.length === 2) setField(into.get(crate)!, segments[1], value);
     }
   }
   const name = libName ?? packageName;
