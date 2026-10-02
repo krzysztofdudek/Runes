@@ -73,7 +73,7 @@ import type {
  *        (B a sub-namespace) — `using A;` imports the TYPES of exactly A, not A's namespaces.
  *      • the alias candidate carries a CO-DEFINITION set (R8): the alias target competes with a
  *        same-named enclosing-ns member; 2+ resolving → ambiguous → silence.
- *    A `global::`-rooted name (R12), a single name (`global::Settings`) as much as a dotted one, is stripped and resolved from the root as its sole candidate (a `global::Program` then falls back to the implicit `Program`);
+ *    A `global::`-rooted name (R12), a single name (`global::Settings`) as much as a dotted one, in a type position, an attribute (`[global::A.Foo]`, both of its readings) or as the receiver of a member access (`global::Guard.NotNull(o)`, every prefix), is stripped and resolved from the root as its sole candidate (a `global::Program` then falls back to the implicit `Program`);
  *    a non-`global` extern/using alias (`Lib::A.B`) is left intact (its `::` text cannot collide
  *    with a dot-only key → R13 silence-by-luck). Nested-type recovery is centralized in the
  *    resolver: for any dotted candidate it also tries the guarded `+`-boundary split (split
@@ -587,17 +587,10 @@ export type CsharpRefDescriptor =
   /** A `using static N.C;` / `global using static N.C;` TARGET edge — the concrete type whose
    *  static members are imported. Resolves verbatim-from-root as its sole candidate (A8/A11). */
   | { kind: 'static'; fqn: string; line: number }
-  /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional
-   *  `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). */
-  | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[] }
-  /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`,
-   *  `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the
-   *  accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one
-   *  reading, concatenated in that order into ONE group — C# binds the leftmost simple name first
-   *  and only reads further segments when it names a namespace. Emitted only when the leftmost
-   *  identifier is not a name this file declares (a local, parameter, field, property, method…),
-   *  so a value that shadows a type name never manufactures a type edge. */
-  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[] }
+  /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. */
+  | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; rooted?: boolean }
+  /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
+  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; rooted?: boolean }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
    *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the imported
    *  namespaces as one set, then the global namespace. */
@@ -779,6 +772,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     suffixed: string | undefined,
     node: Node,
     line: number,
+    rooted = false,
   ): void => {
     refs.push({
       kind: 'attr',
@@ -786,6 +780,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       suffixed,
       line,
       enclosingNs: enclosingNamespaceChain(fileNs, node),
+      rooted,
     });
   };
 
@@ -1073,35 +1068,38 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     // Attribute usage `[Foo]` / `[FooAttribute]` / generic `[Foo<Bar>]` (C#11, E9).
     if (node.type === 'attribute') {
       const nameField = node.childForFieldName('name');
-      if (nameField !== null && (nameField.type === 'identifier' || nameField.type === 'qualified_name')) {
+      // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name.
+      const rooted = nameField !== null && nameField.text.startsWith('global::');
+      const named = nameField !== null && nameField.type === 'alias_qualified_name' && rooted ? nameField.childForFieldName('name') : nameField;
+      if (nameField !== null && named !== null && (named.type === 'identifier' || named.type === 'qualified_name')) {
         if (!emitted.has(nameField.id)) {
           emitted.add(nameField.id);
-          const written = stripGlobalQualifier(nameField.text);
+          const written = stripGlobalQualifier(named.text);
           // The C# attribute-naming convention: `[Foo]` may name `Foo` OR `FooAttribute`. Emit
           // both readings as ONE group (the verbatim and the `Attribute`-suffixed form), so the
           // dependency resolves whichever the declaring type is named.
           const last = written.split('.').pop() ?? written;
           const suffixed =
             last.endsWith('Attribute') ? undefined : `${written}Attribute`;
-          pushAttribute(written, suffixed, nameField, nameField.startPosition.row + 1);
+          pushAttribute(written, suffixed, nameField, nameField.startPosition.row + 1, rooted);
         }
-      } else if (nameField !== null && nameField.type === 'generic_name') {
+      } else if (nameField !== null && named !== null && named.type === 'generic_name') {
         // C#11 generic attribute `[Foo<Bar>]`: the attribute NAME is the `generic_name`'s base
         // identifier (`Foo`, with the `Foo`/`FooAttribute` convention), and each type ARGUMENT
         // (`Bar`) is its own real type reference. The base container name resolves the attribute
         // class; the type arguments are descended separately.
         if (!emitted.has(nameField.id)) {
           emitted.add(nameField.id);
-          const baseName = nameField.childForFieldName('name');
-          const baseId = baseName ?? findChild(nameField, 'identifier');
+          const baseName = named.childForFieldName('name');
+          const baseId = baseName ?? findChild(named, 'identifier');
           if (baseId !== null) {
             const written = stripGlobalQualifier(baseId.text);
             const last = written.split('.').pop() ?? written;
             const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
-            pushAttribute(written, suffixed, baseId, baseId.startPosition.row + 1);
+            pushAttribute(written, suffixed, baseId, baseId.startPosition.row + 1, rooted);
           }
           const args =
-            nameField.childForFieldName('type_arguments') ?? findChild(nameField, 'type_argument_list');
+            named.childForFieldName('type_arguments') ?? findChild(named, 'type_argument_list');
           if (args !== null) {
             for (let i = 0; i < args.namedChildCount; i++) emitTypeNode(args.namedChild(i));
           }
@@ -1159,10 +1157,13 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     // is the leftmost identifier). A generic receiver `Result<int>.Ok()` is a type position.
     if (node.type === 'member_access_expression') {
       const expr = node.childForFieldName('expression');
-      if (expr !== null && expr.type === 'generic_name') {
+      // A receiver written after `global::` (`global::Guard.NotNull(o)`, `global::Shop.Core.Guard.NotNull(o)`) is read from the global namespace only (R12): its name, not the alias-qualified node, leads the chain, and no name this file declares shadows it.
+      const rootedName = expr !== null && expr.type === 'alias_qualified_name' && expr.childForFieldName('alias')!.text === 'global' ? expr.childForFieldName('name') : null;
+      if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
         emitTypeNode(expr);
-      } else if (expr !== null && expr.type === 'identifier' && !declaredNames.has(expr.text) && !insideNameof(node)) {
-        const chain = [expr.text];
+      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text))) && !insideNameof(node)) {
+        const rooted = rootedName !== null;
+        const chain = [(rootedName ?? expr).text];
         let cur = node;
         // Walk outward while this access is itself the receiver of a further access (a member
         // access only ever nests through its `expression`): every name but the outermost accessed
@@ -1178,6 +1179,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           chain,
           line: expr.startPosition.row + 1,
           enclosingNs: enclosingNamespaceChain(fileNs, node),
+          rooted,
         });
       }
       // A generic member `sp.GetRequiredService<Ctx>()`, `Substitute.For<Ctx>()`: its type arguments are type references; the member name itself is a method, never a type.
@@ -1221,13 +1223,23 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       return undefined;
     }
     // A tuple type with named elements as a type argument, followed by arguments or an initializer (`new List<(Order Item, int Index)>(n)`, `new List<(Order Item, int Index)> { … }`, `Make<(Order Item, int Index)>(n)`): the grammar reads it as `G < (Order Item, int Index) > …`, comparisons around a tuple of declaration expressions. A tuple of declarations is never a valid operand, so after `<` it can only be that tuple type: each named element's type is read (its name never is), and so is a bare unnamed element beside a named one.
+    // One generic level deeper or more (`new List<Page<(Order Item, int Index)>>(n)`), the closing `>>` or `>>>` is a shift, which binds tighter than `<`: the grammar reads `(G < Page) < ((Order Item, int Index) >> (n))`, the tuple the shift's left operand. It is the same tuple type, read the same way, and each enclosing generic's name, the right operand of a `<` further left (one per `>` beyond the first), is a type reference too.
     if (node.type === 'binary_expression' && node.childForFieldName('operator')!.type === '<') {
-      const tuple = node.childForFieldName('right')!;
+      const right = node.childForFieldName('right')!;
+      const shift = right.type === 'binary_expression' && /^>>>?$/.test(right.childForFieldName('operator')!.type) ? right : undefined;
+      const tuple = shift?.childForFieldName('left') ?? right;
       const elements = tuple.type === 'tuple_expression' ? tuple.namedChildren.map((arg) => arg!.namedChild(0)!) : [];
       if (elements.some((e) => e.type === 'declaration_expression')) {
         for (const e of elements) {
           if (e.type === 'declaration_expression') emitTypeNode(e.childForFieldName('type'));
           else if (e.type === 'identifier') emitTypeNode(e);
+        }
+        let generic = node.childForFieldName('left')!;
+        for (let level = 1; shift !== undefined && level < shift.childForFieldName('operator')!.type.length; level++) {
+          if (generic.type !== 'binary_expression' || generic.childForFieldName('operator')!.type !== '<') break;
+          const name = generic.childForFieldName('right')!;
+          if (name.type === 'identifier') emitTypeNode(name);
+          generic = generic.childForFieldName('left')!;
         }
       }
       return undefined;
@@ -1400,10 +1412,11 @@ export function assembleCsharpCandidates(
     suffixed: string | undefined,
     enclosingNs: string[],
     line: number,
+    rooted: boolean,
   ): void => {
     const before = out.length;
-    pushRef(written, enclosingNs, line, false);
-    if (suffixed !== undefined) pushRef(suffixed, enclosingNs, line, false);
+    pushRef(written, enclosingNs, line, rooted);
+    if (suffixed !== undefined) pushRef(suffixed, enclosingNs, line, rooted);
     // Merge the (at most two) groups just pushed into one ordered group so both readings live
     // in a single reference (an attribute is ONE dependency, resolved by whichever name binds).
     mergeGroupsFrom(before, line);
@@ -1469,13 +1482,14 @@ export function assembleCsharpCandidates(
         break;
       }
       case 'attr':
-        pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line);
+        pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true);
         break;
       case 'receiver': {
-        // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group.
-        if (ambiguousAliases.has(r.chain[0])) break;
+        // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies.
+        const rooted = r.rooted === true;
+        if (!rooted && ambiguousAliases.has(r.chain[0])) break;
         const before = out.length;
-        for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, false);
+        for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted);
         mergeGroupsFrom(before, r.line);
         break;
       }

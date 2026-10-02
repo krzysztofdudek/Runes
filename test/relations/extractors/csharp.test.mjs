@@ -1131,3 +1131,95 @@ describe('csharp — a tuple type with named elements as a type argument (issue 
     expect(groups(uses)).toEqual([['Foo'], ['Bar'], ['List']]);
   });
 });
+
+describe('csharp — `global::` in attributes and member accesses, and a named tuple type argument one generic level deeper (issue 174)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('an attribute written after `global::` is rooted, single or qualified, plain or generic; its type arguments are ordinary references', async () => {
+    // `[global::A.Bar]` was read through the enclosing namespaces and the usings, and `[global::Foo]` / `[global::Gen<Order>]` emitted nothing.
+    const { uses } = await run(['using Shop.Core;', 'namespace Shop.Web;', '[global::A.Bar, global::Foo]', '[global::Gen<Order>]', '[global::A.BazAttribute(1)]', '[Local]', 'class C { }', ''].join('\n'));
+    expect(groups(uses)).toEqual([
+      ['A.Bar', 'A.BarAttribute'],
+      ['Foo', 'FooAttribute'],
+      ['Gen', 'GenAttribute'],
+      ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'],
+      ['A.BazAttribute'],
+      ['Shop.Web.Local', 'Shop.Local', 'Shop.Core.Local', 'Local', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'Shop.Core.LocalAttribute', 'LocalAttribute'],
+    ]);
+  });
+
+  it('a member reached through `global::` reads its receiver from the root only, and no declared name shadows it', async () => {
+    // `global::X.Member()` emitted nothing.
+    const { uses } = await run([
+      'using Shop.Core;',
+      'namespace Shop.Web;',
+      'class C {',
+      '  int X;',
+      '  object M() {',
+      '    global::X.Member();',
+      '    global::A.B.C.Run(X);',
+      '    var v = global::X.Prop;',
+      '    var g = global::Box<Order>.Create();',
+      '    var n = nameof(global::X.Member);',
+      '    return X.Member();',
+      '  }',
+      '}',
+      '',
+    ].join('\n'));
+    // The last line's `X` is the field, so `X.Member()` is only an extension-method call on a value.
+    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Shop.Core.Member()', 'Member()']]);
+  });
+
+  it('a `global::` receiver ignores a project-wide alias that silences the same bare name, and in a file of top-level statements `global::Program` is the file\'s own class', async () => {
+    const code = ['class C { void M() { global::Money.Parse(); Money.Parse(); } }', ''].join('\n');
+    await withParsedFile('x.cs', code, (tree) => {
+      const file = { path: 'x.cs', content: code, tree, language: 'csharp' };
+      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money'], ['Money', 'B.Money']] }))).toEqual([['Money']]);
+    });
+    const { uses } = await run(['global::Program.Main();', 'global::Other.Run();', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Other']]);
+  });
+
+  it('a `global::` qualified name is rooted in every position it can take', async () => {
+    const { uses } = await run([
+      'using Shop.Core;',
+      'namespace Shop.Web;',
+      'class C : global::A.Bar, global::A.IFace<global::A.Bar> {',
+      '  global::A.Bar f;',
+      '  object M(object o) {',
+      '    var a = typeof(global::A.Bar);',
+      '    var c = (global::A.Bar)o;',
+      '    var d = new global::A.Bar();',
+      '    var e = new global::A.Bar[2];',
+      '    var h = default(global::A.Bar);',
+      '    var i = Make<global::A.Bar>();',
+      '    var l = o as global::A.Bar;',
+      '    global::A.Bar.Run();',
+      '    return null;',
+      '  }',
+      '  void N<T>() where T : global::A.Bar { }',
+      '}',
+      '',
+    ].join('\n'));
+    const rows = groups(uses);
+    expect(rows).toEqual([['A.Bar'], ['A.IFace'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A.Bar'], ['A', 'A.Bar'], ['A.Bar']]);
+  });
+
+  it('the element types of a named tuple one or two generic levels deeper are emitted, and so are the enclosing generics; the element names and the method name never are', async () => {
+    // The closing `>>` / `>>>` is read as a shift around the tuple, so these gave no edge.
+    const { uses } = await run([
+      'class C { object M(int n, int i, int a, int b) {',
+      '  var x = new List<List<(Order Item, int Index)>>(n);',
+      '  var y = new List<Page<(Customer Who, Line)>> { };',
+      '  var z = Make<List<(Invoice Doc, int I)>>(n);',
+      '  var w = new Box<Page<List<(Shipment Parcel, int I)>>>(n);',
+      '  var s = new List<List<(int Order, string Customer)>>(n);',
+      '  return i < (a, b) >> 1;',
+      '} }',
+      '',
+    ].join('\n'));
+    // Per line: the tuple's element types, then the enclosing generics innermost first, then the created type.
+    expect(groups(uses)).toEqual([['Order'], ['List'], ['List'], ['Customer'], ['Line'], ['Page'], ['List'], ['Invoice'], ['List'], ['Shipment'], ['List'], ['Page'], ['Box'], ['List'], ['List']]);
+  });
+});
