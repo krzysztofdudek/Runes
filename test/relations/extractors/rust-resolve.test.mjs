@@ -363,6 +363,35 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::support', 'tests/integration/suite.rs', 'rust')).toBeUndefined();
   });
 
+  it('with test discovery turned off, roots the files of tests/ at the declared tests alone, and reads a target array written inline (issue 181)', () => {
+    // ripgrep's shape: `autotests = false` and one `[[test]] path = "tests/tests.rs"`, so tests/util.rs and tests/common/ are modules of that one crate.
+    put('Cargo.toml', 'bin = [{ name = "tool", path = "tools/tool.rs" }]\n[package]\nname = "app"\nautotests = false\nautoexamples = false\nautobenches = false\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[example]]\nname = "demo"\n');
+    put('src/lib.rs', 'pub struct Dir;\n');
+    put('tests/tests.rs', 'mod common;\nmod util;\npub struct Dir;\n');
+    put('tests/common/mod.rs', '');
+    put('tests/util.rs', 'mod helper;\n');
+    put('tests/util/helper.rs', '');
+    put('tests/helper.rs', '');
+    put('examples/demo/main.rs', 'mod ui;\npub struct Model;\n');
+    put('examples/demo/ui.rs', '');
+    put('examples/other.rs', 'pub struct Model;\n');
+    put('benches/speed.rs', 'pub struct Thing;\n');
+    put('tools/tool.rs', 'mod sub;\npub struct Config;\n');
+    put('tools/sub.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Dir', 'tests/common/mod.rs', 'rust')).toBe('tests/tests.rs');
+    expect(resolve('crate::Dir', 'tests/util.rs', 'rust')).toBe('tests/tests.rs');
+    // tests/util.rs is a module, so its own `mod helper;` lies in tests/util/, never beside it.
+    expect(resolve('self::helper', 'tests/util.rs', 'rust')).toBe('tests/util/helper.rs');
+    // An [[example]] that gives only its name is rooted where Cargo infers it; a file no declared target roots has no root.
+    expect(resolve('crate::Model', 'examples/demo/ui.rs', 'rust')).toBe('examples/demo/main.rs');
+    expect(resolve('crate::Model', 'examples/other.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::Thing', 'benches/speed.rs', 'rust')).toBeUndefined();
+    // `bin = [{ path = … }]` roots its crate as `[[bin]]` does.
+    expect(resolve('crate::Config', 'tools/sub.rs', 'rust')).toBe('tools/tool.rs');
+    expect(resolve('self::sub', 'tools/tool.rs', 'rust')).toBe('tools/sub.rs');
+  });
+
   it('leaves a shared helper under tests/ rootless beside a [[test]] path in tests/ itself, and gives no root to the modules of two test paths sharing a directory', () => {
     // ripgrep's `[[test]] path = "tests/tests.rs"`: with test auto-discovery other test crates in tests/ may declare tests/common/ too.
     put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[test]]\nname = "a"\npath = "suites/a.rs"\n[[test]]\nname = "b"\npath = "suites/b.rs"\n[[bench]]\nname = "c"\npath = "suites/c/main.rs"\n');
@@ -461,6 +490,21 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(targets('[lib]\npath = "lib/lib.rs"\n[[test]]\npath = "tests/it.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\npath = "perf/main.rs"\n[[bin]]\nname = "x"\n')).toEqual(['tests/it.rs', 'demos/viewer/app.rs', 'perf/main.rs']);
     expect(targets('[bin.extra]\npath = "nope.rs"\n[test]\npath = "no.rs"\n[[tests]]\npath = "no.rs"\n[[bin.x]]\npath = "no.rs"\n[package]\npath = "no.rs"\n[[bin]]\npath = 5\n')).toEqual([]);
     expect(targets('[[bin]]\r\nname = "rg"\r\npath = "crates/core/main.rs"\r\n[[test]]\r\npath = "tests/integration/suite.rs"\r\n')).toEqual(['crates/core/main.rs', 'tests/integration/suite.rs']);
+  });
+
+  it('reads the target arrays written inline, the targets that give only a name, and the [package] flags that turn auto-discovery off (issue 181)', () => {
+    const read = (text) => {
+      const m = parseCargoManifest(text);
+      return { targetPaths: m.targetPaths, undiscoveredDirs: m.undiscoveredDirs, namedTargets: m.namedTargets };
+    };
+    // `bin = [{ path = … }]` was not read, so such a root was a module of another tree.
+    expect(read('bin = [{ name = "x", path = "tools/x.rs" }, { path = \'tools/y.rs\' }]\ntest = [\n  { name = "a", path = "t/a.rs" }, # first\n  { name = "b", required-features = ["x,]"] },\n]\nexample = [{ name = "e", path = """ex/e.rs""" }]\nbench = []\n')).toEqual({ targetPaths: ['tools/x.rs', 'tools/y.rs', 't/a.rs', 'ex/e.rs'], undiscoveredDirs: [], namedTargets: ['tests/b'] });
+    // A name with no path is rooted by Cargo at <dir>/<name>.rs or <dir>/<name>/main.rs; a [[bin]] name is not read, and a path written but unreadable is no name-only target.
+    expect(read('[[test]]\nname = "integration"\n[[example]]\nname = "demo"\n[[bench]]\nname = "speed"\npath.x = 1\n[[bin]]\nname = "cli"\ntest = 1\n')).toEqual({ targetPaths: [], undiscoveredDirs: [], namedTargets: ['tests/integration', 'examples/demo'] });
+    // `autotests` was not read, so every file in tests/ was a test crate.
+    expect(read('[package]\nname = "p"\nautotests = false\nautoexamples = true\nautobins = false\n[package.metadata]\nautobenches = false\n').undiscoveredDirs).toEqual(['tests']);
+    expect(read('package = { name = "p", autobenches = false, autoexamples = false }\n').undiscoveredDirs).toEqual(['benches', 'examples']);
+    expect(read('package.autotests = false\r\n[package]\r\nautotests = "false"\r\n').undiscoveredDirs).toEqual(['tests']);
   });
 
   it('reads a string value in each of its TOML forms, so a path written as a multi-line string is that path, not an empty one', () => {
