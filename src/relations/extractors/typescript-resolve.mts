@@ -358,12 +358,13 @@ function toPosix(p: string): string {
 // ─── Disk-backed configuration ───────────────────────────────────────────────
 
 /**
- * Parse JSON with comments and trailing commas (the tsconfig dialect). Returns
- * undefined for anything that is still not JSON afterwards.
+ * Parse JSON with comments and trailing commas (the tsconfig dialect). A leading UTF-8
+ * byte order mark (Visual Studio saves one) is skipped, as tsc, Node and npm skip it.
+ * Returns undefined for anything that is still not JSON afterwards.
  */
 export function parseJsonc(text: string): unknown {
   let out = '';
-  let i = 0;
+  let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const n = text.length;
   while (i < n) {
     const c = text[i];

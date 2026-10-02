@@ -219,4 +219,36 @@ describe('parseJsonc', () => {
     expect(parseJsonc('{ "a": "q\\"," }')).toEqual({ a: 'q",' });
     expect(parseJsonc('{ nope')).toBeUndefined();
   });
+  it('reads a file that starts with a UTF-8 byte order mark, as tsc, Node and npm do', () => {
+    expect(parseJsonc('﻿{"a":1}')).toEqual({ a: 1 });
+    expect(parseJsonc('﻿// c\n{ "a": [1,], }')).toEqual({ a: [1] });
+    // Only a leading mark is a byte order mark; one anywhere else is still not JSON.
+    expect(parseJsonc('{"a":1}﻿﻿')).toBeUndefined();
+  });
+});
+
+describe('resolveTsPath — configuration files with a byte order mark', () => {
+  const BOM = '﻿';
+  it('reads the paths of a tsconfig.json saved with a BOM (issue 074, case 1)', () => {
+    const r = project({
+      'tsconfig.json': `${BOM}{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }`,
+      'src/b/b.ts': '',
+    });
+    expect(r('@/b/b', 'src/a/a.ts')).toBe('src/b/b.ts');
+  });
+  it('a tsconfig.json with a BOM does not silence a workspace package import (case 1b)', () => {
+    const r = project({
+      'tsconfig.json': `${BOM}{ "compilerOptions": { "strict": true } }`,
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./src/index.ts" }',
+      'packages/core/src/index.ts': '',
+    });
+    expect(r('@acme/core', 'main.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('a package.json with a BOM is still a workspace package (case 2)', () => {
+    const r = project({
+      'packages/core/package.json': `${BOM}{ "name": "@acme/core", "main": "./src/index.js" }`,
+      'packages/core/src/index.js': '',
+    });
+    expect(r('@acme/core', 'packages/app/src/index.js')).toBe('packages/core/src/index.js');
+  });
 });
