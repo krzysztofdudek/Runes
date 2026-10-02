@@ -1091,3 +1091,21 @@ describe('csharp — the element type of a stackalloc (issue 139)', () => {
     expect(groups(uses)).toEqual([['Foo'], ['Baz']]);
   });
 });
+
+describe('csharp — `global::` with a single name binds the global namespace only (issue 156)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('`global::Settings` and `global::Box<Order>` are rooted: no enclosing namespace or using candidate; the type argument is an ordinary reference', async () => {
+    const { uses } = await run(['using Shop.Core;', 'namespace App;', 'class C : global::Base { global::Settings s; global::Box<Order> b; object M() => new global::Thing(); }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Base'], ['Settings'], ['Box'], ['App.Order', 'Shop.Core.Order', 'Order'], ['Thing']]);
+  });
+  it('`global::Program` falls back to the implicit Program; a type parameter `T` never shadows `global::T`', async () => {
+    const { uses } = await run(['namespace App;', 'class C<T> { global::Program p; global::T t; T u; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Program', '<Program>$'], ['T']]);
+  });
+  it('inside a file of top-level statements, `global::Program` is the file\'s own class and emits nothing', async () => {
+    const { uses } = await run(['var t = typeof(global::Program);', ''].join('\n'));
+    expect(groups(uses)).toEqual([]);
+  });
+});
