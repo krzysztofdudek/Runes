@@ -144,7 +144,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
  * ancestor of the importing file that contains a `Cargo.toml`; which CRATE of that package
  * the file belongs to follows Cargo's target auto-discovery (`src/lib.rs` / `src/main.rs`
  * for `src/**`, `src/bin/<x>.rs` and `src/bin/<x>/main.rs`, `tests/`, `examples/`,
- * `benches/`, `build.rs`) and the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table — see `rustTargetFor`. The package's crate name (`[lib].name`,
+ * `benches/`, `build.rs`, each of the last three unless `[package]` turns its discovery off) and the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table, written as tables or inline — see `rustTargetFor`. The package's crate name (`[lib].name`,
  * else `[package].name`, hyphens → underscores) addresses its library from any target.
  *
  * In-repo PATH DEPENDENCIES (`[dependencies]`, `[dev-dependencies]`,
@@ -233,7 +233,7 @@ function makeRustResolveDeps(projectRoot, exists) {
         const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
         // Target sub-paths are package-relative and never climb, so a plain join is exact.
         const at = (sub) => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.targetPaths);
+        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.targetPaths, manifest?.undiscoveredDirs, manifest?.namedTargets);
         return {
             srcDir: at(target.srcDir),
             crateName,
@@ -309,8 +309,10 @@ function makeRustResolveDeps(projectRoot, exists) {
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
  *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
  *
- *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`. */
-export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = []) {
+ *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`.
+ *
+ *  `undiscoveredDirs` are the directories among `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
+export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = [], undiscoveredDirs = [], namedTargets = []) {
     const targets = [...new Set(targetPaths.map((p) => path.posix.normalize(p)))];
     const dirOfRoot = (root) => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
     if (targets.includes(rel))
@@ -337,6 +339,12 @@ export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = []) {
         const dir = `src/bin/${segs[2]}`;
         const main = `${dir}/main.rs`;
         return { srcDir: dir, rootFiles: [main], fileIsRoot: rel === main };
+    }
+    if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2 && undiscoveredDirs.includes(segs[0])) {
+        const named = namedTargets.filter((n) => n.startsWith(`${segs[0]}/`) && !n.slice(segs[0].length + 1).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
+        if (named.includes(rel))
+            return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
+        return deepestTree([libRoot, ...named, ...targets]) ?? { srcDir: segs[0], rootFiles: [], fileIsRoot: false };
     }
     if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2) {
         if (segs.length === 2)
@@ -526,14 +534,29 @@ function inlineTableMembers(value) {
 }
 /** The target tables whose array elements (`[[bin]]`, `[[test]]`, `[[example]]`, `[[bench]]`) can name a crate root with `path`. */
 const TARGET_TABLES = new Set(['bin', 'test', 'example', 'bench']);
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** The directory Cargo discovers each kind of target in, and the `[package]` key that turns that discovery off. `[[bin]]` (`src/bin/`, `autobins`) is not read. */
+const DISCOVERED_DIRS = {
+    test: { dir: 'tests', flag: 'autotests' },
+    example: { dir: 'examples', flag: 'autoexamples' },
+    bench: { dir: 'benches', flag: 'autobenches' },
+};
+/** The elements of the TOML array `value` (`[a, { b = 1 }, "c"]`), each as its text, split at the array's own commas: strings and nested brackets stay whole, and an empty element (a trailing comma) is skipped. Undefined when `value` is no array. */
+function inlineArrayItems(value) {
+    const v = value.trim();
+    if (!v.startsWith('['))
+        return undefined;
+    return inlineTableMembers(`{${v.slice(1, v.endsWith(']') ? -1 : undefined)}}`);
+}
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autotests`, `autoexamples` and `autobenches`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text) {
     let packageName;
     let libName;
     let libPath;
-    const targetPaths = [];
-    // Inside one element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables.
-    let inTarget = false;
+    // Each element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array, with the `name` and `path` it gives (`null` for one written but not readable as a string).
+    const targets = [];
+    const undiscoveredDirs = [];
+    // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
+    let inTarget;
     const dependencies = new Map();
     const workspaceDependencies = new Map();
     // The current table header's key segments ([] above the first header).
@@ -575,6 +598,22 @@ export function parseCargoManifest(text) {
             libName = tomlString(value);
         else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'path')
             libPath = tomlString(value);
+        else if (keyPath.length === 2 && top === 'package' && Object.values(DISCOVERED_DIRS).some((d) => d.flag === keyPath[1])) {
+            const { dir } = Object.values(DISCOVERED_DIRS).find((d) => d.flag === keyPath[1]);
+            if (value === 'false' && !undiscoveredDirs.includes(dir))
+                undiscoveredDirs.push(dir);
+        }
+        else if (keyPath.length === 1 && TARGET_TABLES.has(top)) {
+            // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
+            for (const item of inlineArrayItems(value) ?? []) {
+                const target = { kind: top };
+                for (const [key, member] of membersOf(item))
+                    if (key[0] === 'name' || key[0] === 'path')
+                        target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
+                if (inlineTableMembers(item) !== undefined)
+                    targets.push(target);
+            }
+        }
         else if (keyPath.length === 1 && (top === 'package' || top === 'lib')) {
             // `package = { name = … }`, `lib = { path = … }`: the table its key names, each member read as the dotted key it stands for.
             for (const [key, member] of membersOf(value))
@@ -616,7 +655,9 @@ export function parseCargoManifest(text) {
         const header = /^\[\[?\s*([^\]]+?)\s*\]\]?$/.exec(line);
         if (header) {
             sectionPath = keySegments(header[1]);
-            inTarget = line.startsWith('[[') && sectionPath.length === 1 && TARGET_TABLES.has(sectionPath[0]);
+            inTarget = line.startsWith('[[') && sectionPath.length === 1 && TARGET_TABLES.has(sectionPath[0]) ? { kind: sectionPath[0] } : undefined;
+            if (inTarget !== undefined)
+                targets.push(inTarget);
             declaredHere = new Set();
             // `[dependencies.<name>]` (or a table below it) declares the crate; its lines are the crate's fields.
             const entry = dependencyEntryAt(sectionPath);
@@ -630,11 +671,8 @@ export function parseCargoManifest(text) {
         // A key is one or more segments joined by dots (TOML dotted keys), each bare or quoted.
         const segments = keySegments(kv[1]);
         const value = kv[2].trim();
-        if (inTarget && segments.length === 1 && segments[0] === 'path') {
-            const targetPath = tomlString(value);
-            if (targetPath !== undefined)
-                targetPaths.push(targetPath);
-        }
+        if (inTarget !== undefined && (segments[0] === 'path' || segments[0] === 'name'))
+            inTarget[segments[0]] = segments.length === 1 ? (tomlString(value) ?? null) : null;
         else
             assign([...sectionPath, ...segments], value);
     }
@@ -642,7 +680,9 @@ export function parseCargoManifest(text) {
     return {
         crateName: name === undefined ? undefined : normalizeCrateName(name),
         libPath,
-        targetPaths,
+        targetPaths: targets.flatMap((t) => (typeof t.path === 'string' ? [t.path] : [])),
+        undiscoveredDirs,
+        namedTargets: targets.flatMap((t) => (t.path === undefined && typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
         dependencies,
         workspaceDependencies,
     };

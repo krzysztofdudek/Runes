@@ -38,7 +38,7 @@ import { walk } from '../../ast/walk.mjs';
  *    global-using prefixes — plus its MSBuild `<Using>` items and SDK implicit usings — and
  *    injects them into each file's `uses(file, { projectGlobalUsings })` as the lowest using tier. Then, for each type reference (detected across every syntactic
  *    type position — base/`new`, field/property/parameter/return/local types, generic base names
- *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
+ *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]` (a generic one by its name without type arguments, `[A.Gen<T>]` as `A.Gen`, and one after a using alias, `[S::Foo]`, in the aliased namespace), generic constraints, `typeof`/`is`/`as`/
  *    cast operands, tuple/array/nullable element types (a named tuple type argument the grammar misreads as comparisons included), the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
@@ -663,7 +663,7 @@ export function extractCsharpRefs(file) {
         });
     };
     /** Emit an attribute descriptor (the two-reading `[Foo]`/`[FooAttribute]` group). */
-    const pushAttribute = (written, suffixed, node, line, rooted = false) => {
+    const pushAttribute = (written, suffixed, node, line, rooted = false, alias) => {
         refs.push({
             kind: 'attr',
             written,
@@ -671,6 +671,7 @@ export function extractCsharpRefs(file) {
             line,
             enclosingNs: enclosingNamespaceChain(fileNs, node),
             rooted,
+            ...(alias !== undefined ? { alias } : {}),
         });
     };
     /**
@@ -789,6 +790,14 @@ export function extractCsharpRefs(file) {
             pushRef(stripGlobalQualifier(q.text), q, line, rooted);
             return;
         }
+        const { name, generics } = qualifiedNameParts(q);
+        if (name !== undefined)
+            pushRef(name, q, line, rooted);
+        for (const g of generics)
+            emitTypeArguments(g);
+    }
+    /** A generic qualified name's plain dotted name, its type-argument lists stripped (undefined when a qualifier is a using alias, `Lib::A<T>.B`, which can never match a dot-only key, R13), and its generic segments, whose type arguments are references of their own. */
+    function qualifiedNameParts(q) {
         const segs = [];
         const generics = [];
         let ok = true;
@@ -814,10 +823,7 @@ export function extractCsharpRefs(file) {
             }
         };
         collect(q);
-        if (ok)
-            pushRef(segs.join('.'), q, line, rooted);
-        for (const g of generics)
-            emitTypeArguments(g);
+        return { name: ok ? segs.join('.') : undefined, generics };
     }
     /** The first child of the given type, or null. */
     function findChild(node, childType) {
@@ -970,42 +976,36 @@ export function extractCsharpRefs(file) {
         // Attribute usage `[Foo]` / `[FooAttribute]` / generic `[Foo<Bar>]` (C#11, E9).
         if (node.type === 'attribute') {
             const nameField = node.childForFieldName('name');
-            // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name.
-            const rooted = nameField !== null && nameField.text.startsWith('global::');
-            const named = nameField !== null && nameField.type === 'alias_qualified_name' && rooted ? nameField.childForFieldName('name') : nameField;
-            if (nameField !== null && named !== null && (named.type === 'identifier' || named.type === 'qualified_name')) {
-                if (!emitted.has(nameField.id)) {
-                    emitted.add(nameField.id);
-                    const written = stripGlobalQualifier(named.text);
-                    // The C# attribute-naming convention: `[Foo]` may name `Foo` OR `FooAttribute`. Emit
-                    // both readings as ONE group (the verbatim and the `Attribute`-suffixed form), so the
-                    // dependency resolves whichever the declaring type is named.
-                    const last = written.split('.').pop() ?? written;
-                    const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
-                    pushAttribute(written, suffixed, nameField, nameField.startPosition.row + 1, rooted);
-                }
+            if (nameField === null || emitted.has(nameField.id))
+                return undefined;
+            emitted.add(nameField.id);
+            // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name. After a using alias (`[S::Foo]`, `[S::Gen<T>]`, `using S = N;`) the right side is the attribute's name in the aliased namespace, rewritten on assembly as a type's `S::Tail` is (B5).
+            const rooted = nameField.text.startsWith('global::');
+            const aliasField = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('alias') : null;
+            const alias = aliasField !== null && aliasField.text !== 'global' ? aliasField.text : undefined;
+            const named = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('name') : nameField;
+            // The C# attribute-naming convention: `[Foo]` may name `Foo` OR `FooAttribute`. Emit both readings as ONE group (the verbatim and the `Attribute`-suffixed form), so the dependency resolves whichever the declaring type is named.
+            const emitAttribute = (written, at) => {
+                const last = written.split('.').pop() ?? written;
+                const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
+                pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, alias);
+            };
+            if (named !== null && named.type === 'identifier')
+                emitAttribute(named.text, nameField);
+            else if (named !== null && named.type === 'qualified_name' && !named.text.includes('<'))
+                emitAttribute(stripGlobalQualifier(named.text), nameField);
+            else if (named !== null && named.type === 'qualified_name') {
+                // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) names nothing, as in a type position (R13).
+                const { name, generics } = qualifiedNameParts(named);
+                if (name !== undefined)
+                    emitAttribute(name, nameField);
+                for (const g of generics)
+                    emitTypeArguments(g);
             }
-            else if (nameField !== null && named !== null && named.type === 'generic_name') {
-                // C#11 generic attribute `[Foo<Bar>]`: the attribute NAME is the `generic_name`'s base
-                // identifier (`Foo`, with the `Foo`/`FooAttribute` convention), and each type ARGUMENT
-                // (`Bar`) is its own real type reference. The base container name resolves the attribute
-                // class; the type arguments are descended separately.
-                if (!emitted.has(nameField.id)) {
-                    emitted.add(nameField.id);
-                    const baseName = named.childForFieldName('name');
-                    const baseId = baseName ?? findChild(named, 'identifier');
-                    if (baseId !== null) {
-                        const written = stripGlobalQualifier(baseId.text);
-                        const last = written.split('.').pop() ?? written;
-                        const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
-                        pushAttribute(written, suffixed, baseId, baseId.startPosition.row + 1, rooted);
-                    }
-                    const args = named.childForFieldName('type_arguments') ?? findChild(named, 'type_argument_list');
-                    if (args !== null) {
-                        for (let i = 0; i < args.namedChildCount; i++)
-                            emitTypeNode(args.namedChild(i));
-                    }
-                }
+            else if (named !== null && named.type === 'generic_name') {
+                // C#11 generic attribute `[Foo<Bar>]`: the attribute NAME is the `generic_name`'s base identifier (`Foo`, with the `Foo`/`FooAttribute` convention), and each type ARGUMENT (`Bar`) is its own real type reference.
+                emitAttribute(findChild(named, 'identifier').text, findChild(named, 'identifier')); // a generic_name always has its identifier
+                emitTypeArguments(named);
             }
             return undefined;
         }
@@ -1376,9 +1376,17 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 }
                 break;
             }
-            case 'attr':
-                pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true);
+            case 'attr': {
+                if (r.alias === undefined) {
+                    pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true);
+                    break;
+                }
+                // `[S::Foo]`: both readings in the namespace `S` names, from the root (B5); nothing when `S` is no confirmed alias.
+                const aliasFqn = aliases.get(r.alias);
+                if (aliasFqn !== undefined)
+                    pushAttribute(`${aliasFqn}.${r.written}`, r.suffixed === undefined ? undefined : `${aliasFqn}.${r.suffixed}`, r.enclosingNs, r.line, true);
                 break;
+            }
             case 'receiver': {
                 // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies.
                 const rooted = r.rooted === true;

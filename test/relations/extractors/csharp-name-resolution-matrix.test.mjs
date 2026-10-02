@@ -107,6 +107,9 @@ describe('MATRIX — global:: prefix stripping', () => {
   it('csharp-global-qualifier-single-name-silence', () => runCase('csharp-global-qualifier-single-name-silence'));
   it('csharp-global-qualifier-attribute-edge', () => runCase('csharp-global-qualifier-attribute-edge'));
   it('csharp-global-qualifier-attribute-silence', () => runCase('csharp-global-qualifier-attribute-silence'));
+  it('csharp-qualified-generic-attribute-edge', () => runCase('csharp-qualified-generic-attribute-edge'));
+  it('csharp-alias-qualified-attribute-edge', () => runCase('csharp-alias-qualified-attribute-edge'));
+  it('csharp-alias-qualified-attribute-silence', () => runCase('csharp-alias-qualified-attribute-silence'));
   it('csharp-global-qualifier-member-access-edge', () => runCase('csharp-global-qualifier-member-access-edge'));
   it('csharp-global-qualifier-member-access-silence', () => runCase('csharp-global-qualifier-member-access-silence'));
 });

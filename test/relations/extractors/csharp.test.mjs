@@ -1223,3 +1223,42 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
     expect(groups(uses)).toEqual([['Order'], ['List'], ['List'], ['Customer'], ['Line'], ['Page'], ['List'], ['Invoice'], ['List'], ['Shipment'], ['List'], ['Page'], ['Box'], ['List'], ['List']]);
   });
 });
+
+describe('csharp — a generic attribute behind a qualifier, and an attribute after a using alias (issue 181)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a qualified generic attribute is named without its type arguments, rooted after `global::`, and its type arguments are ordinary references', async () => {
+    // `[A.Gen<Order>]` looked up `A.Gen<Order>` and `A.Gen<Order>Attribute` and emitted no type argument.
+    const { uses } = await run(['using Shop.Core;', 'namespace Shop.Web;', '[A.Gen<Order>]', '[global::A.B.Gen<Order, Item>]', '[S::A.Gen<Item>]', 'class C { }', ''].join('\n'));
+    expect(groups(uses)).toEqual([
+      ['Shop.Web.A.Gen', 'Shop.A.Gen', 'Shop.Core.A.Gen', 'A.Gen', 'Shop.Web.A.GenAttribute', 'Shop.A.GenAttribute', 'Shop.Core.A.GenAttribute', 'A.GenAttribute'],
+      ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'],
+      ['A.B.Gen', 'A.B.GenAttribute'],
+      ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'],
+      ['Shop.Web.Item', 'Shop.Item', 'Shop.Core.Item', 'Item'],
+      // A qualifier through a using alias names nothing, as in a type position; the type argument is still read.
+      ['Shop.Web.Item', 'Shop.Item', 'Shop.Core.Item', 'Item'],
+    ]);
+  });
+
+  it('an attribute after a using alias reads both readings in the aliased namespace from the root, and after an unknown or extern alias nothing', async () => {
+    // `[S::Foo]` emitted nothing.
+    const { uses } = await run(['using S = Shop.Attrs;', 'namespace Shop.Web;', '[S::Foo, S::BarAttribute]', '[S::Gen<Order>(1)]', '[Lib::Foo]', 'class C { }', ''].join('\n'));
+    expect(groups(uses)).toEqual([
+      ['Shop.Attrs.Foo', 'Shop.Attrs.FooAttribute'],
+      ['Shop.Attrs.BarAttribute'],
+      ['Shop.Attrs.Gen', 'Shop.Attrs.GenAttribute'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order'],
+    ]);
+  });
+
+  it('a project-wide alias binds an attribute after `S::`, and an alias two projects bind differently silences it', async () => {
+    const code = ['namespace Shop.Web;', '[P::Foo]', 'class C { }', ''].join('\n');
+    await withParsedFile('x.cs', code, (tree) => {
+      const file = { path: 'x.cs', content: code, tree, language: 'csharp' };
+      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['P', 'Shop.Attrs']] }))).toEqual([['Shop.Attrs.Foo', 'Shop.Attrs.FooAttribute']]);
+      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['P', 'A.Attrs'], ['P', 'B.Attrs']] }))).toEqual([]);
+    });
+  });
+});
