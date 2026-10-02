@@ -90,6 +90,15 @@ const PYTHON_STDLIB_TOP_LEVEL: ReadonlySet<string> = new Set(
  * not shadow the real source root): a single distinct matching file is returned;
  * 2+ distinct matches are ambiguous and resolve to undefined (silence).
  *
+ * The exact module is looked for at every root before the parent fallback counts. When
+ * some root holds the module itself (`a/b/c.py` or `a/b/c/__init__.py`), a parent PACKAGE
+ * (`a/b/__init__.py`) found at another root does not compete with it: a package can span
+ * several roots (a pkgutil-style namespace package that several distributions ship, each
+ * with its own `__init__.py` extending `__path__`), so the submodule is reachable through
+ * it. A parent MODULE file (`a/b.py`) at another root still competes, because a module
+ * holds no submodules and which of the two Python loads depends on the `sys.path` order.
+ * The parent packages count only when no root holds the exact module.
+ *
  * An ancestor directory INSIDE A REGULAR PACKAGE is never a root: one that holds an
  * `__init__.py`, or whose parent does (a namespace sub-directory of a regular package).
  * `sys.path` only ever holds directories outside packages, so `import logging` in
@@ -143,14 +152,16 @@ function resolveAbsolute(
   //
   // Per-root, the candidate priority order is preserved (module-as-file/package
   // first, then the parentPath longest-match): only the first LIVE hit at each
-  // root is added to the set, so a root that matches both the full module and its
+  // root counts, so a root that matches both the full module and its
   // parent still contributes just one file (the stronger match wins) — but an
   // EXCLUDED hit does not stop the search at that root: it is skipped exactly
   // like a genuine miss, so a live candidate further down the SAME root's list
   // (a package outranking its own excluded same-named module, matching CPython's
-  // real precedence) still reaches the match set.
+  // real precedence) still counts. Across roots, an exact hit outranks a parent
+  // package fallback (see the doc comment above).
   const isExcl = isExcluded ?? ((): boolean => false);
-  const matches = new Set<string>();
+  const firstLive = (candidates: readonly string[]): string | undefined =>
+    candidates.find((cand) => exists(cand) && !isExcl(cand));
   const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(segments[0]);
   const discovered = projectRoots?.() ?? [];
   const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
@@ -165,27 +176,26 @@ function resolveAbsolute(
       if (!roots.includes(root) && !insideRegularPackage(root, exists)) roots.push(root);
     }
   }
+  const exact = new Set<string>();
+  const parentPackages = new Set<string>();
+  const parentModules = new Set<string>();
   for (const dir of roots) {
-    const candidates: string[] = [
-      // package / module-as-file at this root — CPython imports a regular
-      // package over a same-named module file (verified against the real
-      // interpreter: `import lib.mod` loads lib/mod/__init__.py even when
-      // lib/mod.py also exists at the same root).
-      joinUnder(dir, modulePath + '/__init__.py'),
-      joinUnder(dir, modulePath + '.py'),
-    ];
+    // package / module-as-file at this root — CPython imports a regular
+    // package over a same-named module file (verified against the real
+    // interpreter: `import lib.mod` loads lib/mod/__init__.py even when
+    // lib/mod.py also exists at the same root).
+    const hit = firstLive([joinUnder(dir, modulePath + '/__init__.py'), joinUnder(dir, modulePath + '.py')]);
+    if (hit !== undefined) {
+      exact.add(hit);
+      continue;
+    }
     // `from a.b import c` longest-match: last segment is a symbol in module a.b.
-    if (parentPath.length > 0) {
-      candidates.push(joinUnder(dir, parentPath + '/__init__.py'));
-      candidates.push(joinUnder(dir, parentPath + '.py'));
-    }
-    for (const cand of candidates) {
-      if (cand !== undefined && exists(cand) && !isExcl(cand)) {
-        matches.add(cand);
-        break; // only the strongest LIVE match per root contributes to the set
-      }
-    }
+    if (parentPath.length === 0) continue;
+    const parentPackage = joinUnder(dir, parentPath + '/__init__.py');
+    const fallback = firstLive([parentPackage, joinUnder(dir, parentPath + '.py')]);
+    if (fallback !== undefined) (fallback === parentPackage ? parentPackages : parentModules).add(fallback);
   }
+  const matches = new Set([...(exact.size > 0 ? exact : parentPackages), ...parentModules]);
   return matches.size === 1 ? [...matches][0] : undefined;
 }
 
