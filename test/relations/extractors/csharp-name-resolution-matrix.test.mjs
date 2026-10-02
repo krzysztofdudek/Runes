@@ -220,3 +220,9 @@ describe('MATRIX — the implicit Program of top-level statements', () => {
   it('csharp-top-level-program-implicit-class-edge', () => runCase('csharp-top-level-program-implicit-class-edge'));
   it('csharp-top-level-program-two-entries-silence', () => runCase('csharp-top-level-program-two-entries-silence'));
 });
+
+describe('MATRIX — a comparison pair the grammar reads as a declaration', () => {
+  it('csharp-comparison-pair-argument-silence', () => runCase('csharp-comparison-pair-argument-silence'));
+  it('csharp-comparison-pair-constructor-argument-silence', () => runCase('csharp-comparison-pair-constructor-argument-silence'));
+  it('csharp-comparison-pair-indexer-argument-silence', () => runCase('csharp-comparison-pair-indexer-argument-silence'));
+});
