@@ -62,6 +62,8 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-integration-test-mod-common-edge', () => runCase('rust-integration-test-mod-common-edge'));
   it('rust-workspace-path-dependency-edge', () => runCase('rust-workspace-path-dependency-edge'));
   it('rust-dotted-key-workspace-dependency-edge', () => runCase('rust-dotted-key-workspace-dependency-edge'));
+  it('rust-root-dotted-dependency-key-edge', () => runCase('rust-root-dotted-dependency-key-edge'));
+  it('rust-reexported-extern-crate-edge', () => runCase('rust-reexported-extern-crate-edge'));
   it('rust-extern-crate-alias-edge', () => runCase('rust-extern-crate-alias-edge'));
 });
 

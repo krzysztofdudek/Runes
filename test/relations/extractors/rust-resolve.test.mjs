@@ -342,12 +342,127 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parseCargoManifest('[dependencies]\nkit = "1"\nkit.path = "../kit"\n').dependencies).toEqual(whole);
   });
 
+  it('keeps the first declaration of a crate against a later [dependencies.<name>] table too, so one rule holds for every form', () => {
+    // Issue 136: a `[dependencies.<name>]` table filled the entry an earlier declaration had made, while a later whole value or dotted line left it alone.
+    const first = new Map([['kit', { workspace: false }]]);
+    expect(parseCargoManifest('[dependencies]\nkit = "1"\n\n[dependencies.kit]\npath = "../kit"\n').dependencies).toEqual(first);
+    expect(parseCargoManifest('[dependencies]\nkit = "1"\n\n[dev-dependencies.kit]\npath = "../kit"\npackage = "kit-pkg"\n').dependencies).toEqual(first);
+    expect(parseCargoManifest('[dependencies]\nkit.version = "1"\n\n[build-dependencies.kit]\nworkspace = true\n').dependencies).toEqual(first);
+    expect(parseCargoManifest('[workspace.dependencies]\nkit = "1"\n\n[workspace.dependencies.kit]\npath = "libs/kit"\n').workspaceDependencies).toEqual(first);
+    // A table that declares the crate first keeps its own fields; a later table of the same crate extends nothing.
+    expect(parseCargoManifest('[dependencies.kit]\npath = "../kit"\n\n[dev-dependencies.kit]\npath = "../other"\npackage = "kit-pkg"\n').dependencies).toEqual(
+      new Map([['kit', { path: '../kit', workspace: false }]]),
+    );
+  });
+
+  it('reads a dotted key that names the dependency table itself, above the first header or inside [workspace] / [target.<cfg>]', () => {
+    // Issue 135: `dependencies.kit.path` above the first header and `dependencies.kit.path` inside [workspace] were ignored.
+    const kit = new Map([['kit', { path: '../kit', workspace: false }]]);
+    const parsed = (text) => parseCargoManifest(text);
+    expect(parsed('dependencies.kit.path = "../kit"\n\n[package]\nname = "app"\n').dependencies).toEqual(kit);
+    expect(parsed('dependencies.kit = { path = "../kit" }\n').dependencies).toEqual(kit);
+    expect(parsed('dev-dependencies."kit".path = "../kit"\n').dependencies).toEqual(kit);
+    expect(parsed("target.'cfg(unix)'.build-dependencies.kit.path = '../kit'\n").dependencies).toEqual(kit);
+    expect(parsed("[target.'cfg(unix)']\ndependencies.kit.path = \"../kit\"\n").dependencies).toEqual(kit);
+    expect(parsed('dependencies.kit.workspace = true\n').dependencies).toEqual(new Map([['kit', { workspace: true }]]));
+    const ws = new Map([['kit', { path: 'libs/kit', workspace: false }]]);
+    expect(parsed('[workspace]\nmembers = ["libs/*"]\ndependencies.kit.path = "libs/kit"\n').workspaceDependencies).toEqual(ws);
+    expect(parsed('[workspace]\ndependencies.kit = { path = "libs/kit" }\n').workspaceDependencies).toEqual(ws);
+    expect(parsed('workspace.dependencies.kit.path = "libs/kit"\n').workspaceDependencies).toEqual(ws);
+    // One table above the first header can hold both maps; each crate merges its own lines.
+    const both = parsed('workspace.dependencies.kit.path = "libs/kit"\ndependencies.kit.workspace = true\ndependencies.kit.package = "kit-pkg"\n');
+    expect(both.workspaceDependencies).toEqual(ws);
+    expect(both.dependencies).toEqual(new Map([['kit', { package: 'kit-pkg', workspace: true }]]));
+    // The first declaration keeps the crate here too, and keys that name no crate declare nothing.
+    expect(parsed('dependencies.kit.path = "../kit"\n\n[dependencies]\nkit = { path = "../other" }\n').dependencies).toEqual(kit);
+    expect(parsed('package.name = "x"\nworkspace.members = ["a"]\n[workspace]\nresolver = "2"\n').dependencies).toEqual(new Map());
+  });
+
+  it('reads the fields written after a multi-line array inside an inline table (the zed shape)', () => {
+    // Issue 149: the line-by-line reader stopped at the first line of `features = [`, so `package` (zed's reqwest and xim) or a `path` after the array was lost.
+    const { dependencies, workspaceDependencies } = parseCargoManifest(
+      [
+        '[workspace.dependencies]',
+        'reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", default-features = false, features = [',
+        '    "charset",',
+        '    "http2",',
+        '], package = "zed-reqwest", version = "0.12.15-zed" }',
+        'next = { path = "crates/next" }',
+        '',
+        '[dependencies]',
+        'kit = { git = "https://example.com/a[b{c", features = [ # a comment with ] and }',
+        '  "a]",',
+        "  ['nested', \"}\"],",
+        '], path = "../kit" }',
+        'tail = { path = "../tail" }',
+        'list.features = [',
+        '  "x",',
+        ']',
+        'list.path = "../list"',
+      ].join('\n') + '\n',
+    );
+    expect(workspaceDependencies).toEqual(
+      new Map([
+        ['reqwest', { path: undefined, package: 'zed-reqwest', workspace: false }],
+        ['next', { path: 'crates/next', package: undefined, workspace: false }],
+      ]),
+    );
+    expect(dependencies).toEqual(
+      new Map([
+        ['kit', { path: '../kit', package: undefined, workspace: false }],
+        ['tail', { path: '../tail', package: undefined, workspace: false }],
+        ['list', { path: '../list', workspace: false }],
+      ]),
+    );
+    // Joining lines follows strings: a multi-line string is one value, so its content is never read as a table header or an entry.
+    expect(parseCargoManifest('[package]\nname = "app"\ndescription = """\n[dependencies]\nghost = { path = "../ghost" }\n"""\n').dependencies).toEqual(new Map());
+  });
+
+  it('joins the lines of a CRLF file the same way, so an entry with a multi-line array keeps the fields before and after it', () => {
+    // Issue 149, round 2: the join kept each `\r`, the joined line no longer matched `key = value`, and the whole entry was dropped.
+    const lf = '[dependencies]\nkit = { path = "../kit", features = [\n    "a",\n    "b", # comment\n], package = "kit-pkg" }\nnext = { path = "../next" }\n';
+    const crlf = lf.replace(/\n/g, '\r\n');
+    const expected = new Map([
+      ['kit', { path: '../kit', package: 'kit-pkg', workspace: false }],
+      ['next', { path: '../next', package: undefined, workspace: false }],
+    ]);
+    expect(parseCargoManifest(lf).dependencies).toEqual(expected);
+    expect(parseCargoManifest(crlf).dependencies).toEqual(expected);
+  });
+
+  it('stops joining at a line that opens a table header, so a bracket left open in invalid TOML can lose an entry but never invent one', () => {
+    // A `]` missing from `features` would otherwise swallow the next table and hand `bar`'s path to `foo`.
+    const text = '[dependencies]\nfoo = { version = "1", features = ["a" }\n\n[dev-dependencies]\nbar = { path = "../bar" }\n';
+    for (const t of [text, text.replace(/\n/g, '\r\n')]) {
+      expect(parseCargoManifest(t).dependencies).toEqual(
+        new Map([
+          ['foo', { path: undefined, package: undefined, workspace: false }],
+          ['bar', { path: '../bar', package: undefined, workspace: false }],
+        ]),
+      );
+    }
+    // The same for a one-line string left open inside an inline table, and for a header written below a nested table.
+    expect(parseCargoManifest('[dependencies]\nfoo = { git = "https://x, features = [\n[target.\'cfg(unix)\'.dependencies]\nbar.path = "../bar"\n').dependencies.get('bar')).toEqual({ path: '../bar', workspace: false });
+    // A nested array element that is not a header keeps the join.
+    expect(parseCargoManifest('[dependencies]\nkit = { features = [\n  ["a", "b"],\n  [1, 2]\n], path = "../kit" }\n').dependencies.get('kit')).toEqual({ path: '../kit', package: undefined, workspace: false });
+  });
+
   it('matches a declared or used name as a whole word only', () => {
     expect(rustFileDeclares('pub struct Engine;', 'Engine')).toBe(true);
     expect(rustFileDeclares('pub struct EngineRoom;', 'Engine')).toBe(false);
     expect(rustFileDeclares('pub use a::{b::Engine, c};', 'Engine')).toBe(true);
     expect(rustFileDeclares('fn f() { let Engine = 1; }', 'Engine')).toBe(false);
     expect(rustFileDeclares('pub mod r#gen;', 'gen')).toBe(true);
+  });
+
+  it('counts an `extern crate` binding as a name the file declares: the alias when renamed, else the crate', () => {
+    // Issue 137: ripgrep's facade crate `grep` re-exports its parts as `pub extern crate grep_printer as printer;`, so `grep::printer::…` found no declaration in grep's lib.rs and stayed silent.
+    expect(rustFileDeclares('pub extern crate grep_printer as printer;', 'printer')).toBe(true);
+    expect(rustFileDeclares('pub extern crate grep_printer as printer;', 'grep_printer')).toBe(false);
+    expect(rustFileDeclares('#[macro_use]\nextern crate log;', 'log')).toBe(true);
+    expect(rustFileDeclares('extern crate r#async as r#await ;', 'await')).toBe(true);
+    expect(rustFileDeclares('extern crate self as facade;', 'facade')).toBe(true);
+    expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
   });
 });
 
@@ -424,6 +539,27 @@ describe('resolveRustPath — manifest and target edge forms (disk-backed)', () 
     for (const pkg of ['a', 'd', 'f', 'g']) {
       expect(resolve('shop_core::Order', `crates/${pkg}/src/main.rs`, 'rust'), pkg).toBe('crates/core/src/lib.rs');
     }
+  });
+
+  it('resolves a path dependency whose path follows a multi-line features array in its inline table', () => {
+    // Issue 149: `path` after `features = [ … ]` spread over lines was never read, so the import was silent.
+    put('Cargo.toml', '[package]\nname = "app"\n\n[dependencies]\nkit = { version = "0.1", features = [\n    "x",\n    "y",\n], path = "libs/kit" }\n');
+    put('libs/kit/Cargo.toml', '[package]\nname = "kit"\n');
+    put('libs/kit/src/lib.rs', 'pub struct Engine;\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('kit::Engine', 'src/main.rs', 'rust')).toBe('libs/kit/src/lib.rs');
+  });
+
+  it('binds a path through a dependency\'s re-exported extern crate to that dependency\'s crate root file', () => {
+    // Issue 137, the ripgrep shape: `rg` uses `grep::printer::Standard`, and the facade crate `grep` declares `printer` only as `pub extern crate grep_printer as printer;`.
+    put('Cargo.toml', '[package]\nname = "app"\n\n[dependencies]\ngrep = { path = "crates/grep" }\n');
+    put('crates/grep/Cargo.toml', '[package]\nname = "grep"\n\n[dependencies]\ngrep-printer = { path = "../printer" }\n');
+    put('crates/grep/src/lib.rs', 'pub extern crate grep_printer as printer;\n');
+    put('crates/printer/Cargo.toml', '[package]\nname = "grep-printer"\n');
+    put('crates/printer/src/lib.rs', 'pub struct Standard;\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('grep::printer::Standard', 'crates/core/flags/hiargs.rs', 'rust')).toBe('crates/grep/src/lib.rs');
+    expect(resolve('grep::searcher::Searcher', 'crates/core/flags/hiargs.rs', 'rust')).toBeUndefined();
   });
 
   it('walks past an intermediate manifest to the workspace that defines an inherited dependency', () => {
