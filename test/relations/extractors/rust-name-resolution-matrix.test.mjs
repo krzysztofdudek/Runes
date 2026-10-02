@@ -51,6 +51,7 @@ describe('MATRIX — crate-relative use (the `::`-path IS the edge; resolves thr
   it('rust-pub-use-reexport-edge', () => runCase('rust-pub-use-reexport-edge'));
   it('rust-use-grouped-crate-root-edge', () => runCase('rust-use-grouped-crate-root-edge'));
   it('rust-use-grouped-nested-subpath-edge', () => runCase('rust-use-grouped-nested-subpath-edge'));
+  it('rust-top-level-use-list-edge', () => runCase('rust-top-level-use-list-edge'));
   it('rust-use-crate-root-item-edge', () => runCase('rust-use-crate-root-item-edge'));
   it('rust-raw-identifier-module-edge', () => runCase('rust-raw-identifier-module-edge'));
 });

@@ -296,10 +296,7 @@ function uses(file) {
                 return;
             }
             case 'scoped_use_list': {
-                // `prefix::{ items }` — extend the prefix with this group's path, then resolve
-                // EVERY item on its own under that prefix: a path item (`billing::Invoice`) names
-                // its own module, never the prefix module. A group with no usable prefix
-                // (`use {a, b};`, non-idiomatic) resolves each item from the top level.
+                // `prefix::{ items }` — extend the prefix with this group's path, then resolve EVERY item on its own under that prefix: a path item (`billing::Invoice`) names its own module, never the prefix module. A leading-`::` group with no usable prefix (`use ::{a, b};`) resolves each item from the top level.
                 const pre = prefixNode(arg);
                 const groupPrefix = pre === null
                     ? prefix
@@ -307,12 +304,16 @@ function uses(file) {
                 if (groupPrefix === undefined)
                     return; // unrenderable prefix → silence
                 const list = arg.childForFieldName('list');
-                if (list !== null) {
-                    for (let i = 0; i < list.namedChildCount; i++) {
-                        const item = list.namedChild(i);
-                        if (item !== null)
-                            handleArgument(item, groupPrefix);
-                    }
+                if (list !== null)
+                    handleArgument(list, groupPrefix);
+                return;
+            }
+            case 'use_list': {
+                // `{ items }` — a group's list, or a brace list with no path prefix at all (`use {a::X, b::Y};`, where it is the argument itself): resolve every item on its own under the current prefix (empty at the top level).
+                for (let i = 0; i < arg.namedChildCount; i++) {
+                    const item = arg.namedChild(i);
+                    if (item !== null)
+                        handleArgument(item, prefix);
                 }
                 return;
             }
@@ -405,7 +406,7 @@ function declarations(file) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 2,
+    rev: 3,
     declarations,
     uses,
 };
