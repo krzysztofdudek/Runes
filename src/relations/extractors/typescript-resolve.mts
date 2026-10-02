@@ -4,10 +4,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
- * `exists(repoRelPosix)` reports whether a candidate FILE exists in the resolution universe
+ * `existsAny(repoRelPosix)` reports whether a candidate FILE exists in the resolution universe
  * (disk at check time; a fixed known-set in unit tests). `deps`, when given, answers the
  * project-configuration questions a non-relative specifier needs (tsconfig, package.json);
- * without it only relative specifiers resolve. PURE except through `exists` and `deps`.
+ * without it only relative specifiers resolve. A file `deps.isExcluded` names acts as though
+ * it does not exist, both as a candidate and as a configuration file, so ignored build
+ * output or a generated config on disk cannot change the answer. PURE except through
+ * `existsAny` and `deps`.
  *
  * Zero false positives outrank recall: every branch below either names the file the
  * TypeScript compiler (or the bundler convention it documents) would pick, or returns
@@ -46,12 +49,16 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 export function resolveTsPath(
   specifier: string,
   fromFile: string,
-  exists: (repoRelPosix: string) => boolean,
+  existsAny: (repoRelPosix: string) => boolean,
   deps?: TsResolveDeps,
 ): string | undefined {
   const spec = stripQuery(specifier);
   if (spec === '') return undefined;
   const from = toPosix(fromFile);
+  // A file the caller excludes (git-ignored build output, a generated file) acts as though
+  // it does not exist, for every probe below: the answer is the one a clean checkout gives.
+  const excluded = deps?.isExcluded;
+  const exists = excluded === undefined ? existsAny : (p: string): boolean => existsAny(p) && !excluded(p);
 
   if (spec.startsWith('.')) {
     return probe(path.posix.normalize(path.posix.join(path.posix.dirname(from), spec)), exists, deps);
@@ -92,6 +99,9 @@ export interface TsResolveDeps {
   packageNamed(name: string): TsPackage | 'ambiguous' | undefined;
   /** The package whose package.json sits directly in `dir`, if any. */
   packageAt?(dir: string): TsPackage | undefined;
+  /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution
+   *  target, whether or not it is on disk. */
+  isExcluded?(repoRelPosix: string): boolean;
 }
 
 export interface TsPathConfig {
@@ -418,7 +428,8 @@ const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages
  * which one relation pass owns. The in-repo package index is built on the first bare
  * specifier that reaches package lookup: one walk of the repository that skips
  * `node_modules` (where a workspace package's own symlink lives), dot-directories and
- * any path `isExcluded` names.
+ * any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never
+ * read: it acts as though it does not exist.
  */
 export function makeTsResolveDeps(
   projectRoot: string,
@@ -438,7 +449,7 @@ export function makeTsResolveDeps(
   };
   const isFile = (repoRel: string): boolean => {
     try {
-      return statSync(path.join(projectRoot, repoRel)).isFile();
+      return statSync(path.join(projectRoot, repoRel)).isFile() && !isExcluded?.(repoRel);
     } catch {
       return false;
     }
@@ -619,5 +630,6 @@ export function makeTsResolveDeps(
     nearestPackage,
     packageNamed: (name) => packageIndex().get(name),
     packageAt,
+    ...(isExcluded !== undefined ? { isExcluded } : {}),
   };
 }

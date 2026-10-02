@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   resolveTsPath, makeTsResolveDeps, parseJsonc,
 } from '../../helpers/internal/relations.mjs';
+import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([
@@ -66,13 +67,17 @@ const roots = [];
 afterEach(() => {
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
 });
-function project(files) {
+function materialize(files) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'yg-tsres-'));
   roots.push(root);
   for (const [rel, text] of Object.entries(files)) {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     writeFileSync(path.join(root, rel), text);
   }
+  return root;
+}
+function project(files, isExcluded) {
+  const root = materialize(files);
   const isFile = (p) => {
     try {
       return statSync(path.join(root, p)).isFile();
@@ -80,7 +85,7 @@ function project(files) {
       return false;
     }
   };
-  const deps = makeTsResolveDeps(root);
+  const deps = makeTsResolveDeps(root, isExcluded);
   return (spec, from) => resolveTsPath(spec, from, isFile, deps);
 }
 
@@ -210,6 +215,77 @@ describe('resolveTsPath — packages', () => {
   it('never reads a package.json above the repository root', () => {
     const r = project({ 'a.ts': '' });
     expect(r('../outside', 'a.ts')).toBeUndefined();
+  });
+});
+
+// Issue 010: a verdict must be a function of the commit, so a file the caller excludes (git-ignored build output, a generated config) acts as though it does not exist, for every probe and every configuration read: the result with it on disk equals the result without it.
+describe('resolveTsPath — an excluded file acts as though it does not exist', () => {
+  const builtCore = {
+    'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js", "types": "./dist/index.d.ts", "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } } }',
+    'packages/core/src/index.ts': '',
+    'packages/app/src/main.ts': '',
+  };
+  const buildOutput = { 'packages/core/dist/index.js': '', 'packages/core/dist/index.d.ts': '' };
+  const ignoredDist = (p) => p.startsWith('packages/core/dist/');
+
+  it('a package whose exports point only into excluded build output resolves as in a clean checkout', () => {
+    const clean = project(builtCore, ignoredDist);
+    const built = project({ ...builtCore, ...buildOutput }, ignoredDist);
+    expect(clean('@acme/core', 'packages/app/src/main.ts')).toBeUndefined();
+    expect(built('@acme/core', 'packages/app/src/main.ts')).toBeUndefined();
+  });
+  it('the same holds through makeResolvePathToFile, the entry point a consumer calls', () => {
+    const root = materialize({ ...builtCore, ...buildOutput });
+    const resolve = makeResolvePathToFile(root, undefined, ignoredDist);
+    expect(resolve('@acme/core', 'packages/app/src/main.ts', 'typescript')).toBeUndefined();
+    // Without the exclusion the build output is a file like any other.
+    expect(makeResolvePathToFile(root)('@acme/core', 'packages/app/src/main.ts', 'typescript')).toBe('packages/core/dist/index.d.ts');
+  });
+  it('an excluded exports condition target is skipped, so the next condition wins as in a clean checkout', () => {
+    const conditions = {
+      'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "types": "./dist/index.d.ts", "development": "./src/index.ts" } } }',
+      'packages/core/src/index.ts': '',
+    };
+    expect(project(conditions, ignoredDist)('@acme/core', 'packages/app/src/main.ts')).toBe('packages/core/src/index.ts');
+    expect(project({ ...conditions, ...buildOutput }, ignoredDist)('@acme/core', 'packages/app/src/main.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('a main entry and a relative import into excluded output are silent, and a directory index skips an excluded file', () => {
+    const files = {
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }',
+      'packages/core/dist/index.js': '',
+      'gen/index.ts': '',
+      'gen/index.js': '',
+      'src/a.ts': '',
+    };
+    const excluded = (p) => p.startsWith('packages/core/dist/') || p === 'gen/index.ts';
+    const r = project(files, excluded);
+    expect(r('@acme/core', 'src/a.ts')).toBeUndefined();
+    expect(r('../packages/core/dist/index.js', 'src/a.ts')).toBeUndefined();
+    expect(r('../gen', 'src/a.ts')).toBe('gen/index.js');
+  });
+  it('a relative extends to an excluded generated tsconfig reads as missing (SvelteKit), so $lib stays silent either way', () => {
+    const svelte = {
+      'tsconfig.json': '{ "extends": "./.svelte-kit/tsconfig.json" }',
+      'src/lib/x.ts': '',
+      'src/routes/+page.server.ts': '',
+    };
+    const generated = { '.svelte-kit/tsconfig.json': '{ "compilerOptions": { "paths": { "$lib": ["../src/lib"], "$lib/*": ["../src/lib/*"] } } }' };
+    const ignored = (p) => p.startsWith('.svelte-kit/');
+    expect(project(svelte, ignored)('$lib/x', 'src/routes/+page.server.ts')).toBeUndefined();
+    expect(project({ ...svelte, ...generated }, ignored)('$lib/x', 'src/routes/+page.server.ts')).toBeUndefined();
+  });
+  it('an excluded tsconfig.json or package.json is not read: the next one up is', () => {
+    const r = project({
+      'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./shared/*"] } } }',
+      'apps/web/tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./gen/*"] } } }',
+      'apps/web/gen/m.ts': '',
+      'shared/m.ts': '',
+      'web/package.json': '{}',
+      'web/src/x.ts': '',
+    }, (p) => p === 'apps/web/tsconfig.json' || p === 'web/package.json');
+    expect(r('@/m', 'apps/web/a.ts')).toBe('shared/m.ts');
+    // The only package root was excluded, so a root-absolute import has none.
+    expect(r('/src/x', 'web/src/pages/a.ts')).toBeUndefined();
   });
 });
 
