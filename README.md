@@ -4,7 +4,7 @@ Shared code for the Yggdrasil tool family.
 
 **Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
-Status: 1.0.0, the first release for npm (the 0.1.x tags were for vendoring only). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the 460-case relation catalogue and their unit tests, and the command table, the MCP adapter, the test kit and the skill fragments. What 1.x keeps stable is in [docs/api.md](docs/api.md): only what a family tool imports today, so the file-system code and most of the CLI code ship as internal modules (below).
+Status: 1.0.1, a patch to 1.0.0, the first release for npm (the 0.1.x tags were for vendoring only). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the relation catalogue (522 cases today) and their unit tests, and the command table, the MCP adapter, the test kit and the skill fragments. What 1.x keeps stable is in [docs/api.md](docs/api.md): only what a family tool imports today, so the file-system code and most of the CLI code ship as internal modules (below).
 
 **The stable API.** [docs/api.md](docs/api.md) lists every name the six subpaths export, which family tool imports it, and what semver 1.x promises and does not; a test holds that page and the exports together.
 
@@ -198,7 +198,7 @@ PHP is the `php` grammar, not `php_only`: PHP runs only what sits between its ta
 
 **The runtime pin check.** `checkRuntimePins({ resolveFrom, languages })` from the test kit reports every package whose installed version differs from the manifest: the runtime, and the npm grammar packages of the given languages. It also hashes the runtime's `web-tree-sitter.wasm` against `runtime.wasmSha256`, so the right version with other engine bytes fails too (`versions` and `runtimeWasm` pass a vendored runtime's recorded version and its copy of the WASM, `cli: true` adds tree-sitter-cli). A consumer runs it in its tests, so the catalogue passing here means the same trees there.
 
-**The catalogue.** `reference/relations/<language>/<id>.md` holds 460 relation cases in 12 languages, each with its files and its expected edges or silence. `test/relations/reference-case-runner.mjs` drives the real extractors, symbol table and resolver over each case, one test per case in the matrix suites.
+**The catalogue.** `reference/relations/<language>/<id>.md` holds 522 relation cases in 12 languages, each with its files and its expected edges or silence. `test/relations/reference-case-runner.mjs` drives the real extractors, symbol table and resolver over each case, one test per case in the matrix suites.
 
 ## Vendoring with `tools/vendor.mjs`
 
