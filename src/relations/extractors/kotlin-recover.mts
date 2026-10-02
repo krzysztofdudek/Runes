@@ -330,10 +330,10 @@ function blankRanges(toks: Tok[]): Array<[number, number]> {
 }
 
 /**
- * Newline moves `[from, to]` that join a nested class header to its primary constructor on the next line (`class Options` over `private constructor(val s: String)`, the ktfmt style). Kotlin attaches a constructor on the next line to the class above it, but inside a class body the shipped grammar ends the class at the newline and reads the constructor as a secondary constructor of the enclosing class, whose `val` parameters are an ERROR; the enclosing class then lost every member. Moving the newline from the end of the header into the blank after `class` (`class` over `Options private constructor(…)`) parses as Kotlin reads it: only the class name and its type parameters move, onto the constructor's row, and the class still starts on the row of its `class` keyword. Type parameters qualify only as plain names with `in`/`out` (`<T>`, `<in A, out B>`): a bound or an annotation there (`<T : a.Bound>`, `<@a.Ann T>`) is a use, which the move would report one line too low, so such a header is left unjoined and its enclosing class falls back to its header. So every declaration and use keeps its line. Only a header with nothing but blanks after its name or type parameters, directly above `constructor(` (after annotations and modifiers), qualifies, and only below the top level: a top-level class of this shape already parses, and the move would put its name at column 0, where the declaration splitter cuts.
+ * Newline moves `[from, end, to]` that join a nested class header to its primary constructor on the next line (`class Options` over `private constructor(val s: String)`, the ktfmt style): blank `[from, end)`, the end of the header line with its newline (and a CRLF's `\r`), and put the newline at `to`, the blank after `class`. Kotlin attaches a constructor on the next line to the class above it, but inside a class body the shipped grammar ends the class at the newline and reads the constructor as a secondary constructor of the enclosing class, whose `val` parameters are an ERROR; the enclosing class then lost every member. After the move (`class` over `Options private constructor(…)`) the file parses as Kotlin reads it: only the class name and its type parameters move, onto the constructor's row, and the class still starts on the row of its `class` keyword. Type parameters qualify only as plain names with `in`/`out` (`<T>`, `<in A, out B>`): a bound or an annotation there (`<T : a.Bound>`, `<@a.Ann T>`) is a use, which the move would report one line too low, so such a header is left unjoined and its enclosing class falls back to its header. So every declaration and use keeps its line. Only a header with nothing but blanks after its name or type parameters, directly above `constructor(` (after annotations and modifiers), qualifies, and only below the top level: a top-level class of this shape already parses, and the move would put its name at column 0, where the declaration splitter cuts.
  */
-function constructorJoins(toks: Tok[], text: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
+function constructorJoins(toks: Tok[], text: string): Array<[number, number, number]> {
+  const out: Array<[number, number, number]> = [];
   let depth = 0;
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i];
@@ -352,17 +352,20 @@ function constructorJoins(toks: Tok[], text: string): Array<[number, number]> {
     const k = skipPrefix(toks, j + 1);
     if (k === undefined || toks[k]?.text !== 'constructor' || toks[k + 1]?.text !== '(') continue;
     if (!/^[ \t]+$/.test(text.slice(t.end, toks[i + 1].start)) || !/^[ \t\r]*$/.test(text.slice(toks[j - 1].end, nl.start))) continue;
-    out.push([nl.start, t.end]);
+    out.push([toks[j - 1].end, nl.end, t.end]);
   }
   return out;
 }
 
 /** Blank the `ranges` (newlines kept) and move each joined newline; the text keeps its length and its number of lines. */
-function applyRewrites(text: string, ranges: Array<[number, number]>, joins: Array<[number, number]>): string {
+function applyRewrites(text: string, ranges: Array<[number, number]>, joins: Array<[number, number, number]>): string {
   if (ranges.length === 0 && joins.length === 0) return text;
   const chars = text.split('');
   for (const [s, e] of ranges) for (let k = s; k < e; k++) if (chars[k] !== '\n') chars[k] = ' ';
-  for (const [from, to] of joins) { chars[from] = ' '; chars[to] = '\n'; }
+  for (const [from, end, to] of joins) {
+    for (let k = from; k < end; k++) chars[k] = ' ';
+    chars[to] = '\n';
+  }
   return chars.join('');
 }
 
