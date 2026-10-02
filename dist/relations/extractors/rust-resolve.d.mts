@@ -16,7 +16,7 @@
  * CARGO TARGETS: a package holds several crates. `src/lib.rs` and `src/main.rs` root the
  * library and the default binary (module tree under `src/`); every `src/bin/<name>.rs`,
  * `src/bin/<name>/main.rs`, `tests/<name>.rs`, `examples/<name>.rs` and `benches/<name>.rs` roots a crate of its
- * own, whose `crate::` is that target's tree, not the library's, and so does the `path` of a `[[bin]]` table, wherever it lies. A crate ROOT file resolves
+ * own, whose `crate::` is that target's tree, not the library's, and so does the `path` of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` table, wherever it lies. A crate ROOT file resolves
  * `mod x;` beside itself (like `mod.rs`); `crateRootFor` says which target a file belongs to
  * and whether it is that target's root. The package's own name always means the library.
  *

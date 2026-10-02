@@ -62,11 +62,16 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-bin-path-crate-root-edge', () => runCase('rust-bin-path-crate-root-edge'));
   it('rust-lib-path-below-bin-dir-edge', () => runCase('rust-lib-path-below-bin-dir-edge'));
   it('rust-several-bins-one-dir-silence', () => runCase('rust-several-bins-one-dir-silence'));
+  it('rust-lib-path-outside-src-main-module-edge', () => runCase('rust-lib-path-outside-src-main-module-edge'));
+  it('rust-target-path-crate-root-edge', () => runCase('rust-target-path-crate-root-edge'));
+  it('rust-target-paths-shared-dir-silence', () => runCase('rust-target-paths-shared-dir-silence'));
   it('rust-integration-test-mod-common-edge', () => runCase('rust-integration-test-mod-common-edge'));
   it('rust-workspace-path-dependency-edge', () => runCase('rust-workspace-path-dependency-edge'));
   it('rust-dotted-key-workspace-dependency-edge', () => runCase('rust-dotted-key-workspace-dependency-edge'));
   it('rust-root-dotted-dependency-key-edge', () => runCase('rust-root-dotted-dependency-key-edge'));
   it('rust-inline-dependency-table-edge', () => runCase('rust-inline-dependency-table-edge'));
+  it('rust-multiline-string-path-dependency-edge', () => runCase('rust-multiline-string-path-dependency-edge'));
+  it('rust-inline-package-table-crate-name-edge', () => runCase('rust-inline-package-table-crate-name-edge'));
   it('rust-reexported-extern-crate-edge', () => runCase('rust-reexported-extern-crate-edge'));
   it('rust-extern-crate-alias-edge', () => runCase('rust-extern-crate-alias-edge'));
 });

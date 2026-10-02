@@ -105,6 +105,10 @@ describe('MATRIX — global:: prefix stripping', () => {
   it('csharp-global-qualifier-strip', () => runCase('csharp-global-qualifier-strip'));
   it('csharp-global-qualifier-single-name-edge', () => runCase('csharp-global-qualifier-single-name-edge'));
   it('csharp-global-qualifier-single-name-silence', () => runCase('csharp-global-qualifier-single-name-silence'));
+  it('csharp-global-qualifier-attribute-edge', () => runCase('csharp-global-qualifier-attribute-edge'));
+  it('csharp-global-qualifier-attribute-silence', () => runCase('csharp-global-qualifier-attribute-silence'));
+  it('csharp-global-qualifier-member-access-edge', () => runCase('csharp-global-qualifier-member-access-edge'));
+  it('csharp-global-qualifier-member-access-silence', () => runCase('csharp-global-qualifier-member-access-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,4 +252,6 @@ describe('MATRIX — a type parameter shadows a type of the same name within its
 describe('MATRIX — a tuple type with named elements as a type argument', () => {
   it('csharp-tuple-type-argument-named-elements-edge', () => runCase('csharp-tuple-type-argument-named-elements-edge'));
   it('csharp-tuple-type-argument-element-names-silence', () => runCase('csharp-tuple-type-argument-element-names-silence'));
+  it('csharp-nested-tuple-type-argument-edge', () => runCase('csharp-nested-tuple-type-argument-edge'));
+  it('csharp-nested-tuple-type-argument-silence', () => runCase('csharp-nested-tuple-type-argument-silence'));
 });

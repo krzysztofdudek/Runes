@@ -310,6 +310,80 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::Opts', 'cli/args.rs', 'rust')).toBe('cli/main.rs');
   });
 
+  it('gives a src/ file the root of src/main.rs, never a [lib] path outside src/', () => {
+    // Issue 173: a src/ file probed the library's root first wherever it lay, so `crate::Config` in a module of the binary bound the library's `Config`, and `crate::Item` an item only the library has.
+    put('a/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib/lib.rs"\n');
+    put('a/lib/lib.rs', 'pub mod util;\npub struct Config;\npub struct Item;\n');
+    put('a/lib/util.rs', '');
+    put('a/src/main.rs', 'mod cli;\nstruct Config;\nfn main() {}\n');
+    put('a/src/args.rs', '');
+    put('b/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib.rs"\n');
+    put('b/lib.rs', 'pub struct Config;\n');
+    put('b/src/main.rs', 'struct Config;\nfn main() {}\n');
+    put('c/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "src/core.rs"\n');
+    put('c/src/core.rs', 'pub struct Config;\n');
+    put('c/src/main.rs', 'struct Config;\nfn main() {}\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Config', 'a/src/cli.rs', 'rust')).toBe('a/src/main.rs');
+    expect(resolve('crate::Item', 'a/src/cli.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::args', 'a/src/cli.rs', 'rust')).toBe('a/src/args.rs');
+    // A library at the package root holds src/, but src/main.rs's directory is the deeper one.
+    expect(resolve('crate::Config', 'b/src/cli.rs', 'rust')).toBe('b/src/main.rs');
+    // The library keeps its own tree, and the package's name still addresses it from the binary's modules.
+    expect(resolve('crate::Item', 'a/lib/util.rs', 'rust')).toBe('a/lib/lib.rs');
+    expect(resolve('crate::util', 'a/lib/lib.rs', 'rust')).toBe('a/lib/util.rs');
+    expect(resolve('app::Config', 'a/src/cli.rs', 'rust')).toBe('a/lib/lib.rs');
+    // A [lib] path inside src/ is probed first, as src/lib.rs is.
+    expect(resolve('crate::Config', 'c/src/cli.rs', 'rust')).toBe('c/src/core.rs');
+  });
+
+  it('roots crate:: of a [[test]], [[example]] or [[bench]] path at that target, also below tests/ where no main.rs is (the zed shape)', () => {
+    // Issue 173: those paths were ignored, so such a target's root was a module of the default tree and its modules resolved under src/ or under tests/.
+    put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/integration/suite.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\nname = "perf"\npath = "perf/bench_main.rs"\n');
+    put('src/lib.rs', 'pub struct Harness;\npub mod support;\n');
+    put('src/support.rs', '');
+    put('src/state.rs', '');
+    put('tests/support.rs', '');
+    put('tests/integration/suite.rs', 'mod support;\npub struct TestServer;\n');
+    put('tests/integration/support/mod.rs', '');
+    put('demos/viewer/app.rs', 'mod state;\n');
+    put('demos/viewer/state.rs', '');
+    put('perf/bench_main.rs', 'mod cases;\npub struct Harness;\n');
+    put('perf/cases/mod.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('self::support', 'tests/integration/suite.rs', 'rust')).toBe('tests/integration/support/mod.rs');
+    expect(resolve('crate::support::Fixture', 'tests/integration/cases/login.rs', 'rust')).toBe('tests/integration/support/mod.rs');
+    expect(resolve('crate::TestServer', 'tests/integration/cases/login.rs', 'rust')).toBe('tests/integration/suite.rs');
+    expect(resolve('super::TestServer', 'tests/integration/login.rs', 'rust')).toBe('tests/integration/suite.rs');
+    expect(resolve('crate::state::Model', 'demos/viewer/app.rs', 'rust')).toBe('demos/viewer/state.rs');
+    expect(resolve('crate::state::Model', 'demos/viewer/panels/list.rs', 'rust')).toBe('demos/viewer/state.rs');
+    expect(resolve('crate::Harness', 'perf/cases/sort.rs', 'rust')).toBe('perf/bench_main.rs');
+    expect(resolve('self::cases', 'perf/bench_main.rs', 'rust')).toBe('perf/cases/mod.rs');
+    // A target root has no parent module.
+    expect(resolve('super::support', 'tests/integration/suite.rs', 'rust')).toBeUndefined();
+  });
+
+  it('leaves a shared helper under tests/ rootless beside a [[test]] path in tests/ itself, and gives no root to the modules of two test paths sharing a directory', () => {
+    // ripgrep's `[[test]] path = "tests/tests.rs"`: with test auto-discovery other test crates in tests/ may declare tests/common/ too.
+    put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[test]]\nname = "a"\npath = "suites/a.rs"\n[[test]]\nname = "b"\npath = "suites/b.rs"\n[[bench]]\nname = "c"\npath = "suites/c/main.rs"\n');
+    put('src/lib.rs', 'pub struct Dir;\npub struct Env;\n');
+    put('tests/tests.rs', 'mod common;\npub struct Dir;\n');
+    put('tests/common/mod.rs', '');
+    put('tests/util.rs', '');
+    put('suites/a.rs', 'pub struct Env;\n');
+    put('suites/b.rs', 'mod shared;\n');
+    put('suites/shared/mod.rs', '');
+    put('suites/c/main.rs', 'pub struct Env;\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Dir', 'tests/common/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::util', 'tests/common/mod.rs', 'rust')).toBe('tests/util.rs');
+    expect(resolve('crate::Dir', 'tests/tests.rs', 'rust')).toBe('tests/tests.rs');
+    expect(resolve('crate::Env', 'suites/shared/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::shared', 'suites/shared/x.rs', 'rust')).toBe('suites/shared/mod.rs');
+    // A root in a deeper directory still holds the files below it.
+    expect(resolve('crate::Env', 'suites/c/run.rs', 'rust')).toBe('suites/c/main.rs');
+  });
+
   it('resolves tests/<name>.rs as a test crate root and a shared tests/common/mod.rs under tests/', () => {
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('tests/common/mod.rs', '');
@@ -380,11 +454,71 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parseCargoManifest('[package]\nname = "a-b"\n[lib]\nname = "c_d"\n').crateName).toBe('c_d');
   });
 
-  it('reads the path of each [[bin]] table, and no other table\'s path', () => {
-    const bins = (text) => parseCargoManifest(text).binPaths;
-    expect(bins('[[bin]]\nname = "rg"\npath = "crates/core/main.rs"\n\n[[bin]]\nname = "auto"\n\n[[bin]]\npath = \'tools/gen.rs\' # generator\n')).toEqual(['crates/core/main.rs', 'tools/gen.rs']);
-    expect(bins('[lib]\npath = "lib/lib.rs"\n[[test]]\npath = "tests/it.rs"\n[[bin]]\nname = "x"\n[bin.extra]\npath = "nope.rs"\n')).toEqual([]);
-    expect(bins('[[bin]]\r\nname = "rg"\r\npath = "crates/core/main.rs"\r\n')).toEqual(['crates/core/main.rs']);
+  it('reads the path of each [[bin]], [[test]], [[example]] and [[bench]] table, and no other table\'s path', () => {
+    const targets = (text) => parseCargoManifest(text).targetPaths;
+    expect(targets('[[bin]]\nname = "rg"\npath = "crates/core/main.rs"\n\n[[bin]]\nname = "auto"\n\n[[bin]]\npath = \'tools/gen.rs\' # generator\n')).toEqual(['crates/core/main.rs', 'tools/gen.rs']);
+    // Issue 173: the paths of [[test]], [[example]] and [[bench]] tables were ignored.
+    expect(targets('[lib]\npath = "lib/lib.rs"\n[[test]]\npath = "tests/it.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\npath = "perf/main.rs"\n[[bin]]\nname = "x"\n')).toEqual(['tests/it.rs', 'demos/viewer/app.rs', 'perf/main.rs']);
+    expect(targets('[bin.extra]\npath = "nope.rs"\n[test]\npath = "no.rs"\n[[tests]]\npath = "no.rs"\n[[bin.x]]\npath = "no.rs"\n[package]\npath = "no.rs"\n[[bin]]\npath = 5\n')).toEqual([]);
+    expect(targets('[[bin]]\r\nname = "rg"\r\npath = "crates/core/main.rs"\r\n[[test]]\r\npath = "tests/integration/suite.rs"\r\n')).toEqual(['crates/core/main.rs', 'tests/integration/suite.rs']);
+  });
+
+  it('reads a string value in each of its TOML forms, so a path written as a multi-line string is that path, not an empty one', () => {
+    // Issue 173: `path = """../kit"""` read as '', which made the package its own dependency.
+    const read = (text) => {
+      const m = parseCargoManifest(text);
+      return { crateName: m.crateName, libPath: m.libPath, targetPaths: m.targetPaths, dependencies: m.dependencies };
+    };
+    const plain = read('[package]\nname = "app"\n[lib]\npath = "lib/lib.rs"\n[[bin]]\npath = "tools/x.rs"\n[dependencies]\nkit = { path = "../kit", package = "kit-pkg" }\nnext.path = "../next"\n[dependencies.more]\npath = "../more"\n');
+    expect(plain.dependencies.get('kit')).toEqual({ path: '../kit', package: 'kit-pkg', workspace: false });
+    const multi = String.raw`[package]
+name = """app"""
+[lib]
+path = '''
+lib/lib.rs'''
+[[bin]]
+path = """
+tools/x.rs"""
+[dependencies]
+kit = { path = '''../kit''', package = """
+kit-pkg""" }
+next.path = """../\
+    next"""
+[dependencies.more]
+path = "..\u002fmore"
+`;
+    expect(read(multi)).toEqual(plain);
+    expect(read(multi.replace(/\n/g, '\r\n'))).toEqual(plain);
+    // Escapes, quotes beside the closing delimiter, and a literal string's backslash read as TOML defines them.
+    const pathOf = (value) => parseCargoManifest(`[dependencies]\nkit = { path = ${value} }\n`).dependencies.get('kit').path;
+    expect(pathOf(String.raw`"../a\"b\\c"`)).toBe('../a"b\\c');
+    expect(pathOf(String.raw`"\x41\U0001F600\t\e"`)).toBe('A\u{1F600}\t\x1b');
+    expect(pathOf('"""a"""""')).toBe('a""');
+    expect(pathOf("'''a''''")).toBe("a'");
+    expect(pathOf(String.raw`'C:\dir\n'`)).toBe(String.raw`C:\dir\n`);
+    // A value that is no single TOML string names no path.
+    for (const value of ['5', '"a" "b"', String.raw`"\q"`, String.raw`"\uD800"`, String.raw`"\u12"`, String.raw`"""a\ b"""`, '"""a""""""', "'unclosed", String.raw`"a\"`]) {
+      expect(pathOf(value), value).toBeUndefined();
+    }
+  });
+
+  it('reads [package] and [lib] written as inline tables or dotted keys as it reads their table form', () => {
+    // Issue 173: `package = { name = … }` gave no crate name, and `lib = { path = … }` no library path.
+    const read = (text) => {
+      const m = parseCargoManifest(text);
+      return { crateName: m.crateName, libPath: m.libPath };
+    };
+    expect(read('[package]\nname = "shop-core"\n')).toEqual({ crateName: 'shop_core', libPath: undefined });
+    expect(read('package = { name = "shop-core", version = "0.1.0" }\n')).toEqual({ crateName: 'shop_core', libPath: undefined });
+    expect(read('package.name = "shop-core"\n[dependencies]\n')).toEqual({ crateName: 'shop_core', libPath: undefined });
+    const lib = { crateName: 'api', libPath: 'api/lib.rs' };
+    expect(read('[package]\nname = "kit"\n[lib]\nname = "api"\npath = "api/lib.rs"\n')).toEqual(lib);
+    expect(read('package = { name = "kit" }\nlib = { name = "api", path = "api/lib.rs" }\n')).toEqual(lib);
+    expect(read('lib.name = "api"\nlib.path = "api/lib.rs"\n[package]\nname = "kit"\n')).toEqual(lib);
+    expect(read('package = {\n  name = "kit",\n}\r\nlib = { "path" = \'api/lib.rs\', name = "api" }\r\n')).toEqual(lib);
+    // An inline table under another key holds neither, and a package table holds no dependencies.
+    const other = parseCargoManifest('workspace = { package = { name = "ws" } }\nmetadata = { lib = { path = "x.rs" } }\npackage = { dependencies = { kit = { path = "../kit" } } }\n');
+    expect({ crateName: other.crateName, libPath: other.libPath, dependencies: other.dependencies }).toEqual({ crateName: undefined, libPath: undefined, dependencies: new Map() });
   });
 
   it('ignores a `name` outside [package] / [lib]', () => {
