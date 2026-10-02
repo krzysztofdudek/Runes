@@ -111,6 +111,34 @@ describe('walk and closest', () => {
       assert.equal(closest(tree.rootNode, 'module'), null);
     });
   });
+
+  // Issue 168: walk moves a tree cursor instead of asking `node.child(i)`, which counts from the first child on every call, and it no longer recurses.
+  test('walk visits exactly the nodes an index loop visits, in document order, stays inside the node it is given, and needs no stack for a deep tree', async () => {
+    const code = 'class A { m() { return f(1, [2, 3]); } }\nfunction g() { if (x) { y(); } }\n"a(\n"a(\n';
+    await host.withParsedFile('a.ts', code, (tree) => {
+      const key = (n) => `${n.type}@${n.startIndex}-${n.endIndex}`;
+      const byIndex = (node) => [key(node), ...Array.from({ length: node.childCount }, (_, i) => byIndex(node.child(i))).flat()];
+      const seen = (node, visitor = () => undefined) => {
+        const out = [];
+        walk(node, (n) => { out.push(key(n)); return visitor(n); });
+        return out;
+      };
+      assert.deepEqual(seen(tree.rootNode), byIndex(tree.rootNode));
+      const cls = tree.rootNode.child(0);
+      assert.equal(cls.type, 'class_declaration');
+      assert.deepEqual(seen(cls), byIndex(cls), 'a subtree, never the function after it');
+      assert.deepEqual(seen(cls.child(0)), [key(cls.child(0))], 'a leaf is visited alone');
+      const pruned = seen(tree.rootNode, (n) => n.type !== 'class_body');
+      assert.ok(pruned.some((k) => k.startsWith('class_body@')) && !pruned.some((k) => k.startsWith('method_definition@')));
+      assert.ok(pruned.some((k) => k.startsWith('function_declaration@')), 'pruning one subtree goes on with the next');
+    });
+    // 64 KB of ")`" nests deeper than a recursive walk's stack reaches.
+    await host.withParsedFile('deep.ts', ')`'.repeat(32 * 1024), (tree) => {
+      let count = 0;
+      walk(tree.rootNode, () => { count++; });
+      assert.equal(count, tree.rootNode.descendantCount);
+    });
+  });
 });
 
 describe('the injected parser factory in Kotlin recovery', () => {

@@ -142,14 +142,14 @@ const RECOVERY_PATTERNS: RegExp[] = [
   /^[ \t]*(?:export[ \t]+)?import([ \t]+(?:type[ \t]+)?)[\w$]+[ \t]*=[ \t]*require[ \t]*\([ \t]*(['"])([^'"\r\n]+)\2/gm,
 ];
 
-/** Zero-based rows touched by any ERROR node in the tree (empty for an error-free parse). */
+/** Zero-based rows touched by any ERROR node in the tree (empty for an error-free parse). An ERROR node's rows hold those of every node below it, so the walk does not descend into one: each row is added once per outermost ERROR, not once per nested one. */
 function errorRows(root: Node): Set<number> {
   const rows = new Set<number>();
   if (!root.hasError) return rows;
   walk(root, (node) => {
     if (node.type !== 'ERROR') return undefined;
     for (let r = node.startPosition.row; r <= node.endPosition.row; r++) rows.add(r);
-    return undefined;
+    return false;
   });
   return rows;
 }
@@ -317,29 +317,21 @@ const TOP_LEVEL_DECLARATION_TYPES = new Set([
   'enum_declaration',
 ]);
 
-/** True when the declaration sits at module top level — directly under `program`,
- * or wrapped in an `export_statement` that is itself directly under `program`. */
-function isTopLevel(node: Node): boolean {
-  const parent = node.parent;
-  if (parent === null) return false;
-  if (parent.type === 'program') return true;
-  if (parent.type === 'export_statement') {
-    const grandparent = parent.parent;
-    return grandparent !== null && grandparent.type === 'program';
-  }
-  return false;
-}
-
+/** The declarations at module top level, in document order: each one directly under `program`, or wrapped in an `export_statement` that is itself directly under `program`. They are read as the children of those two nodes, never by asking a node for its parent, which tree-sitter answers by searching down from the root, so the cost grows with the size of the file for every declaration asked about. A root that is no `program` (a file the grammar could not read as one) holds none. */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
-  walk(file.tree.rootNode, (node) => {
-    if (!TOP_LEVEL_DECLARATION_TYPES.has(node.type)) return undefined;
-    if (!isTopLevel(node)) return undefined;
+  const root = file.tree.rootNode;
+  if (root.type !== 'program') return out;
+  const declare = (node: Node): void => {
+    if (!TOP_LEVEL_DECLARATION_TYPES.has(node.type)) return;
     const nameNode = node.childForFieldName('name');
-    if (nameNode === null) return undefined;
-    out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
-    return undefined;
-  });
+    if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+  };
+  for (const child of root.children) {
+    if (child === null) continue;
+    declare(child);
+    if (child.type === 'export_statement') for (const inner of child.children) if (inner !== null) declare(inner);
+  }
   return out;
 }
 
