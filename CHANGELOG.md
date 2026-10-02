@@ -4,9 +4,9 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 
 ## [1.0.1] - 2026-10-02
 
-A patch release of the relation extractors: they find dependencies they used to miss, drop a few they reported by mistake, and run fast on large monorepos and large files. The exports, options and contracts in `docs/api.md` are unchanged.
+A patch release of the relation extractors: they find dependencies they used to miss and drop a few they reported by mistake. Two things got faster: Python import resolution in monorepos with many projects, and walking a syntax tree, which now takes time in proportion to its size. Parsing a file the grammar cannot read is still slow (about 13 to 16 seconds per megabyte). The exports, options and contracts in `docs/api.md` are unchanged.
 
-**Before you upgrade.** The extractors now see real dependencies that went unnoticed before: C# types named only as type arguments of a generic method call, TypeScript path aliases in Vite and other solution-style tsconfig files, Rust brace-list imports and dotted Cargo keys, Kotlin annotated declarations, and Python namespace packages and multi-distribution layouts. A graph that passed on 1.0.0 may therefore show new refusals after the upgrade. They point at dependencies your code really has: declare them, or change the code.
+**Before you upgrade.** The extractors now see real dependencies that went unnoticed before, so a graph that passed on 1.0.0 may show new refusals after the upgrade. The forms they now read: in C#, types named only as generic type arguments, the implicit `Program` of top-level statements, `global::` forms, attributes and tuple types; in TypeScript, path aliases in Vite and other solution-style tsconfig files, configs saved with a byte order mark, and workspace, `file:` and `link:` package bindings; in Rust, brace-list imports, dotted and inline-table Cargo dependencies, Cargo target paths and re-exported `extern crate`; in Kotlin, annotated declarations; in Python, namespace packages and multi-distribution layouts. The new refusals are almost always dependencies your code really has: declare them, or change the code. One known exception: in C#, `ILogger<Program>` in one project can bind to the `partial class Program` of another project, an edge that is not real.
 
 ### C#
 
@@ -29,7 +29,7 @@ A patch release of the relation extractors: they find dependencies they used to 
 
 ### Python
 
-- In a PEP 420 namespace package (google-cloud-* libraries, poetry's src/poetry), `import logging`, `import json` or an external library import from a sub-package binds to the library, not to a same-named sibling such as google/cloud/logging/. Inside a project, imports are searched from the importing file's own directory, a directory holding conftest.py and no `__init__.py` (pytest), and one holding manage.py (Django); a standard-library name binds only in the file's own directory or at the repository root. A folder put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not searched, so imports between its modules give no edge.
+- In a PEP 420 namespace package (google-cloud-* libraries, poetry's src/poetry), `import logging`, `import json` or an external library import from a sub-package binds to the library, not to a same-named sibling such as google/cloud/logging/. Besides the project roots, imports are searched from the importing file's own directory, a directory holding conftest.py and no `__init__.py` (pytest), and one holding manage.py (Django); a standard-library name binds only in the file's own directory or at the repository root. A folder put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not searched, so imports between its modules give no edge.
 - When several distributions share a pkgutil-style namespace package (Airflow's core, task SDK and providers each ship `airflow/__init__.py`), `from airflow import settings` and `import airflow.settings` report the dependency on the distribution that holds the module.
 - Resolution in a uv or Poetry monorepo with many pyproject.toml projects is fast: one resolver per pass remembers its probes and looks only at the projects that hold the imported package, so a check that took minutes on Airflow no longer does, with the same relations reported.
 
@@ -47,7 +47,7 @@ A patch release of the relation extractors: they find dependencies they used to 
 
 ### All languages
 
-- Walking a syntax tree takes time in proportion to its size: a large file the grammar cannot make sense of (a binary file named .ts) walks quickly instead of taking seconds to minutes per megabyte, and deeply nested trees walk without running out of stack.
+- Walking a syntax tree takes time in proportion to its size: a large file the grammar cannot make sense of (a binary file named .ts) no longer takes seconds to minutes per megabyte to walk (parsing it still takes 13 to 16 seconds per megabyte), and deeply nested trees walk without running out of stack.
 
 ## [1.0.0] - 2026-09-28
 
