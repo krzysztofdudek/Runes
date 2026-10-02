@@ -737,7 +737,7 @@ export function makeTsResolveDeps(
   // whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
   const holds = (config: LoadedConfig, configDir: string, file: string): boolean => {
     if (config.files?.includes(file)) return true;
-    const include = config.include ?? (config.files === undefined ? [configDir] : []);
+    const include = config.include ?? (config.files === undefined ? [configDir === '' ? '**/*' : `${configDir}/**/*`] : []);
     const asDirectory = (p: string): string => (/[*?.]/.test(p.slice(p.lastIndexOf('/') + 1)) ? p : `${p}/**/*`);
     if (!include.some((p) => globMatches(asDirectory(p), file))) return false;
     const segs = file.split('/');

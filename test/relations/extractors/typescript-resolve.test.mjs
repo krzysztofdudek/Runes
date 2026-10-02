@@ -285,6 +285,36 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
     });
     expect(r('@/m', 'src/a.ts')).toBeUndefined();
   });
+  // A config with neither `files` nor `include` holds everything under its directory, also when the directory name has a dot (`apps/web.v2`), as tsc reads it.
+  describe('a config without files or include holds its whole directory, dotted or not', () => {
+    it('a nearest config that holds the file by default keeps its own paths over a referenced one', () => {
+      const r = project({
+        'apps/web.v2/tsconfig.json': '{ "references": [{ "path": "./tsconfig.node.json" }], "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+        'apps/web.v2/tsconfig.node.json': '{ "include": ["**/*.ts"], "compilerOptions": { "paths": { "@/*": ["./build/*"] } } }',
+        'apps/web.v2/src/m.ts': '',
+        'apps/web.v2/build/m.ts': '',
+      });
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
+    });
+    it('a referenced config holding the file by default and another holding it by include disagree, so the file is silent', () => {
+      const r = project({
+        'apps/web.v2/tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.lint.json" }] }',
+        'apps/web.v2/tsconfig.app.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+        'apps/web.v2/tsconfig.lint.json': '{ "include": ["src/**/*.ts"], "compilerOptions": { "paths": { "@/*": ["./lint/*"] } } }',
+        'apps/web.v2/src/m.ts': '',
+        'apps/web.v2/lint/m.ts': '',
+      });
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBeUndefined();
+    });
+    it('the only referenced config, holding the file by default, gives its paths', () => {
+      const r = project({
+        'apps/web.v2/tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }',
+        'apps/web.v2/tsconfig.app.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+        'apps/web.v2/src/m.ts': '',
+      });
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
+    });
+  });
   it('excludes a directory named in exclude, and reads include and files inherited through extends', () => {
     const r = project({
       'tsconfig.json': '{ "files": [], "references": [{ "path": "./cfg/app.json" }, { "path": "./legacy.json" }] }',
