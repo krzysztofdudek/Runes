@@ -3,12 +3,7 @@ import { describe, it } from '../../helpers/expect.mjs';
 import { runCase } from '../reference-case-runner.mjs';
 
 /**
- * JAVASCRIPT NAME-RESOLUTION IDENTIFICATION MATRIX — one runCase-backed test per case in
- * reference/relations/javascript/. JavaScript shares the TypeScript extractor and path
- * resolver; these cases pin what is specific to `.js`/`.mjs`/`.cjs`/`.jsx` sources and the
- * JavaScript grammar (JSX in `.js`, CommonJS, JSDoc comments, the grammar's ERROR on
- * re-export attributes), and a Vue or Svelte component reading jsconfig.json as a
- * JavaScript file does.
+ * JAVASCRIPT NAME-RESOLUTION IDENTIFICATION MATRIX — one runCase-backed test per case in reference/relations/javascript/. JavaScript shares the TypeScript extractor and path resolver; these cases pin what is specific to `.js`/`.mjs`/`.cjs`/`.jsx` sources and the JavaScript grammar (JSX in `.js`, CommonJS, JSDoc comments, the grammar's ERROR on re-export attributes), and a Vue or Svelte component reading jsconfig.json as a JavaScript file does.
  */
 
 describe('MATRIX — JavaScript sources', () => {
