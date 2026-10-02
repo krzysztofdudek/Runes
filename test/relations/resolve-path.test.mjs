@@ -1,7 +1,8 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/resolve-path.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect, beforeEach, afterEach } from '../helpers/expect.mjs';
 import path from 'node:path';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import fs, { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
@@ -462,5 +463,40 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     const isExcluded = (p) => p.startsWith('packages/lib/');
     expect(makeResolvePathToFile(root, undefined, isExcluded)('lib.util', 'packages/api/src/api/main.py', 'python')).toBeUndefined();
     expect(makeResolvePathToFile(root)('lib.util', 'packages/api/src/api/main.py', 'python')).toBe('packages/lib/src/lib/util.py');
+  });
+
+  it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {
+    // 60 src-layout projects; every module imports three external libraries, its own package and the first project's.
+    const projects = 60;
+    const calls = [];
+    for (let i = 1; i <= projects; i++) {
+      write(`proj${i}/pyproject.toml`, `[project]\nname = "proj${i}"\n`);
+      write(`proj${i}/src/pkg${i}/__init__.py`);
+      for (let m = 1; m <= 3; m++) {
+        const from = `proj${i}/src/pkg${i}/m${m}.py`;
+        write(from);
+        for (const spec of ['requests', 'numpy.linalg', 'pydantic.BaseModel', `pkg${i}.m${(m % 3) + 1}`, 'pkg1.m1']) calls.push([spec, from]);
+      }
+    }
+    const resolve = makeResolvePathToFile(root);
+    const realExistsSync = fs.existsSync;
+    let probes = 0;
+    fs.existsSync = (p) => {
+      probes++;
+      return realExistsSync(p);
+    };
+    syncBuiltinESMExports();
+    let resolved;
+    try {
+      resolved = calls.map(([spec, from]) => resolve(spec, from, 'python'));
+    } finally {
+      fs.existsSync = realExistsSync;
+      syncBuiltinESMExports();
+    }
+    expect(resolved.filter((r) => r !== undefined)).toHaveLength(calls.length * 2 / 5);
+    expect(resolved[3]).toBe('proj1/src/pkg1/m2.py');
+    expect(resolved[4]).toBe('proj1/src/pkg1/m1.py');
+    // today's cost was about six probes per discovered root for every import (60 × 900 × 6); bounded here by a constant per import and per project
+    expect(probes).toBeLessThan(10 * (calls.length + projects));
   });
 });

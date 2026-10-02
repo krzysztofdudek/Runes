@@ -10,7 +10,9 @@ import path from 'node:path';
  * universe (disk at --approve time; a fixed known-set in unit tests). PURE except
  * through `exists` and `isExcluded`. Resolution is a pure file-existence search — no
  * directory listing, no ownership lookup. The owner index downstream maps the resolved
- * file to an owner; an unmapped resolved file is simply not a known target.
+ * file to an owner; an unmapped resolved file is simply not a known target. (A pass
+ * resolving many imports builds `makePythonResolver` once instead; it gives the same
+ * answers and may list the discovered roots only to skip those that cannot match.)
  *
  * `isExcluded`, when supplied, makes an excluded candidate act as though it does not
  * exist, in BOTH resolvers. In the absolute resolver this happens at two levels: per
@@ -38,10 +40,108 @@ import path from 'node:path';
  * or any module whose file is not present resolves to nothing and is never flagged.
  */
 export function resolvePythonModule(specifier, fromFile, exists, isExcluded, projectRoots) {
-    if (specifier.startsWith('.')) {
-        return resolveRelative(specifier, fromFile, exists, isExcluded);
-    }
-    return resolveAbsolute(specifier, fromFile, exists, isExcluded, projectRoots);
+    return makePythonResolver(exists, isExcluded, projectRoots)(specifier, fromFile);
+}
+/**
+ * The resolver `resolvePythonModule` describes, built once for the many imports of one
+ * resolution pass over a file universe that does not change during it: every call answers
+ * exactly what `resolvePythonModule` answers, and the work imports share is done once.
+ * `exists` and the regular-package test are memoized per path, the discovered project roots
+ * are read once, and the matches under the discovered roots, which depend on the specifier
+ * alone, are memoized per specifier.
+ *
+ * `listDir`, when supplied, lists the names directly inside a directory (undefined when it
+ * cannot be listed), and every path `exists` accepts must be spelled with names those listings
+ * give. Each directory is then listed at most once, and an import probes only the discovered
+ * roots that hold the path of its parent module (`a/b` as a directory or `a/b.py` for `a.b.c`,
+ * `a` for `a`): an external library such as `requests` probes none, and `airflow.models.dag`
+ * probes the one distribution that holds `airflow/models` although every distribution holds
+ * `airflow/`. Without it every discovered root is probed, with the same answers.
+ */
+export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
+    const known = new Map();
+    const has = (repoRelPosix) => {
+        let found = known.get(repoRelPosix);
+        if (found === undefined) {
+            found = exists(repoRelPosix);
+            known.set(repoRelPosix, found);
+        }
+        return found;
+    };
+    const inPackage = new Map();
+    const insidePackage = (dir) => {
+        let inside = inPackage.get(dir);
+        if (inside === undefined) {
+            inside = insideRegularPackage(dir, has);
+            inPackage.set(dir, inside);
+        }
+        return inside;
+    };
+    let roots;
+    const discovered = () => {
+        if (roots === undefined) {
+            const all = new Set(projectRoots?.() ?? []);
+            roots = { all, usable: [...all].filter((root) => !insidePackage(root)) };
+        }
+        return roots;
+    };
+    // A directory's entries, `x/` and `x.py` both as `x`, compared in NFC as the exact-case check compares names.
+    const listings = new Map();
+    const namesIn = (dir) => {
+        if (!listings.has(dir)) {
+            const names = listDir?.(dir);
+            listings.set(dir, names === undefined ? undefined : new Set(names.map((name) => (name.endsWith('.py') ? name.slice(0, -3) : name).normalize('NFC'))));
+        }
+        return listings.get(dir);
+    };
+    // The usable discovered roots that may hold the path `segments` (each but the last a directory, the last a directory or a `.py` file); a directory that cannot be listed keeps its root.
+    const holding = new Map();
+    const holders = (segments) => {
+        if (listDir === undefined)
+            return discovered().usable;
+        const key = segments.join('/');
+        let found = holding.get(key);
+        if (found === undefined) {
+            const within = segments.slice(0, -1);
+            const name = segments[segments.length - 1].normalize('NFC');
+            found = (within.length === 0 ? discovered().usable : holders(within)).filter((root) => {
+                const names = namesIn(within.length === 0 ? root : joinUnder(root, within.join('/')));
+                return names === undefined || names.has(name);
+            });
+            holding.set(key, found);
+        }
+        return found;
+    };
+    const below = new Map();
+    const underDiscovered = new Map();
+    const ctx = {
+        exists: has,
+        isExcluded: isExcluded ?? (() => false),
+        insideRegularPackage: insidePackage,
+        belowDiscoveredRoot: (dir) => {
+            let isBelow = below.get(dir);
+            if (isBelow === undefined) {
+                isBelow = properAncestors(dir).some((ancestor) => discovered().all.has(ancestor));
+                below.set(dir, isBelow);
+            }
+            return isBelow;
+        },
+        matchesUnderDiscoveredRoots: (segments, modulePath, parentPath) => {
+            let matches = underDiscovered.get(modulePath);
+            if (matches === undefined) {
+                matches = emptyMatches();
+                // Every candidate (a/b/c/__init__.py, a/b/c.py, a/b/__init__.py, a/b.py) lies on the path a/b; for a one-segment module, on a.
+                for (const root of holders(segments.length > 1 ? segments.slice(0, -1) : segments))
+                    probeRoot(root, modulePath, parentPath, ctx, matches);
+                underDiscovered.set(modulePath, matches);
+            }
+            return matches;
+        },
+    };
+    return (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : resolveAbsolute(specifier, fromFile, ctx);
+}
+function emptyMatches() {
+    return { exact: new Set(), parentPackages: new Set(), parentModules: new Set() };
 }
 /**
  * Top-level standard-library module names (CPython 3.13 `sys.stdlib_module_names` without
@@ -116,7 +216,7 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  * surviving match silenced merely because it once shared a dotted module name
  * with a file the caller no longer considers.
  */
-function resolveAbsolute(specifier, fromFile, exists, isExcluded, projectRoots) {
+function resolveAbsolute(specifier, fromFile, ctx) {
     const segments = specifier.split('.').filter((s) => s.length > 0);
     if (segments.length === 0)
         return undefined;
@@ -129,55 +229,55 @@ function resolveAbsolute(specifier, fromFile, exists, isExcluded, projectRoots) 
     // module to 2+ distinct LIVE files means we cannot tell which root is genuine —
     // silence (undefined) per the zero-false-positive rule. A single distinct live
     // file is an unambiguous resolution and is returned.
-    //
-    // Per-root, the candidate priority order is preserved (module-as-file/package
-    // first, then the parentPath longest-match): only the first LIVE hit at each
-    // root counts, so a root that matches both the full module and its
-    // parent still contributes just one file (the stronger match wins) — but an
-    // EXCLUDED hit does not stop the search at that root: it is skipped exactly
-    // like a genuine miss, so a live candidate further down the SAME root's list
-    // (a package outranking its own excluded same-named module, matching CPython's
-    // real precedence) still counts. Across roots, an exact hit outranks a parent
-    // package fallback (see the doc comment above).
-    const isExcl = isExcluded ?? (() => false);
-    const firstLive = (candidates) => candidates.find((cand) => exists(cand) && !isExcl(cand));
     const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(segments[0]);
-    const discovered = projectRoots?.() ?? [];
     const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
-    // An ancestor other than the importer's own directory is a root only when it is not a
-    // directory inside a project (strictly below a discovered root) and, for a standard-library
-    // name, only when it is the repository root (see the doc comment above).
-    const ancestorIsRoot = (dir) => dir === ownDir || (!(stdlibName && dir !== '') && !discovered.some((root) => strictlyBelow(dir, root)));
-    const roots = ancestorDirs(ownDir).filter((dir) => ancestorIsRoot(dir) && !insideRegularPackage(dir, exists));
+    const found = emptyMatches();
+    for (const dir of ancestorDirs(ownDir)) {
+        // An ancestor other than the importer's own directory is a root only when it is not a
+        // directory inside a project (strictly below a discovered root) and, for a standard-library
+        // name, only when it is the repository root (see the doc comment above).
+        const isRoot = dir === ownDir || (!(stdlibName && dir !== '') && !ctx.belowDiscoveredRoot(dir));
+        if (isRoot && !ctx.insideRegularPackage(dir))
+            probeRoot(dir, modulePath, parentPath, ctx, found);
+    }
     if (!stdlibName) {
-        for (const root of discovered) {
-            if (!roots.includes(root) && !insideRegularPackage(root, exists))
-                roots.push(root);
-        }
+        // A discovered root that is also an ancestor root adds the same file of the same kind again: the sets keep one.
+        const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath);
+        for (const kind of ['exact', 'parentPackages', 'parentModules'])
+            for (const file of under[kind])
+                found[kind].add(file);
     }
-    const exact = new Set();
-    const parentPackages = new Set();
-    const parentModules = new Set();
-    for (const dir of roots) {
-        // package / module-as-file at this root — CPython imports a regular
-        // package over a same-named module file (verified against the real
-        // interpreter: `import lib.mod` loads lib/mod/__init__.py even when
-        // lib/mod.py also exists at the same root).
-        const hit = firstLive([joinUnder(dir, modulePath + '/__init__.py'), joinUnder(dir, modulePath + '.py')]);
-        if (hit !== undefined) {
-            exact.add(hit);
-            continue;
-        }
-        // `from a.b import c` longest-match: last segment is a symbol in module a.b.
-        if (parentPath.length === 0)
-            continue;
-        const parentPackage = joinUnder(dir, parentPath + '/__init__.py');
-        const fallback = firstLive([parentPackage, joinUnder(dir, parentPath + '.py')]);
-        if (fallback !== undefined)
-            (fallback === parentPackage ? parentPackages : parentModules).add(fallback);
-    }
-    const matches = new Set([...(exact.size > 0 ? exact : parentPackages), ...parentModules]);
+    const matches = new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
     return matches.size === 1 ? [...matches][0] : undefined;
+}
+/**
+ * Adds one root's strongest live match to `into`, by kind. Per root, the candidate priority
+ * order is preserved (module-as-file/package first, then the parentPath longest-match): only
+ * the first LIVE hit at the root counts, so a root that matches both the full module and its
+ * parent still contributes just one file (the stronger match wins) — but an EXCLUDED hit does
+ * not stop the search at that root: it is skipped exactly like a genuine miss, so a live
+ * candidate further down the SAME root's list (a package outranking its own excluded
+ * same-named module, matching CPython's real precedence) still counts. Across roots, an exact
+ * hit outranks a parent package fallback (see resolveAbsolute's doc comment).
+ */
+function probeRoot(dir, modulePath, parentPath, ctx, into) {
+    const firstLive = (candidates) => candidates.find((cand) => ctx.exists(cand) && !ctx.isExcluded(cand));
+    // package / module-as-file at this root — CPython imports a regular
+    // package over a same-named module file (verified against the real
+    // interpreter: `import lib.mod` loads lib/mod/__init__.py even when
+    // lib/mod.py also exists at the same root).
+    const hit = firstLive([joinUnder(dir, modulePath + '/__init__.py'), joinUnder(dir, modulePath + '.py')]);
+    if (hit !== undefined) {
+        into.exact.add(hit);
+        return;
+    }
+    // `from a.b import c` longest-match: last segment is a symbol in module a.b.
+    if (parentPath.length === 0)
+        return;
+    const parentPackage = joinUnder(dir, parentPath + '/__init__.py');
+    const fallback = firstLive([parentPackage, joinUnder(dir, parentPath + '.py')]);
+    if (fallback !== undefined)
+        (fallback === parentPackage ? into.parentPackages : into.parentModules).add(fallback);
 }
 /**
  * Relative module: a leading run of `k` dots then an optional dotted tail. CPython
@@ -229,9 +329,10 @@ function insideRegularPackage(dir, exists) {
     const parent = path.posix.dirname(dir);
     return exists(joinUnder(parent === '.' ? '' : parent, '__init__.py'));
 }
-/** True when `dir` lies strictly below `root` (both repo-relative, '' is the repo root). */
-function strictlyBelow(dir, root) {
-    return root === '' ? dir !== '' : dir.startsWith(root + '/');
+/** Every directory `dir` lies strictly below, nearest-first, ending with '' (the repo root);
+ *  none for the repo root itself. */
+function properAncestors(dir) {
+    return dir === '' ? [] : ancestorDirs(dir).slice(1);
 }
 /** A repo-relative directory as `path.posix.dirname` gives it, with the repo root as ''. */
 function normalizeDir(dir) {
