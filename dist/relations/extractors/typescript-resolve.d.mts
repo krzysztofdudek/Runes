@@ -30,11 +30,19 @@
  *         file → that file. Two or more naming DIFFERENT files → undefined (ambiguous).
  *         A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package whose package.json `name` is the specifier's package name
- *         (a workspace package): `exports` (exact subpath, else longest `*` pattern; the
- *         first condition target that names a file), else for the root `types`/`typings`,
- *         `module`, `main` and `index.*`, for a subpath the path inside the package. Two
- *         in-repo packages with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the one the
+ *         importer's own package.json declares under that name with a local spec
+ *         (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's
+ *         directory; a `workspace:<name>@<range>` alias names a member); else, inside a
+ *         declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists
+ *         `packages`, or whose package.json has `workspaces`), the workspace member with
+ *         that `name` (the root and the directories its globs match; a fixture outside
+ *         them is never linked under its name); with no workspace declared above the
+ *         importer, any in-repo package.json with that `name`. Then `exports` (exact
+ *         subpath, else longest `*` pattern; the first condition target that names a
+ *         file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for
+ *         a subpath the path inside the package. Two candidates with the same name →
+ *         undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -52,8 +60,9 @@ export interface TsResolveDeps {
     tsconfigFor(fromFile: string): TsPathConfig | 'unknown' | undefined;
     /** The nearest ancestor package of a file: its directory and parsed package.json. */
     nearestPackage(fromFile: string): TsPackage | undefined;
-    /** The in-repo package whose package.json `name` is `name`; `'ambiguous'` when two share it. */
-    packageNamed(name: string): TsPackage | 'ambiguous' | undefined;
+    /** The in-repo package a bare package `name` imported from `fromFile` binds to (rule 4c);
+     *  `'ambiguous'` when two candidates share the name. */
+    packageNamed(name: string, fromFile: string): TsPackage | 'ambiguous' | undefined;
     /** The package whose package.json sits directly in `dir`, if any. */
     packageAt?(dir: string): TsPackage | undefined;
     /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution
@@ -82,6 +91,11 @@ export interface PackageManifest {
     module?: unknown;
     types?: unknown;
     typings?: unknown;
+    workspaces?: unknown;
+    dependencies?: unknown;
+    devDependencies?: unknown;
+    optionalDependencies?: unknown;
+    peerDependencies?: unknown;
 }
 /**
  * Parse JSON with comments and trailing commas (the tsconfig dialect). A leading UTF-8

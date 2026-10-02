@@ -218,6 +218,180 @@ describe('resolveTsPath — packages', () => {
   });
 });
 
+// Issue 012: inside a declared workspace a bare name binds only to a workspace member, or to the package the importer's own package.json declares under that name with a local spec; a repository that declares no workspace keeps indexing every package.json.
+describe('resolveTsPath — workspace membership', () => {
+  it('a fixture outside the workspace globs is not importable by name; a member is (scenario B)', () => {
+    const r = project({
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/resolver/package.json': '{ "name": "@acme/resolver", "main": "./index.ts" }',
+      'packages/resolver/index.ts': '',
+      'packages/resolver/test/fixtures/lodash/package.json': '{ "name": "lodash", "main": "./index.js" }',
+      'packages/resolver/test/fixtures/lodash/index.js': '',
+    });
+    expect(r('lodash', 'packages/app/src/index.ts')).toBeUndefined();
+    expect(r('@acme/resolver', 'packages/app/src/index.ts')).toBe('packages/resolver/index.ts');
+    // A file of the workspace that belongs to no member (an e2e test) sees the members too, as Node does through the root node_modules.
+    expect(r('@acme/resolver', 'e2e/run.ts')).toBe('packages/resolver/index.ts');
+    expect(r('lodash', 'e2e/run.ts')).toBeUndefined();
+  });
+  it('without any workspace declaration every package.json still counts, as before', () => {
+    const r = project({
+      'packages/resolver/test/fixtures/lodash/package.json': '{ "name": "lodash", "main": "./index.js" }',
+      'packages/resolver/test/fixtures/lodash/index.js': '',
+    });
+    expect(r('lodash', 'packages/app/src/index.ts')).toBe('packages/resolver/test/fixtures/lodash/index.js');
+  });
+  it('two members with one name are ambiguous; a fixture copying a member name is not (scenario D1)', () => {
+    const files = {
+      'package.json': '{ "workspaces": { "packages": ["packages/*", "tools/*"] } }',
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./index.ts" }',
+      'packages/core/index.ts': '',
+      'fixtures/core/package.json': '{ "name": "@acme/core", "main": "./index.ts" }',
+      'fixtures/core/index.ts': '',
+    };
+    expect(project(files)('@acme/core', 'packages/app/a.ts')).toBe('packages/core/index.ts');
+    const twice = project({ ...files, 'tools/core/package.json': '{ "name": "@acme/core" }', 'tools/core/index.ts': '' });
+    expect(twice('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('reads pnpm-workspace.yaml, with ** globs and ! negation', () => {
+    const r = project({
+      'pnpm-workspace.yaml': "# the workspace\npackages:\n  - 'apps/**'\n  - \"libs/*\" # libraries\n  - '!**/test/**'\ncatalog:\n  react: ^18\n",
+      'apps/web/package.json': '{ "name": "web", "main": "./index.ts" }',
+      'apps/web/index.ts': '',
+      'apps/group/admin/package.json': '{ "name": "admin", "main": "./index.ts" }',
+      'apps/group/admin/index.ts': '',
+      'libs/ui/package.json': '{ "name": "ui", "main": "./index.ts" }',
+      'libs/ui/index.ts': '',
+      'libs/ui/nested/package.json': '{ "name": "nested", "main": "./index.ts" }',
+      'libs/ui/nested/index.ts': '',
+      'apps/web/test/mock/package.json': '{ "name": "mock", "main": "./index.ts" }',
+      'apps/web/test/mock/index.ts': '',
+    });
+    expect(r('web', 'libs/ui/a.ts')).toBe('apps/web/index.ts');
+    expect(r('admin', 'libs/ui/a.ts')).toBe('apps/group/admin/index.ts');
+    expect(r('ui', 'apps/web/a.ts')).toBe('libs/ui/index.ts');
+    expect(r('nested', 'apps/web/a.ts')).toBeUndefined();
+    expect(r('mock', 'apps/web/a.ts')).toBeUndefined();
+  });
+  it('reads a pnpm-workspace.yaml flow list, and one with no packages list means every directory', () => {
+    const flow = project({
+      'pnpm-workspace.yaml': "packages: ['pkgs/?', \"!pkgs/x\"]\n",
+      'pkgs/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'pkgs/a/index.ts': '',
+      'pkgs/x/package.json': '{ "name": "x", "main": "./index.ts" }',
+      'pkgs/x/index.ts': '',
+      'pkgs/long/package.json': '{ "name": "long", "main": "./index.ts" }',
+      'pkgs/long/index.ts': '',
+    });
+    expect(flow('a', 'src/m.ts')).toBe('pkgs/a/index.ts');
+    expect(flow('x', 'src/m.ts')).toBeUndefined();
+    expect(flow('long', 'src/m.ts')).toBeUndefined();
+    const multiline = project({
+      'pnpm-workspace.yaml': "packages: [\n  './apps/web.v2/',\n  'tools/*'\n]\n",
+      'apps/web.v2/package.json': '{ "name": "web2", "main": "./index.ts" }',
+      'apps/web.v2/index.ts': '',
+      'apps/webXv2/package.json': '{ "name": "webx", "main": "./index.ts" }',
+      'apps/webXv2/index.ts': '',
+    });
+    expect(multiline('web2', 'src/m.ts')).toBe('apps/web.v2/index.ts');
+    expect(multiline('webx', 'src/m.ts')).toBeUndefined();
+    const all = project({
+      'pnpm-workspace.yaml': 'catalog:\n  react: ^18\n',
+      'deep/er/p/package.json': '{ "name": "p", "main": "./index.ts" }',
+      'deep/er/p/index.ts': '',
+    });
+    expect(all('p', 'src/m.ts')).toBe('deep/er/p/index.ts');
+  });
+  it('the root package is a member, and the nearest declaration above the importer is the workspace', () => {
+    const r = project({
+      'package.json': '{ "name": "root-pkg", "main": "./root.ts", "workspaces": ["packages/*", "e2e/demo"] }',
+      'root.ts': '',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'e2e/demo/package.json': '{ "name": "demo", "workspaces": ["libs/*"] }',
+      'e2e/demo/libs/inner/package.json': '{ "name": "inner", "main": "./index.ts" }',
+      'e2e/demo/libs/inner/index.ts': '',
+    });
+    expect(r('root-pkg', 'packages/a/x.ts')).toBe('root.ts');
+    expect(r('inner', 'e2e/demo/src/x.ts')).toBe('e2e/demo/libs/inner/index.ts');
+    expect(r('inner', 'packages/a/x.ts')).toBeUndefined();
+    expect(r('a', 'e2e/demo/src/x.ts')).toBeUndefined();
+  });
+  it('a malformed workspaces field is not a declaration', () => {
+    const r = project({
+      'package.json': '{ "workspaces": "packages/*" }',
+      'fixtures/f/package.json': '{ "name": "f", "main": "./index.ts" }',
+      'fixtures/f/index.ts': '',
+    });
+    expect(r('f', 'src/a.ts')).toBe('fixtures/f/index.ts');
+  });
+  it('a package the importer declares with a file:, link: or portal: spec binds under the dependency name', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/app/package.json': JSON.stringify({
+        name: 'app',
+        dependencies: { 'local-a': 'file:../../vendor/a', 'tarball': 'file:../../vendor/a.tgz', 'far': 'file:../../../elsewhere' },
+        devDependencies: { 'local-b': 'link:./tools/b' },
+        optionalDependencies: { 'local-c': 'portal:../../vendor/c' },
+        peerDependencies: { registry: '^1.0.0' },
+      }),
+      'vendor/a/package.json': '{ "name": "a-real-name", "main": "./index.ts" }',
+      'vendor/a/index.ts': '',
+      'vendor/a.tgz': '',
+      'packages/app/tools/b/package.json': '{ "name": "b" }',
+      'packages/app/tools/b/index.ts': '',
+      'vendor/c/package.json': '{ "name": "c", "main": "./index.ts" }',
+      'vendor/c/index.ts': '',
+      'vendor/registry/package.json': '{ "name": "registry", "main": "./index.ts" }',
+      'vendor/registry/index.ts': '',
+    });
+    expect(r('local-a', 'packages/app/src/x.ts')).toBe('vendor/a/index.ts');
+    expect(r('local-b', 'packages/app/src/x.ts')).toBe('packages/app/tools/b/index.ts');
+    expect(r('local-c', 'packages/app/src/x.ts')).toBe('vendor/c/index.ts');
+    // A local spec that names no in-repo package (a tarball, a path outside the repository) is silent.
+    expect(r('tarball', 'packages/app/src/x.ts')).toBeUndefined();
+    expect(r('far', 'packages/app/src/x.ts')).toBeUndefined();
+    // A registry range is the installed dependency; the in-repo copy outside the globs is not it.
+    expect(r('registry', 'packages/app/src/x.ts')).toBeUndefined();
+    // Only the importer's own package.json counts.
+    expect(r('local-a', 'packages/other/x.ts')).toBeUndefined();
+  });
+  it('the workspace: protocol binds a member by the dependency name, an alias, or a relative path', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/app/package.json': JSON.stringify({
+        name: 'app',
+        dependencies: { core: 'workspace:*', 'ui-alias': 'workspace:@acme/ui@^1.0.0', plain: 'workspace:plain-lib@*', near: 'workspace:../near', missing: 'workspace:nope@*' },
+      }),
+      'packages/core/package.json': '{ "name": "core", "main": "./index.ts" }',
+      'packages/core/index.ts': '',
+      'packages/ui/package.json': '{ "name": "@acme/ui", "main": "./index.ts" }',
+      'packages/ui/index.ts': '',
+      'packages/plain/package.json': '{ "name": "plain-lib", "main": "./index.ts" }',
+      'packages/plain/index.ts': '',
+      'packages/near/package.json': '{ "name": "near-real", "main": "./index.ts" }',
+      'packages/near/index.ts': '',
+    });
+    expect(r('core', 'packages/app/a.ts')).toBe('packages/core/index.ts');
+    expect(r('ui-alias', 'packages/app/a.ts')).toBe('packages/ui/index.ts');
+    expect(r('plain', 'packages/app/a.ts')).toBe('packages/plain/index.ts');
+    expect(r('near', 'packages/app/a.ts')).toBe('packages/near/index.ts');
+    expect(r('missing', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('a member under an excluded directory or with an excluded package.json is not a member', () => {
+    const files = {
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'packages/b/package.json': '{ "name": "b", "main": "./index.ts" }',
+      'packages/b/index.ts': '',
+    };
+    const r = project(files, (p) => p === 'packages/a' || p === 'packages/b/package.json');
+    expect(r('a', 'src/x.ts')).toBeUndefined();
+    expect(r('b', 'src/x.ts')).toBeUndefined();
+  });
+});
+
 // Issue 010: a verdict must be a function of the commit, so a file the caller excludes (git-ignored build output, a generated config) acts as though it does not exist, for every probe and every configuration read: the result with it on disk equals the result without it.
 describe('resolveTsPath — an excluded file acts as though it does not exist', () => {
   const builtCore = {
