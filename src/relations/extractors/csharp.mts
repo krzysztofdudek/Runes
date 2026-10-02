@@ -49,7 +49,7 @@ import type {
  *    injects them into each file's `uses(file, { projectGlobalUsings })` as the lowest using tier. Then, for each type reference (detected across every syntactic
  *    type position — base/`new`, field/property/parameter/return/local types, generic base names
  *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
- *    cast operands, tuple/array/nullable element types, the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
+ *    cast operands, tuple/array/nullable element types (a named tuple type argument the grammar misreads as comparisons included), the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
  *      [alias-expansion?]                              ← leftmost segment is a local alias
@@ -1218,6 +1218,18 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     // The element type of `new T[n]` and `stackalloc T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing, and so does the implicit `stackalloc[] { … }`; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
     if (node.type === 'array_creation_expression' || node.type === 'stackalloc_expression' || node.type === 'foreach_statement') {
       emitTypeNode(node.childForFieldName('type'));
+      return undefined;
+    }
+    // A tuple type with named elements as a type argument, followed by arguments or an initializer (`new List<(Order Item, int Index)>(n)`, `new List<(Order Item, int Index)> { … }`, `Make<(Order Item, int Index)>(n)`): the grammar reads it as `G < (Order Item, int Index) > …`, comparisons around a tuple of declaration expressions. A tuple of declarations is never a valid operand, so after `<` it can only be that tuple type: each named element's type is read (its name never is), and so is a bare unnamed element beside a named one.
+    if (node.type === 'binary_expression' && node.childForFieldName('operator')!.type === '<') {
+      const tuple = node.childForFieldName('right')!;
+      const elements = tuple.type === 'tuple_expression' ? tuple.namedChildren.map((arg) => arg!.namedChild(0)!) : [];
+      if (elements.some((e) => e.type === 'declaration_expression')) {
+        for (const e of elements) {
+          if (e.type === 'declaration_expression') emitTypeNode(e.childForFieldName('type'));
+          else if (e.type === 'identifier') emitTypeNode(e);
+        }
+      }
       return undefined;
     }
     // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
