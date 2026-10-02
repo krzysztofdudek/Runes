@@ -411,7 +411,7 @@ function directiveNamespaceText(directive: Node, skipName: Node | null = null): 
 }
 
 /**
- * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
+ * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)` or `F(x.i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>` or `x.i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
  */
 function declaresVariable(decl: Node): boolean {
   const arg = decl.parent!; // a declaration expression is always an argument's child
@@ -1217,9 +1217,10 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
-    // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`), which names no type.
+    // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
     if (node.type === 'declaration_expression') {
-      if (declaresVariable(node)) emitTypeNode(node.childForFieldName('type'));
+      if (!declaresVariable(node)) return false;
+      emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
 

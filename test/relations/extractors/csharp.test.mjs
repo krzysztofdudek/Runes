@@ -1067,3 +1067,17 @@ describe('csharp — a type parameter in scope shadows a type of the same name (
     expect(groups(uses)).toEqual([['Entity']]);
   });
 });
+
+describe('csharp — a qualified comparison pair the grammar reads as a declaration (issue 150)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('`x.i < A, j > B` and `a.b.i < A, j.k > B` in a call, constructor or indexer argument list emit nothing', async () => {
+    const { uses } = await run(['class C { object M(object x, object a, int j) => F(x.i < A, j > B) && new P(x.i < A, j > B) && this[a.b.i < A, j.k > B]; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['P']]);
+  });
+  it('a qualified generic `out` declaration and deconstruction element still emit the type and its arguments', async () => {
+    const { uses } = await run(['class C { void M(object c) { c.TryGet(out A.B<X, Y> v); (A.B<Z> p, int q) = c.Pair(); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['TryGet()'], ['A.B'], ['X'], ['Y'], ['A.B'], ['Z'], ['Pair()']]);
+  });
+});
