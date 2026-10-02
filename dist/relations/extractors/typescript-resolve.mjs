@@ -22,7 +22,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it, and silence when several hold it and disagree. The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the one the importer's own package.json declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -572,22 +572,24 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
         declaredAt.set(dir, globs);
         return globs;
     };
-    // The members of the workspace rooted at `root`, by name: the root package and every package whose directory a positive glob matches and no `!` glob does, braces expanded.
+    // Whether a directory is a member of the workspace rooted at `root`: the root itself, or a directory a positive glob matches and no `!` glob does, braces expanded.
+    const isMemberDir = (root, globs, dir) => {
+        if (dir === root)
+            return true;
+        if (root !== '' && !dir.startsWith(`${root}/`))
+            return false;
+        const rel = root === '' ? dir : dir.slice(root.length + 1);
+        const include = globs.filter((g) => !g.startsWith('!')).flatMap(expandBraces);
+        const exclude = globs.filter((g) => g.startsWith('!')).flatMap((g) => expandBraces(g.slice(1)));
+        return include.some((g) => globMatches(g, rel)) && !exclude.some((g) => globMatches(g, rel));
+    };
+    // The members of the workspace rooted at `root`, by name.
     const membersAt = new Map();
     const workspaceMembers = (root, globs) => {
         const cached = membersAt.get(root);
         if (cached !== undefined)
             return cached;
-        const include = globs.filter((g) => !g.startsWith('!')).flatMap(expandBraces);
-        const exclude = globs.filter((g) => g.startsWith('!')).flatMap((g) => expandBraces(g.slice(1)));
-        const members = inRepoPackages().filter((pkg) => {
-            if (pkg.dir === root)
-                return true;
-            if (root !== '' && !pkg.dir.startsWith(`${root}/`))
-                return false;
-            const rel = root === '' ? pkg.dir : pkg.dir.slice(root.length + 1);
-            return include.some((g) => globMatches(g, rel)) && !exclude.some((g) => globMatches(g, rel));
-        });
+        const members = inRepoPackages().filter((pkg) => isMemberDir(root, globs, pkg.dir));
         const index = indexByName(members);
         membersAt.set(root, index);
         return index;
@@ -795,10 +797,26 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
         }
         return undefined;
     };
-    // Rule 4c. A local spec in the importer's own package.json is what the package manager links under that name; otherwise the nearest workspace declaration above the importer decides which in-repo packages are linked by name at all.
+    // The package whose dependencies a file sees: the nearest package.json that names a package, declares dependencies or declares a workspace. One that does none of these (a `{"type": "module"}` marker) installs nothing, so the files under it see the dependencies of the package around it.
+    const dependencyOwner = (fromFile) => {
+        for (const dir of ancestors(fromFile)) {
+            const pkg = packageAt(dir);
+            if (pkg === undefined)
+                continue;
+            const { manifest } = pkg;
+            if (typeof manifest.name === 'string' || manifest.workspaces !== undefined || DEPENDENCY_FIELDS.some((f) => manifest[f] !== undefined))
+                return pkg;
+        }
+        return undefined;
+    };
+    // Rule 4c. A package resolves its own name through its `exports` before anything else, as Node and TypeScript self-reference; a local spec in the importer's own package.json is what the package manager links under that name; otherwise the workspace declarations above the importer decide which in-repo packages are linked by name at all.
     const packageNamed = (name, fromFile) => {
+        // Self-reference reads the package scope, the nearest package.json (a marker included, as Node reads it), and only one with `exports` resolves its own name.
+        const scope = nearestPackage(fromFile);
+        if (scope !== undefined && scope.manifest.name === name && scope.manifest.exports !== undefined && scope.manifest.exports !== null)
+            return scope;
         let lookup = name;
-        const own = nearestPackage(fromFile);
+        const own = dependencyOwner(fromFile);
         const field = own === undefined ? undefined : DEPENDENCY_FIELDS.map((f) => own.manifest[f]).find((d) => isRecord(d) && Object.hasOwn(d, name));
         const spec = isRecord(field) ? field[name] : undefined;
         if (own !== undefined && typeof spec === 'string') {
@@ -812,12 +830,22 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
             if (alias !== null)
                 lookup = alias[1];
         }
+        // The nearest workspace declaration above the importer, then each enclosing one while the declaring directory is a member of it: npm and pnpm install a member from the enclosing root and ignore its own declaration, and yarn links nested worktrees into one project, so the enclosing members are linked too. A name two of them bind to different packages is ambiguous (npm takes the enclosing one, yarn refuses the pair). A declaration that is no member of the one above is a project installed on its own, whose node_modules may hold a registry package under any name, so nothing above it is looked at.
+        let found;
+        let declared;
         for (const dir of ancestors(fromFile)) {
             const globs = workspaceGlobs(dir);
-            if (globs !== undefined)
-                return workspaceMembers(dir, globs).get(lookup);
+            if (globs === undefined)
+                continue;
+            if (declared !== undefined && !isMemberDir(dir, globs, declared))
+                break;
+            const hit = workspaceMembers(dir, globs).get(lookup);
+            if (hit !== undefined && found !== undefined && hit !== found)
+                return 'ambiguous';
+            found ??= hit;
+            declared = dir;
         }
-        return packageIndex().get(lookup);
+        return declared !== undefined ? found : packageIndex().get(lookup);
     };
     return {
         tsconfigFor,

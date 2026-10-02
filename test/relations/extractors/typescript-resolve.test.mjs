@@ -447,7 +447,106 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('root-pkg', 'packages/a/x.ts')).toBe('root.ts');
     expect(r('inner', 'e2e/demo/src/x.ts')).toBe('e2e/demo/libs/inner/index.ts');
     expect(r('inner', 'packages/a/x.ts')).toBeUndefined();
-    expect(r('a', 'e2e/demo/src/x.ts')).toBeUndefined();
+  });
+  // Issue 155 (1): npm and pnpm install a member's directory from the enclosing root and ignore its own declaration, and yarn links nested worktrees into one project, so a member that declares a workspace of its own still sees the enclosing members.
+  describe('a member that declares its own workspace (issue 155, 1)', () => {
+    const nested = {
+      'package.json': '{ "name": "root-pkg", "workspaces": ["packages/*", "e2e/demo"] }',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'e2e/demo/package.json': '{ "name": "demo", "workspaces": ["libs/*"] }',
+      'e2e/demo/libs/inner/package.json': '{ "name": "inner", "main": "./index.ts" }',
+      'e2e/demo/libs/inner/index.ts': '',
+    };
+    it('sees the enclosing members, from its own files and from its own members', () => {
+      const r = project(nested);
+      expect(r('a', 'e2e/demo/src/x.ts')).toBe('packages/a/index.ts');
+      expect(r('a', 'e2e/demo/libs/inner/y.ts')).toBe('packages/a/index.ts');
+      expect(r('inner', 'e2e/demo/src/x.ts')).toBe('e2e/demo/libs/inner/index.ts');
+    });
+    it('reads a pnpm-workspace.yaml nested in a member the same way', () => {
+      const r = project({
+        'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n  - 'e2e/demo'\n",
+        'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+        'packages/a/index.ts': '',
+        'e2e/demo/package.json': '{ "name": "demo", "dependencies": { "a": "workspace:*" } }',
+        'e2e/demo/pnpm-workspace.yaml': "packages:\n  - 'libs/*'\n",
+      });
+      expect(r('a', 'e2e/demo/src/x.ts')).toBe('packages/a/index.ts');
+    });
+    it('a name the nested and the enclosing workspace bind to different packages is ambiguous (npm takes the enclosing one, yarn refuses the pair)', () => {
+      const r = project({ ...nested, 'e2e/demo/libs/a/package.json': '{ "name": "a", "main": "./index.ts" }', 'e2e/demo/libs/a/index.ts': '' });
+      expect(r('a', 'e2e/demo/src/x.ts')).toBeUndefined();
+      expect(r('a', 'packages/a/x.ts')).toBe('packages/a/index.ts');
+    });
+    it('a nested project the enclosing globs do not match is installed on its own: the enclosing members stay silent there', () => {
+      // Node would still find them through the enclosing root's node_modules, unless the nested project's own install holds a registry package of the same name; which it holds is not known here.
+      const r = project({
+        'package.json': '{ "workspaces": ["packages/*"] }',
+        'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+        'packages/a/index.ts': '',
+        'examples/demo/package.json': '{ "name": "demo", "private": true, "workspaces": ["libs/*"] }',
+        'examples/demo/libs/inner/package.json': '{ "name": "inner", "main": "./index.ts" }',
+        'examples/demo/libs/inner/index.ts': '',
+      });
+      expect(r('a', 'examples/demo/src/x.ts')).toBeUndefined();
+      expect(r('inner', 'examples/demo/src/x.ts')).toBe('examples/demo/libs/inner/index.ts');
+      expect(r('inner', 'packages/a/x.ts')).toBeUndefined();
+    });
+  });
+  // Issue 155 (2): Node and TypeScript resolve a package's own name from inside it through its `exports` (self-reference), before any node_modules lookup, wherever the package sits.
+  it('a package with exports imports itself by name, inside the globs or not; without exports, or under a marker package.json, it does not (issue 155, 2)', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'tools/gen/package.json': '{ "name": "gen", "exports": { ".": "./index.ts", "./sub": "./lib/sub.ts" } }',
+      'tools/gen/index.ts': '',
+      'tools/gen/lib/sub.ts': '',
+      'tools/gen/lib/hidden.ts': '',
+      'tools/gen/src/esm/package.json': '{ "type": "module" }',
+      'tools/plain/package.json': '{ "name": "plain", "main": "./index.ts" }',
+      'tools/plain/index.ts': '',
+      'fixtures/gen/package.json': '{ "name": "gen", "main": "./index.ts" }',
+      'fixtures/gen/index.ts': '',
+    });
+    expect(r('gen', 'tools/gen/src/x.ts')).toBe('tools/gen/index.ts');
+    expect(r('gen/sub', 'tools/gen/src/x.ts')).toBe('tools/gen/lib/sub.ts');
+    // `exports` is the whole public surface, for the package itself too.
+    expect(r('gen/lib/hidden', 'tools/gen/src/x.ts')).toBeUndefined();
+    // The package scope is the nearest package.json: a marker without the name or `exports` ends self-reference, as in Node.
+    expect(r('gen', 'tools/gen/src/esm/x.ts')).toBeUndefined();
+    expect(r('plain', 'tools/plain/src/x.ts')).toBeUndefined();
+    // Elsewhere the name is not linked: neither the package nor the fixture copying its name.
+    expect(r('gen', 'packages/a/x.ts')).toBeUndefined();
+    // Without any workspace declaration, the package's own name still beats a fixture copying it.
+    const undeclared = project({
+      'tools/gen/package.json': '{ "name": "gen", "exports": "./index.ts" }',
+      'tools/gen/index.ts': '',
+      'fixtures/gen/package.json': '{ "name": "gen", "main": "./index.ts" }',
+      'fixtures/gen/index.ts': '',
+    });
+    expect(undeclared('gen', 'tools/gen/src/x.ts')).toBe('tools/gen/index.ts');
+    expect(undeclared('gen', 'src/x.ts')).toBeUndefined();
+  });
+  // Issue 155 (3): a package.json that names no package and declares no dependencies (a `{"type": "module"}` marker) installs nothing, so the files under it see the dependencies of the package around it.
+  it('a file under a marker package.json sees the local dependencies of the package around it (issue 155, 3)', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/app/package.json': '{ "name": "app", "dependencies": { "vend": "file:../../vendor/vend" } }',
+      'packages/app/src/esm/package.json': '{ "type": "commonjs" }',
+      'packages/app/src/esm/deep/package.json': '{ "type": "module", "sideEffects": false }',
+      'packages/app/src/nested/package.json': '{ "workspaces": ["libs/*"] }',
+      'packages/app/src/named/package.json': '{ "name": "named-sub" }',
+      'vendor/vend/package.json': '{ "name": "vend", "main": "./index.ts" }',
+      'vendor/vend/index.ts': '',
+    });
+    expect(r('vend', 'packages/app/src/y.ts')).toBe('vendor/vend/index.ts');
+    expect(r('vend', 'packages/app/src/esm/x.ts')).toBe('vendor/vend/index.ts');
+    expect(r('vend', 'packages/app/src/esm/deep/z.ts')).toBe('vendor/vend/index.ts');
+    // A package.json that names a package or declares a workspace is a package of its own, with its own dependencies.
+    expect(r('vend', 'packages/app/src/named/x.ts')).toBeUndefined();
+    expect(r('vend', 'packages/app/src/nested/x.ts')).toBeUndefined();
   });
   it('a malformed workspaces field is not a declaration', () => {
     const r = project({
