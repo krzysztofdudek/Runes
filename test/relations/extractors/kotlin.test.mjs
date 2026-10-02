@@ -535,6 +535,13 @@ describe('kotlin extractor — parse recovery reads headers and lexes defensivel
     expect(keysOf(declarations)).toEqual(['p.Outer', 'p.Outer+Box']);
   });
 
+  it('joins a header to its next-line constructor in a file with CRLF line endings', async () => {
+    const code = ['package com.acme', 'abstract class Reader {', '  class Options', '  private constructor(val s: List<String>) {', '    fun size(): Int = s.size', '  }', '', '  enum class Token {', '    BEGIN,', '    END,', '  }', '}', ''].join('\r\n');
+    const { declarations } = await run(code);
+    expect(keysOf(declarations)).toEqual(['com.acme.Reader', 'com.acme.Reader+Options', 'com.acme.Reader+Options+size', 'com.acme.Reader+Token']);
+    expect(declarations.map((d) => d.line)).toEqual([2, 3, 5, 8]);
+  });
+
   it('kotlinView releases its trees once, however often dispose is called', async () => {
     const code = 'package p\ncontext(l: Logger)\nfun d() {}\n';
     await withParsedFiles([kt('src/a/D.kt', code)], ([f]) => {
