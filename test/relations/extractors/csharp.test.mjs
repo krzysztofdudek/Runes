@@ -947,3 +947,41 @@ describe('csharp — extension and receiver shapes that must NOT count (branch g
     expect(g.flat().some((k) => k.includes('Lib'))).toBe(false);
   });
 });
+
+describe('csharp — type arguments of generic methods and the remaining typed expressions (issue 016)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a generic method call emits its type arguments, never the method name', async () => {
+    const { uses } = await run(['class C { void M(object s) { Make<Order>(); Shop.Make<Line>(); } }', ''].join('\n'));
+    const keys = groups(uses).flat();
+    expect(keys).toContain('Order');
+    expect(keys).toContain('Line');
+    expect(keys).not.toContain('Make');
+    expect(keys).not.toContain('Shop.Make');
+  });
+  it('a value-receiver generic call keeps its extension group and adds its type arguments after it', async () => {
+    const { uses } = await run(['class C { void M(object sp) { sp.Get<Ctx>(); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Get()'], ['Ctx']]);
+  });
+  it('a null-conditional generic call `sp?.Get<Ctx>()` emits its type arguments', async () => {
+    const { uses } = await run(['class C { void M(object sp) { sp?.Get<Ctx>(); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Get()'], ['Ctx']]);
+  });
+  it('a nested generic type argument `Get<List<Ctx>>()` emits the container and its argument', async () => {
+    const { uses } = await run(['class C { void M(object sp) { sp.Get<List<Ctx>>(); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Get()'], ['List'], ['Ctx']]);
+  });
+  it('an array creation emits its element type through jagged ranks; `new[] { … }` names none', async () => {
+    const { uses } = await run(['class C { object M() { var a = new[] { 1 }; return new Order[2][]; } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Order']]);
+  });
+  it('a deconstructing foreach emits each typed element; `var` and predefined types emit nothing', async () => {
+    const { uses } = await run(['class C { void M(object xs) { foreach ((Order p, int q) in xs) {} foreach (var r in xs) {} } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Order']]);
+  });
+  it('`out var x` emits nothing; `out Order x` emits Order', async () => {
+    const { uses } = await run(['class C { void M(object c) { c.TryGet(out var a); c.TryGet(out Order b); } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['TryGet()'], ['TryGet()'], ['Order']]);
+  });
+});
