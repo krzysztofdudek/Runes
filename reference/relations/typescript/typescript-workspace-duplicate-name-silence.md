@@ -8,7 +8,7 @@ cites: "Yggdrasil zero-false-positive rule — two in-repo packages with one nam
 
 ## Rule
 
-Two in-repo package.json files declaring the same `name` (a fixture copy, a vendored fork) make the name ambiguous: the package manager links one of them, and the source cannot say which. The import is silenced.
+In a repository that declares no workspace, two in-repo package.json files declaring the same `name` (a fixture copy, a vendored fork) make the name ambiguous: the package manager links one of them, and the source cannot say which. The import is silenced. Inside a declared workspace only members count, so a copy outside the workspace globs does not silence the member (see `typescript-workspace-member-beats-fixture-edge`).
 
 ## Files
 
