@@ -524,6 +524,17 @@ describe('kotlin extractor — parse recovery reads headers and lexes defensivel
     }
   });
 
+  it('never joins a header whose type parameters carry a use: a bound or an annotation would leave its row', async () => {
+    for (const params of ['<T : com.acme.Bound>', '<@com.acme.Ann T>', '<T : a.B, U>']) {
+      const { declarations, uses } = await run(`package p\nclass Outer {\n  class Box${params}\n  private constructor(val t: T)\n}\n`);
+      expect(keysOf(declarations), params).toEqual(['p.Outer', 'p.Outer+*']);
+      expect(uses.filter((u) => u.line !== 3), params).toEqual([]);
+    }
+    // Plain names with variance still join.
+    const { declarations } = await run('package p\nclass Outer {\n  class Box<in A, out B>\n  private constructor(val a: A)\n}\n');
+    expect(keysOf(declarations)).toEqual(['p.Outer', 'p.Outer+Box']);
+  });
+
   it('kotlinView releases its trees once, however often dispose is called', async () => {
     const code = 'package p\ncontext(l: Logger)\nfun d() {}\n';
     await withParsedFiles([kt('src/a/D.kt', code)], ([f]) => {
