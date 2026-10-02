@@ -1,6 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/python-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import { resolvePythonModule } from '../../helpers/internal/relations.mjs';
+import { resolvePythonModule, makePythonResolver } from '../../helpers/internal/relations.mjs';
+import { random, seeded, seedNote } from '../../helpers/prng.mjs';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([
@@ -269,5 +270,195 @@ describe('resolvePythonModule — sys.path-like roots', () => {
     const files = new Set(['pkg/__init__.py', 'pkg/sub/mod.py']);
     const roots = () => ['pkg/sub'];
     expect(resolvePythonModule('mod', 'apps/web/main.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+});
+
+describe('resolvePythonModule — a PEP 420 namespace directory is not a sys.path root (issue 009)', () => {
+  // acme/ has no __init__.py (a top-level namespace package) and the repository root holds the project's pyproject.toml (flat layout, discovered root ''). Python puts the root on sys.path, never acme/, so `import logging` loads the standard library and `import yaml` the installed library, not acme/logging/ or acme/yaml/.
+  const flat = new Set(['acme/core/__init__.py', 'acme/core/service.py', 'acme/logging/__init__.py', 'acme/yaml/__init__.py', 'acme/tool.py']);
+  const flatExists = (p) => flat.has(p);
+  const flatRoots = () => [''];
+
+  it('a standard-library name from a sub-package never binds to the namespace directory', () => {
+    expect(resolvePythonModule('logging', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBeUndefined();
+    expect(resolvePythonModule('logging.handlers', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBeUndefined();
+  });
+
+  it('an external library name from a sub-package never binds to the namespace directory', () => {
+    expect(resolvePythonModule('yaml', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBeUndefined();
+  });
+
+  it('control: the namespace package itself still resolves from the project root', () => {
+    expect(resolvePythonModule('acme.logging', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBe('acme/logging/__init__.py');
+  });
+
+  it('control: the importing script\'s own directory stays a root (python acme/tool.py)', () => {
+    expect(resolvePythonModule('logging', 'acme/tool.py', flatExists, undefined, flatRoots)).toBe('acme/logging/__init__.py');
+    expect(resolvePythonModule('yaml', 'acme/tool.py', flatExists, undefined, flatRoots)).toBe('acme/yaml/__init__.py');
+  });
+
+  it('src layout: a namespace directory under the discovered src/ root is not a root (poetry)', () => {
+    const files = new Set(['src/poetry/config/__init__.py', 'src/poetry/config/config.py', 'src/poetry/json/__init__.py']);
+    const exists = (p) => files.has(p);
+    const roots = () => ['src'];
+    expect(resolvePythonModule('json', 'src/poetry/config/config.py', exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('json.JSONDecodeError', 'src/poetry/config/config.py', exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('poetry.json', 'src/poetry/config/config.py', exists, undefined, roots)).toBe('src/poetry/json/__init__.py');
+  });
+
+  it('a project nested in the repository: its namespace directory is not a root, the project root is (google-cloud-logging)', () => {
+    const files = new Set([
+      'packages/gcl/setup.py',
+      'packages/gcl/google/cloud/logging/__init__.py',
+      'packages/gcl/google/cloud/logging_v2/__init__.py',
+      'packages/gcl/google/cloud/logging_v2/client.py',
+    ]);
+    const exists = (p) => files.has(p);
+    const roots = () => ['packages/gcl'];
+    const from = 'packages/gcl/google/cloud/logging_v2/client.py';
+    expect(resolvePythonModule('logging', from, exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('logging.handlers', from, exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('google.cloud.logging', from, exists, undefined, roots)).toBe('packages/gcl/google/cloud/logging/__init__.py');
+  });
+
+  it('without a manifest, a standard-library name binds only at the importer\'s own directory or the repository root', () => {
+    const files = new Set(['acme/core/__init__.py', 'acme/core/service.py', 'acme/logging/__init__.py', 'tools/json.py', 'tools/run.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('logging', 'acme/core/service.py', exists)).toBeUndefined();
+    // the importing script's own directory (python tools/run.py) and the repository root (python -m from the root) are first on sys.path
+    expect(resolvePythonModule('json', 'tools/run.py', exists)).toBe('tools/json.py');
+    const atRoot = new Set(['logging.py', 'acme/core/__init__.py', 'acme/core/service.py']);
+    expect(resolvePythonModule('logging', 'acme/core/service.py', (p) => atRoot.has(p))).toBe('logging.py');
+  });
+});
+
+describe('resolvePythonModule — directories a tool runs from stay roots below a project root (issue 009, flat layouts)', () => {
+  // The repository root holds the project's pyproject.toml (discovered root ''), so every other ancestor lies below it. Two conventions still put such a directory first on sys.path: pytest's rootdir rule (a conftest.py in a directory with no __init__.py) and Django's manage.py, which runs from its own directory.
+  const roots = () => [''];
+
+  it('a directory holding manage.py roots its apps (Django in backend/)', () => {
+    const files = new Set(['pyproject.toml', 'backend/manage.py', 'backend/shop/__init__.py', 'backend/shop/views.py', 'backend/orders/__init__.py', 'backend/orders/models.py']);
+    expect(resolvePythonModule('orders.models', 'backend/shop/views.py', (p) => files.has(p), undefined, roots)).toBe('backend/orders/models.py');
+  });
+
+  it('a directory holding conftest.py and no __init__.py roots the test helpers (pytest rootdir)', () => {
+    const files = new Set(['pyproject.toml', 'mypkg/__init__.py', 'tests/conftest.py', 'tests/helpers.py', 'tests/unit/test_a.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('helpers', 'tests/unit/test_a.py', exists, undefined, roots)).toBe('tests/helpers.py');
+    expect(resolvePythonModule('helpers.make', 'tests/unit/test_a.py', exists, undefined, roots)).toBe('tests/helpers.py');
+  });
+
+  it('control: a conftest.py directory that is a regular package is no root', () => {
+    const files = new Set(['pyproject.toml', 'tests/__init__.py', 'tests/conftest.py', 'tests/helpers.py', 'tests/unit/test_a.py']);
+    expect(resolvePythonModule('helpers', 'tests/unit/test_a.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+
+  it('control: neither opens the standard-library trap (a stdlib name binds only at the importer\'s directory or the repository root)', () => {
+    const files = new Set(['pyproject.toml', 'tests/conftest.py', 'tests/logging.py', 'tests/unit/test_a.py', 'backend/manage.py', 'backend/json/__init__.py', 'backend/shop/__init__.py', 'backend/shop/views.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('logging', 'tests/unit/test_a.py', exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('json', 'backend/shop/views.py', exists, undefined, roots)).toBeUndefined();
+  });
+
+  it('known limit: a directory put on sys.path only by configuration (an Airflow dags folder) is not searched', () => {
+    const files = new Set(['pyproject.toml', 'dags/common/utils.py', 'dags/etl/job.py']);
+    expect(resolvePythonModule('common.utils', 'dags/etl/job.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+});
+
+describe('resolvePythonModule — a pkgutil namespace package shared by several distributions (issue 073)', () => {
+  // Two workspace members ship the package `acme` (each with an `acme/__init__.py` that extends `__path__` with pkgutil); only core has `acme/settings.py`. Python finds acme.settings through the extended `__path__`, so the other member's `acme/__init__.py` (the parent-package fallback for `from acme import settings`) must not make the exact module ambiguous.
+  const roots = () => ['', 'core/src', 'plugin/src'];
+  const base = ['core/src/acme/__init__.py', 'core/src/acme/models/__init__.py', 'core/src/acme/models/user.py', 'plugin/src/acme/__init__.py', 'plugin/src/acme/x.py'];
+
+  it('the exact module at one root wins over a sibling distribution\'s parent package', () => {
+    const files = new Set([...base, 'core/src/acme/settings.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('acme.settings', 'core/src/acme/models/user.py', exists, undefined, roots)).toBe('core/src/acme/settings.py');
+    expect(resolvePythonModule('acme.settings', 'plugin/src/acme/x.py', exists, undefined, roots)).toBe('core/src/acme/settings.py');
+  });
+
+  it('control: a module found exactly under both roots stays silent', () => {
+    const files = new Set([...base, 'core/src/acme/settings.py', 'plugin/src/acme/settings.py']);
+    expect(resolvePythonModule('acme.settings', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+
+  it('control: a symbol of the module (from acme.settings import DEBUG) still resolves to the module', () => {
+    const files = new Set([...base, 'core/src/acme/settings.py']);
+    expect(resolvePythonModule('acme.settings.DEBUG', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBe('core/src/acme/settings.py');
+  });
+
+  it('control: with no exact module anywhere, the parent packages of both distributions stay ambiguous', () => {
+    const files = new Set(base);
+    expect(resolvePythonModule('acme.settings', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+
+  it('control: with no exact module anywhere, a single parent package is the fallback (from acme import NAME)', () => {
+    const files = new Set(['core/src/acme/__init__.py', 'core/src/acme/models/__init__.py', 'core/src/acme/models/user.py']);
+    expect(resolvePythonModule('acme.NAME', 'core/src/acme/models/user.py', (p) => files.has(p), undefined, roots)).toBe('core/src/acme/__init__.py');
+  });
+
+  it('control: a parent MODULE file at another root still competes with the exact module (it cannot hold a submodule, so sys.path order decides)', () => {
+    const files = new Set(['core/src/acme/__init__.py', 'core/src/acme/settings.py', 'plugin/src/acme.py', 'apps/main.py']);
+    expect(resolvePythonModule('acme.settings', 'apps/main.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+});
+
+describe('makePythonResolver — one resolver for a whole pass (issue 013)', () => {
+  it('answers every import exactly as resolvePythonModule does, over generated layouts, roots, exclusions and listings', seeded(() => {
+    const rnd = random();
+    const names = ['a', 'b', 'pkg', 'src', 'logging', 'json', 'yaml'];
+    for (let round = 0; round < 60; round++) {
+      const files = new Set();
+      for (let f = rnd.int(4, 24); f > 0; f--) {
+        const dirs = Array.from({ length: rnd.int(0, 3) }, () => rnd.pick(names));
+        files.add([...dirs, rnd.bool(0.3) ? '__init__.py' : `${rnd.pick(names)}.py`].join('/'));
+      }
+      const children = new Map();
+      for (const file of files) {
+        const segs = file.split('/');
+        for (let i = 0; i < segs.length; i++) {
+          const dir = segs.slice(0, i).join('/');
+          if (!children.has(dir)) children.set(dir, new Set());
+          children.get(dir).add(segs[i]);
+        }
+      }
+      const dirs = [...children.keys()];
+      const roots = dirs.filter(() => rnd.bool(0.3));
+      const unlisted = new Set(roots.filter(() => rnd.bool(0.2)));
+      const listDir = (dir) => (unlisted.has(dir) ? undefined : [...(children.get(dir) ?? [])]);
+      const excluded = new Set([...files].filter(() => rnd.bool(0.1)));
+      const exists = (p) => files.has(p);
+      const isExcluded = rnd.bool() ? (p) => excluded.has(p) : undefined;
+      const shared = makePythonResolver(exists, isExcluded, () => roots, listDir);
+      const importers = [...files, 'apps/main.py', 'main.py'];
+      for (let q = 0; q < 80; q++) {
+        const dotted = Array.from({ length: rnd.int(1, 3) }, () => rnd.pick([...names, 'X'])).join('.');
+        const specifier = rnd.bool(0.2) ? `${'.'.repeat(rnd.int(1, 2))}${rnd.bool() ? dotted : ''}` : dotted;
+        const from = rnd.pick(importers);
+        const want = resolvePythonModule(specifier, from, exists, isExcluded, () => roots);
+        expect(shared(specifier, from), `${specifier} from ${from}, files ${JSON.stringify([...files])}, roots ${JSON.stringify(roots)} ${seedNote()}`).toBe(want);
+      }
+    }
+  }));
+
+  it('probes only the discovered roots that hold the parent module\'s path, each path once', () => {
+    // Every distribution ships the namespace package `ns`; only p1 holds `ns/models`.
+    const files = new Set(['p1/src/ns/__init__.py', 'p1/src/ns/models/__init__.py', 'p1/src/ns/models/dag.py', 'p2/src/ns/__init__.py', 'p2/src/ns/hooks.py', 'p3/src/ns/__init__.py', 'app/main.py']);
+    const probed = [];
+    const exists = (p) => {
+      probed.push(p);
+      return files.has(p);
+    };
+    const roots = ['p1/src', 'p2/src', 'p3/src'];
+    const listing = { 'p1/src': ['ns'], 'p1/src/ns': ['__init__.py', 'models'], 'p2/src': ['ns'], 'p2/src/ns': ['__init__.py', 'hooks.py'], 'p3/src': ['ns'], 'p3/src/ns': ['__init__.py'] };
+    const resolve = makePythonResolver(exists, undefined, () => roots, (dir) => listing[dir]);
+    expect(resolve('ns.models.dag', 'app/main.py')).toBe('p1/src/ns/models/dag.py');
+    expect(resolve('ns.hooks', 'app/main.py')).toBe('p2/src/ns/hooks.py');
+    expect(resolve('requests', 'app/main.py')).toBeUndefined();
+    expect(resolve('ns.models.dag', 'app/main.py')).toBe('p1/src/ns/models/dag.py');
+    // under p2 and p3 nothing for ns.models.dag and requests; for ns.hooks, its candidates (and p3's parent package), besides the one-time regular-package check of each root
+    expect(probed.filter((p) => /^p[23]\//.test(p)).sort()).toEqual(['p2/__init__.py', 'p2/src/__init__.py', 'p2/src/ns/hooks.py', 'p2/src/ns/hooks/__init__.py', 'p3/__init__.py', 'p3/src/__init__.py', 'p3/src/ns/__init__.py', 'p3/src/ns/hooks.py', 'p3/src/ns/hooks/__init__.py']);
+    expect(probed.length).toBe(new Set(probed).size);
   });
 });
