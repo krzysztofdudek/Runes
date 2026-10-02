@@ -2,6 +2,53 @@
 
 All notable changes to Runes are recorded here, one line per change. Runes follows [Semantic Versioning](https://semver.org/); one version covers every subpath.
 
+## [1.0.1] - 2026-10-02
+
+A patch release of the relation extractors: they find dependencies they used to miss, drop a few they reported by mistake, and run fast on large monorepos and large files. The exports, options and contracts in `docs/api.md` are unchanged.
+
+**Before you upgrade.** The extractors now see real dependencies that went unnoticed before: C# types named only as type arguments of a generic method call, TypeScript path aliases in Vite and other solution-style tsconfig files, Rust brace-list imports and dotted Cargo keys, Kotlin annotated declarations, and Python namespace packages and multi-distribution layouts. A graph that passed on 1.0.0 may therefore show new refusals after the upgrade. They point at dependencies your code really has: declare them, or change the code.
+
+### C#
+
+- Types named only as type arguments of a generic method call (`services.AddScoped<IFoo, Foo>()`, `sp.GetRequiredService<T>()`, `Substitute.For<T>()`, `Array.Empty<T>()`), and types in `new T[n]`, `stackalloc T[n]`, `foreach (T x in …)`, `out T x` and a typed deconstruction, count as dependencies.
+- A tuple type with named elements inside a generic argument (`new List<(Order Item, int Index)>(n)`, `Make<List<(Invoice Doc, int I)>>(n)`) gives edges for its element types and the enclosing generic types; the element names never do.
+- `global::` reaches only the global namespace: `global::Settings`, `global::Box<T>`, `WebApplicationFactory<global::Program>`, attributes (`[global::A.Bar]`, `[global::Foo]`, `[global::Gen<Order>]`) and static members (`global::Clock.Now()`, as generated gRPC and protobuf code writes them) bind the type of the global namespace, ahead of a same-named type in an enclosing namespace.
+- An attribute behind a qualifier (`[A.Gen<Order>]`) or a using alias (`[S::Foo]`, `[S::Gen<T>]`) gives its edge.
+- A reference to `Program` (such as `WebApplicationFactory<Program>` in an integration-test project) finds the class the compiler generates for a file of top-level statements. A `Program` declared in source (`public partial class Program { }`) still takes precedence; when several projects have top-level statements and none declares `Program`, the reference stays unresolved.
+- A name equal to a type parameter in scope (`T x;` inside `T Resolve<T>()`, `Entity` inside `class Repository<Entity>`) refers to that type parameter, never to a same-named type of the repository.
+- A comparison pair whose left operand is a member access (`Within(x.Low < Order, j > Max)`) is read as two comparisons, not as a generic type.
+
+### TypeScript and JavaScript
+
+- Path aliases in a solution-style tsconfig.json (`files: []` plus `references`, as Vite and create-vue scaffold it) come from the referenced config whose `include` holds the file, matched as tsc matches it (a wildcard skips dot-names and node_modules, `outDir` and `declarationDir` are excluded when no `exclude` is set). When several referenced configs hold the file and disagree, the import stays unresolved. A `.vue` or `.svelte` component reads jsconfig.json paths as a JavaScript file does.
+- A bare import binds to the package the importing package.json declares under that name with a `file:`, `link:`, `portal:` or `workspace:` spec; otherwise, in a repository that declares a workspace (package.json `workspaces` or pnpm-workspace.yaml, brace globs included), to a workspace member. A test fixture or mock named like a dependency or a member no longer takes the import.
+- Layouts that npm, pnpm and Node resolve resolve here too: a workspace member with a workspace of its own sees the enclosing workspace's members, a package with `exports` imports itself by name, a file under a package.json that only sets `"type"` sees the `file:` and `link:` dependencies of the package around it, and a referenced tsconfig that extends a generated base missing from the commit (SvelteKit, Nuxt) affects only the files it may hold.
+- A tsconfig `extends` naming a package (`"extends": "@acme/tsconfig"`) follows the same workspace rule and reads the package's `exports` as tsc 5.0+ does.
+- Files the consumer excludes (git-ignored build output under dist/, a generated `.svelte-kit/tsconfig.json`) are neither import targets nor configs to read; git-ignored paths still have to be passed as excluded.
+- A tsconfig.json, jsconfig.json or package.json saved with a UTF-8 byte order mark (as Visual Studio writes it) is read like any other.
+
+### Python
+
+- In a PEP 420 namespace package (google-cloud-* libraries, poetry's src/poetry), `import logging`, `import json` or an external library import from a sub-package binds to the library, not to a same-named sibling such as google/cloud/logging/. Inside a project, imports are searched from the importing file's own directory, a directory holding conftest.py and no `__init__.py` (pytest), and one holding manage.py (Django); a standard-library name binds only in the file's own directory or at the repository root. A folder put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not searched, so imports between its modules give no edge.
+- When several distributions share a pkgutil-style namespace package (Airflow's core, task SDK and providers each ship `airflow/__init__.py`), `from airflow import settings` and `import airflow.settings` report the dependency on the distribution that holds the module.
+- Resolution in a uv or Poetry monorepo with many pyproject.toml projects is fast: one resolver per pass remembers its probes and looks only at the projects that hold the imported package, so a check that took minutes on Airflow no longer does, with the same relations reported.
+
+### Rust and Cargo
+
+- A brace-list import with no path prefix (`use {core_lib::Invoice, std::fmt::Debug};`, nested, or `pub use {…}`) gives an edge for every item.
+- Cargo.toml dependencies are read in every TOML spelling: dotted keys (`foo.workspace = true`, `foo.path = "../foo"`, `dependencies.foo.path`, `workspace.dependencies.foo.path`, also under `[workspace]` and `[target.<cfg>]`), one inline table for the whole section (`dependencies = { util = { path = "../util" } }`), inline tables holding multi-line arrays, and strings in any TOML form (multi-line, with escapes). The first declaration of a crate wins over a later `[dependencies.<name>]` table.
+- `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` paths, also written inline (`bin = [{ path = … }]`), root their crates, so `crate::`, `self::` and `super::` paths and `mod` lines in those files resolve inside them (ripgrep's crates/core/main.rs, zed's tests/integration). `autotests`, `autoexamples` and `autobenches = false` are read.
+- `package = { name = … }` and `lib = { name = …, path = … }`, inline or dotted, give the crate name and library path as the `[package]` and `[lib]` tables do. With a `[lib]` path outside src/, the modules of src/main.rs bind `crate::` within the binary.
+- A path through a dependency's re-exported extern crate (`grep::printer::Standard`, where `grep` declares `pub extern crate grep_printer as printer;`) gives an edge to that dependency.
+
+### Kotlin
+
+- Imports give an edge for annotated top-level declarations (a meta-annotated annotation class such as a Dagger or Hilt qualifier, an annotated enum with one entry, an annotated data object, `expect class` or `const val`) and for the types nested in a class whose primary constructor sits on the line below its header (ktfmt style), with or without `val`/`var` parameters. Where a header cannot be joined to its constructor, the enclosing type is marked as not fully read.
+
+### All languages
+
+- Walking a syntax tree takes time in proportion to its size: a large file the grammar cannot make sense of (a binary file named .ts) walks quickly instead of taking seconds to minutes per megabyte, and deeply nested trees walk without running out of stack.
+
 ## [1.0.0] - 2026-09-28
 
 The first release published to npm, and the first under the semver 1.x promise: `docs/api.md` lists every name the package keeps stable, the vendoring module paths, and what the promise does not cover. The 0.1.x tags were published for vendoring only; everything they brought is in 1.0.0, and what no family tool imports ships as internal code outside the promise:
