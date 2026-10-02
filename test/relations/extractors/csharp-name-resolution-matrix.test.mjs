@@ -206,3 +206,12 @@ describe('MATRIX — extension-method calls (bound at compile time)', () => {
   it('csharp-extension-via-owned-namespace', () => runCase('csharp-extension-via-owned-namespace'));
   it('csharp-extension-not-in-scope-silence', () => runCase('csharp-extension-not-in-scope-silence'));
 });
+
+describe('MATRIX — type arguments of generic methods and the remaining typed expressions', () => {
+  it('csharp-generic-method-type-argument-edge', () => runCase('csharp-generic-method-type-argument-edge'));
+  it('csharp-generic-local-method-type-argument-edge', () => runCase('csharp-generic-local-method-type-argument-edge'));
+  it('csharp-generic-method-name-not-a-type-silence', () => runCase('csharp-generic-method-name-not-a-type-silence'));
+  it('csharp-array-creation-element-edge', () => runCase('csharp-array-creation-element-edge'));
+  it('csharp-foreach-declared-type-edge', () => runCase('csharp-foreach-declared-type-edge'));
+  it('csharp-out-declaration-type-edge', () => runCase('csharp-out-declaration-type-edge'));
+});

@@ -38,8 +38,8 @@ import { walk } from '../../ast/walk.mjs';
  *    global-using prefixes — plus its MSBuild `<Using>` items and SDK implicit usings — and
  *    injects them into each file's `uses(file, { projectGlobalUsings })` as the lowest using tier. Then, for each type reference (detected across every syntactic
  *    type position — base/`new`, field/property/parameter/return/local types, generic base names
- *    and type arguments, member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
- *    cast operands, tuple/array/nullable element types, and a C#12 alias RHS's embedded named
+ *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
+ *    cast operands, tuple/array/nullable element types, the element type of `new T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
  *      [alias-expansion?]                              ← leftmost segment is a local alias
@@ -72,11 +72,7 @@ import { walk } from '../../ast/walk.mjs';
  *
  * SILENCE-ON-DOUBT (D8 — no waiver; a false positive blocks CI with no escape). All of
  * the following stay silent here, by construction:
- *   - DI-container registration / reflection (`Type.GetType`, `Activator.CreateInstance`)
- *     / source generators — they surface no resolvable qualified type, so any candidate FQN they
- *     do emit resolves to nothing. (Extension-method calls are NOT dynamic: C# binds them at
- *     compile time through the namespaces in scope, so they resolve against the `<ns>.<Name>()`
- *     extension keys — see `extensionKey`.)
+ *   - reflection (`Type.GetType`, `Activator.CreateInstance`) / source generators — they surface no resolvable qualified type, so any candidate FQN they do emit resolves to nothing. (Two forms are NOT dynamic: an extension-method call, which C# binds at compile time through the namespaces in scope, so it resolves against the `<ns>.<Name>()` extension keys — see `extensionKey`; and DI registration or service location such as `AddScoped<IFoo, Foo>()`, whose type arguments the compiler binds like any other type reference. Only what the container hands out at run time stays invisible.)
  *   - `using static X;` — skipped (no namespace prefix recorded).
  *   - IMPLICIT / SDK `global using`s — read from the project file when `<ImplicitUsings>` is on,
  *     but they name external namespaces, so a bare name they qualify resolves to nothing unless
@@ -985,6 +981,9 @@ export function extractCsharpRefs(file) {
             const nm = node.childForFieldName('name');
             if (recoveredNew && nm !== null)
                 emitTypeNode(nm);
+            // A null-conditional generic call `sp?.Get<Ctx>()`: the type arguments, never the method name.
+            else if (nm?.type === 'generic_name')
+                emitTypeArguments(nm);
             return undefined;
         }
         // Member access through a TYPE name (M16): `Guard.NotNull(o)`, `OrderStatus.Paid`,
@@ -1015,10 +1014,18 @@ export function extractCsharpRefs(file) {
                     enclosingNs: enclosingNamespaceChain(fileNs, node),
                 });
             }
+            // A generic member `sp.GetRequiredService<Ctx>()`, `Substitute.For<Ctx>()`: its type arguments are type references; the member name itself is a method, never a type.
+            const member = node.childForFieldName('name');
+            if (member.type === 'generic_name')
+                emitTypeArguments(member);
             return undefined;
         }
         // Extension-method call on an instance-like receiver (m27): `builder.Services.AddInfrastructure()`.
         if (node.type === 'invocation_expression') {
+            // A generic method called by its simple name, `Resolve<Ctx>()`: the type arguments are type references; the method name is not a type.
+            const fn = node.childForFieldName('function');
+            if (fn.type === 'generic_name')
+                emitTypeArguments(fn);
             const call = extensionCall(node);
             if (call !== undefined && !insideNameof(node)) {
                 refs.push({
@@ -1038,6 +1045,11 @@ export function extractCsharpRefs(file) {
         }
         // Bare / generic / qualified type in `new T()`.
         if (node.type === 'object_creation_expression') {
+            emitTypeNode(node.childForFieldName('type'));
+            return undefined;
+        }
+        // The element type of `new T[n]` (an array_type, unwrapped through every rank), the explicitly typed iteration variable of `foreach (T x in …)`, and a declaration expression `out T x` or a typed deconstruction `(T a, U b) = …`. `var` is an implicit_type and names nothing; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
+        if (node.type === 'array_creation_expression' || node.type === 'foreach_statement' || node.type === 'declaration_expression') {
             emitTypeNode(node.childForFieldName('type'));
             return undefined;
         }
@@ -1285,7 +1297,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 3,
+    rev: 4,
     declarations,
     uses,
 };
