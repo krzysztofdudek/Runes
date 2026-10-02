@@ -393,7 +393,19 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('nested', 'apps/web/a.ts')).toBeUndefined();
     expect(r('mock', 'apps/web/a.ts')).toBeUndefined();
   });
-  it('reads a pnpm-workspace.yaml flow list, and one with no packages list means every directory', () => {
+  it('expands brace globs in a workspace declaration, nested ones and negated ones too', () => {
+    const pkg = (name) => ({ [`${name}/package.json`]: JSON.stringify({ name: path.posix.basename(name), main: './index.ts' }), [`${name}/index.ts`]: '' });
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/{core,ui}", "apps/{web,{admin,docs}}", "tools/*", "!tools/{x,y}", "odd/{unclosed", "lit/{one}x{a,b}"] }',
+      ...pkg('packages/core'), ...pkg('packages/ui'), ...pkg('packages/other'),
+      ...pkg('apps/web'), ...pkg('apps/admin'), ...pkg('apps/docs'), ...pkg('apps/blog'),
+      ...pkg('tools/x'), ...pkg('tools/z'),
+      ...pkg('odd/{unclosed'), ...pkg('lit/{one}xb'),
+    });
+    for (const dir of ['packages/core', 'packages/ui', 'apps/web', 'apps/admin', 'apps/docs', 'tools/z', 'odd/{unclosed', 'lit/{one}xb']) expect(r(path.posix.basename(dir), 'src/main.ts')).toBe(`${dir}/index.ts`);
+    for (const outside of ['other', 'blog', 'x']) expect(r(outside, 'src/main.ts')).toBeUndefined();
+  });
+  it('reads a pnpm-workspace.yaml flow list; one with no packages list (catalog settings only) counts every package under it, as an undeclared repository does', () => {
     const flow = project({
       'pnpm-workspace.yaml': "packages: ['pkgs/?', \"!pkgs/x\"]\n",
       'pkgs/a/package.json': '{ "name": "a", "main": "./index.ts" }',

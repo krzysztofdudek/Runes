@@ -471,11 +471,25 @@ function globMatches(glob: string, rel: string): boolean {
   return match(0, 0);
 }
 
-/**
- * The `packages` globs of a pnpm-workspace.yaml: a block list (`- 'apps/*'`) or a flow
- * list (`['apps/*']`) under a top-level `packages:` key. undefined when the file has no
- * such key, which pnpm reads as every directory.
- */
+/** The globs a workspace glob's brace alternatives stand for (`packages/{core,ui}`, nested ones too), as npm's minimatch and pnpm's globber expand them; a brace with no comma or no closing partner is literal. tsconfig `include` and `exclude` have no braces, so only workspace globs go through this. */
+function expandBraces(glob: string): string[] {
+  const open = glob.indexOf('{');
+  if (open === -1) return [glob];
+  let depth = 0;
+  const commas: number[] = [];
+  for (let k = open; k < glob.length; k++) {
+    if (glob[k] === ',' && depth === 1) commas.push(k);
+    else if (glob[k] === '{') depth++;
+    else if (glob[k] === '}' && --depth === 0) {
+      if (commas.length === 0) return expandBraces(glob.slice(k + 1)).map((rest) => glob.slice(0, k + 1) + rest);
+      const bounds = [open, ...commas, k];
+      return bounds.slice(1).flatMap((end, i) => expandBraces(glob.slice(0, open) + glob.slice(bounds[i] + 1, end) + glob.slice(k + 1)));
+    }
+  }
+  return [glob];
+}
+
+/** The `packages` globs of a pnpm-workspace.yaml: a block list (`- 'apps/*'`) or a flow list (`['apps/*']`) under a top-level `packages:` key. undefined when the file has no such key (a file holding only settings such as catalogs); pnpm then takes the root alone, and the resolver counts every package under the file's directory, as it does where no workspace is declared. */
 function pnpmWorkspacePackages(text: string): string[] | undefined {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   const unquote = (raw: string): string => {
@@ -596,9 +610,7 @@ export function makeTsResolveDeps(
   let everyPackage: Map<string, TsPackage | 'ambiguous'> | undefined;
   const packageIndex = (): Map<string, TsPackage | 'ambiguous'> => (everyPackage ??= indexByName(inRepoPackages()));
 
-  // The workspace a directory declares: the `packages` of its pnpm-workspace.yaml (none
-  // listed means every directory), else its package.json `workspaces` (an array, or
-  // yarn's `{ packages }`). undefined when it declares none.
+  // The workspace a directory declares: the `packages` of its pnpm-workspace.yaml (with none listed, every package under it counts, as where nothing is declared), else its package.json `workspaces` (an array, or yarn's `{ packages }`). undefined when it declares none.
   const declaredAt = new Map<string, string[] | undefined>();
   const workspaceGlobs = (dir: string): string[] | undefined => {
     if (declaredAt.has(dir)) return declaredAt.get(dir);
@@ -609,7 +621,7 @@ export function makeTsResolveDeps(
       try {
         text = readFileSync(path.join(projectRoot, pnpm), 'utf-8');
       } catch {
-        // unreadable: read as declaring no list, so every directory
+        // unreadable: read as a file with no packages list
       }
       globs = pnpmWorkspacePackages(text) ?? ['**'];
     } else {
@@ -620,14 +632,13 @@ export function makeTsResolveDeps(
     declaredAt.set(dir, globs);
     return globs;
   };
-  // The members of the workspace rooted at `root`, by name: the root package and every
-  // package whose directory a positive glob matches and no `!` glob does.
+  // The members of the workspace rooted at `root`, by name: the root package and every package whose directory a positive glob matches and no `!` glob does, braces expanded.
   const membersAt = new Map<string, Map<string, TsPackage | 'ambiguous'>>();
   const workspaceMembers = (root: string, globs: string[]): Map<string, TsPackage | 'ambiguous'> => {
     const cached = membersAt.get(root);
     if (cached !== undefined) return cached;
-    const include = globs.filter((g) => !g.startsWith('!'));
-    const exclude = globs.filter((g) => g.startsWith('!')).map((g) => g.slice(1));
+    const include = globs.filter((g) => !g.startsWith('!')).flatMap(expandBraces);
+    const exclude = globs.filter((g) => g.startsWith('!')).flatMap((g) => expandBraces(g.slice(1)));
     const members = inRepoPackages().filter((pkg) => {
       if (pkg.dir === root) return true;
       if (root !== '' && !pkg.dir.startsWith(`${root}/`)) return false;
