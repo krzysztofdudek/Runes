@@ -114,6 +114,7 @@ describe('MATRIX — gap-close (research-audited missing forms)', () => {
   it('csharp-nested-type-deep-generic', () => runCase('csharp-nested-type-deep-generic'));
   it('csharp-nameof-no-edge-silence', () => runCase('csharp-nameof-no-edge-silence'));
   it('csharp-pointer-stackalloc-element', () => runCase('csharp-pointer-stackalloc-element'));
+  it('csharp-stackalloc-no-named-element-silence', () => runCase('csharp-stackalloc-no-named-element-silence'));
   it('csharp-default-sizeof-operand', () => runCase('csharp-default-sizeof-operand'));
   it('csharp-primary-constructor-param-type', () => runCase('csharp-primary-constructor-param-type'));
   it('csharp-record-positional-param-type', () => runCase('csharp-record-positional-param-type'));

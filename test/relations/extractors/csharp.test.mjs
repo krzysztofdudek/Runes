@@ -1081,3 +1081,13 @@ describe('csharp — a qualified comparison pair the grammar reads as a declarat
     expect(groups(uses)).toEqual([['TryGet()'], ['A.B'], ['X'], ['Y'], ['A.B'], ['Z'], ['Pair()']]);
   });
 });
+
+describe('csharp — the element type of a stackalloc (issue 139)', () => {
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('`stackalloc Foo[n]` and `stackalloc Baz[] { … }` emit the element; a predefined element and `stackalloc[] { … }` emit nothing', async () => {
+    const { uses } = await run(['class C { unsafe void M(int n) { var s = stackalloc Foo[n]; var u = stackalloc Baz[] { 1 }; var a = stackalloc int[2]; var w = stackalloc[] { 1, 2 }; } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['Foo'], ['Baz']]);
+  });
+});

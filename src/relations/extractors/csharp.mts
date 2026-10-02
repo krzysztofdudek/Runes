@@ -49,7 +49,7 @@ import type {
  *    injects them into each file's `uses(file, { projectGlobalUsings })` as the lowest using tier. Then, for each type reference (detected across every syntactic
  *    type position — base/`new`, field/property/parameter/return/local types, generic base names
  *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]`, generic constraints, `typeof`/`is`/`as`/
- *    cast operands, tuple/array/nullable element types, the element type of `new T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
+ *    cast operands, tuple/array/nullable element types, the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
  *      [alias-expansion?]                              ← leftmost segment is a local alias
@@ -1212,8 +1212,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       return undefined;
     }
 
-    // The element type of `new T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
-    if (node.type === 'array_creation_expression' || node.type === 'foreach_statement') {
+    // The element type of `new T[n]` and `stackalloc T[n]` (an array_type, unwrapped through every rank) and the explicitly typed iteration variable of `foreach (T x in …)`. `var` is an implicit_type and names nothing, and so does the implicit `stackalloc[] { … }`; a deconstructing `foreach ((T a, U b) in …)` has no `type` field, its elements are declaration expressions of their own.
+    if (node.type === 'array_creation_expression' || node.type === 'stackalloc_expression' || node.type === 'foreach_statement') {
       emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
