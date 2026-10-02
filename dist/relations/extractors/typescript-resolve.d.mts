@@ -1,10 +1,13 @@
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
- * `exists(repoRelPosix)` reports whether a candidate FILE exists in the resolution universe
+ * `existsAny(repoRelPosix)` reports whether a candidate FILE exists in the resolution universe
  * (disk at check time; a fixed known-set in unit tests). `deps`, when given, answers the
  * project-configuration questions a non-relative specifier needs (tsconfig, package.json);
- * without it only relative specifiers resolve. PURE except through `exists` and `deps`.
+ * without it only relative specifiers resolve. A file `deps.isExcluded` names acts as though
+ * it does not exist, both as a candidate and as a configuration file, so ignored build
+ * output or a generated config on disk cannot change the answer. PURE except through
+ * `existsAny` and `deps`.
  *
  * Zero false positives outrank recall: every branch below either names the file the
  * TypeScript compiler (or the bundler convention it documents) would pick, or returns
@@ -40,7 +43,7 @@
  *   directory holding a package.json, its `types`/`typings`/`module`/`main` entry; then
  *   the directory index (`index.ts|tsx|js|jsx|mjs|cjs`).
  */
-export declare function resolveTsPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps?: TsResolveDeps): string | undefined;
+export declare function resolveTsPath(specifier: string, fromFile: string, existsAny: (repoRelPosix: string) => boolean, deps?: TsResolveDeps): string | undefined;
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
     /** The tsconfig in effect for a file (its `extends` chain applied), `'unknown'` when it
@@ -53,6 +56,9 @@ export interface TsResolveDeps {
     packageNamed(name: string): TsPackage | 'ambiguous' | undefined;
     /** The package whose package.json sits directly in `dir`, if any. */
     packageAt?(dir: string): TsPackage | undefined;
+    /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution
+     *  target, whether or not it is on disk. */
+    isExcluded?(repoRelPosix: string): boolean;
 }
 export interface TsPathConfig {
     /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
@@ -89,6 +95,7 @@ export declare function parseJsonc(text: string): unknown;
  * which one relation pass owns. The in-repo package index is built on the first bare
  * specifier that reaches package lookup: one walk of the repository that skips
  * `node_modules` (where a workspace package's own symlink lives), dot-directories and
- * any path `isExcluded` names.
+ * any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never
+ * read: it acts as though it does not exist.
  */
 export declare function makeTsResolveDeps(projectRoot: string, isExcluded?: (repoRelPosix: string) => boolean): TsResolveDeps;
