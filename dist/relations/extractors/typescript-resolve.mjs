@@ -596,7 +596,8 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
     // `extends` chain). `null` marks a file being resolved, so an `extends` cycle reads as
     // unknown instead of recursing forever.
     const configCache = new Map();
-    const resolveExtends = (fromDir, ext) => {
+    const resolveExtends = (configFile, ext) => {
+        const fromDir = dirOf(configFile);
         if (ext.startsWith('.') || ext.startsWith('/')) {
             if (ext.startsWith('/'))
                 return 'unknown';
@@ -608,12 +609,11 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
                     return cand;
             return 'unknown'; // a relative base that is not there: its options are unknowable
         }
-        // A package base (`@tsconfig/node20/tsconfig.json`, `@acme/tsconfig`): an in-repo
-        // package first, then an installed one under an ancestor node_modules.
+        // A package base (`@tsconfig/node20/tsconfig.json`, `@acme/tsconfig`): an in-repo package first, bound by rule 4c as a bare import from the config would be (tsc reads it from node_modules, where the package manager links only members and local dependencies, so a fixture with the name is never it), then an installed one under an ancestor node_modules.
         const split = splitPackageSpecifier(ext);
         if (split !== undefined) {
             const [name, sub] = split;
-            const local = packageIndex().get(name);
+            const local = packageNamed(name, configFile);
             const roots = [];
             if (local !== undefined && local !== 'ambiguous')
                 roots.push(local.dir);
@@ -650,7 +650,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
             for (const base of bases) {
                 if (typeof base !== 'string')
                     return 'unknown';
-                const baseFile = resolveExtends(dir, base);
+                const baseFile = resolveExtends(file, base);
                 if (baseFile === 'unknown')
                     return 'unknown';
                 if (baseFile === undefined)
