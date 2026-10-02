@@ -3,10 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
- * `exists(repoRelPosix)` reports whether a candidate FILE exists in the resolution universe
- * (disk at check time; a fixed known-set in unit tests). `deps`, when given, answers the
- * project-configuration questions a non-relative specifier needs (tsconfig, package.json);
- * without it only relative specifiers resolve. PURE except through `exists` and `deps`.
+ * `existsAny(repoRelPosix)` reports whether a candidate FILE exists in the resolution universe (disk at check time; a fixed known-set in unit tests). `deps`, when given, answers the project-configuration questions a non-relative specifier needs (tsconfig, package.json); without it only relative specifiers resolve. A file `deps.isExcluded` names acts as though it does not exist, both as a candidate and as a configuration file, so ignored build output or a generated config on disk cannot change the answer. PURE except through `existsAny` and `deps`.
  *
  * Zero false positives outrank recall: every branch below either names the file the
  * TypeScript compiler (or the bundler convention it documents) would pick, or returns
@@ -23,17 +20,9 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
  *      the longest `*` pattern); a relative target resolves inside that package, a bare
  *      target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
- *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS), with its
- *         `extends` chain: the exact key, else the longest-prefix `*` pattern; each
- *         substitution is probed like a relative path. Exactly one substitution naming a
- *         file → that file. Two or more naming DIFFERENT files → undefined (ambiguous).
- *         A matched pattern with no hit falls through to (c), as the compiler does.
+ *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it, and silence when several hold it and disagree. The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package whose package.json `name` is the specifier's package name
- *         (a workspace package): `exports` (exact subpath, else longest `*` pattern; the
- *         first condition target that names a file), else for the root `types`/`typings`,
- *         `module`, `main` and `index.*`, for a subpath the path inside the package. Two
- *         in-repo packages with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the one the importer's own package.json declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -42,11 +31,14 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
  *   directory holding a package.json, its `types`/`typings`/`module`/`main` entry; then
  *   the directory index (`index.ts|tsx|js|jsx|mjs|cjs`).
  */
-export function resolveTsPath(specifier, fromFile, exists, deps) {
+export function resolveTsPath(specifier, fromFile, existsAny, deps) {
     const spec = stripQuery(specifier);
     if (spec === '')
         return undefined;
     const from = toPosix(fromFile);
+    // A file the caller excludes (git-ignored build output, a generated file) acts as though it does not exist, for every probe below: the answer is the one a clean checkout gives.
+    const excluded = deps?.isExcluded;
+    const exists = excluded === undefined ? existsAny : (p) => existsAny(p) && !excluded(p);
     if (spec.startsWith('.')) {
         return probe(path.posix.normalize(path.posix.join(path.posix.dirname(from), spec)), exists, deps);
     }
@@ -98,7 +90,7 @@ function resolveBare(spec, from, exists, deps) {
             if (hits.size === 1)
                 return [...hits][0];
             // A matched pattern with no hit: the compiler moves on to package lookup.
-            return resolveWorkspacePackage(spec, exists, deps);
+            return resolveWorkspacePackage(spec, from, exists, deps);
         }
     }
     if (config?.baseUrl !== undefined) {
@@ -106,7 +98,7 @@ function resolveBare(spec, from, exists, deps) {
         if (hit !== undefined)
             return hit;
     }
-    return resolveWorkspacePackage(spec, exists, deps);
+    return resolveWorkspacePackage(spec, from, exists, deps);
 }
 /** `@scope/name/sub/path` → ['@scope/name', './sub/path']; `name` → ['name', '.']. */
 function splitPackageSpecifier(spec) {
@@ -118,12 +110,12 @@ function splitPackageSpecifier(spec) {
     const rest = segs.slice(nameLen).join('/');
     return [name, rest === '' ? '.' : `./${rest}`];
 }
-function resolveWorkspacePackage(spec, exists, deps) {
+function resolveWorkspacePackage(spec, from, exists, deps) {
     const split = splitPackageSpecifier(spec);
     if (split === undefined)
         return undefined;
     const [name, subpath] = split;
-    const pkg = deps.packageNamed(name);
+    const pkg = deps.packageNamed(name, from);
     if (pkg === undefined || pkg === 'ambiguous')
         return undefined;
     const { manifest, dir } = pkg;
@@ -327,12 +319,11 @@ function toPosix(p) {
 }
 // ─── Disk-backed configuration ───────────────────────────────────────────────
 /**
- * Parse JSON with comments and trailing commas (the tsconfig dialect). Returns
- * undefined for anything that is still not JSON afterwards.
+ * Parse JSON with comments and trailing commas (the tsconfig dialect). A leading UTF-8 byte order mark (Visual Studio saves one) is skipped, as tsc, Node and npm skip it. Returns undefined for anything that is still not JSON afterwards.
  */
 export function parseJsonc(text) {
     let out = '';
-    let i = 0;
+    let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
     const n = text.length;
     while (i < n) {
         const c = text[i];
@@ -387,13 +378,80 @@ export function parseJsonc(text) {
     }
 }
 const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages']);
+const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
 /**
- * Build the disk-backed {@link TsResolveDeps} for a project root. Each tsconfig,
- * package.json and directory lookup is cached for the life of the returned object,
- * which one relation pass owns. The in-repo package index is built on the first bare
- * specifier that reaches package lookup: one walk of the repository that skips
- * `node_modules` (where a workspace package's own symlink lives), dot-directories and
- * any path `isExcluded` names.
+ * Whether a path matches one glob of the dialect npm, yarn and pnpm workspaces and tsconfig `include`/`exclude` share: `*` and `?` within one segment, `**` for any number of segments, everything else literal. Both sides are relative to the same directory.
+ */
+function globMatches(glob, rel) {
+    const pattern = glob.split('/').filter((seg) => seg !== '' && seg !== '.');
+    const segs = rel === '' ? [] : rel.split('/');
+    const segment = (pat, seg) => {
+        let source = '';
+        for (const c of pat)
+            source += c === '*' ? '[^/]*' : c === '?' ? '[^/]' : c.replace(/[\\^$.|+()[\]{}]/g, '\\$&');
+        return new RegExp(`^${source}$`).test(seg);
+    };
+    const match = (i, j) => {
+        if (i === pattern.length)
+            return j === segs.length;
+        if (pattern[i] === '**')
+            return match(i + 1, j) || (j < segs.length && match(i, j + 1));
+        return j < segs.length && segment(pattern[i], segs[j]) && match(i + 1, j + 1);
+    };
+    return match(0, 0);
+}
+/** The globs a workspace glob's brace alternatives stand for (`packages/{core,ui}`, nested ones too), as npm's minimatch and pnpm's globber expand them; a brace with no comma or no closing partner is literal. tsconfig `include` and `exclude` have no braces, so only workspace globs go through this. */
+function expandBraces(glob) {
+    const open = glob.indexOf('{');
+    if (open === -1)
+        return [glob];
+    let depth = 0;
+    const commas = [];
+    for (let k = open; k < glob.length; k++) {
+        if (glob[k] === ',' && depth === 1)
+            commas.push(k);
+        else if (glob[k] === '{')
+            depth++;
+        else if (glob[k] === '}' && --depth === 0) {
+            if (commas.length === 0)
+                return expandBraces(glob.slice(k + 1)).map((rest) => glob.slice(0, k + 1) + rest);
+            const bounds = [open, ...commas, k];
+            return bounds.slice(1).flatMap((end, i) => expandBraces(glob.slice(0, open) + glob.slice(bounds[i] + 1, end) + glob.slice(k + 1)));
+        }
+    }
+    return [glob];
+}
+/** The `packages` globs of a pnpm-workspace.yaml: a block list (`- 'apps/*'`) or a flow list (`['apps/*']`) under a top-level `packages:` key. undefined when the file has no such key (a file holding only settings such as catalogs); pnpm then takes the root alone, and the resolver counts every package under the file's directory, as it does where no workspace is declared. */
+function pnpmWorkspacePackages(text) {
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+    const unquote = (raw) => {
+        const quoted = /^\s*(['"])(.*?)\1/.exec(raw);
+        return quoted !== null ? quoted[2] : raw.replace(/(^|\s)#.*$/, '').trim();
+    };
+    const at = lines.findIndex((line) => /^packages\s*:/.test(line));
+    if (at === -1)
+        return undefined;
+    let inline = lines[at].replace(/^packages\s*:/, '').trim();
+    if (inline.startsWith('[')) {
+        for (let k = at + 1; !inline.includes(']') && k < lines.length; k++)
+            inline += ` ${lines[k]}`;
+        return inline.slice(1).split(']')[0].split(',').map(unquote).filter((g) => g !== '');
+    }
+    const globs = [];
+    for (const line of lines.slice(at + 1)) {
+        if (/^\s*(#.*)?$/.test(line))
+            continue;
+        const item = /^\s*-\s+(.*)$/.exec(line);
+        if (item === null)
+            break;
+        const glob = unquote(item[1]);
+        if (glob !== '')
+            globs.push(glob);
+    }
+    return globs;
+}
+/**
+ * Build the disk-backed {@link TsResolveDeps} for a project root. Each tsconfig, package.json and directory lookup is cached for the life of the returned object, which one relation pass owns. The in-repo package index is built on the first bare specifier that reaches package lookup: one walk of the repository that skips `node_modules` (where a workspace package's own symlink lives), dot-directories and any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never read: it acts as though it does not exist.
  */
 export function makeTsResolveDeps(projectRoot, isExcluded) {
     const jsonCache = new Map();
@@ -412,7 +470,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
     };
     const isFile = (repoRel) => {
         try {
-            return statSync(path.join(projectRoot, repoRel)).isFile();
+            return statSync(path.join(projectRoot, repoRel)).isFile() && !isExcluded?.(repoRel);
         }
         catch {
             return false;
@@ -442,11 +500,12 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
         packageInDir.set(dir, pkg);
         return pkg;
     };
-    let byName;
-    const packageIndex = () => {
-        if (byName !== undefined)
-            return byName;
-        byName = new Map();
+    // Every in-repo package, from one walk of the repository.
+    let inRepo;
+    const inRepoPackages = () => {
+        if (inRepo !== undefined)
+            return inRepo;
+        inRepo = [];
         const stack = [''];
         while (stack.length > 0) {
             const dir = stack.pop();
@@ -466,16 +525,72 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
                         continue;
                     stack.push(rel);
                 }
-                else if (e.isFile() && e.name === 'package.json' && !isExcluded?.(rel)) {
-                    const pkg = packageAt(dir);
-                    const name = pkg?.manifest.name;
-                    if (pkg === undefined || typeof name !== 'string' || name === '')
-                        continue;
-                    byName.set(name, byName.has(name) ? 'ambiguous' : pkg);
+                else if (e.isFile() && e.name === 'package.json') {
+                    const pkg = packageAt(dir); // undefined for an excluded or unparseable package.json
+                    if (pkg !== undefined)
+                        inRepo.push(pkg);
                 }
             }
         }
+        return inRepo;
+    };
+    const indexByName = (pkgs) => {
+        const byName = new Map();
+        for (const pkg of pkgs) {
+            const name = pkg.manifest.name;
+            if (typeof name !== 'string' || name === '')
+                continue;
+            byName.set(name, byName.has(name) ? 'ambiguous' : pkg);
+        }
         return byName;
+    };
+    let everyPackage;
+    const packageIndex = () => (everyPackage ??= indexByName(inRepoPackages()));
+    // The workspace a directory declares: the `packages` of its pnpm-workspace.yaml (with none listed, every package under it counts, as where nothing is declared), else its package.json `workspaces` (an array, or yarn's `{ packages }`). undefined when it declares none.
+    const declaredAt = new Map();
+    const workspaceGlobs = (dir) => {
+        if (declaredAt.has(dir))
+            return declaredAt.get(dir);
+        let globs;
+        const pnpm = dir === '' ? 'pnpm-workspace.yaml' : `${dir}/pnpm-workspace.yaml`;
+        if (isFile(pnpm)) {
+            let text = '';
+            try {
+                text = readFileSync(path.join(projectRoot, pnpm), 'utf-8');
+            }
+            catch {
+                // unreadable: read as a file with no packages list
+            }
+            globs = pnpmWorkspacePackages(text) ?? ['**'];
+        }
+        else {
+            const field = packageAt(dir)?.manifest.workspaces;
+            const list = isRecord(field) ? field.packages : field;
+            if (Array.isArray(list))
+                globs = list.filter((g) => typeof g === 'string');
+        }
+        declaredAt.set(dir, globs);
+        return globs;
+    };
+    // The members of the workspace rooted at `root`, by name: the root package and every package whose directory a positive glob matches and no `!` glob does, braces expanded.
+    const membersAt = new Map();
+    const workspaceMembers = (root, globs) => {
+        const cached = membersAt.get(root);
+        if (cached !== undefined)
+            return cached;
+        const include = globs.filter((g) => !g.startsWith('!')).flatMap(expandBraces);
+        const exclude = globs.filter((g) => g.startsWith('!')).flatMap((g) => expandBraces(g.slice(1)));
+        const members = inRepoPackages().filter((pkg) => {
+            if (pkg.dir === root)
+                return true;
+            if (root !== '' && !pkg.dir.startsWith(`${root}/`))
+                return false;
+            const rel = root === '' ? pkg.dir : pkg.dir.slice(root.length + 1);
+            return include.some((g) => globMatches(g, rel)) && !exclude.some((g) => globMatches(g, rel));
+        });
+        const index = indexByName(members);
+        membersAt.set(root, index);
+        return index;
     };
     // tsconfig chain: the resolved view of one config file (its own options merged over its
     // `extends` chain). `null` marks a file being resolved, so an `extends` cycle reads as
@@ -569,41 +684,107 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
                 }
                 merged.paths = { base: dir, map };
             }
+            // `files`, `include` and `exclude` resolve from the config that spells them; a base's list is inherited whole unless the inheriting config sets its own.
+            for (const field of ['files', 'include', 'exclude']) {
+                const list = json[field];
+                if (!Array.isArray(list))
+                    continue;
+                merged[field] = list
+                    .filter((p) => typeof p === 'string')
+                    .map((p) => joinConfigPath(dir, withConfigDir(p)))
+                    .filter((p) => p !== undefined);
+            }
             return merged;
         })();
         configCache.set(key, result);
         return result;
     };
-    const configByDir = new Map();
-    const tsconfigFor = (fromFile) => {
-        const isJs = /\.(?:[cm]?js|jsx)$/i.test(fromFile);
-        const startDir = dirOf(fromFile);
-        const cacheKey = `${isJs ? 'js' : 'ts'}\n${startDir}`;
-        if (configByDir.has(cacheKey))
-            return configByDir.get(cacheKey);
-        let found;
-        for (const dir of ancestors(fromFile)) {
-            const names = isJs ? ['tsconfig.json', 'jsconfig.json'] : ['tsconfig.json'];
-            const file = names.map((nm) => (dir === '' ? nm : `${dir}/${nm}`)).find(isFile);
-            if (file === undefined)
+    // Whether a config's project holds a file, as tsc reads `files`, `include` and `exclude`: a listed file always; otherwise an `include` match that no `exclude` pattern matches. With neither `files` nor `include` set, `include` is everything under the config's directory; with only `files` set, it is nothing. An include pattern whose last segment has no extension and no wildcard names a directory, and an exclude pattern also covers everything under a directory it matches. Extensions are not filtered: a project holds whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
+    const holds = (config, configDir, file) => {
+        if (config.files?.includes(file))
+            return true;
+        const include = config.include ?? (config.files === undefined ? [configDir === '' ? '**/*' : `${configDir}/**/*`] : []);
+        const asDirectory = (p) => (/[*?.]/.test(p.slice(p.lastIndexOf('/') + 1)) ? p : `${p}/**/*`);
+        if (!include.some((p) => globMatches(asDirectory(p), file)))
+            return false;
+        const segs = file.split('/');
+        return !(config.exclude ?? []).some((p) => segs.some((_, k) => globMatches(p, segs.slice(0, k + 1).join('/'))));
+    };
+    // The configs a tsconfig's own `references` name (never inherited): a config file, or a directory holding a tsconfig.json. A reference naming neither is skipped, as tsserver skips it.
+    const referencesOf = (file) => {
+        const json = readJson(file);
+        const refs = isRecord(json) && Array.isArray(json.references) ? json.references : [];
+        const out = [];
+        for (const ref of refs) {
+            const target = isRecord(ref) && typeof ref.path === 'string' ? joinUnder(dirOf(file), ref.path) : undefined;
+            if (target === undefined)
                 continue;
-            const config = loadConfig(file, dir);
-            if (config === 'unknown') {
-                found = 'unknown';
-            }
-            else {
-                // `paths` resolve from the directory of the config that declares them unless a
-                // `baseUrl` is in effect (TypeScript 4.1+).
-                found = {
-                    ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
-                    ...(config.paths !== undefined
-                        ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } }
-                        : {}),
-                };
-            }
-            break;
+            const found = [target, target === '' ? 'tsconfig.json' : `${target}/tsconfig.json`].find(isFile);
+            if (found !== undefined)
+                out.push(found);
         }
-        configByDir.set(cacheKey, found);
+        return out;
+    };
+    // `paths` resolve from the directory of the config that declares them unless a `baseUrl` is in effect (TypeScript 4.1+).
+    const view = (config) => ({
+        ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+        ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
+    });
+    // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced configs that hold it, searched through the whole reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and `paths`, those; when they disagree, or one cannot be read (it may hold the file), 'unknown'; when none holds it, the nearest config's own options.
+    const configInEffect = (file, fromFile) => {
+        const own = loadConfig(file, dirOf(file));
+        if (own === 'unknown')
+            return 'unknown';
+        const references = referencesOf(file);
+        if (references.length === 0 || holds(own, dirOf(file), fromFile))
+            return view(own);
+        const holding = [];
+        const seen = new Set([file]);
+        const search = (configs) => {
+            for (const ref of configs) {
+                if (seen.has(ref))
+                    continue;
+                seen.add(ref);
+                const loaded = loadConfig(ref, dirOf(ref));
+                if (loaded === 'unknown')
+                    return false;
+                if (holds(loaded, dirOf(ref), fromFile))
+                    holding.push(view(loaded));
+                if (!search(referencesOf(ref)))
+                    return false;
+            }
+            return true;
+        };
+        if (!search(references))
+            return 'unknown';
+        if (holding.length === 0)
+            return view(own);
+        const first = JSON.stringify(holding[0]);
+        return holding.every((v) => JSON.stringify(v) === first) ? holding[0] : 'unknown';
+    };
+    const nearestConfigByDir = new Map();
+    const configByFile = new Map();
+    const tsconfigFor = (fromFile) => {
+        // A Vue or Svelte component reads jsconfig.json as a JavaScript file does: its language tools (Volar, svelte-check) take the nearest tsconfig.json or jsconfig.json.
+        const isJs = /\.(?:[cm]?js|jsx|vue|svelte)$/i.test(fromFile);
+        const kind = isJs ? 'js' : 'ts';
+        const fileKey = `${kind}\n${fromFile}`;
+        if (configByFile.has(fileKey))
+            return configByFile.get(fileKey);
+        const dirKey = `${kind}\n${dirOf(fromFile)}`;
+        if (!nearestConfigByDir.has(dirKey)) {
+            const names = isJs ? ['tsconfig.json', 'jsconfig.json'] : ['tsconfig.json'];
+            let nearest;
+            for (const dir of ancestors(fromFile)) {
+                nearest = names.map((nm) => (dir === '' ? nm : `${dir}/${nm}`)).find(isFile);
+                if (nearest !== undefined)
+                    break;
+            }
+            nearestConfigByDir.set(dirKey, nearest);
+        }
+        const nearest = nearestConfigByDir.get(dirKey);
+        const found = nearest === undefined ? undefined : configInEffect(nearest, fromFile);
+        configByFile.set(fileKey, found);
         return found;
     };
     const nearestPackage = (fromFile) => {
@@ -614,10 +795,35 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
         }
         return undefined;
     };
+    // Rule 4c. A local spec in the importer's own package.json is what the package manager links under that name; otherwise the nearest workspace declaration above the importer decides which in-repo packages are linked by name at all.
+    const packageNamed = (name, fromFile) => {
+        let lookup = name;
+        const own = nearestPackage(fromFile);
+        const field = own === undefined ? undefined : DEPENDENCY_FIELDS.map((f) => own.manifest[f]).find((d) => isRecord(d) && Object.hasOwn(d, name));
+        const spec = isRecord(field) ? field[name] : undefined;
+        if (own !== undefined && typeof spec === 'string') {
+            const local = /^(?:file|link|portal):(.*)$/.exec(spec) ?? /^workspace:(\.{1,2}(?:\/.*)?)$/.exec(spec);
+            if (local !== null) {
+                // A relative path inside the repository; an absolute or home path is outside it.
+                const dir = /^(?:[/~\\]|[A-Za-z]:)/.test(local[1]) ? undefined : joinUnder(own.dir, local[1]);
+                return dir === undefined ? undefined : packageAt(dir);
+            }
+            const alias = /^workspace:((?:@[^/@]+\/)?[^/@]+)@/.exec(spec);
+            if (alias !== null)
+                lookup = alias[1];
+        }
+        for (const dir of ancestors(fromFile)) {
+            const globs = workspaceGlobs(dir);
+            if (globs !== undefined)
+                return workspaceMembers(dir, globs).get(lookup);
+        }
+        return packageIndex().get(lookup);
+    };
     return {
         tsconfigFor,
         nearestPackage,
-        packageNamed: (name) => packageIndex().get(name),
+        packageNamed,
         packageAt,
+        ...(isExcluded !== undefined ? { isExcluded } : {}),
     };
 }
