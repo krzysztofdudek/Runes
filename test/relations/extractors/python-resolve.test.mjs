@@ -332,6 +332,40 @@ describe('resolvePythonModule — a PEP 420 namespace directory is not a sys.pat
   });
 });
 
+describe('resolvePythonModule — directories a tool runs from stay roots below a project root (issue 009, flat layouts)', () => {
+  // The repository root holds the project's pyproject.toml (discovered root ''), so every other ancestor lies below it. Two conventions still put such a directory first on sys.path: pytest's rootdir rule (a conftest.py in a directory with no __init__.py) and Django's manage.py, which runs from its own directory.
+  const roots = () => [''];
+
+  it('a directory holding manage.py roots its apps (Django in backend/)', () => {
+    const files = new Set(['pyproject.toml', 'backend/manage.py', 'backend/shop/__init__.py', 'backend/shop/views.py', 'backend/orders/__init__.py', 'backend/orders/models.py']);
+    expect(resolvePythonModule('orders.models', 'backend/shop/views.py', (p) => files.has(p), undefined, roots)).toBe('backend/orders/models.py');
+  });
+
+  it('a directory holding conftest.py and no __init__.py roots the test helpers (pytest rootdir)', () => {
+    const files = new Set(['pyproject.toml', 'mypkg/__init__.py', 'tests/conftest.py', 'tests/helpers.py', 'tests/unit/test_a.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('helpers', 'tests/unit/test_a.py', exists, undefined, roots)).toBe('tests/helpers.py');
+    expect(resolvePythonModule('helpers.make', 'tests/unit/test_a.py', exists, undefined, roots)).toBe('tests/helpers.py');
+  });
+
+  it('control: a conftest.py directory that is a regular package is no root', () => {
+    const files = new Set(['pyproject.toml', 'tests/__init__.py', 'tests/conftest.py', 'tests/helpers.py', 'tests/unit/test_a.py']);
+    expect(resolvePythonModule('helpers', 'tests/unit/test_a.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+
+  it('control: neither opens the standard-library trap (a stdlib name binds only at the importer\'s directory or the repository root)', () => {
+    const files = new Set(['pyproject.toml', 'tests/conftest.py', 'tests/logging.py', 'tests/unit/test_a.py', 'backend/manage.py', 'backend/json/__init__.py', 'backend/shop/__init__.py', 'backend/shop/views.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('logging', 'tests/unit/test_a.py', exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('json', 'backend/shop/views.py', exists, undefined, roots)).toBeUndefined();
+  });
+
+  it('known limit: a directory put on sys.path only by configuration (an Airflow dags folder) is not searched', () => {
+    const files = new Set(['pyproject.toml', 'dags/common/utils.py', 'dags/etl/job.py']);
+    expect(resolvePythonModule('common.utils', 'dags/etl/job.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+});
+
 describe('resolvePythonModule — a pkgutil namespace package shared by several distributions (issue 073)', () => {
   // Two workspace members ship the package `acme` (each with an `acme/__init__.py` that extends `__path__` with pkgutil); only core has `acme/settings.py`. Python finds acme.settings through the extended `__path__`, so the other member's `acme/__init__.py` (the parent-package fallback for `from acme import settings`) must not make the exact module ambiguous.
   const roots = () => ['', 'core/src', 'plugin/src'];
