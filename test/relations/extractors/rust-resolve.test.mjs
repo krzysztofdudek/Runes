@@ -228,6 +228,88 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::opts', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
+  it('roots crate:: of a [[bin]] path outside src/ at that binary, for the root and the files below its directory (the ripgrep shape)', () => {
+    put('Cargo.toml', '[package]\nname = "ripgrep"\n\n[[bin]]\nbench = false\npath = "crates/core/main.rs"\nname = "rg"\n\n[[bin]]\nname = "gen"\npath = "./crates/core/gen/main.rs"\n\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n');
+    put('crates/core/main.rs', 'mod flags;\nmod haystack;\npub struct Thing;\n');
+    put('crates/core/flags/mod.rs', 'pub struct HiArgs;\n');
+    put('crates/core/haystack.rs', '');
+    put('crates/core/gen/flags.rs', '');
+    put('src/flags.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::flags::HiArgs', 'crates/core/main.rs', 'rust')).toBe('crates/core/flags/mod.rs');
+    expect(resolve('self::flags', 'crates/core/main.rs', 'rust')).toBe('crates/core/flags/mod.rs');
+    expect(resolve('crate::haystack::Haystack', 'crates/core/flags/hiargs.rs', 'rust')).toBe('crates/core/haystack.rs');
+    expect(resolve('super::haystack', 'crates/core/flags/mod.rs', 'rust')).toBe('crates/core/haystack.rs');
+    expect(resolve('crate::Thing', 'crates/core/flags/mod.rs', 'rust')).toBe('crates/core/main.rs');
+    // The deepest [[bin]] directory holds a file, and `./` in a path is read as written.
+    expect(resolve('crate::flags', 'crates/core/gen/main.rs', 'rust')).toBe('crates/core/gen/flags.rs');
+    expect(resolve('crate::flags', 'crates/core/gen/util.rs', 'rust')).toBe('crates/core/gen/flags.rs');
+    // A binary root has no parent module, and a file under src/ keeps the src/ tree.
+    expect(resolve('super::flags', 'crates/core/main.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::flags', 'src/other.rs', 'rust')).toBe('src/flags.rs');
+  });
+
+  it('keeps the library tree for src/ files when a [[bin]] path names src/main.rs, and roots a [[bin]] at the package directory', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n\n[[bin]]\nname = "app"\npath = "src/main.rs"\n\n[[bin]]\nname = "tool"\npath = "tool.rs"\n');
+    put('src/lib.rs', 'pub enum Error {}\n');
+    put('src/orders/mod.rs', '');
+    put('cli/args.rs', '');
+    put('tests/common.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Error', 'src/orders/mod.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('crate::cli::args::Parser', 'tool.rs', 'rust')).toBe('cli/args.rs');
+    expect(resolve('crate::cli::args', 'cli/other.rs', 'rust')).toBe('cli/args.rs');
+    // The auto-discovered targets outside src/ keep their own roots.
+    expect(resolve('self::common', 'tests/it.rs', 'rust')).toBe('tests/common.rs');
+  });
+
+  it('lets a [lib] path outside src/ compete with [[bin]] paths: the deepest directory wins, and the library is probed first in its own', () => {
+    // Three packages side by side. Beside a binary at the package root: the library's root is probed before the binary's, as src/lib.rs before src/main.rs.
+    put('root/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib.rs"\n[[bin]]\nname = "app"\npath = "main.rs"\n');
+    put('root/lib.rs', 'pub mod foo;\npub struct Config;\npub struct LibOnly;\n');
+    put('root/main.rs', 'struct Config;\nfn main() {}\n');
+    put('root/foo.rs', '');
+    // In the same directory as the binary, outside src/.
+    put('same/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "crates/core/lib.rs"\n[[bin]]\nname = "app"\npath = "crates/core/main.rs"\n');
+    put('same/crates/core/lib.rs', 'pub mod util;\npub struct Item;\n');
+    put('same/crates/core/main.rs', 'struct Bin;\nfn main() {}\n');
+    put('same/crates/core/other.rs', '');
+    // Below the binary's directory: the library's deeper directory holds its files.
+    put('below/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib/lib.rs"\n[[bin]]\nname = "app"\npath = "main.rs"\n');
+    put('below/lib/lib.rs', 'pub mod util;\npub struct Item;\n');
+    put('below/main.rs', 'mod util;\nstruct Item;\n');
+    put('below/lib/util.rs', '');
+    put('below/util.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Config', 'root/foo.rs', 'rust')).toBe('root/lib.rs');
+    expect(resolve('crate::LibOnly', 'root/foo.rs', 'rust')).toBe('root/lib.rs');
+    expect(resolve('crate::foo', 'root/lib.rs', 'rust')).toBe('root/foo.rs');
+    expect(resolve('crate::Item', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/lib.rs');
+    expect(resolve('crate::Bin', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/main.rs');
+    expect(resolve('crate::other', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/other.rs');
+    expect(resolve('crate::Item', 'below/lib/util.rs', 'rust')).toBe('below/lib/lib.rs');
+    expect(resolve('crate::util', 'below/lib/lib.rs', 'rust')).toBe('below/lib/util.rs');
+    expect(resolve('crate::util', 'below/lib/other.rs', 'rust')).toBe('below/lib/util.rs');
+    expect(resolve('crate::util', 'below/main.rs', 'rust')).toBe('below/util.rs');
+  });
+
+  it('gives a module no binary root when two [[bin]] paths share its directory, and each binary its own', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "a"\npath = "tools/a.rs"\n[[bin]]\nname = "b"\npath = "tools/b.rs"\n[[bin]]\nname = "cli"\npath = "cli/main.rs"\n[[bin]]\nname = "cli2"\npath = "cli/./main.rs"\n');
+    put('tools/a.rs', 'pub struct Opts;\nfn main() {}\n');
+    put('tools/b.rs', 'mod util;\nfn main() {}\n');
+    put('tools/util.rs', '');
+    put('tools/helper.rs', '');
+    put('cli/main.rs', 'pub struct Opts;\nfn main() {}\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Opts', 'tools/util.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::helper', 'tools/util.rs', 'rust')).toBe('tools/helper.rs');
+    expect(resolve('crate::Opts', 'tools/a.rs', 'rust')).toBe('tools/a.rs');
+    expect(resolve('crate::Opts', 'tools/b.rs', 'rust')).toBeUndefined();
+    expect(resolve('self::util', 'tools/b.rs', 'rust')).toBe('tools/util.rs');
+    // One path named twice is one binary.
+    expect(resolve('crate::Opts', 'cli/args.rs', 'rust')).toBe('cli/main.rs');
+  });
+
   it('resolves tests/<name>.rs as a test crate root and a shared tests/common/mod.rs under tests/', () => {
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('tests/common/mod.rs', '');
@@ -296,6 +378,13 @@ describe('parseCargoManifest / rustFileDeclares', () => {
   it('reads [lib].name over [package].name and normalizes hyphens', () => {
     expect(parseCargoManifest('[package]\nname = "a-b"\n').crateName).toBe('a_b');
     expect(parseCargoManifest('[package]\nname = "a-b"\n[lib]\nname = "c_d"\n').crateName).toBe('c_d');
+  });
+
+  it('reads the path of each [[bin]] table, and no other table\'s path', () => {
+    const bins = (text) => parseCargoManifest(text).binPaths;
+    expect(bins('[[bin]]\nname = "rg"\npath = "crates/core/main.rs"\n\n[[bin]]\nname = "auto"\n\n[[bin]]\npath = \'tools/gen.rs\' # generator\n')).toEqual(['crates/core/main.rs', 'tools/gen.rs']);
+    expect(bins('[lib]\npath = "lib/lib.rs"\n[[test]]\npath = "tests/it.rs"\n[[bin]]\nname = "x"\n[bin.extra]\npath = "nope.rs"\n')).toEqual([]);
+    expect(bins('[[bin]]\r\nname = "rg"\r\npath = "crates/core/main.rs"\r\n')).toEqual(['crates/core/main.rs']);
   });
 
   it('ignores a `name` outside [package] / [lib]', () => {
@@ -416,6 +505,24 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     );
     // Joining lines follows strings: a multi-line string is one value, so its content is never read as a table header or an entry.
     expect(parseCargoManifest('[package]\nname = "app"\ndescription = """\n[dependencies]\nghost = { path = "../ghost" }\n"""\n').dependencies).toEqual(new Map());
+  });
+
+  it('reads a dependency table written as one inline table as it reads the [dependencies] table, LF and CRLF', () => {
+    // Issue 163: `dependencies = { kit = { path = … } }` named no crate by its key path, so its entries were ignored.
+    const table = '[dependencies]\nkit = { path = "../kit", features = ["a, b", \'}\'], package = "kit-pkg" }\nnext = "1"\nmore.path = "../more"\n';
+    const inline = 'dependencies = { kit = { path = "../kit", features = ["a, b", \'}\'], package = "kit-pkg" }, next = "1", more.path = "../more" }\n';
+    const expected = parseCargoManifest(table).dependencies;
+    expect(expected.size).toBe(3);
+    for (const text of [inline, inline.replace(/\n/g, '\r\n'), `[package]\nname = "app"\n[target.'cfg(unix)']\n${inline}`, `target = { 'cfg(unix)' = { ${inline.trim()} } }\n`, 'dependencies = {\n  kit = { path = "../kit", features = ["a, b", \'}\'], package = "kit-pkg" },\n  next = "1",\n  more.path = "../more",\n}\n']) {
+      expect(parseCargoManifest(text).dependencies, text).toEqual(expected);
+    }
+    const ws = new Map([['kit', { path: 'libs/kit', package: undefined, workspace: false }]]);
+    expect(parseCargoManifest('workspace = { dependencies = { kit = { path = "libs/kit" } } }\n').workspaceDependencies).toEqual(ws);
+    expect(parseCargoManifest('[workspace]\ndependencies = { kit = { path = "libs/kit" } }\n').workspaceDependencies).toEqual(ws);
+    expect(parseCargoManifest('dev-dependencies = { kit = { workspace = true } }\n').dependencies).toEqual(new Map([['kit', { path: undefined, package: undefined, workspace: true }]]));
+    // The first declaration keeps the crate across forms, and an inline table elsewhere, or a member that is no `key = value`, declares nothing.
+    expect(parseCargoManifest('dependencies = { kit = "1" }\n[dev-dependencies]\nkit = { path = "../kit" }\n').dependencies).toEqual(new Map([['kit', { workspace: false }]]));
+    expect(parseCargoManifest('package = { dependencies = { kit = { path = "../kit" } } }\nfeatures = { kit = { path = "../kit" } }\ndependencies = { kit }\n').dependencies).toEqual(new Map());
   });
 
   it('joins the lines of a CRLF file the same way, so an entry with a multi-line array keeps the fields before and after it', () => {

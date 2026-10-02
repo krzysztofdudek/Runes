@@ -188,29 +188,42 @@ describe('properties of the lock', () => {
   }));
 
   // The staleness rules of the README, as a model: withLock takes over exactly the locks the model calls stale, and waits out (then refuses) the others without touching them.
-  test('withLock takes over exactly the locks the documented rules call stale, and never touches a live one', seeded(async () => {
+  // The lock reads its clock through Date.now, which the test replaces for each call with a clock that starts at the case's age and moves STEP ms at every reading, whatever the wall clock does: the age the lock judges is the case's age plus at most the call's wait, however slowly a loaded machine runs between and within the steps.
+  test('withLock takes over exactly the locks the documented rules call stale, and never touches a live one', seeded(async (t) => {
     const dead = spawnSync(process.execPath, ['-e', '0']).pid;
     const limits = { emptyMs: 300, staleMs: 600, reusedPidMs: 900 };
+    const waitMs = 80;
+    const STEP = 10;
     const model = ({ content, host, pid, age }) => {
       if (content === 'empty') return age > limits.emptyMs;
       if (host === 'mine' && pid !== 'garbage') return pid === 'dead' ? true : age > limits.reusedPidMs;
       return age > limits.staleMs;
     };
+    // The lock's modification time: a whole second, which every file system stores exactly.
+    const stamp = Math.floor(Date.now() / 1000) - 60;
+    // Runs `call` with Date.now reading stamp + age, then STEP ms more at each further reading.
+    const aged = async (age, call) => {
+      let now = stamp * 1000 + age - STEP;
+      const clock = t.mock.method(Date, 'now', () => (now += STEP));
+      try { return await call(); } finally { clock.mock.restore(); }
+    };
+    const young = (limit) => Math.floor(limit * 0.2);
+    // A young lock stays young through a whole wait (a reading past the deadline ends it), and an old one is old from the first reading.
+    assert.ok(young(Math.min(...Object.values(limits))) + waitMs + 2 * STEP < Math.min(...Object.values(limits)), 'the young age and the wait fit below the smallest limit');
     const r = random();
     for (let i = 0; i < 40; i += 1) {
       const c = { content: r.pick(['empty', 'holder', 'holder', 'holder']), host: r.pick(['mine', 'other']), pid: r.pick(['alive', 'dead', 'garbage']) };
       const limit = c.content === 'empty' ? limits.emptyMs : c.host === 'mine' && c.pid !== 'garbage' ? limits.reusedPidMs : limits.staleMs;
-      c.age = r.bool() ? Math.floor(limit * 0.2) : limit * 3;   // well away from the edge, so the short wait below cannot cross it
+      c.age = r.bool() ? young(limit) : limit * 3;
       const dir = mkdtempSync(join(tmp, 'stale-'));
       const lock = join(dir, '.lock');
       const pidText = c.pid === 'alive' ? String(process.pid) : c.pid === 'dead' ? String(dead) : 'x1';
       const text = c.content === 'empty' ? '' : `${pidText} ${c.host === 'mine' ? hostname() : 'another-host.invalid'} 2026-01-01T00:00:00.000Z${r.bool() ? '\r' : ''}\n`;
       writeFileSync(lock, text);
-      const at = (Date.now() - c.age) / 1000;
-      utimesSync(lock, at, at);
+      utimesSync(lock, stamp, stamp);
       let ran = false;
       let error = null;
-      try { withLock(lock, () => { ran = true; }, { ...limits, waitMs: 80 }); } catch (e) { error = e; }
+      try { await aged(c.age, () => withLock(lock, () => { ran = true; }, { ...limits, waitMs })); } catch (e) { error = e; }
       const stale = model(c);
       assert.equal(ran, stale, `case ${i} ${JSON.stringify(c)} ${seedNote()}`);
       if (stale) assert.ok(!existsSync(lock), 'a lock taken over is released');
@@ -220,7 +233,7 @@ describe('properties of the lock', () => {
       }
       // The async lock reads the same rules.
       if (!stale) {
-        await assert.rejects(withLockAsync(lock, () => 1, { ...limits, waitMs: 60 }), (e) => e instanceof LockHeldError);
+        await assert.rejects(aged(c.age, () => withLockAsync(lock, () => 1, { ...limits, waitMs: 60 })), (e) => e instanceof LockHeldError);
       }
     }
   }));

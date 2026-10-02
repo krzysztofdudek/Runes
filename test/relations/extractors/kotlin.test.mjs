@@ -542,6 +542,48 @@ describe('kotlin extractor — parse recovery reads headers and lexes defensivel
     expect(declarations.map((d) => d.line)).toEqual([2, 3, 5, 8]);
   });
 
+  it('a nested class over a next-line constructor without val or var, which parses without an ERROR, keeps its members and their lines, LF and CRLF', async () => {
+    const lines = ['package com.acme', 'class Outer {', '  class Inner', '  private constructor(s: com.acme.text.Word) {', '    class Deep', '    fun size(): Int = 1', '  }', '  class Sib', '}', ''];
+    for (const eol of ['\n', '\r\n']) {
+      const { declarations, uses } = await run(lines.join(eol));
+      expect(declarations.map((d) => `${d.symbolKey}@${d.line}`), JSON.stringify(eol)).toEqual(['com.acme.Outer@2', 'com.acme.Outer+Inner@3', 'com.acme.Outer+Inner+Deep@5', 'com.acme.Outer+Inner+size@6', 'com.acme.Outer+Sib@8']);
+      expect(uses).toContainEqual(expect.objectContaining({ candidates: [{ kind: 'symbol', symbolKey: 'com.acme.text.Word' }], line: 4 }));
+    }
+  });
+
+  it('marks the top-level type of a nested class cut from its next-line constructor when no join fits', async () => {
+    const cut = (header, ctor = '  constructor(s: String) {') => `package p\nclass Outer {\n${header}\n${ctor}\n    class Deep\n  }\n}\n`;
+    // A comment after the header, a blank line or a comment line above the constructor, or a bound among the type parameters: Kotlin still attaches the constructor, but the join does not fit.
+    for (const code of [cut('  class Inner // note'), cut('  class Inner\n'), cut('  class Inner\n  /* note */'), cut('  class Inner<T : a.B>')]) {
+      expect(keysOf((await run(code)).declarations), code).toEqual(['p.Outer', 'p.Outer+Inner', 'p.Outer+*']);
+    }
+    // A join whose re-parse is damaged keeps the tree as it was, and the mark.
+    expect(keysOf((await run('package p\nclass Outer {\n  class Inner\n  constructor(s: String) {\n    throw E()\n  }\n}\n')).declarations)).toEqual(['p.Outer', 'p.Outer+Inner', 'p.Outer+*']);
+    // The mark goes to the top-level type, an object as well.
+    const deeper = await run('package p\nclass Top {\n  companion object {\n    class Inner // note\n    constructor(s: String) {}\n  }\n}\nobject Solo {\n  class Inner // note\n  constructor(s: String) {}\n}\n');
+    expect(keysOf(deeper.declarations)).toEqual(expect.arrayContaining(['p.Top+*', 'p.Solo+*']));
+    // A class inside a function declares nothing importable, so nothing is marked.
+    expect(keysOf((await run('package p\nfun f() {\n  class L {\n    class Inner // note\n    constructor(s: String) {}\n  }\n}\n')).declarations)).toEqual(['p.f', 'p.XKt']);
+  });
+
+  it('never marks a secondary constructor after a class that already ended, or after another member', async () => {
+    const { declarations } = await run('package p\nclass Outer(val x: Int) {\n  class A {}\n  constructor(s: String) : this(1) {}\n  class B(val y: Int)\n  constructor(t: Long) : this(2) {}\n  class C : Base()\n  constructor(u: Char) : this(3) {}\n  val y = 1\n  constructor(v: Byte) : this(4) {}\n}\n');
+    expect(keysOf(declarations)).toEqual(['p.Outer', 'p.Outer+A', 'p.Outer+B', 'p.Outer+C', 'p.Outer+y']);
+  });
+
+  it('kotlinView reads a cut class without a parser: the tree as it stands, and the mark', async () => {
+    const code = 'package p\nclass Outer {\n  class Inner\n  constructor(s: String) {\n    class Deep\n  }\n}\n';
+    await withParsedFiles([kt('src/a/O.kt', code)], ([f]) => {
+      const bare = kotlinView(f.tree, f.content);
+      expect([bare.roots.length, bare.roots[0].id === f.tree.rootNode.id, [...bare.incompleteTypes]]).toEqual([1, true, ['Outer']]);
+      bare.dispose();
+      const joined = kotlinView(f.tree, f.content, f.newParser);
+      expect([joined.roots[0].id === f.tree.rootNode.id, [...joined.incompleteTypes]]).toEqual([false, []]);
+      joined.dispose();
+      joined.dispose();
+    });
+  });
+
   it('kotlinView releases its trees once, however often dispose is called', async () => {
     const code = 'package p\ncontext(l: Logger)\nfun d() {}\n';
     await withParsedFiles([kt('src/a/D.kt', code)], ([f]) => {
