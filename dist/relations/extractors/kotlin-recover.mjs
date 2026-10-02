@@ -526,6 +526,33 @@ function coveringNodes(chunk, clean) {
     }
     return used;
 }
+// ── declarations misread without an ERROR ─────────────────────────────────────
+/** The top-level node types the shipped grammar turns an annotated declaration into when it reads it as a script statement. */
+const MISREAD_TYPES = new Set(['annotated_expression', 'assignment']);
+/**
+ * The declaration a top-level `node` really is when the shipped grammar misread it as a script statement: undefined when it is none, null for a destructuring `val (a, b)` (no key). The grammar reads an annotation followed by a soft-keyword modifier (`@Keep annotation class X`, `@Serializable enum class X { A }`, `@Keep data object X`, `@Keep expect class X`) as an `annotated_expression`, and `@Keep const val X = 1` or `@Keep actual typealias X = Y` as an `assignment`, cleanly: no ERROR node marks the loss. A genuine script statement (`version = "1.0"`, `@Suppress("x") run()`) has no declaration keyword after its annotations and modifiers, so its header does not read.
+ */
+function misreadDeclaration(node) {
+    if (!MISREAD_TYPES.has(node.type))
+        return undefined;
+    const row = node.startPosition.row;
+    const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row }));
+    return readHeader({ start: node.startIndex, end: node.endIndex, toks });
+}
+/** Read every misread top-level declaration among the view's roots (a whole file's root, or a top-level node of it) into the view's lexical declarations, a type with its members marked incomplete. The misread node itself stays a root: it holds no declaration node the walkers could key, and its annotations are read right, so the uses walk still finds their types. */
+function readMisread(view) {
+    for (const root of view.roots) {
+        const top = root.type === 'source_file' ? root.children : [root];
+        for (const node of top) {
+            const decl = misreadDeclaration(node);
+            if (!decl)
+                continue;
+            view.lexical.push(decl);
+            if (decl.kind === 'type')
+                view.incompleteTypes.add(decl.name);
+        }
+    }
+}
 // ── the view ──────────────────────────────────────────────────────────────────
 /**
  * True when `node` holds an `ERROR` node. A tree whose only defects are zero-width MISSING
@@ -562,7 +589,9 @@ function parseAt(parser, text, start, end) {
 export function kotlinView(tree, content, newParser) {
     const root = tree.rootNode;
     if (!damaged(root)) {
-        return { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => { } };
+        const view = { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => { } };
+        readMisread(view);
+        return view;
     }
     if (newParser === undefined) {
         throw new Error('kotlinView: this Kotlin file has syntax errors and recovery needs a parser; pass ParsedFile.newParser (for example the parser host\'s newParser)');
@@ -593,6 +622,7 @@ export function kotlinView(tree, content, newParser) {
         const view = { roots: [], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose };
         if (!damaged(base.rootNode)) {
             view.roots.push(base.rootNode);
+            readMisread(view);
             return view;
         }
         // From here on the split into declarations rests on the lexer; a literal or comment it saw
@@ -644,6 +674,7 @@ export function kotlinView(tree, content, newParser) {
             if (header.kind === 'type')
                 view.incompleteTypes.add(header.name);
         }
+        readMisread(view);
         return view;
     }
     catch (err) {
