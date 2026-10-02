@@ -16,8 +16,7 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  * WHAT: `kotlinView` turns a parsed file into the set of trustworthy parse nodes to walk, plus
  * what could only be read lexically:
  *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work beyond step 5; zero-width MISSING tokens alone do not count, see `damaged`).
- *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every
- *      row and column stays put — and the file is re-parsed. A clean re-parse is used as-is.
+ *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every row and column stays put — a nested class header is joined to its primary constructor on the next line by moving one newline (only the class name changes row, see `constructorJoins`), and the file is re-parsed. A clean re-parse is used as-is.
  *   3. Whatever is still damaged is split into top-level declarations by a small lexer (a
  *      declaration starts on a column-0 line at bracket depth 0) and each one is re-parsed on
  *      its own, padded so its rows and columns match the file. A clean declaration is walked
@@ -29,9 +28,7 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *      declarations the resolver uses to fail closed — see resolver.ts `incompletenessMarkers`.
  *   5. Among the nodes to walk, a top-level script statement whose leading tokens read as a declaration is a misread declaration (see `misreadDeclaration`). Its name is read from those tokens, as for a damaged declaration, and a type's members are marked incomplete.
  *
- * The blanking runs ONLY on a file that already failed to parse, so a wrong guess can never
- * disturb a file the grammar reads correctly; the worst it can do is leave a damaged file
- * damaged, which step 3 and 4 then handle.
+ * The rewriting of step 2 (blanking and joining) runs ONLY on a file that already failed to parse, so a wrong guess can never disturb a file the grammar reads correctly; the worst it can do is leave a damaged file damaged, which step 3 and 4 then handle.
  *
  * THE GRAMMAR SITUATION (why this is recovery, not a grammar fix): the shipped
  * `@tree-sitter-grammars/tree-sitter-kotlin` 1.1.0 (2025-01) is a fork that stopped moving (its

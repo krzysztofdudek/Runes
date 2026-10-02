@@ -198,7 +198,7 @@ const MODIFIERS = new Set([
     'actual', 'companion', 'vararg', 'reified', 'out', 'in',
 ]);
 const DECL_KEYWORDS = new Set(['class', 'interface', 'object', 'fun', 'val', 'var', 'typealias', 'constructor', 'init', 'import', 'package']);
-// ── blanking the three known forms ────────────────────────────────────────────
+// ── rewriting the known forms ─────────────────────────────────────────────────
 /** Index of the token closing the bracket opened at `open`, or -1. */
 function matching(toks, open) {
     let depth = 0;
@@ -319,14 +319,48 @@ function blankRanges(toks) {
     }
     return out;
 }
-function applyBlanks(text, ranges) {
-    if (ranges.length === 0)
+/**
+ * Newline moves `[from, to]` that join a nested class header to its primary constructor on the next line (`class Options` over `private constructor(val s: String)`, the ktfmt style). Kotlin attaches a constructor on the next line to the class above it, but inside a class body the shipped grammar ends the class at the newline and reads the constructor as a secondary constructor of the enclosing class, whose `val` parameters are an ERROR; the enclosing class then lost every member. Moving the newline from the end of the header into the blank after `class` (`class` over `Options private constructor(…)`) parses as Kotlin reads it: only the class name and its type parameters move, onto the constructor's row, and the class still starts on the row of its `class` keyword, so every declaration and use keeps its line. Only a header with nothing but blanks after its name or type parameters, directly above `constructor(` (after annotations and modifiers), qualifies, and only below the top level: a top-level class of this shape already parses, and the move would put its name at column 0, where the declaration splitter cuts.
+ */
+function constructorJoins(toks, text) {
+    const out = [];
+    let depth = 0;
+    for (let i = 0; i < toks.length; i++) {
+        const t = toks[i];
+        if (t.kind === 'p' && OPEN.has(t.text))
+            depth++;
+        else if (t.kind === 'p' && CLOSE.has(t.text))
+            depth--;
+        if (depth === 0 || t.kind !== 'id' || t.text !== 'class' || toks[i + 1]?.kind !== 'id')
+            continue;
+        let j = i + 2;
+        if (toks[j]?.kind === 'p' && toks[j].text === '<')
+            j = skipAngles(toks, j);
+        const nl = toks[j];
+        if (nl?.kind !== 'nl' || toks[j + 1]?.kind === 'nl')
+            continue;
+        const k = skipPrefix(toks, j + 1);
+        if (k === undefined || toks[k]?.text !== 'constructor' || toks[k + 1]?.text !== '(')
+            continue;
+        if (!/^[ \t]+$/.test(text.slice(t.end, toks[i + 1].start)) || !/^[ \t\r]*$/.test(text.slice(toks[j - 1].end, nl.start)))
+            continue;
+        out.push([nl.start, t.end]);
+    }
+    return out;
+}
+/** Blank the `ranges` (newlines kept) and move each joined newline; the text keeps its length and its number of lines. */
+function applyRewrites(text, ranges, joins) {
+    if (ranges.length === 0 && joins.length === 0)
         return text;
     const chars = text.split('');
     for (const [s, e] of ranges)
         for (let k = s; k < e; k++)
             if (chars[k] !== '\n')
                 chars[k] = ' ';
+    for (const [from, to] of joins) {
+        chars[from] = ' ';
+        chars[to] = '\n';
+    }
     return chars.join('');
 }
 /**
@@ -395,16 +429,8 @@ function skipAngles(toks, i) {
     }
     return toks.length;
 }
-/**
- * Read the declaration a chunk's leading tokens name: annotations and modifiers, then
- * `class|interface|object|fun interface` + name (a TYPE), `typealias` + name, `fun` [`<…>`]
- * [receiver `.`] name `(` or `val|var` [`<…>`] [receiver `.`] name (a CALLABLE). Returns
- * `null` for a destructuring `val (a, b)` (declares no key), `undefined` when the header is not
- * readable.
- */
-function readHeader(chunk) {
-    const toks = chunk.toks.filter((t) => t.kind !== 'nl');
-    let i = 0;
+/** The index of the first token at or after `i` that is not an annotation, a modifier or a newline; undefined when an annotation's brackets do not close. */
+function skipPrefix(toks, i) {
     while (i < toks.length) {
         const t = toks[i];
         if (t.kind === 'p' && t.text === '@') {
@@ -435,12 +461,26 @@ function readHeader(chunk) {
             }
             continue;
         }
-        if (t.kind === 'id' && MODIFIERS.has(t.text)) {
+        if (t.kind === 'nl' || (t.kind === 'id' && MODIFIERS.has(t.text))) {
             i++;
             continue;
         }
         break;
     }
+    return i;
+}
+/**
+ * Read the declaration a chunk's leading tokens name: annotations and modifiers, then
+ * `class|interface|object|fun interface` + name (a TYPE), `typealias` + name, `fun` [`<…>`]
+ * [receiver `.`] name `(` or `val|var` [`<…>`] [receiver `.`] name (a CALLABLE). Returns
+ * `null` for a destructuring `val (a, b)` (declares no key), `undefined` when the header is not
+ * readable.
+ */
+function readHeader(chunk) {
+    const toks = chunk.toks.filter((t) => t.kind !== 'nl');
+    const i = skipPrefix(toks, 0);
+    if (i === undefined)
+        return undefined;
     const kw = toks[i];
     if (kw === undefined || kw.kind !== 'id')
         return undefined;
@@ -610,7 +650,7 @@ export function kotlinView(tree, content, newParser) {
     try {
         parser.setLanguage(tree.language);
         const { toks, unbalanced: lexUnbalanced } = tokenize(content);
-        const text = applyBlanks(content, blankRanges(toks));
+        const text = applyRewrites(content, blankRanges(toks), constructorJoins(toks, content));
         let base = tree;
         if (text !== content) {
             const reparsed = parser.parse(text);

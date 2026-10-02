@@ -487,6 +487,43 @@ describe('kotlin extractor — parse recovery reads headers and lexes defensivel
     expect(keysOf(declarations)).toEqual(expect.arrayContaining(['p.a', 'p.b', 'p.c', 'p.d', 'p.After']));
   });
 
+  it('a nested class whose primary constructor sits on the next line keeps its members, its siblings and their lines', async () => {
+    const { declarations, uses } = await run(
+      [
+        'package com.acme',
+        'abstract class Reader {',
+        '  class Options',
+        '  private constructor(val s: List<com.acme.text.Word>) {',
+        '    fun size(): Int = s.size',
+        '  }',
+        '  data class Pair<T>',
+        '  @Inject',
+        '  constructor(val a: T, val b: T)',
+        '  enum class Token {',
+        '    BEGIN,',
+        '    END,',
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    expect(keysOf(declarations)).toEqual(['com.acme.Reader', 'com.acme.Reader+Options', 'com.acme.Reader+Options+size', 'com.acme.Reader+Pair', 'com.acme.Reader+Token']);
+    const lineOf = (key) => declarations.find((d) => d.symbolKey === key)?.line;
+    expect([lineOf('com.acme.Reader+Options'), lineOf('com.acme.Reader+Options+size'), lineOf('com.acme.Reader+Pair'), lineOf('com.acme.Reader+Token')]).toEqual([3, 5, 7, 10]);
+    expect(uses).toContainEqual(expect.objectContaining({ candidates: [{ kind: 'symbol', symbolKey: 'com.acme.text.Word' }], line: 4 }));
+  });
+
+  it('joins only a nested class header with nothing after its name, directly above its constructor', async () => {
+    // At the top level the grammar reads the form as it stands; a join there would put `Top` at column 0, where the declaration splitter cuts.
+    const top = await run('package p\npublic %% class Thing\nclass Top\nprivate constructor(val s: String)\n');
+    expect(keysOf(top.declarations)).toEqual(expect.arrayContaining(['p.Top', 'p.*']));
+    // A comment after the header, or a blank line above the constructor: no join, so the enclosing class keeps its header and a marker.
+    for (const header of ['  class B // note\n', '  class B\n\n']) {
+      const { declarations } = await run(`package p\nclass Box {\n${header}  private constructor(val s: String)\n}\n`);
+      expect(keysOf(declarations), header).toEqual(['p.Box', 'p.Box+*']);
+    }
+  });
+
   it('kotlinView releases its trees once, however often dispose is called', async () => {
     const code = 'package p\ncontext(l: Logger)\nfun d() {}\n';
     await withParsedFiles([kt('src/a/D.kt', code)], ([f]) => {
