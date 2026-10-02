@@ -314,6 +314,47 @@ describe('kotlin extractor — parse recovery for Kotlin 2.2+ syntax', () => {
   });
 });
 
+describe('kotlin extractor — top-level declarations the shipped grammar misreads without an ERROR', () => {
+  // The shipped grammar reads an annotation followed by a soft-keyword modifier (`annotation`, `enum`, `data`, `const`, `expect`, `actual`) at the top level as an annotated script expression or an assignment, with no ERROR node. Each such declaration is read from its leading tokens, like a damaged one.
+  const cases = [
+    ['import javax.inject.Qualifier\n\n@Qualifier\n@Retention(AnnotationRetention.RUNTIME)\nannotation class D1', ['com.acme.D1', 'com.acme.D1+*'], 6],
+    ['@Target(AnnotationTarget.FUNCTION)\nannotation class D4', ['com.acme.D4', 'com.acme.D4+*'], 3],
+    ['@Serializable\nenum class D6 {\n  A\n}', ['com.acme.D6', 'com.acme.D6+*'], 3],
+    ['@Serializable enum class C1 { X }', ['com.acme.C1', 'com.acme.C1+*'], 2],
+    ['@Keep annotation class C7', ['com.acme.C7', 'com.acme.C7+*'], 2],
+    ['@Keep\ndata object E2', ['com.acme.E2', 'com.acme.E2+*'], 3],
+    ['@Keep enum class E { A; fun f() = 1 }', ['com.acme.E', 'com.acme.E+*'], 2],
+    ['@Keep\nexpect class X', ['com.acme.X', 'com.acme.X+*'], 3],
+    ['@Keep\nconst val E14 = 1', ['com.acme.E14', 'com.acme.XKt'], 3],
+    ['@Keep\nactual typealias Y = Int', ['com.acme.Y', 'com.acme.XKt'], 3],
+  ];
+  for (const [body, keys, line] of cases) {
+    it(`declares ${keys[0]} (${keys[1]})`, async () => {
+      const { declarations } = await run(`package com.acme\n${body}\n`);
+      expect(declarations.map((d) => d.symbolKey)).toEqual(keys);
+      expect(declarations[0].line).toBe(line);
+    });
+  }
+
+  it('keeps the inline FQN types of a misread declaration among its uses', async () => {
+    const { declarations, uses } = await run('package p\n@com.acme.meta.Marker annotation class Q\nclass After\n');
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['p.After', 'p.Q', 'p.Q+*']);
+    expect(symbolKeys(uses)).toContain('com.acme.meta.Marker');
+  });
+
+  it('reads a misread declaration in a file that also needs recovery', async () => {
+    for (const damage of ['fun kind(v: Any) = when (v) {\n    is String if v.isNotEmpty() -> 1\n    else -> 3\n}', 'public %% class Thing']) {
+      const { declarations } = await run(`package p\n${damage}\n@Keep annotation class Q\nclass After\n`);
+      expect(declarations.map((d) => d.symbolKey), damage).toEqual(expect.arrayContaining(['p.Q', 'p.Q+*', 'p.After']));
+    }
+  });
+
+  it('a script statement that is no declaration stays undeclared', async () => {
+    const { declarations } = await runExtractor(kotlinExtractor, 'kotlin', '.kts', 'version = "1.0"\n@Suppress("x") foo()\n@Keep value = 2\n');
+    expect(declarations).toEqual([]);
+  });
+});
+
 describe('kotlin extractor — local declarations and JVM file facades', () => {
   it('does not key declarations local to a function, lambda, init block, accessor, constructor or object expression', async () => {
     const { declarations } = await run(

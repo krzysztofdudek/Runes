@@ -12,10 +12,11 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  * when one of those declarations was a duplicate of a key another file also declares, the
  * other file became the unique definer and an ambiguity flipped into a WRONG edge.
  *
+ * The same grammar also misreads some ordinary Kotlin 1.x without giving up: at the top level, an annotation followed by a soft-keyword modifier (`@Keep annotation class X`, `@Serializable enum class X { A }`, `@Keep data object X`, `@Keep const val X = 1`) reads as a script statement, an `annotated_expression` or an `assignment`, and no ERROR node marks the declaration it lost.
+ *
  * WHAT: `kotlinView` turns a parsed file into the set of trustworthy parse nodes to walk, plus
  * what could only be read lexically:
- *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work;
- *      zero-width MISSING tokens alone do not count, see `damaged`).
+ *   1. A file whose tree holds no ERROR node is used as-is (the common case, no extra work beyond step 5; zero-width MISSING tokens alone do not count, see `damaged`).
  *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every
  *      row and column stays put — and the file is re-parsed. A clean re-parse is used as-is.
  *   3. Whatever is still damaged is split into top-level declarations by a small lexer (a
@@ -27,6 +28,7 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *      whose name is unreadable, or a lexer that lost track of the brackets) or one type's
  *      members (a class whose body did not parse). The extractor turns these into marker
  *      declarations the resolver uses to fail closed — see resolver.ts `incompletenessMarkers`.
+ *   5. Among the nodes to walk, a top-level script statement whose leading tokens read as a declaration is a misread declaration (see `misreadDeclaration`). Its name is read from those tokens, as for a damaged declaration, and a type's members are marked incomplete.
  *
  * The blanking runs ONLY on a file that already failed to parse, so a wrong guess can never
  * disturb a file the grammar reads correctly; the worst it can do is leave a damaged file
@@ -483,6 +485,34 @@ function coveringNodes(chunk: Chunk, clean: Node[]): Node[] | undefined {
   return used;
 }
 
+// ── declarations misread without an ERROR ─────────────────────────────────────
+
+/** The top-level node types the shipped grammar turns an annotated declaration into when it reads it as a script statement. */
+const MISREAD_TYPES = new Set(['annotated_expression', 'assignment']);
+
+/**
+ * The declaration a top-level `node` really is when the shipped grammar misread it as a script statement: undefined when it is none, null for a destructuring `val (a, b)` (no key). The grammar reads an annotation followed by a soft-keyword modifier (`@Keep annotation class X`, `@Serializable enum class X { A }`, `@Keep data object X`, `@Keep expect class X`) as an `annotated_expression`, and `@Keep const val X = 1` or `@Keep actual typealias X = Y` as an `assignment`, cleanly: no ERROR node marks the loss. A genuine script statement (`version = "1.0"`, `@Suppress("x") run()`) has no declaration keyword after its annotations and modifiers, so its header does not read.
+ */
+function misreadDeclaration(node: Node): LexicalDecl | null | undefined {
+  if (!MISREAD_TYPES.has(node.type)) return undefined;
+  const row = node.startPosition.row;
+  const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row }));
+  return readHeader({ start: node.startIndex, end: node.endIndex, toks });
+}
+
+/** Read every misread top-level declaration among the view's roots (a whole file's root, or a top-level node of it) into the view's lexical declarations, a type with its members marked incomplete. The misread node itself stays a root: it holds no declaration node the walkers could key, and its annotations are read right, so the uses walk still finds their types. */
+function readMisread(view: KotlinView): void {
+  for (const root of view.roots) {
+    const top = root.type === 'source_file' ? root.children : [root];
+    for (const node of top) {
+      const decl = misreadDeclaration(node);
+      if (!decl) continue;
+      view.lexical.push(decl);
+      if (decl.kind === 'type') view.incompleteTypes.add(decl.name);
+    }
+  }
+}
+
 // ── the view ──────────────────────────────────────────────────────────────────
 
 /**
@@ -520,7 +550,9 @@ function parseAt(parser: Parser, text: string, start: number, end: number): Tree
 export function kotlinView(tree: Tree, content: string, newParser?: () => Parser): KotlinView {
   const root = tree.rootNode;
   if (!damaged(root)) {
-    return { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => {} };
+    const view: KotlinView = { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => {} };
+    readMisread(view);
+    return view;
   }
   if (newParser === undefined) {
     throw new Error('kotlinView: this Kotlin file has syntax errors and recovery needs a parser; pass ParsedFile.newParser (for example the parser host\'s newParser)');
@@ -546,7 +578,7 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
       if (reparsed !== null) { owned.push(reparsed); base = reparsed; }
     }
     const view: KotlinView = { roots: [], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose };
-    if (!damaged(base.rootNode)) { view.roots.push(base.rootNode); return view; }
+    if (!damaged(base.rootNode)) { view.roots.push(base.rootNode); readMisread(view); return view; }
     // From here on the split into declarations rests on the lexer; a literal or comment it saw
     // run off the end means it cannot be trusted to have found every declaration.
     if (lexUnbalanced) view.packageIncomplete = true;
@@ -584,6 +616,7 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
       view.lexical.push(header);
       if (header.kind === 'type') view.incompleteTypes.add(header.name);
     }
+    readMisread(view);
     return view;
   } catch (err) {
     dispose();
