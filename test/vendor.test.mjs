@@ -155,9 +155,8 @@ describe('vendor.mjs', () => {
     restore();
   });
 
-  // The gate's contract, over random edits: any byte changed in a vendored file, a file removed or added under the copy, the tool changed, or a fragment block changed fails check; an edit outside the blocks, or line endings turned to CRLF, passes.
-  test('property: every edit to the copy, the tool or a fragment block fails check; edits outside the blocks and CRLF do not', seeded(() => {
-    const r = random();
+  // The gate's contract, over random edits: any byte changed in a vendored file, a file removed or added under the copy, the tool changed, or a fragment block changed fails check; an edit outside the blocks, or line endings turned to CRLF, passes. Thirty edits drawn from r; note names the seed that replays them.
+  const randomEdits = (r, note) => {
     const vendored = [...baseline.keys()].filter((k) => k.replace(/\\/g, '/').startsWith('vendor/runes/'));
     for (let i = 0; i < 30; i += 1) {
       const kind = r.pick(['flip', 'delete', 'extra', 'tool', 'fragment', 'outside', 'crlf']);
@@ -184,17 +183,24 @@ describe('vendor.mjs', () => {
         writeFileSync(join(consumer, 'SKILL.md'), `${text.slice(0, at)}${r.word(3)}x${text.slice(at)}`);
         what.marker = marker.trim();
       } else if (kind === 'outside') {
-        writeFileSync(join(consumer, 'SKILL.md'), read('SKILL.md').replace('Middle.', `Middle. ${r.word()}`).concat(r.bool() ? `${r.word()}\n` : ''));
+        // A replacer function, not a replacement string: the alphabet holds '$', and "$'" or "$$" in a replacement string is a pattern, not text.
+        const text = r.word();
+        writeFileSync(join(consumer, 'SKILL.md'), read('SKILL.md').replace('Middle.', () => `Middle. ${text}`).concat(r.bool() ? `${r.word()}\n` : ''));
+        what.text = text;
       } else {
         writeFileSync(join(consumer, 'SKILL.md'), crlf(read('SKILL.md')));
       }
       const res = run(['check']);
       const passes = kind === 'outside' || kind === 'crlf';
-      assert.equal(res.code, passes ? 0 : 1, `case ${i} ${JSON.stringify(what)} ${seedNote()}\n${res.err}`);
+      assert.equal(res.code, passes ? 0 : 1, `case ${i} ${JSON.stringify(what)} ${note}\n${res.err}`);
       restore();
     }
     assert.equal(run(['check']).code, 0, 'restored');
-  }));
+  };
+  test('property: every edit to the copy, the tool or a fragment block fails check; edits outside the blocks and CRLF do not', seeded(() => randomEdits(random(), seedNote())));
+
+  // A counterexample kept as a regression (issue 140): this seed's case 21 is an edit outside the blocks whose text is "$?$'--". Passed to String.prototype.replace as a replacement string, "$'" stood for the text after the match and pasted a second copy of the evidence block into the file, which check rightly refuses; the edit text now goes in literally.
+  test('property replayed at RUNES_PROPERTY_SEED=690888235: an edit outside the blocks whose text holds "$\'" passes check', () => randomEdits(random(690888235), '(RUNES_PROPERTY_SEED=690888235)'));
 
   test('mutation: a hand-edited vendored file fails check', () => {
     appendFileSync(join(consumer, 'vendor/runes/dist/fs/index.mjs'), '// quick fix\n');
