@@ -985,3 +985,24 @@ describe('csharp — type arguments of generic methods and the remaining typed e
     expect(groups(uses)).toEqual([['TryGet()'], ['TryGet()'], ['Order']]);
   });
 });
+
+describe('csharp — the implicit Program of top-level statements (issue 075)', () => {
+  const keys = (declarations) => declarations.map((d) => [d.symbolKey, d.line]);
+
+  it('a file with top-level statements declares the global `Program` at its first statement', async () => {
+    const { declarations } = await run(['using System;', '', 'var app = Build(args);', 'app.Run();', ''].join('\n'));
+    expect(keys(declarations)).toEqual([['Program', 3]]);
+  });
+  it('an explicit global `partial class Program` beside the statements is declared once, at the class', async () => {
+    const { declarations } = await run(['var app = Build(args);', 'app.Run();', 'public partial class Program { }', ''].join('\n'));
+    expect(keys(declarations)).toEqual([['Program', 3]]);
+  });
+  it('a `Program` inside a namespace is another type: the implicit global `Program` is still declared', async () => {
+    const { declarations } = await run(['System.Console.WriteLine(1);', 'namespace App { class Program { } }', ''].join('\n'));
+    expect(keys(declarations)).toEqual([['App.Program', 2], ['Program', 1]]);
+  });
+  it('a file without top-level statements declares no implicit `Program`', async () => {
+    const { declarations } = await run(['namespace App;', 'public class Startup { void Main() { } }', ''].join('\n'));
+    expect(keys(declarations)).toEqual([['App.Startup', 2]]);
+  });
+});

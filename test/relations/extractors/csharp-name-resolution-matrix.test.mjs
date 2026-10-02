@@ -215,3 +215,8 @@ describe('MATRIX — type arguments of generic methods and the remaining typed e
   it('csharp-foreach-declared-type-edge', () => runCase('csharp-foreach-declared-type-edge'));
   it('csharp-out-declaration-type-edge', () => runCase('csharp-out-declaration-type-edge'));
 });
+
+describe('MATRIX — the implicit Program of top-level statements', () => {
+  it('csharp-top-level-program-implicit-class-edge', () => runCase('csharp-top-level-program-implicit-class-edge'));
+  it('csharp-top-level-program-two-entries-silence', () => runCase('csharp-top-level-program-two-entries-silence'));
+});
