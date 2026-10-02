@@ -271,3 +271,62 @@ describe('resolvePythonModule — sys.path-like roots', () => {
     expect(resolvePythonModule('mod', 'apps/web/main.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
   });
 });
+
+describe('resolvePythonModule — a PEP 420 namespace directory is not a sys.path root (issue 009)', () => {
+  // acme/ has no __init__.py (a top-level namespace package) and the repository root holds the project's pyproject.toml (flat layout, discovered root ''). Python puts the root on sys.path, never acme/, so `import logging` loads the standard library and `import yaml` the installed library, not acme/logging/ or acme/yaml/.
+  const flat = new Set(['acme/core/__init__.py', 'acme/core/service.py', 'acme/logging/__init__.py', 'acme/yaml/__init__.py', 'acme/tool.py']);
+  const flatExists = (p) => flat.has(p);
+  const flatRoots = () => [''];
+
+  it('a standard-library name from a sub-package never binds to the namespace directory', () => {
+    expect(resolvePythonModule('logging', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBeUndefined();
+    expect(resolvePythonModule('logging.handlers', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBeUndefined();
+  });
+
+  it('an external library name from a sub-package never binds to the namespace directory', () => {
+    expect(resolvePythonModule('yaml', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBeUndefined();
+  });
+
+  it('control: the namespace package itself still resolves from the project root', () => {
+    expect(resolvePythonModule('acme.logging', 'acme/core/service.py', flatExists, undefined, flatRoots)).toBe('acme/logging/__init__.py');
+  });
+
+  it('control: the importing script\'s own directory stays a root (python acme/tool.py)', () => {
+    expect(resolvePythonModule('logging', 'acme/tool.py', flatExists, undefined, flatRoots)).toBe('acme/logging/__init__.py');
+    expect(resolvePythonModule('yaml', 'acme/tool.py', flatExists, undefined, flatRoots)).toBe('acme/yaml/__init__.py');
+  });
+
+  it('src layout: a namespace directory under the discovered src/ root is not a root (poetry)', () => {
+    const files = new Set(['src/poetry/config/__init__.py', 'src/poetry/config/config.py', 'src/poetry/json/__init__.py']);
+    const exists = (p) => files.has(p);
+    const roots = () => ['src'];
+    expect(resolvePythonModule('json', 'src/poetry/config/config.py', exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('json.JSONDecodeError', 'src/poetry/config/config.py', exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('poetry.json', 'src/poetry/config/config.py', exists, undefined, roots)).toBe('src/poetry/json/__init__.py');
+  });
+
+  it('a project nested in the repository: its namespace directory is not a root, the project root is (google-cloud-logging)', () => {
+    const files = new Set([
+      'packages/gcl/setup.py',
+      'packages/gcl/google/cloud/logging/__init__.py',
+      'packages/gcl/google/cloud/logging_v2/__init__.py',
+      'packages/gcl/google/cloud/logging_v2/client.py',
+    ]);
+    const exists = (p) => files.has(p);
+    const roots = () => ['packages/gcl'];
+    const from = 'packages/gcl/google/cloud/logging_v2/client.py';
+    expect(resolvePythonModule('logging', from, exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('logging.handlers', from, exists, undefined, roots)).toBeUndefined();
+    expect(resolvePythonModule('google.cloud.logging', from, exists, undefined, roots)).toBe('packages/gcl/google/cloud/logging/__init__.py');
+  });
+
+  it('without a manifest, a standard-library name binds only at the importer\'s own directory or the repository root', () => {
+    const files = new Set(['acme/core/__init__.py', 'acme/core/service.py', 'acme/logging/__init__.py', 'tools/json.py', 'tools/run.py']);
+    const exists = (p) => files.has(p);
+    expect(resolvePythonModule('logging', 'acme/core/service.py', exists)).toBeUndefined();
+    // the importing script's own directory (python tools/run.py) and the repository root (python -m from the root) are first on sys.path
+    expect(resolvePythonModule('json', 'tools/run.py', exists)).toBe('tools/json.py');
+    const atRoot = new Set(['logging.py', 'acme/core/__init__.py', 'acme/core/service.py']);
+    expect(resolvePythonModule('logging', 'acme/core/service.py', (p) => atRoot.has(p))).toBe('logging.py');
+  });
+});

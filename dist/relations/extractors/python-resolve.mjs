@@ -83,6 +83,17 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  * `app/api/routes.py` loads the standard library even when the package `app/` has a
  * `logging.py`, and must not bind to it.
  *
+ * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every
+ * regular package, yet it is no more on `sys.path` than a package is: what Python puts
+ * there is an installed project's source root, the directory of the script it runs, or
+ * the current directory for `python -m`. So an ancestor directory lying strictly below a
+ * discovered project root is never a root, and for a top-level name the standard library
+ * owns (which precedes every installed project on `sys.path`) no ancestor is a root but the
+ * repository root. The importing file's own directory is exempt from both rules: it is
+ * `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging`
+ * and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/`
+ * when `acme/` is a namespace package.
+ *
  * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project
  * manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a
  * test outside `src/` or one workspace member importing another resolves although the
@@ -120,9 +131,16 @@ function resolveAbsolute(specifier, fromFile, exists, isExcluded, projectRoots) 
     // real precedence) still reaches the match set.
     const isExcl = isExcluded ?? (() => false);
     const matches = new Set();
-    const roots = ancestorDirs(path.posix.dirname(toPosix(fromFile))).filter((dir) => !insideRegularPackage(dir, exists));
-    if (projectRoots !== undefined && !PYTHON_STDLIB_TOP_LEVEL.has(segments[0])) {
-        for (const root of projectRoots()) {
+    const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(segments[0]);
+    const discovered = projectRoots?.() ?? [];
+    const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+    // An ancestor other than the importer's own directory is a root only when it is not a
+    // directory inside a project (strictly below a discovered root) and, for a standard-library
+    // name, only when it is the repository root (see the doc comment above).
+    const ancestorIsRoot = (dir) => dir === ownDir || (!(stdlibName && dir !== '') && !discovered.some((root) => strictlyBelow(dir, root)));
+    const roots = ancestorDirs(ownDir).filter((dir) => ancestorIsRoot(dir) && !insideRegularPackage(dir, exists));
+    if (!stdlibName) {
+        for (const root of discovered) {
             if (!roots.includes(root) && !insideRegularPackage(root, exists))
                 roots.push(root);
         }
@@ -200,11 +218,19 @@ function insideRegularPackage(dir, exists) {
     const parent = path.posix.dirname(dir);
     return exists(joinUnder(parent === '.' ? '' : parent, '__init__.py'));
 }
+/** True when `dir` lies strictly below `root` (both repo-relative, '' is the repo root). */
+function strictlyBelow(dir, root) {
+    return root === '' ? dir !== '' : dir.startsWith(root + '/');
+}
+/** A repo-relative directory as `path.posix.dirname` gives it, with the repo root as ''. */
+function normalizeDir(dir) {
+    return dir === '.' ? '' : dir;
+}
 /** The importing file's directory and every ancestor directory up to the repo root,
  *  nearest-first. '' (the repo root) is the final entry. */
 function ancestorDirs(dir) {
     const out = [];
-    let cur = dir === '.' ? '' : dir;
+    let cur = dir;
     for (;;) {
         out.push(cur);
         if (cur === '')
