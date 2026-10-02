@@ -498,11 +498,13 @@ function stripRustComments(text: string): string {
 }
 
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait /
- *  type / fn / const / static / mod / macro_rules!) or bring it into scope with a `use`? */
+ *  type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of
+ *  `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope
+ *  with a `use`? */
 export function rustFileDeclares(text: string, name: string): boolean {
   const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const decl = new RegExp(
-    `\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b`,
+    `\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`,
   );
   if (decl.test(text)) return true;
   const word = new RegExp(`(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);

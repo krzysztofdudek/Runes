@@ -425,6 +425,16 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(rustFileDeclares('fn f() { let Engine = 1; }', 'Engine')).toBe(false);
     expect(rustFileDeclares('pub mod r#gen;', 'gen')).toBe(true);
   });
+
+  it('counts an `extern crate` binding as a name the file declares: the alias when renamed, else the crate', () => {
+    // Issue 137: ripgrep's facade crate `grep` re-exports its parts as `pub extern crate grep_printer as printer;`, so `grep::printer::…` found no declaration in grep's lib.rs and stayed silent.
+    expect(rustFileDeclares('pub extern crate grep_printer as printer;', 'printer')).toBe(true);
+    expect(rustFileDeclares('pub extern crate grep_printer as printer;', 'grep_printer')).toBe(false);
+    expect(rustFileDeclares('#[macro_use]\nextern crate log;', 'log')).toBe(true);
+    expect(rustFileDeclares('extern crate r#async as r#await ;', 'await')).toBe(true);
+    expect(rustFileDeclares('extern crate self as facade;', 'facade')).toBe(true);
+    expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
+  });
 });
 
 describe('resolveRustPath — manifest and target edge forms (disk-backed)', () => {
@@ -509,6 +519,18 @@ describe('resolveRustPath — manifest and target edge forms (disk-backed)', () 
     put('libs/kit/src/lib.rs', 'pub struct Engine;\n');
     const resolve = makeResolvePathToFile(ws);
     expect(resolve('kit::Engine', 'src/main.rs', 'rust')).toBe('libs/kit/src/lib.rs');
+  });
+
+  it('binds a path through a dependency\'s re-exported extern crate to that dependency\'s crate root file', () => {
+    // Issue 137, the ripgrep shape: `rg` uses `grep::printer::Standard`, and the facade crate `grep` declares `printer` only as `pub extern crate grep_printer as printer;`.
+    put('Cargo.toml', '[package]\nname = "app"\n\n[dependencies]\ngrep = { path = "crates/grep" }\n');
+    put('crates/grep/Cargo.toml', '[package]\nname = "grep"\n\n[dependencies]\ngrep-printer = { path = "../printer" }\n');
+    put('crates/grep/src/lib.rs', 'pub extern crate grep_printer as printer;\n');
+    put('crates/printer/Cargo.toml', '[package]\nname = "grep-printer"\n');
+    put('crates/printer/src/lib.rs', 'pub struct Standard;\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('grep::printer::Standard', 'crates/core/flags/hiargs.rs', 'rust')).toBe('crates/grep/src/lib.rs');
+    expect(resolve('grep::searcher::Searcher', 'crates/core/flags/hiargs.rs', 'rust')).toBeUndefined();
   });
 
   it('walks past an intermediate manifest to the workspace that defines an inherited dependency', () => {
