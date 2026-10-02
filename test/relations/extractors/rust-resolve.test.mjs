@@ -460,6 +460,24 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(parseCargoManifest('[package]\nname = "app"\ndescription = """\n[dependencies]\nghost = { path = "../ghost" }\n"""\n').dependencies).toEqual(new Map());
   });
 
+  it('reads a dependency table written as one inline table as it reads the [dependencies] table, LF and CRLF', () => {
+    // Issue 163: `dependencies = { kit = { path = … } }` named no crate by its key path, so its entries were ignored.
+    const table = '[dependencies]\nkit = { path = "../kit", features = ["a, b", \'}\'], package = "kit-pkg" }\nnext = "1"\nmore.path = "../more"\n';
+    const inline = 'dependencies = { kit = { path = "../kit", features = ["a, b", \'}\'], package = "kit-pkg" }, next = "1", more.path = "../more" }\n';
+    const expected = parseCargoManifest(table).dependencies;
+    expect(expected.size).toBe(3);
+    for (const text of [inline, inline.replace(/\n/g, '\r\n'), `[package]\nname = "app"\n[target.'cfg(unix)']\n${inline}`, `target = { 'cfg(unix)' = { ${inline.trim()} } }\n`, 'dependencies = {\n  kit = { path = "../kit", features = ["a, b", \'}\'], package = "kit-pkg" },\n  next = "1",\n  more.path = "../more",\n}\n']) {
+      expect(parseCargoManifest(text).dependencies, text).toEqual(expected);
+    }
+    const ws = new Map([['kit', { path: 'libs/kit', package: undefined, workspace: false }]]);
+    expect(parseCargoManifest('workspace = { dependencies = { kit = { path = "libs/kit" } } }\n').workspaceDependencies).toEqual(ws);
+    expect(parseCargoManifest('[workspace]\ndependencies = { kit = { path = "libs/kit" } }\n').workspaceDependencies).toEqual(ws);
+    expect(parseCargoManifest('dev-dependencies = { kit = { workspace = true } }\n').dependencies).toEqual(new Map([['kit', { path: undefined, package: undefined, workspace: true }]]));
+    // The first declaration keeps the crate across forms, and an inline table elsewhere, or a member that is no `key = value`, declares nothing.
+    expect(parseCargoManifest('dependencies = { kit = "1" }\n[dev-dependencies]\nkit = { path = "../kit" }\n').dependencies).toEqual(new Map([['kit', { workspace: false }]]));
+    expect(parseCargoManifest('package = { dependencies = { kit = { path = "../kit" } } }\nfeatures = { kit = { path = "../kit" } }\ndependencies = { kit }\n').dependencies).toEqual(new Map());
+  });
+
   it('joins the lines of a CRLF file the same way, so an entry with a multi-line array keeps the fields before and after it', () => {
     // Issue 149, round 2: the join kept each `\r`, the joined line no longer matched `key = value`, and the whole entry was dropped.
     const lf = '[dependencies]\nkit = { path = "../kit", features = [\n    "a",\n    "b", # comment\n], package = "kit-pkg" }\nnext = { path = "../next" }\n';
