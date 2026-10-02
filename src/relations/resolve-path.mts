@@ -145,7 +145,7 @@ export function makeResolvePathToFile(
  * ancestor of the importing file that contains a `Cargo.toml`; which CRATE of that package
  * the file belongs to follows Cargo's target auto-discovery (`src/lib.rs` / `src/main.rs`
  * for `src/**`, `src/bin/<x>.rs` and `src/bin/<x>/main.rs`, `tests/`, `examples/`,
- * `benches/`, `build.rs`) — see `rustTargetFor`. The package's crate name (`[lib].name`,
+ * `benches/`, `build.rs`) and the `path` of each `[[bin]]` table — see `rustTargetFor`. The package's crate name (`[lib].name`,
  * else `[package].name`, hyphens → underscores) addresses its library from any target.
  *
  * In-repo PATH DEPENDENCIES (`[dependencies]`, `[dev-dependencies]`,
@@ -238,7 +238,7 @@ function makeRustResolveDeps(
     const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
     // Target sub-paths are package-relative and never climb, so a plain join is exact.
     const at = (sub: string): string => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.binPaths);
     return {
       srcDir: at(target.srcDir),
       crateName,
@@ -307,12 +307,18 @@ function makeRustResolveDeps(
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
- *  crate declares it, so it gets the `tests/` tree with no root file to bind items to. */
+ *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
+ *
+ *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`), and a file outside `src/` below its directory belongs to that binary's tree (the deepest such directory), not to the `src/` tree that holds no part of it. A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
 export function rustTargetFor(
   rel: string,
   existsInPackage: (sub: string) => boolean,
   libPath?: string,
+  binPaths: readonly string[] = [],
 ): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } {
+  const bins = binPaths.map((p) => path.posix.normalize(p));
+  const dirOfRoot = (root: string): string => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
+  if (bins.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
   const segs = rel.split('/');
   if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3) {
     if (segs.length === 3) return { srcDir: 'src/bin', rootFiles: [rel], fileIsRoot: true };
@@ -331,6 +337,14 @@ export function rustTargetFor(
   const libRoot = path.posix.normalize(libPath ?? 'src/lib.rs');
   const mainRoot = 'src/main.rs';
   if (rel === libRoot || rel === mainRoot) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
+  if (segs[0] !== 'src') {
+    let bin: string | undefined;
+    for (const b of bins) {
+      const dir = dirOfRoot(b);
+      if ((dir === '' || rel.startsWith(`${dir}/`)) && (bin === undefined || dir.length > dirOfRoot(bin).length)) bin = b;
+    }
+    if (bin !== undefined) return { srcDir: dirOfRoot(bin), rootFiles: [bin], fileIsRoot: false };
+  }
   return { srcDir: 'src', rootFiles: [libRoot, mainRoot], fileIsRoot: false };
 }
 
@@ -343,6 +357,8 @@ interface CargoDependencySpec {
 interface CargoManifest {
   crateName: string | undefined;
   libPath: string | undefined;
+  /** The `path` of each `[[bin]]` table that names one, package-relative as written. */
+  binPaths: string[];
   dependencies: Map<string, CargoDependencySpec>;
   workspaceDependencies: Map<string, CargoDependencySpec>;
 }
@@ -415,11 +431,14 @@ function tomlLogicalLines(source: string): string[] {
   return lines;
 }
 
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]` table, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text: string): CargoManifest {
   let packageName: string | undefined;
   let libName: string | undefined;
   let libPath: string | undefined;
+  const binPaths: string[] = [];
+  // True inside one element of the `[[bin]]` array of tables.
+  let inBin = false;
   const dependencies = new Map<string, CargoDependencySpec>();
   const workspaceDependencies = new Map<string, CargoDependencySpec>();
   // The current table header's key segments ([] above the first header), and the same joined with dots.
@@ -464,6 +483,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (header) {
       sectionPath = keySegments(header[1]);
       section = sectionPath.join('.');
+      inBin = section === 'bin' && line.startsWith('[[');
       declaredHere = new Set<string>();
       // `[dependencies.<name>]` (or a table below it) declares the crate; its lines are the crate's fields.
       const entry = dependencyEntryAt(sectionPath);
@@ -479,6 +499,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (section === 'package' && key === 'name') packageName = unquote(value);
     else if (section === 'lib' && key === 'name') libName = unquote(value);
     else if (section === 'lib' && key === 'path') libPath = unquote(value);
+    else if (inBin && key === 'path') binPaths.push(unquote(value));
     else {
       const entry = dependencyEntryAt([...sectionPath, ...segments]);
       if (entry === undefined) continue;
@@ -497,6 +518,7 @@ export function parseCargoManifest(text: string): CargoManifest {
   return {
     crateName: name === undefined ? undefined : normalizeCrateName(name),
     libPath,
+    binPaths,
     dependencies,
     workspaceDependencies,
   };

@@ -30,8 +30,10 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
- *  crate declares it, so it gets the `tests/` tree with no root file to bind items to. */
-export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string): {
+ *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
+ *
+ *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`), and a file outside `src/` below its directory belongs to that binary's tree (the deepest such directory), not to the `src/` tree that holds no part of it. A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
+export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, binPaths?: readonly string[]): {
     srcDir: string;
     rootFiles: string[];
     fileIsRoot: boolean;
@@ -45,10 +47,12 @@ interface CargoDependencySpec {
 interface CargoManifest {
     crateName: string | undefined;
     libPath: string | undefined;
+    /** The `path` of each `[[bin]]` table that names one, package-relative as written. */
+    binPaths: string[];
     dependencies: Map<string, CargoDependencySpec>;
     workspaceDependencies: Map<string, CargoDependencySpec>;
 }
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]` table, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export declare function parseCargoManifest(text: string): CargoManifest;
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
 export declare function rustFileDeclares(text: string, name: string): boolean;

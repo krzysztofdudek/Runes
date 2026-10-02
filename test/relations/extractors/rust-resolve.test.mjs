@@ -228,6 +228,41 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::opts', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
+  it('roots crate:: of a [[bin]] path outside src/ at that binary, for the root and the files below its directory (the ripgrep shape)', () => {
+    put('Cargo.toml', '[package]\nname = "ripgrep"\n\n[[bin]]\nbench = false\npath = "crates/core/main.rs"\nname = "rg"\n\n[[bin]]\nname = "gen"\npath = "./crates/core/gen/main.rs"\n\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n');
+    put('crates/core/main.rs', 'mod flags;\nmod haystack;\npub struct Thing;\n');
+    put('crates/core/flags/mod.rs', 'pub struct HiArgs;\n');
+    put('crates/core/haystack.rs', '');
+    put('crates/core/gen/flags.rs', '');
+    put('src/flags.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::flags::HiArgs', 'crates/core/main.rs', 'rust')).toBe('crates/core/flags/mod.rs');
+    expect(resolve('self::flags', 'crates/core/main.rs', 'rust')).toBe('crates/core/flags/mod.rs');
+    expect(resolve('crate::haystack::Haystack', 'crates/core/flags/hiargs.rs', 'rust')).toBe('crates/core/haystack.rs');
+    expect(resolve('super::haystack', 'crates/core/flags/mod.rs', 'rust')).toBe('crates/core/haystack.rs');
+    expect(resolve('crate::Thing', 'crates/core/flags/mod.rs', 'rust')).toBe('crates/core/main.rs');
+    // The deepest [[bin]] directory holds a file, and `./` in a path is read as written.
+    expect(resolve('crate::flags', 'crates/core/gen/main.rs', 'rust')).toBe('crates/core/gen/flags.rs');
+    expect(resolve('crate::flags', 'crates/core/gen/util.rs', 'rust')).toBe('crates/core/gen/flags.rs');
+    // A binary root has no parent module, and a file under src/ keeps the src/ tree.
+    expect(resolve('super::flags', 'crates/core/main.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::flags', 'src/other.rs', 'rust')).toBe('src/flags.rs');
+  });
+
+  it('keeps the library tree for src/ files when a [[bin]] path names src/main.rs, and roots a [[bin]] at the package directory', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n\n[[bin]]\nname = "app"\npath = "src/main.rs"\n\n[[bin]]\nname = "tool"\npath = "tool.rs"\n');
+    put('src/lib.rs', 'pub enum Error {}\n');
+    put('src/orders/mod.rs', '');
+    put('cli/args.rs', '');
+    put('tests/common.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Error', 'src/orders/mod.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('crate::cli::args::Parser', 'tool.rs', 'rust')).toBe('cli/args.rs');
+    expect(resolve('crate::cli::args', 'cli/other.rs', 'rust')).toBe('cli/args.rs');
+    // The auto-discovered targets outside src/ keep their own roots.
+    expect(resolve('self::common', 'tests/it.rs', 'rust')).toBe('tests/common.rs');
+  });
+
   it('resolves tests/<name>.rs as a test crate root and a shared tests/common/mod.rs under tests/', () => {
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('tests/common/mod.rs', '');
@@ -296,6 +331,13 @@ describe('parseCargoManifest / rustFileDeclares', () => {
   it('reads [lib].name over [package].name and normalizes hyphens', () => {
     expect(parseCargoManifest('[package]\nname = "a-b"\n').crateName).toBe('a_b');
     expect(parseCargoManifest('[package]\nname = "a-b"\n[lib]\nname = "c_d"\n').crateName).toBe('c_d');
+  });
+
+  it('reads the path of each [[bin]] table, and no other table\'s path', () => {
+    const bins = (text) => parseCargoManifest(text).binPaths;
+    expect(bins('[[bin]]\nname = "rg"\npath = "crates/core/main.rs"\n\n[[bin]]\nname = "auto"\n\n[[bin]]\npath = \'tools/gen.rs\' # generator\n')).toEqual(['crates/core/main.rs', 'tools/gen.rs']);
+    expect(bins('[lib]\npath = "lib/lib.rs"\n[[test]]\npath = "tests/it.rs"\n[[bin]]\nname = "x"\n[bin.extra]\npath = "nope.rs"\n')).toEqual([]);
+    expect(bins('[[bin]]\r\nname = "rg"\r\npath = "crates/core/main.rs"\r\n')).toEqual(['crates/core/main.rs']);
   });
 
   it('ignores a `name` outside [package] / [lib]', () => {
