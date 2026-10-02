@@ -330,7 +330,7 @@ function blankRanges(toks: Tok[]): Array<[number, number]> {
 }
 
 /**
- * Newline moves `[from, to]` that join a nested class header to its primary constructor on the next line (`class Options` over `private constructor(val s: String)`, the ktfmt style). Kotlin attaches a constructor on the next line to the class above it, but inside a class body the shipped grammar ends the class at the newline and reads the constructor as a secondary constructor of the enclosing class, whose `val` parameters are an ERROR; the enclosing class then lost every member. Moving the newline from the end of the header into the blank after `class` (`class` over `Options private constructor(…)`) parses as Kotlin reads it: only the class name and its type parameters move, onto the constructor's row, and the class still starts on the row of its `class` keyword, so every declaration and use keeps its line. Only a header with nothing but blanks after its name or type parameters, directly above `constructor(` (after annotations and modifiers), qualifies, and only below the top level: a top-level class of this shape already parses, and the move would put its name at column 0, where the declaration splitter cuts.
+ * Newline moves `[from, to]` that join a nested class header to its primary constructor on the next line (`class Options` over `private constructor(val s: String)`, the ktfmt style). Kotlin attaches a constructor on the next line to the class above it, but inside a class body the shipped grammar ends the class at the newline and reads the constructor as a secondary constructor of the enclosing class, whose `val` parameters are an ERROR; the enclosing class then lost every member. Moving the newline from the end of the header into the blank after `class` (`class` over `Options private constructor(…)`) parses as Kotlin reads it: only the class name and its type parameters move, onto the constructor's row, and the class still starts on the row of its `class` keyword. Type parameters qualify only as plain names with `in`/`out` (`<T>`, `<in A, out B>`): a bound or an annotation there (`<T : a.Bound>`, `<@a.Ann T>`) is a use, which the move would report one line too low, so such a header is left unjoined and its enclosing class falls back to its header. So every declaration and use keeps its line. Only a header with nothing but blanks after its name or type parameters, directly above `constructor(` (after annotations and modifiers), qualifies, and only below the top level: a top-level class of this shape already parses, and the move would put its name at column 0, where the declaration splitter cuts.
  */
 function constructorJoins(toks: Tok[], text: string): Array<[number, number]> {
   const out: Array<[number, number]> = [];
@@ -341,7 +341,12 @@ function constructorJoins(toks: Tok[], text: string): Array<[number, number]> {
     else if (t.kind === 'p' && CLOSE.has(t.text)) depth--;
     if (depth === 0 || t.kind !== 'id' || t.text !== 'class' || toks[i + 1]?.kind !== 'id') continue;
     let j = i + 2;
-    if (toks[j]?.kind === 'p' && toks[j].text === '<') j = skipAngles(toks, j);
+    if (toks[j]?.kind === 'p' && toks[j].text === '<') {
+      j++;
+      while (toks[j]?.kind === 'id' || (toks[j]?.kind === 'p' && toks[j].text === ',')) j++;
+      if (toks[j]?.kind !== 'p' || toks[j].text !== '>') continue;
+      j++;
+    }
     const nl = toks[j];
     if (nl?.kind !== 'nl' || toks[j + 1]?.kind === 'nl') continue;
     const k = skipPrefix(toks, j + 1);
