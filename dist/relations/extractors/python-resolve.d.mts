@@ -9,7 +9,9 @@
  * universe (disk at --approve time; a fixed known-set in unit tests). PURE except
  * through `exists` and `isExcluded`. Resolution is a pure file-existence search — no
  * directory listing, no ownership lookup. The owner index downstream maps the resolved
- * file to an owner; an unmapped resolved file is simply not a known target.
+ * file to an owner; an unmapped resolved file is simply not a known target. (A pass
+ * resolving many imports builds `makePythonResolver` once instead; it gives the same
+ * answers and may list the discovered roots only to skip those that cannot match.)
  *
  * `isExcluded`, when supplied, makes an excluded candidate act as though it does not
  * exist, in BOTH resolvers. In the absolute resolver this happens at two levels: per
@@ -37,3 +39,20 @@
  * or any module whose file is not present resolves to nothing and is never flagged.
  */
 export declare function resolvePythonModule(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly string[]): string | undefined;
+/**
+ * The resolver `resolvePythonModule` describes, built once for the many imports of one
+ * resolution pass over a file universe that does not change during it: every call answers
+ * exactly what `resolvePythonModule` answers, and the work imports share is done once.
+ * `exists` and the regular-package test are memoized per path, the discovered project roots
+ * are read once, and the matches under the discovered roots, which depend on the specifier
+ * alone, are memoized per specifier.
+ *
+ * `listDir`, when supplied, lists the names directly inside a directory (undefined when it
+ * cannot be listed), and every path `exists` accepts must be spelled with names those listings
+ * give. Each directory is then listed at most once, and an import probes only the discovered
+ * roots that hold the path of its parent module (`a/b` as a directory or `a/b.py` for `a.b.c`,
+ * `a` for `a`): an external library such as `requests` probes none, and `airflow.models.dag`
+ * probes the one distribution that holds `airflow/models` although every distribution holds
+ * `airflow/`. Without it every discovered root is probed, with the same answers.
+ */
+export declare function makePythonResolver(exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly string[], listDir?: (repoRelPosix: string) => readonly string[] | undefined): (specifier: string, fromFile: string) => string | undefined;

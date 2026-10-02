@@ -1,6 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/python-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import { resolvePythonModule } from '../../helpers/internal/relations.mjs';
+import { resolvePythonModule, makePythonResolver } from '../../helpers/internal/relations.mjs';
+import { random, seeded, seedNote } from '../../helpers/prng.mjs';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([
@@ -366,5 +367,64 @@ describe('resolvePythonModule — a pkgutil namespace package shared by several 
   it('control: a parent MODULE file at another root still competes with the exact module (it cannot hold a submodule, so sys.path order decides)', () => {
     const files = new Set(['core/src/acme/__init__.py', 'core/src/acme/settings.py', 'plugin/src/acme.py', 'apps/main.py']);
     expect(resolvePythonModule('acme.settings', 'apps/main.py', (p) => files.has(p), undefined, roots)).toBeUndefined();
+  });
+});
+
+describe('makePythonResolver — one resolver for a whole pass (issue 013)', () => {
+  it('answers every import exactly as resolvePythonModule does, over generated layouts, roots, exclusions and listings', seeded(() => {
+    const rnd = random();
+    const names = ['a', 'b', 'pkg', 'src', 'logging', 'json', 'yaml'];
+    for (let round = 0; round < 60; round++) {
+      const files = new Set();
+      for (let f = rnd.int(4, 24); f > 0; f--) {
+        const dirs = Array.from({ length: rnd.int(0, 3) }, () => rnd.pick(names));
+        files.add([...dirs, rnd.bool(0.3) ? '__init__.py' : `${rnd.pick(names)}.py`].join('/'));
+      }
+      const children = new Map();
+      for (const file of files) {
+        const segs = file.split('/');
+        for (let i = 0; i < segs.length; i++) {
+          const dir = segs.slice(0, i).join('/');
+          if (!children.has(dir)) children.set(dir, new Set());
+          children.get(dir).add(segs[i]);
+        }
+      }
+      const dirs = [...children.keys()];
+      const roots = dirs.filter(() => rnd.bool(0.3));
+      const unlisted = new Set(roots.filter(() => rnd.bool(0.2)));
+      const listDir = (dir) => (unlisted.has(dir) ? undefined : [...(children.get(dir) ?? [])]);
+      const excluded = new Set([...files].filter(() => rnd.bool(0.1)));
+      const exists = (p) => files.has(p);
+      const isExcluded = rnd.bool() ? (p) => excluded.has(p) : undefined;
+      const shared = makePythonResolver(exists, isExcluded, () => roots, listDir);
+      const importers = [...files, 'apps/main.py', 'main.py'];
+      for (let q = 0; q < 80; q++) {
+        const dotted = Array.from({ length: rnd.int(1, 3) }, () => rnd.pick([...names, 'X'])).join('.');
+        const specifier = rnd.bool(0.2) ? `${'.'.repeat(rnd.int(1, 2))}${rnd.bool() ? dotted : ''}` : dotted;
+        const from = rnd.pick(importers);
+        const want = resolvePythonModule(specifier, from, exists, isExcluded, () => roots);
+        expect(shared(specifier, from), `${specifier} from ${from}, files ${JSON.stringify([...files])}, roots ${JSON.stringify(roots)} ${seedNote()}`).toBe(want);
+      }
+    }
+  }));
+
+  it('probes only the discovered roots that hold the parent module\'s path, each path once', () => {
+    // Every distribution ships the namespace package `ns`; only p1 holds `ns/models`.
+    const files = new Set(['p1/src/ns/__init__.py', 'p1/src/ns/models/__init__.py', 'p1/src/ns/models/dag.py', 'p2/src/ns/__init__.py', 'p2/src/ns/hooks.py', 'p3/src/ns/__init__.py', 'app/main.py']);
+    const probed = [];
+    const exists = (p) => {
+      probed.push(p);
+      return files.has(p);
+    };
+    const roots = ['p1/src', 'p2/src', 'p3/src'];
+    const listing = { 'p1/src': ['ns'], 'p1/src/ns': ['__init__.py', 'models'], 'p2/src': ['ns'], 'p2/src/ns': ['__init__.py', 'hooks.py'], 'p3/src': ['ns'], 'p3/src/ns': ['__init__.py'] };
+    const resolve = makePythonResolver(exists, undefined, () => roots, (dir) => listing[dir]);
+    expect(resolve('ns.models.dag', 'app/main.py')).toBe('p1/src/ns/models/dag.py');
+    expect(resolve('ns.hooks', 'app/main.py')).toBe('p2/src/ns/hooks.py');
+    expect(resolve('requests', 'app/main.py')).toBeUndefined();
+    expect(resolve('ns.models.dag', 'app/main.py')).toBe('p1/src/ns/models/dag.py');
+    // under p2 and p3 nothing for ns.models.dag and requests; for ns.hooks, its candidates (and p3's parent package), besides the one-time regular-package check of each root
+    expect(probed.filter((p) => /^p[23]\//.test(p)).sort()).toEqual(['p2/__init__.py', 'p2/src/__init__.py', 'p2/src/ns/hooks.py', 'p2/src/ns/hooks/__init__.py', 'p3/__init__.py', 'p3/src/__init__.py', 'p3/src/ns/__init__.py', 'p3/src/ns/hooks.py', 'p3/src/ns/hooks/__init__.py']);
+    expect(probed.length).toBe(new Set(probed).size);
   });
 });

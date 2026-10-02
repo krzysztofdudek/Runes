@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
-import { resolvePythonModule } from './extractors/python-resolve.mjs';
+import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
@@ -46,7 +46,15 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
     const layout = makeRepoLayout(projectRoot, isExcluded);
     const phpDeps = makePhpResolveDeps(projectRoot, exists, isExcluded, layout.composerMaps);
     const rustDeps = makeRustResolveDeps(projectRoot, exists);
-    const pythonRoots = makePythonProjectRoots(projectRoot, isExcluded);
+    // One Python resolver for the whole pass: it memoizes its probes and indexes the discovered roots by the names they hold (issue 013).
+    const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(projectRoot, isExcluded), (repoRelPosix) => {
+        try {
+            return readdirSync(path.join(projectRoot, repoRelPosix));
+        }
+        catch {
+            return undefined;
+        }
+    });
     // TS/JS: a candidate is a FILE (a directory named like `./x.config` is never a module), and
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => {
@@ -63,7 +71,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
             return resolveTsPath(specifier, fromFile, isFile, tsDeps);
         }
         if (language === 'python') {
-            return resolvePythonModule(specifier, fromFile, exists, isExcluded, pythonRoots);
+            return python(specifier, fromFile);
         }
         if (language === 'go') {
             return resolveGoImport(specifier, fromFile, goDeps);
