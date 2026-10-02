@@ -315,6 +315,80 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
       expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
     });
   });
+  // Issue 155 (5): a referenced config holds a file as tsc's own matcher decides (checked with tsc --listFilesOnly). The solution root maps @/* to root/, so a file no referenced config holds shows the root's own paths.
+  describe('a referenced config holds a file as tsc decides (issue 155, 5)', () => {
+    const solution = (configs, files = {}) => {
+      const r = project({
+        'tsconfig.json': JSON.stringify({ files: [], references: Object.keys(configs).map((c) => ({ path: `./${c}` })), compilerOptions: { paths: { '@/*': ['./root/*'] } } }),
+        'root/m.ts': '',
+        ...Object.fromEntries(Object.entries(configs).map(([c, json], i) => [c, JSON.stringify({ ...json, compilerOptions: { ...json.compilerOptions, paths: { '@/*': [`${'../'.repeat(c.split('/').length - 1)}T${i}/*`] } } })])),
+        ...Object.fromEntries(Object.keys(configs).map((_, i) => [`T${i}/m.ts`, ''])),
+        ...files,
+      });
+      return (from) => r('@/m', from);
+    };
+    it('a wildcard that opens a segment, and every segment ** spans, skips a name starting with a dot; a dot name spelled out matches', () => {
+      const r = solution({ 'app.json': { include: ['src/**/*', 'lib/?x/*.ts', 'lib/*y/*.ts'] }, 'gen.json': { include: ['src/.gen/**/*'] } });
+      expect(r('src/b.ts')).toBe('T0/m.ts');
+      expect(r('src/.a.ts')).toBe('root/m.ts');
+      expect(r('src/x/.c.ts')).toBe('root/m.ts');
+      expect(r('lib/ax/a.ts')).toBe('T0/m.ts');
+      expect(r('lib/.x/a.ts')).toBe('root/m.ts');
+      expect(r('lib/.y/a.ts')).toBe('root/m.ts');
+      // Only the config that names the dot directory holds it, so its paths apply instead of a disagreement.
+      expect(r('src/.gen/a.ts')).toBe('T1/m.ts');
+      expect(r('src/.gen/.h/b.ts')).toBe('root/m.ts');
+    });
+    it('a wildcard never matches node_modules, bower_components or jspm_packages; a literal segment does', () => {
+      const r = solution({ 'app.json': { include: ['src/**/*', 'lib/*/x.ts', 'vendor/node_modules/**/*'] } });
+      for (const f of ['src/node_modules/a.ts', 'src/bower_components/b.ts', 'src/jspm_packages/c.ts', 'lib/node_modules/x.ts']) expect(r(f)).toBe('root/m.ts');
+      expect(r('src/node_modules_x/d.ts')).toBe('T0/m.ts');
+      expect(r('vendor/node_modules/y/a.ts')).toBe('T0/m.ts');
+    });
+    it('a * in the last segment never spans the dot of a trailing .min.js', () => {
+      const r = solution({ 'app.json': { include: ['src/*.js', 'src/**/*.ts'] } });
+      expect(r('src/a.min.js')).toBe('root/m.ts');
+      expect(r('src/a.js')).toBe('T0/m.ts');
+      expect(r('src/b.min.ts')).toBe('T0/m.ts');
+    });
+    it('an include ending in ** and an include or exclude with .. after ** are rejected, so they match nothing', () => {
+      const r = solution({ 'app.json': { include: ['src/**', 'lib/**/', 'up/**/../lib/*.ts', 'keep/*.ts'], exclude: ['keep/**/..'] } });
+      for (const f of ['src/a.ts', 'src/x/b.ts', 'lib/c.ts', 'up/lib/a.ts']) expect(r(f)).toBe('root/m.ts');
+      expect(r('keep/a.ts')).toBe('T0/m.ts');
+    });
+    it('without an exclude anywhere in the chain, outDir and declarationDir are excluded, each from the config that sets it', () => {
+      const r = solution({
+        'a.json': { include: ['a/**/*'], compilerOptions: { outDir: 'a/out', declarationDir: 'a/types' } },
+        'cfg/b.json': { extends: './base.json', include: ['../pkg/**/*'] },
+        'app/c.json': { extends: '../shared.json', include: ['./**/*'] },
+        'd.json': { include: ['d/**/*'], exclude: ['nothing'], compilerOptions: { outDir: 'd/out' } },
+        'e.json': { extends: './e-base.json', include: ['e/**/*'], compilerOptions: { outDir: 'e/out' } },
+        'f.json': { include: ['f/**/*'], compilerOptions: { outDir: '../../../outside' } },
+      }, {
+        'cfg/base.json': JSON.stringify({ compilerOptions: { outDir: '../pkg/out' } }),
+        'shared.json': JSON.stringify({ compilerOptions: { outDir: '${configDir}/dist' } }),
+        'e-base.json': JSON.stringify({ exclude: ['e/legacy'] }),
+      });
+      expect(r('a/out/a.ts')).toBe('root/m.ts');
+      expect(r('a/types/b.ts')).toBe('root/m.ts');
+      expect(r('a/src/a.ts')).toBe('T0/m.ts');
+      expect(r('pkg/out/a.ts')).toBe('root/m.ts');
+      expect(r('pkg/src/a.ts')).toBe('T1/m.ts');
+      expect(r('app/dist/a.ts')).toBe('root/m.ts');
+      expect(r('app/src/a.ts')).toBe('T2/m.ts');
+      // An exclude set anywhere in the chain replaces the default.
+      expect(r('d/out/a.ts')).toBe('T3/m.ts');
+      expect(r('e/out/a.ts')).toBe('T4/m.ts');
+      expect(r('e/legacy/a.ts')).toBe('root/m.ts');
+      // An outDir outside the repository excludes nothing in it.
+      expect(r('f/a.ts')).toBe('T5/m.ts');
+    });
+    it('an outDir that is the config directory itself excludes everything the config would hold', () => {
+      const r = solution({ 'web/app.json': { compilerOptions: { outDir: '.' } }, 'top.json': { include: ['top/**/*'], compilerOptions: { outDir: '.' } } });
+      expect(r('web/src/a.ts')).toBe('root/m.ts');
+      expect(r('top/a.ts')).toBe('root/m.ts');
+    });
+  });
   it('excludes a directory named in exclude, and reads include and files inherited through extends', () => {
     const r = project({
       'tsconfig.json': '{ "files": [], "references": [{ "path": "./cfg/app.json" }, { "path": "./legacy.json" }] }',

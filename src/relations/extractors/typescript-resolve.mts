@@ -99,6 +99,9 @@ interface LoadedConfig extends TsPathConfig {
   files?: string[];
   include?: string[];
   exclude?: string[];
+  /** `outDir` and `declarationDir`, repo-rel, when set anywhere in the chain inside the repository: tsc's default `exclude`. */
+  outDir?: string;
+  declarationDir?: string;
 }
 
 export interface TsPackage {
@@ -418,14 +421,14 @@ const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
 
 /**
- * Whether a path matches one glob of the dialect npm, yarn and pnpm workspaces and tsconfig `include`/`exclude` share: `*` and `?` within one segment, `**` for any number of segments, everything else literal. Both sides are relative to the same directory.
+ * Whether a path matches one glob of the dialect npm, yarn and pnpm workspaces and tsconfig `exclude` share: `*` and `?` within one segment, `**` for any number of segments, everything else literal. Both sides are relative to the same directory.
  */
 function globMatches(glob: string, rel: string): boolean {
   const pattern = glob.split('/').filter((seg) => seg !== '' && seg !== '.');
   const segs = rel === '' ? [] : rel.split('/');
   const segment = (pat: string, seg: string): boolean => {
     let source = '';
-    for (const c of pat) source += c === '*' ? '[^/]*' : c === '?' ? '[^/]' : c.replace(/[\\^$.|+()[\]{}]/g, '\\$&');
+    for (const c of pat) source += c === '*' ? '[^/]*' : c === '?' ? '[^/]' : escapeRegex(c);
     return new RegExp(`^${source}$`).test(seg);
   };
   const match = (i: number, j: number): boolean => {
@@ -434,6 +437,52 @@ function globMatches(glob: string, rel: string): boolean {
     return j < segs.length && segment(pattern[i], segs[j]) && match(i + 1, j + 1);
   };
   return match(0, 0);
+}
+
+function escapeRegex(c: string): string {
+  return c.replace(/[\\^$.|+()[\]{}]/g, '\\$&');
+}
+
+/**
+ * Whether a repo-rel file matches a tsconfig `include` pattern (repo-rel too) the way tsc's file matcher reads it: a last segment with no `.`, `*` or `?` names a directory and matches everything under it; a pattern ending in `**` matches nothing (tsc rejects it); `*` and `?` stay within a segment and `**` spans any number of segments, but a wildcard that opens a segment, and every segment `**` spans, never matches a name starting with `.`, no wildcard matches a `node_modules`, `bower_components` or `jspm_packages` segment, and a `*` in the file name never spans the dot that opens a trailing `.min.js`. A segment written out matches itself, dotted or not.
+ */
+function includeMatches(pattern: string, file: string): boolean {
+  const pat = pattern.split('/').filter((seg) => seg !== '');
+  const last = pat.length === 0 ? '' : pat[pat.length - 1];
+  if (last === '**') return false;
+  if (!/[.*?]/.test(last)) pat.push('**', '*');
+  const segs = file.split('/');
+  const segment = (p: string, seg: string, isName: boolean): boolean => {
+    if (!/[*?]/.test(p)) return p === seg;
+    if (SKIPPED_DIRS.has(seg)) return false;
+    const star = isName ? '(?:[^./]|\\.(?!min\\.js$))*' : '[^/]*';
+    let source = '';
+    let rest = p;
+    if (rest.startsWith('*')) {
+      source = `(?:[^./]${star})?`;
+      rest = rest.slice(1);
+    } else if (rest.startsWith('?')) {
+      source = '[^./]';
+      rest = rest.slice(1);
+    }
+    for (const c of rest) source += c === '*' ? star : c === '?' ? '[^/]' : escapeRegex(c);
+    return new RegExp(`^${source}$`).test(seg);
+  };
+  const spanned = (seg: string): boolean => !seg.startsWith('.') && !SKIPPED_DIRS.has(seg);
+  const match = (i: number, j: number): boolean => {
+    if (i === pat.length) return j === segs.length;
+    if (pat[i] === '**') return match(i + 1, j) || (j < segs.length && spanned(segs[j]) && match(i, j + 1));
+    return j < segs.length && segment(pat[i], segs[j], j === segs.length - 1) && match(i + 1, j + 1);
+  };
+  return match(0, 0);
+}
+
+/** Whether an `include` or `exclude` spec climbs out with `..` after a `**`, which tsc rejects (so it matches nothing). */
+function dotDotAfterRecursion(spec: string): boolean {
+  const at = spec.startsWith('**/') ? 0 : spec.indexOf('/**/');
+  if (at === -1) return false;
+  const dots = spec.endsWith('/..') ? spec.length : spec.lastIndexOf('/../');
+  return dots > at;
 }
 
 /** The globs a workspace glob's brace alternatives stand for (`packages/{core,ui}`, nested ones too), as npm's minimatch and pnpm's globber expand them; a brace with no comma or no closing partner is literal. tsconfig `include` and `exclude` have no braces, so only workspace globs go through this. */
@@ -642,6 +691,22 @@ export function makeTsResolveDeps(
     // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none.
     return undefined;
   };
+  // `${configDir}` (TypeScript 5.5) is the directory of the tsconfig in effect for the file — the leaf of the chain, not the base that spells it. A value using it is rewritten to a repo-root-anchored path (leading '/'), which `joinConfigPath` reads.
+  const withConfigDir = (p: string, leafDir: string): string =>
+    p.includes('${configDir}') ? `/${p.split('${configDir}').join(leafDir === '' ? '.' : leafDir)}` : p;
+  // `files`, `include` and `exclude` as one config spells them, repo-rel: each resolves from the config's own directory, and an `include` or `exclude` spec tsc rejects (a `..` after `**`) is dropped.
+  const ownLists = (json: Record<string, unknown>, dir: string, leafDir: string): Pick<LoadedConfig, 'files' | 'include' | 'exclude'> => {
+    const out: Pick<LoadedConfig, 'files' | 'include' | 'exclude'> = {};
+    for (const field of ['files', 'include', 'exclude'] as const) {
+      const list = json[field];
+      if (!Array.isArray(list)) continue;
+      out[field] = list
+        .filter((p): p is string => typeof p === 'string' && (field === 'files' || !dotDotAfterRecursion(p)))
+        .map((p) => joinConfigPath(dir, withConfigDir(p, leafDir)))
+        .filter((p): p is string => p !== undefined);
+    }
+    return out;
+  };
   const loadConfig = (file: string, leafDir: string): LoadedConfig | 'unknown' => {
     const key = `${file}\n${leafDir}`;
     const cached = configCache.get(key);
@@ -665,13 +730,8 @@ export function makeTsResolveDeps(
       }
       const options = json.compilerOptions;
       if (options !== undefined && !isRecord(options)) return 'unknown';
-      // `${configDir}` (TypeScript 5.5) is the directory of the tsconfig in effect for the
-      // file — the leaf of the chain, not the base that spells it. A value using it is
-      // rewritten to a repo-root-anchored path (leading '/'), which `joinConfigPath` reads.
-      const withConfigDir = (p: string): string =>
-        p.includes('${configDir}') ? `/${p.split('${configDir}').join(leafDir === '' ? '.' : leafDir)}` : p;
       if (options !== undefined && typeof options.baseUrl === 'string') {
-        const base = joinConfigPath(dir, withConfigDir(options.baseUrl));
+        const base = joinConfigPath(dir, withConfigDir(options.baseUrl, leafDir));
         if (base === undefined) return 'unknown';
         merged.baseUrl = base;
       }
@@ -680,33 +740,33 @@ export function makeTsResolveDeps(
         const map: Record<string, string[]> = {};
         for (const [k, v] of Object.entries(options.paths)) {
           if (!Array.isArray(v) || v.some((s) => typeof s !== 'string')) return 'unknown';
-          map[k] = (v as string[]).map(withConfigDir);
+          map[k] = (v as string[]).map((p) => withConfigDir(p, leafDir));
         }
         merged.paths = { base: dir, map };
       }
-      // `files`, `include` and `exclude` resolve from the config that spells them; a base's list is inherited whole unless the inheriting config sets its own.
-      for (const field of ['files', 'include', 'exclude'] as const) {
-        const list = json[field];
-        if (!Array.isArray(list)) continue;
-        merged[field] = list
-          .filter((p): p is string => typeof p === 'string')
-          .map((p) => joinConfigPath(dir, withConfigDir(p)))
-          .filter((p): p is string => p !== undefined);
+      // `outDir` and `declarationDir` resolve from the config that sets them, like every path option; one outside the repository excludes nothing in it.
+      for (const field of ['outDir', 'declarationDir'] as const) {
+        const value = options?.[field];
+        if (typeof value !== 'string') continue;
+        const at = joinConfigPath(dir, withConfigDir(value, leafDir));
+        if (at === undefined) delete merged[field];
+        else merged[field] = at;
       }
-      return merged;
+      // A base's `files`, `include` or `exclude` list is inherited whole unless the inheriting config sets its own.
+      return { ...merged, ...ownLists(json, dir, leafDir) };
     })();
     configCache.set(key, result);
     return result;
   };
 
-  // Whether a config's project holds a file, as tsc reads `files`, `include` and `exclude`: a listed file always; otherwise an `include` match that no `exclude` pattern matches. With neither `files` nor `include` set, `include` is everything under the config's directory; with only `files` set, it is nothing. An include pattern whose last segment has no extension and no wildcard names a directory, and an exclude pattern also covers everything under a directory it matches. Extensions are not filtered: a project holds whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
+  // Whether a config's project holds a file, as tsc reads `files`, `include` and `exclude`: a listed file always; otherwise an `include` match (tsc's matcher, {@link includeMatches}) that no `exclude` pattern matches. With neither `files` nor `include` set, `include` is everything under the config's directory; with only `files` set, it is nothing. With no `exclude` anywhere in the chain, `outDir` and `declarationDir` are excluded. An exclude pattern also covers everything under a directory it matches, the config's own directory included. Extensions are not filtered: a project holds whatever its compiler (tsc, vue-tsc, svelte-check) accepts.
   const holds = (config: LoadedConfig, configDir: string, file: string): boolean => {
     if (config.files?.includes(file)) return true;
     const include = config.include ?? (config.files === undefined ? [configDir === '' ? '**/*' : `${configDir}/**/*`] : []);
-    const asDirectory = (p: string): string => (/[*?.]/.test(p.slice(p.lastIndexOf('/') + 1)) ? p : `${p}/**/*`);
-    if (!include.some((p) => globMatches(asDirectory(p), file))) return false;
+    if (!include.some((p) => includeMatches(p, file))) return false;
+    const exclude = config.exclude ?? [config.outDir, config.declarationDir].filter((d): d is string => d !== undefined);
     const segs = file.split('/');
-    return !(config.exclude ?? []).some((p) => segs.some((_, k) => globMatches(p, segs.slice(0, k + 1).join('/'))));
+    return !exclude.some((p) => p === '' || segs.some((_, k) => globMatches(p, segs.slice(0, k + 1).join('/'))));
   };
   // The configs a tsconfig's own `references` name (never inherited): a config file, or a directory holding a tsconfig.json. A reference naming neither is skipped, as tsserver skips it.
   const referencesOf = (file: string): string[] => {
