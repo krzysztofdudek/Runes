@@ -32,7 +32,7 @@
 export declare function resolveTsPath(specifier: string, fromFile: string, existsAny: (repoRelPosix: string) => boolean, deps?: TsResolveDeps): string | undefined;
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
-    /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, or referenced configs that hold the file and disagree), or undefined when the file has none. */
+    /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, referenced configs that hold the file and disagree, or a referenced config that may hold the file and cannot be read), or undefined when the file has none. */
     tsconfigFor(fromFile: string): TsPathConfig | 'unknown' | undefined;
     /** The nearest ancestor package of a file: its directory and parsed package.json. */
     nearestPackage(fromFile: string): TsPackage | undefined;
