@@ -78,8 +78,9 @@ export interface PackageManifest {
     typings?: unknown;
 }
 /**
- * Parse JSON with comments and trailing commas (the tsconfig dialect). Returns
- * undefined for anything that is still not JSON afterwards.
+ * Parse JSON with comments and trailing commas (the tsconfig dialect). A leading UTF-8
+ * byte order mark (Visual Studio saves one) is skipped, as tsc, Node and npm skip it.
+ * Returns undefined for anything that is still not JSON afterwards.
  */
 export declare function parseJsonc(text: string): unknown;
 /**
