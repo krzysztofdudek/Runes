@@ -263,6 +263,53 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('self::common', 'tests/it.rs', 'rust')).toBe('tests/common.rs');
   });
 
+  it('lets a [lib] path outside src/ compete with [[bin]] paths: the deepest directory wins, and the library is probed first in its own', () => {
+    // Three packages side by side. Beside a binary at the package root: the library's root is probed before the binary's, as src/lib.rs before src/main.rs.
+    put('root/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib.rs"\n[[bin]]\nname = "app"\npath = "main.rs"\n');
+    put('root/lib.rs', 'pub mod foo;\npub struct Config;\npub struct LibOnly;\n');
+    put('root/main.rs', 'struct Config;\nfn main() {}\n');
+    put('root/foo.rs', '');
+    // In the same directory as the binary, outside src/.
+    put('same/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "crates/core/lib.rs"\n[[bin]]\nname = "app"\npath = "crates/core/main.rs"\n');
+    put('same/crates/core/lib.rs', 'pub mod util;\npub struct Item;\n');
+    put('same/crates/core/main.rs', 'struct Bin;\nfn main() {}\n');
+    put('same/crates/core/other.rs', '');
+    // Below the binary's directory: the library's deeper directory holds its files.
+    put('below/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib/lib.rs"\n[[bin]]\nname = "app"\npath = "main.rs"\n');
+    put('below/lib/lib.rs', 'pub mod util;\npub struct Item;\n');
+    put('below/main.rs', 'mod util;\nstruct Item;\n');
+    put('below/lib/util.rs', '');
+    put('below/util.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Config', 'root/foo.rs', 'rust')).toBe('root/lib.rs');
+    expect(resolve('crate::LibOnly', 'root/foo.rs', 'rust')).toBe('root/lib.rs');
+    expect(resolve('crate::foo', 'root/lib.rs', 'rust')).toBe('root/foo.rs');
+    expect(resolve('crate::Item', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/lib.rs');
+    expect(resolve('crate::Bin', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/main.rs');
+    expect(resolve('crate::other', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/other.rs');
+    expect(resolve('crate::Item', 'below/lib/util.rs', 'rust')).toBe('below/lib/lib.rs');
+    expect(resolve('crate::util', 'below/lib/lib.rs', 'rust')).toBe('below/lib/util.rs');
+    expect(resolve('crate::util', 'below/lib/other.rs', 'rust')).toBe('below/lib/util.rs');
+    expect(resolve('crate::util', 'below/main.rs', 'rust')).toBe('below/util.rs');
+  });
+
+  it('gives a module no binary root when two [[bin]] paths share its directory, and each binary its own', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "a"\npath = "tools/a.rs"\n[[bin]]\nname = "b"\npath = "tools/b.rs"\n[[bin]]\nname = "cli"\npath = "cli/main.rs"\n[[bin]]\nname = "cli2"\npath = "cli/./main.rs"\n');
+    put('tools/a.rs', 'pub struct Opts;\nfn main() {}\n');
+    put('tools/b.rs', 'mod util;\nfn main() {}\n');
+    put('tools/util.rs', '');
+    put('tools/helper.rs', '');
+    put('cli/main.rs', 'pub struct Opts;\nfn main() {}\n');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Opts', 'tools/util.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::helper', 'tools/util.rs', 'rust')).toBe('tools/helper.rs');
+    expect(resolve('crate::Opts', 'tools/a.rs', 'rust')).toBe('tools/a.rs');
+    expect(resolve('crate::Opts', 'tools/b.rs', 'rust')).toBeUndefined();
+    expect(resolve('self::util', 'tools/b.rs', 'rust')).toBe('tools/util.rs');
+    // One path named twice is one binary.
+    expect(resolve('crate::Opts', 'cli/args.rs', 'rust')).toBe('cli/main.rs');
+  });
+
   it('resolves tests/<name>.rs as a test crate root and a shared tests/common/mod.rs under tests/', () => {
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('tests/common/mod.rs', '');

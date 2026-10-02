@@ -60,6 +60,8 @@ describe('MATRIX — crate-relative use (the `::`-path IS the edge; resolves thr
 describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo path dependencies, extern crate)', () => {
   it('rust-bin-target-crate-root-edge', () => runCase('rust-bin-target-crate-root-edge'));
   it('rust-bin-path-crate-root-edge', () => runCase('rust-bin-path-crate-root-edge'));
+  it('rust-lib-path-below-bin-dir-edge', () => runCase('rust-lib-path-below-bin-dir-edge'));
+  it('rust-several-bins-one-dir-silence', () => runCase('rust-several-bins-one-dir-silence'));
   it('rust-integration-test-mod-common-edge', () => runCase('rust-integration-test-mod-common-edge'));
   it('rust-workspace-path-dependency-edge', () => runCase('rust-workspace-path-dependency-edge'));
   it('rust-dotted-key-workspace-dependency-edge', () => runCase('rust-dotted-key-workspace-dependency-edge'));
