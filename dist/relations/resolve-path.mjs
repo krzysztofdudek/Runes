@@ -144,7 +144,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded) {
  * ancestor of the importing file that contains a `Cargo.toml`; which CRATE of that package
  * the file belongs to follows Cargo's target auto-discovery (`src/lib.rs` / `src/main.rs`
  * for `src/**`, `src/bin/<x>.rs` and `src/bin/<x>/main.rs`, `tests/`, `examples/`,
- * `benches/`, `build.rs`) — see `rustTargetFor`. The package's crate name (`[lib].name`,
+ * `benches/`, `build.rs`) and the `path` of each `[[bin]]` table — see `rustTargetFor`. The package's crate name (`[lib].name`,
  * else `[package].name`, hyphens → underscores) addresses its library from any target.
  *
  * In-repo PATH DEPENDENCIES (`[dependencies]`, `[dev-dependencies]`,
@@ -233,7 +233,7 @@ function makeRustResolveDeps(projectRoot, exists) {
         const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
         // Target sub-paths are package-relative and never climb, so a plain join is exact.
         const at = (sub) => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath);
+        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.binPaths);
         return {
             srcDir: at(target.srcDir),
             crateName,
@@ -307,8 +307,14 @@ function makeRustResolveDeps(projectRoot, exists) {
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
  *  root. A shared helper under `tests/` (`tests/common/mod.rs`) belongs to whichever test
- *  crate declares it, so it gets the `tests/` tree with no root file to bind items to. */
-export function rustTargetFor(rel, existsInPackage, libPath) {
+ *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
+ *
+ *  `binPaths` are the `path`s of the manifest's `[[bin]]` tables. Such a file is the root of its binary crate, wherever it lies (ripgrep's `crates/core/main.rs`), and a file outside `src/` below its directory belongs to that binary's tree (the deepest such directory), not to the `src/` tree that holds no part of it. A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it. */
+export function rustTargetFor(rel, existsInPackage, libPath, binPaths = []) {
+    const bins = binPaths.map((p) => path.posix.normalize(p));
+    const dirOfRoot = (root) => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
+    if (bins.includes(rel))
+        return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
     const segs = rel.split('/');
     if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3) {
         if (segs.length === 3)
@@ -332,6 +338,16 @@ export function rustTargetFor(rel, existsInPackage, libPath) {
     const mainRoot = 'src/main.rs';
     if (rel === libRoot || rel === mainRoot)
         return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
+    if (segs[0] !== 'src') {
+        let bin;
+        for (const b of bins) {
+            const dir = dirOfRoot(b);
+            if ((dir === '' || rel.startsWith(`${dir}/`)) && (bin === undefined || dir.length > dirOfRoot(bin).length))
+                bin = b;
+        }
+        if (bin !== undefined)
+            return { srcDir: dirOfRoot(bin), rootFiles: [bin], fileIsRoot: false };
+    }
     return { srcDir: 'src', rootFiles: [libRoot, mainRoot], fileIsRoot: false };
 }
 function normalizeCrateName(name) {
@@ -410,11 +426,14 @@ function tomlLogicalLines(source) {
     lines.push(line);
     return lines;
 }
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]` table, and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. An entry is found by its full TOML key path, so every spelling of it reads alike: an inline table, dotted keys such as `name.workspace = true`, the `[dependencies.<name>]` table form, and a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text) {
     let packageName;
     let libName;
     let libPath;
+    const binPaths = [];
+    // True inside one element of the `[[bin]]` array of tables.
+    let inBin = false;
     const dependencies = new Map();
     const workspaceDependencies = new Map();
     // The current table header's key segments ([] above the first header), and the same joined with dots.
@@ -461,6 +480,7 @@ export function parseCargoManifest(text) {
         if (header) {
             sectionPath = keySegments(header[1]);
             section = sectionPath.join('.');
+            inBin = section === 'bin' && line.startsWith('[[');
             declaredHere = new Set();
             // `[dependencies.<name>]` (or a table below it) declares the crate; its lines are the crate's fields.
             const entry = dependencyEntryAt(sectionPath);
@@ -481,6 +501,8 @@ export function parseCargoManifest(text) {
             libName = unquote(value);
         else if (section === 'lib' && key === 'path')
             libPath = unquote(value);
+        else if (inBin && key === 'path')
+            binPaths.push(unquote(value));
         else {
             const entry = dependencyEntryAt([...sectionPath, ...segments]);
             if (entry === undefined)
@@ -502,6 +524,7 @@ export function parseCargoManifest(text) {
     return {
         crateName: name === undefined ? undefined : normalizeCrateName(name),
         libPath,
+        binPaths,
         dependencies,
         workspaceDependencies,
     };
