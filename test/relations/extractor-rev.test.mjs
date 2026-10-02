@@ -13,6 +13,6 @@ describe('extractor rev', () => {
     expect(extractorForLanguage('java').rev).toBe(3);
     expect(extractorForLanguage('csharp').rev).toBe(4); // 4: the type arguments of a generic method call, `new T[n]`, a typed `foreach` and a declaration expression give an edge, and a file of top-level statements declares `Program`
     expect(extractorForLanguage('typescript').rev).toBe(3); // 3: every type-only reference and a module augmentation give an edge; 2: bare specifiers, new URL(), ERROR-region recovery
-    expect(extractorForLanguage('kotlin').rev).toBe(4); // 4: annotated top-level declarations the grammar misreads as script statements are declared, and a nested class with its primary constructor on the next line keeps its members
+    expect(extractorForLanguage('kotlin').rev).toBe(5); // 5: a nested class over a next-line constructor without val or var keeps its members; 4: annotated top-level declarations the grammar misreads as script statements are declared, and a nested class with its primary constructor on the next line keeps its members
   });
 });

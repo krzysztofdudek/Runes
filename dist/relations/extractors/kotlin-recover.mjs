@@ -586,7 +586,23 @@ function misreadDeclaration(node) {
     const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row }));
     return readHeader({ start: node.startIndex, end: node.endIndex, toks });
 }
-/** Read every misread top-level declaration among the view's roots (a whole file's root, or a top-level node of it) into the view's lexical declarations, a type with its members marked incomplete. The misread node itself stays a root: it holds no declaration node the walkers could key, and its annotations are read right, so the uses walk still finds their types. */
+/** Members a class body ends a class with: a class that has one of them is complete when the next member begins. */
+const CLASS_ENDINGS = new Set(['primary_constructor', 'delegation_specifiers', 'type_constraints', 'class_body', 'enum_class_body']);
+/**
+ * The nested classes under `node` that the shipped grammar cut from the constructor below them without an ERROR. Kotlin attaches a `constructor` that follows a class header to that class, across newlines and comments (`classDeclaration: … {NL} primaryConstructor`), so `class Inner` over `private constructor(s: String) { class Deep }` is one class with a body. Inside a class body the grammar instead ends a class with nothing after its name and type parameters at the newline and reads the constructor as a secondary constructor of the enclosing class. When a parameter is `val` or `var` that is an ERROR, which recovery handles; without one the file parses cleanly and the nested class's body reads as the constructor's block, so every declaration in it is lost unmarked. A cut is a `secondary_constructor` whose previous member, past comments, is a `class_declaration` with none of `CLASS_ENDINGS`.
+ */
+function cutClasses(node) {
+    const out = [];
+    for (const ctor of node.descendantsOfType('secondary_constructor')) {
+        let prev = ctor.previousNamedSibling;
+        while (prev !== null && (prev.type === 'line_comment' || prev.type === 'block_comment'))
+            prev = prev.previousNamedSibling;
+        if (prev?.type === 'class_declaration' && !prev.namedChildren.some((c) => CLASS_ENDINGS.has(c.type)))
+            out.push(prev);
+    }
+    return out;
+}
+/** Read every misread top-level declaration among the view's roots (a whole file's root, or a top-level node of it) into the view's lexical declarations, a type with its members marked incomplete. The misread node itself stays a root: it holds no declaration node the walkers could key, and its annotations are read right, so the uses walk still finds their types. A nested class still cut from its constructor (see `cutClasses`; no join fitted its header) marks the members of its top-level type incomplete. */
 function readMisread(view) {
     for (const root of view.roots) {
         const top = root.type === 'source_file' ? root.children : [root];
@@ -597,6 +613,14 @@ function readMisread(view) {
             view.lexical.push(decl);
             if (decl.kind === 'type')
                 view.incompleteTypes.add(decl.name);
+        }
+        for (const cut of cutClasses(root)) {
+            let owner = cut;
+            while (owner.parent !== null && owner.parent.type !== 'source_file')
+                owner = owner.parent;
+            const name = owner.type === 'class_declaration' || owner.type === 'object_declaration' ? owner.childForFieldName('name')?.text : undefined;
+            if (name !== undefined)
+                view.incompleteTypes.add(name);
         }
     }
 }
@@ -624,6 +648,44 @@ function parseAt(parser, text, start, end) {
     return parser.parse('\n'.repeat(rows) + ' '.repeat(col) + text.slice(start, end) + '\n');
 }
 /**
+ * The view of a file whose tree holds no ERROR: the tree as it stands, unless a nested class is cut from its next-line constructor (`cutClasses`). Then only the joins of step 2 are applied, never the blanking, and the joined text is re-parsed with `newParser`; a clean re-parse replaces the tree. Without a parser, or when the re-parse is damaged, the tree stays and `readMisread` marks the cut class's top-level type incomplete, so a clean file never needs a parser.
+ */
+function cleanView(tree, content, newParser) {
+    const view = { roots: [tree.rootNode], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => { } };
+    if (newParser !== undefined && cutClasses(tree.rootNode).length > 0) {
+        const text = applyRewrites(content, [], constructorJoins(tokenize(content).toks, content));
+        if (text !== content) {
+            const parser = newParser();
+            let joined = null;
+            try {
+                parser.setLanguage(tree.language);
+                joined = parser.parse(text);
+            }
+            finally {
+                if (joined === null || damaged(joined.rootNode)) {
+                    joined?.delete();
+                    parser.delete();
+                    joined = null;
+                }
+            }
+            if (joined !== null) {
+                const kept = joined;
+                let disposed = false;
+                view.roots = [kept.rootNode];
+                view.dispose = () => {
+                    if (disposed)
+                        return;
+                    disposed = true;
+                    kept.delete();
+                    parser.delete();
+                };
+            }
+        }
+    }
+    readMisread(view);
+    return view;
+}
+/**
  * The trustworthy view of a Kotlin file for relation extraction. See the file doc comment. The
  * caller MUST call `dispose()` when done (the recovery may create WASM trees).
  *
@@ -635,11 +697,8 @@ function parseAt(parser, text, start, end) {
  */
 export function kotlinView(tree, content, newParser) {
     const root = tree.rootNode;
-    if (!damaged(root)) {
-        const view = { roots: [root], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose: () => { } };
-        readMisread(view);
-        return view;
-    }
+    if (!damaged(root))
+        return cleanView(tree, content, newParser);
     if (newParser === undefined) {
         throw new Error('kotlinView: this Kotlin file has syntax errors and recovery needs a parser; pass ParsedFile.newParser (for example the parser host\'s newParser)');
     }
