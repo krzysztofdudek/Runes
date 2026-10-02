@@ -218,6 +218,11 @@ function extensionKey(ns: string, name: string): string {
   return ns === '' ? `${name}()` : `${ns}.${name}()`;
 }
 
+/**
+ * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
+ */
+const IMPLICIT_PROGRAM_KEY = '<Program>$';
+
 /** True when `node` has a `static` modifier child. */
 function hasStaticModifier(node: Node): boolean {
   for (let i = 0; i < node.childCount; i++) {
@@ -298,7 +303,7 @@ function extensionMethodName(node: Node): string | undefined {
  * same-named type must never bind to it, and two files declaring same-named `file` types must
  * not mis-merge into one cross-file definition (zero-FP guard F5).
  *
- * A file with top-level statements also declares the class the compiler synthesizes for them, the global `Program`.
+ * A file with top-level statements also declares the class the compiler synthesizes for them, the global `Program`, under a fallback key that an explicit global `Program` always outranks (IMPLICIT_PROGRAM_KEY).
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
@@ -324,10 +329,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     return undefined;
   });
 
-  // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish its key at the first statement, unless the file declares a global `Program` itself (`public partial class Program { }`). Several such files in different owners make the key ambiguous, so a bare `Program` stays silent there.
+  // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
   const firstStatement = file.tree.rootNode.namedChildren.find((c) => c?.type === 'global_statement');
   if (firstStatement && !out.some((d) => d.symbolKey === 'Program')) {
-    out.push({ symbolKey: 'Program', line: firstStatement.startPosition.row + 1 });
+    out.push({ symbolKey: IMPLICIT_PROGRAM_KEY, line: firstStatement.startPosition.row + 1 });
   }
 
   return out;
@@ -1326,7 +1331,9 @@ export function assembleCsharpCandidates(
       add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set: usingMembers });
     }
 
-    add({ kind: 'symbol', symbolKey: ref }); // verbatim / bare top-level — LAST
+    add({ kind: 'symbol', symbolKey: ref }); // verbatim / bare top-level — LAST of the explicit readings
+    // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
+    if (ref === 'Program') add({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
 
     if (candidates.length === 0) return;
     out.push({ candidates, kind: 'import', line });

@@ -226,3 +226,7 @@ describe('MATRIX — a comparison pair the grammar reads as a declaration', () =
   it('csharp-comparison-pair-constructor-argument-silence', () => runCase('csharp-comparison-pair-constructor-argument-silence'));
   it('csharp-comparison-pair-indexer-argument-silence', () => runCase('csharp-comparison-pair-indexer-argument-silence'));
 });
+
+describe('MATRIX — an explicit global Program outranks the implicit one', () => {
+  it('csharp-top-level-program-explicit-partial-wins-edge', () => runCase('csharp-top-level-program-explicit-partial-wins-edge'));
+});

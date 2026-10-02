@@ -988,22 +988,33 @@ describe('csharp — type arguments of generic methods and the remaining typed e
 
 describe('csharp — the implicit Program of top-level statements (issue 075)', () => {
   const keys = (declarations) => declarations.map((d) => [d.symbolKey, d.line]);
+  const groups = (uses) =>
+    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
 
-  it('a file with top-level statements declares the global `Program` at its first statement', async () => {
+  // The implicit class is published under its own fallback key (the compiler's pre-C# 10 name, which no source can write), so an explicit global `Program` anywhere is always tried first.
+  it('a file with top-level statements declares the implicit `Program` fallback key at its first statement', async () => {
     const { declarations } = await run(['using System;', '', 'var app = Build(args);', 'app.Run();', ''].join('\n'));
-    expect(keys(declarations)).toEqual([['Program', 3]]);
+    expect(keys(declarations)).toEqual([['<Program>$', 3]]);
   });
-  it('an explicit global `partial class Program` beside the statements is declared once, at the class', async () => {
+  it('an explicit global `partial class Program` beside the statements is declared once, as `Program`, at the class', async () => {
     const { declarations } = await run(['var app = Build(args);', 'app.Run();', 'public partial class Program { }', ''].join('\n'));
     expect(keys(declarations)).toEqual([['Program', 3]]);
   });
-  it('a `Program` inside a namespace is another type: the implicit global `Program` is still declared', async () => {
+  it('a `Program` inside a namespace is another type: the implicit fallback key is still declared', async () => {
     const { declarations } = await run(['System.Console.WriteLine(1);', 'namespace App { class Program { } }', ''].join('\n'));
-    expect(keys(declarations)).toEqual([['App.Program', 2], ['Program', 1]]);
+    expect(keys(declarations)).toEqual([['App.Program', 2], ['<Program>$', 1]]);
   });
   it('a file without top-level statements declares no implicit `Program`', async () => {
     const { declarations } = await run(['namespace App;', 'public class Startup { void Main() { } }', ''].join('\n'));
     expect(keys(declarations)).toEqual([['App.Startup', 2]]);
+  });
+  it('a bare `Program` reference tries every explicit reading first and the implicit fallback last', async () => {
+    const { uses } = await run(['namespace T;', 'class C { F<Program> f; }', ''].join('\n'));
+    expect(groups(uses)).toEqual([['T.F', 'F'], ['T.Program', 'Program', '<Program>$']]);
+  });
+  it('any other name, and a qualified `App.Program`, gets no fallback', async () => {
+    const { uses } = await run(['class C { Programs a; App.Program b; global::App.Program c; }', ''].join('\n'));
+    expect(groups(uses).flat()).not.toContain('<Program>$');
   });
 });
 

@@ -8,7 +8,7 @@ cites: "C# spec — top-level statements (one synthesized `Program` per project)
 
 ## Rule
 
-Every project with top-level statements has its own implicit global `Program`. When two nodes each hold such a file (a web project and an Aspire app host, a worker and a migrator), the key `Program` has two owners, and a bare `Program` reference cannot be bound by name alone: which one the referencing project sees depends on its project references, which are not read here. The reference stays silent.
+Every project with top-level statements has its own implicit global `Program`. When two nodes each hold such a file (a web project and an Aspire app host, a worker and a migrator) and no global `Program` is declared explicitly, the implicit class has two owners, and a bare `Program` reference cannot be bound by name alone: which one the referencing project sees depends on its project references, which are not read here. The reference stays silent. (An explicit `public partial class Program { }` in one of them binds instead: csharp-top-level-program-explicit-partial-wins-edge.)
 
 ## Files
 
@@ -32,7 +32,7 @@ public class ApiTests {
 
 ## Expect
 
-- silence      # Program is declared by two nodes (web, apphost) → ambiguous → no edge
+- silence      # the implicit Program has two owners (web, apphost) and no explicit one exists → ambiguous → no edge
 
 ## Why
 

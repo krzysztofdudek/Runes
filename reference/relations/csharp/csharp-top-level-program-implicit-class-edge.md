@@ -8,7 +8,7 @@ cites: "C# spec — top-level statements (the compiler synthesizes the entry-poi
 
 ## Rule
 
-A file with top-level statements compiles into a class named `Program` in the global namespace, although the source declares no such type. That implicit class is a declaration like any other: the file publishes the key `Program` at its first statement, unless it also declares a global `Program` itself (`public partial class Program { }`). A test project's `WebApplicationFactory<Program>` therefore binds the web project's entry point.
+A file with top-level statements compiles into a class named `Program` in the global namespace, although the source declares no such type. The file publishes that implicit class at its first statement as a fallback: a bare `Program` binds it when no explicit global `Program` (`public partial class Program { }`) is declared anywhere, which always takes precedence (csharp-top-level-program-explicit-partial-wins-edge). A test project's `WebApplicationFactory<Program>` therefore binds the web project's entry point.
 
 ## Files
 
