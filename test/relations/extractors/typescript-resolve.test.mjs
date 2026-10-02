@@ -285,6 +285,62 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
     });
     expect(r('@/m', 'src/a.ts')).toBeUndefined();
   });
+  // Issue 155 (4): a referenced config whose extends chain cannot be read (a generated SvelteKit or Nuxt base absent from the commit) keeps its options unknowable, but tsc still reads it without that base, so it may hold only what lies under its own directory and what its readable configs name; a file outside both is not silenced by it.
+  describe('a referenced config whose extends chain cannot be read (issue 155, 4)', () => {
+    const monorepo = {
+      'package.json': '{ "private": true, "workspaces": ["apps/*", "packages/*"] }',
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./packages/core" }, { "path": "./apps/web/tsconfig.app.json" }] }',
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./src/index.ts" }',
+      'packages/core/tsconfig.json': '{ "include": ["src"] }',
+      'packages/core/src/index.ts': '',
+      'apps/web/package.json': '{ "name": "web" }',
+      'apps/web/tsconfig.app.json': '{ "extends": "./.svelte-kit/tsconfig.json" }',
+    };
+    it('a file outside its directory that no readable referenced config holds takes the nearest config\'s options', () => {
+      const r = project(monorepo);
+      expect(r('@acme/core', 'scripts/release.ts')).toBe('packages/core/src/index.ts');
+      expect(r('@acme/core', 'eslint.config.js')).toBe('packages/core/src/index.ts');
+      // The generated base on disk but excluded (git-ignored) reads the same.
+      const generated = project({ ...monorepo, 'apps/web/.svelte-kit/tsconfig.json': '{ "include": ["../../../scripts/**/*.ts"] }' }, (p) => p.includes('/.svelte-kit/'));
+      expect(generated('@acme/core', 'scripts/release.ts')).toBe('packages/core/src/index.ts');
+    });
+    it('a file under its directory stays silent: the base it cannot read may remap the import', () => {
+      expect(project(monorepo)('@acme/core', 'apps/web/src/routes/page.ts')).toBeUndefined();
+    });
+    it('a file its own include, or the include or files of a base it can read, names stays silent outside its directory too', () => {
+      const r = project({
+        ...monorepo,
+        'apps/web/tsconfig.app.json': '{ "extends": ["./base.json", "./.svelte-kit/tsconfig.json", "@acme/uninstalled-preset"], "include": ["src", "../../tools/**/*"] }',
+        'apps/web/base.json': '{ "extends": "./base2.json", "files": ["../../scripts/one.ts"] }',
+        'apps/web/base2.json': '{ "include": ["../../e2e"] }',
+      });
+      expect(r('@acme/core', 'tools/gen.ts')).toBeUndefined();
+      expect(r('@acme/core', 'scripts/one.ts')).toBeUndefined();
+      expect(r('@acme/core', 'e2e/smoke.ts')).toBeUndefined();
+      expect(r('@acme/core', 'scripts/two.ts')).toBe('packages/core/src/index.ts');
+    });
+    it('a base that does not parse names nothing, and an extends cycle ends', () => {
+      const r = project({
+        ...monorepo,
+        'apps/web/tsconfig.app.json': '{ "extends": ["./broken.json", "./cycle.json", 7] }',
+        'apps/web/broken.json': '{ "include": [',
+        'apps/web/cycle.json': '{ "extends": "./tsconfig.app.json" }',
+      });
+      expect(r('@acme/core', 'scripts/release.ts')).toBe('packages/core/src/index.ts');
+      expect(r('@acme/core', 'apps/web/src/a.ts')).toBeUndefined();
+    });
+    it('a referenced config that does not parse may hold anything, and the references of one that parses are still searched', () => {
+      const broken = project({ ...monorepo, 'apps/web/tsconfig.app.json': '{ "extends": ' });
+      expect(broken('@acme/core', 'scripts/release.ts')).toBeUndefined();
+      const r = project({
+        ...monorepo,
+        'apps/web/tsconfig.app.json': '{ "extends": "./.svelte-kit/tsconfig.json", "references": [{ "path": "../../tools" }] }',
+        'tools/tsconfig.json': '{ "include": ["../scripts"], "compilerOptions": { "paths": { "@acme/core": ["./core-stub.ts"] } } }',
+        'tools/core-stub.ts': '',
+      });
+      expect(r('@acme/core', 'scripts/release.ts')).toBe('tools/core-stub.ts');
+    });
+  });
   // A config with neither `files` nor `include` holds everything under its directory, also when the directory name has a dot (`apps/web.v2`), as tsc reads it.
   describe('a config without files or include holds its whole directory, dotted or not', () => {
     it('a nearest config that holds the file by default keeps its own paths over a referenced one', () => {
@@ -313,6 +369,80 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
         'apps/web.v2/src/m.ts': '',
       });
       expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
+    });
+  });
+  // Issue 155 (5): a referenced config holds a file as tsc's own matcher decides (checked with tsc --listFilesOnly). The solution root maps @/* to root/, so a file no referenced config holds shows the root's own paths.
+  describe('a referenced config holds a file as tsc decides (issue 155, 5)', () => {
+    const solution = (configs, files = {}) => {
+      const r = project({
+        'tsconfig.json': JSON.stringify({ files: [], references: Object.keys(configs).map((c) => ({ path: `./${c}` })), compilerOptions: { paths: { '@/*': ['./root/*'] } } }),
+        'root/m.ts': '',
+        ...Object.fromEntries(Object.entries(configs).map(([c, json], i) => [c, JSON.stringify({ ...json, compilerOptions: { ...json.compilerOptions, paths: { '@/*': [`${'../'.repeat(c.split('/').length - 1)}T${i}/*`] } } })])),
+        ...Object.fromEntries(Object.keys(configs).map((_, i) => [`T${i}/m.ts`, ''])),
+        ...files,
+      });
+      return (from) => r('@/m', from);
+    };
+    it('a wildcard that opens a segment, and every segment ** spans, skips a name starting with a dot; a dot name spelled out matches', () => {
+      const r = solution({ 'app.json': { include: ['src/**/*', 'lib/?x/*.ts', 'lib/*y/*.ts'] }, 'gen.json': { include: ['src/.gen/**/*'] } });
+      expect(r('src/b.ts')).toBe('T0/m.ts');
+      expect(r('src/.a.ts')).toBe('root/m.ts');
+      expect(r('src/x/.c.ts')).toBe('root/m.ts');
+      expect(r('lib/ax/a.ts')).toBe('T0/m.ts');
+      expect(r('lib/.x/a.ts')).toBe('root/m.ts');
+      expect(r('lib/.y/a.ts')).toBe('root/m.ts');
+      // Only the config that names the dot directory holds it, so its paths apply instead of a disagreement.
+      expect(r('src/.gen/a.ts')).toBe('T1/m.ts');
+      expect(r('src/.gen/.h/b.ts')).toBe('root/m.ts');
+    });
+    it('a wildcard never matches node_modules, bower_components or jspm_packages; a literal segment does', () => {
+      const r = solution({ 'app.json': { include: ['src/**/*', 'lib/*/x.ts', 'vendor/node_modules/**/*'] } });
+      for (const f of ['src/node_modules/a.ts', 'src/bower_components/b.ts', 'src/jspm_packages/c.ts', 'lib/node_modules/x.ts']) expect(r(f)).toBe('root/m.ts');
+      expect(r('src/node_modules_x/d.ts')).toBe('T0/m.ts');
+      expect(r('vendor/node_modules/y/a.ts')).toBe('T0/m.ts');
+    });
+    it('a * in the last segment never spans the dot of a trailing .min.js', () => {
+      const r = solution({ 'app.json': { include: ['src/*.js', 'src/**/*.ts'] } });
+      expect(r('src/a.min.js')).toBe('root/m.ts');
+      expect(r('src/a.js')).toBe('T0/m.ts');
+      expect(r('src/b.min.ts')).toBe('T0/m.ts');
+    });
+    it('an include ending in ** and an include or exclude with .. after ** are rejected, so they match nothing', () => {
+      const r = solution({ 'app.json': { include: ['src/**', 'lib/**/', 'up/**/../lib/*.ts', 'keep/*.ts'], exclude: ['keep/**/..'] } });
+      for (const f of ['src/a.ts', 'src/x/b.ts', 'lib/c.ts', 'up/lib/a.ts']) expect(r(f)).toBe('root/m.ts');
+      expect(r('keep/a.ts')).toBe('T0/m.ts');
+    });
+    it('without an exclude anywhere in the chain, outDir and declarationDir are excluded, each from the config that sets it', () => {
+      const r = solution({
+        'a.json': { include: ['a/**/*'], compilerOptions: { outDir: 'a/out', declarationDir: 'a/types' } },
+        'cfg/b.json': { extends: './base.json', include: ['../pkg/**/*'] },
+        'app/c.json': { extends: '../shared.json', include: ['./**/*'] },
+        'd.json': { include: ['d/**/*'], exclude: ['nothing'], compilerOptions: { outDir: 'd/out' } },
+        'e.json': { extends: './e-base.json', include: ['e/**/*'], compilerOptions: { outDir: 'e/out' } },
+        'f.json': { include: ['f/**/*'], compilerOptions: { outDir: '../../../outside' } },
+      }, {
+        'cfg/base.json': JSON.stringify({ compilerOptions: { outDir: '../pkg/out' } }),
+        'shared.json': JSON.stringify({ compilerOptions: { outDir: '${configDir}/dist' } }),
+        'e-base.json': JSON.stringify({ exclude: ['e/legacy'] }),
+      });
+      expect(r('a/out/a.ts')).toBe('root/m.ts');
+      expect(r('a/types/b.ts')).toBe('root/m.ts');
+      expect(r('a/src/a.ts')).toBe('T0/m.ts');
+      expect(r('pkg/out/a.ts')).toBe('root/m.ts');
+      expect(r('pkg/src/a.ts')).toBe('T1/m.ts');
+      expect(r('app/dist/a.ts')).toBe('root/m.ts');
+      expect(r('app/src/a.ts')).toBe('T2/m.ts');
+      // An exclude set anywhere in the chain replaces the default.
+      expect(r('d/out/a.ts')).toBe('T3/m.ts');
+      expect(r('e/out/a.ts')).toBe('T4/m.ts');
+      expect(r('e/legacy/a.ts')).toBe('root/m.ts');
+      // An outDir outside the repository excludes nothing in it.
+      expect(r('f/a.ts')).toBe('T5/m.ts');
+    });
+    it('an outDir that is the config directory itself excludes everything the config would hold', () => {
+      const r = solution({ 'web/app.json': { compilerOptions: { outDir: '.' } }, 'top.json': { include: ['top/**/*'], compilerOptions: { outDir: '.' } } });
+      expect(r('web/src/a.ts')).toBe('root/m.ts');
+      expect(r('top/a.ts')).toBe('root/m.ts');
     });
   });
   it('excludes a directory named in exclude, and reads include and files inherited through extends', () => {
@@ -447,7 +577,106 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('root-pkg', 'packages/a/x.ts')).toBe('root.ts');
     expect(r('inner', 'e2e/demo/src/x.ts')).toBe('e2e/demo/libs/inner/index.ts');
     expect(r('inner', 'packages/a/x.ts')).toBeUndefined();
-    expect(r('a', 'e2e/demo/src/x.ts')).toBeUndefined();
+  });
+  // Issue 155 (1): npm and pnpm install a member's directory from the enclosing root and ignore its own declaration, and yarn links nested worktrees into one project, so a member that declares a workspace of its own still sees the enclosing members.
+  describe('a member that declares its own workspace (issue 155, 1)', () => {
+    const nested = {
+      'package.json': '{ "name": "root-pkg", "workspaces": ["packages/*", "e2e/demo"] }',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'e2e/demo/package.json': '{ "name": "demo", "workspaces": ["libs/*"] }',
+      'e2e/demo/libs/inner/package.json': '{ "name": "inner", "main": "./index.ts" }',
+      'e2e/demo/libs/inner/index.ts': '',
+    };
+    it('sees the enclosing members, from its own files and from its own members', () => {
+      const r = project(nested);
+      expect(r('a', 'e2e/demo/src/x.ts')).toBe('packages/a/index.ts');
+      expect(r('a', 'e2e/demo/libs/inner/y.ts')).toBe('packages/a/index.ts');
+      expect(r('inner', 'e2e/demo/src/x.ts')).toBe('e2e/demo/libs/inner/index.ts');
+    });
+    it('reads a pnpm-workspace.yaml nested in a member the same way', () => {
+      const r = project({
+        'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n  - 'e2e/demo'\n",
+        'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+        'packages/a/index.ts': '',
+        'e2e/demo/package.json': '{ "name": "demo", "dependencies": { "a": "workspace:*" } }',
+        'e2e/demo/pnpm-workspace.yaml': "packages:\n  - 'libs/*'\n",
+      });
+      expect(r('a', 'e2e/demo/src/x.ts')).toBe('packages/a/index.ts');
+    });
+    it('a name the nested and the enclosing workspace bind to different packages is ambiguous (npm takes the enclosing one, yarn refuses the pair)', () => {
+      const r = project({ ...nested, 'e2e/demo/libs/a/package.json': '{ "name": "a", "main": "./index.ts" }', 'e2e/demo/libs/a/index.ts': '' });
+      expect(r('a', 'e2e/demo/src/x.ts')).toBeUndefined();
+      expect(r('a', 'packages/a/x.ts')).toBe('packages/a/index.ts');
+    });
+    it('a nested project the enclosing globs do not match is installed on its own: the enclosing members stay silent there', () => {
+      // Node would still find them through the enclosing root's node_modules, unless the nested project's own install holds a registry package of the same name; which it holds is not known here.
+      const r = project({
+        'package.json': '{ "workspaces": ["packages/*"] }',
+        'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+        'packages/a/index.ts': '',
+        'examples/demo/package.json': '{ "name": "demo", "private": true, "workspaces": ["libs/*"] }',
+        'examples/demo/libs/inner/package.json': '{ "name": "inner", "main": "./index.ts" }',
+        'examples/demo/libs/inner/index.ts': '',
+      });
+      expect(r('a', 'examples/demo/src/x.ts')).toBeUndefined();
+      expect(r('inner', 'examples/demo/src/x.ts')).toBe('examples/demo/libs/inner/index.ts');
+      expect(r('inner', 'packages/a/x.ts')).toBeUndefined();
+    });
+  });
+  // Issue 155 (2): Node and TypeScript resolve a package's own name from inside it through its `exports` (self-reference), before any node_modules lookup, wherever the package sits.
+  it('a package with exports imports itself by name, inside the globs or not; without exports, or under a marker package.json, it does not (issue 155, 2)', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'packages/a/index.ts': '',
+      'tools/gen/package.json': '{ "name": "gen", "exports": { ".": "./index.ts", "./sub": "./lib/sub.ts" } }',
+      'tools/gen/index.ts': '',
+      'tools/gen/lib/sub.ts': '',
+      'tools/gen/lib/hidden.ts': '',
+      'tools/gen/src/esm/package.json': '{ "type": "module" }',
+      'tools/plain/package.json': '{ "name": "plain", "main": "./index.ts" }',
+      'tools/plain/index.ts': '',
+      'fixtures/gen/package.json': '{ "name": "gen", "main": "./index.ts" }',
+      'fixtures/gen/index.ts': '',
+    });
+    expect(r('gen', 'tools/gen/src/x.ts')).toBe('tools/gen/index.ts');
+    expect(r('gen/sub', 'tools/gen/src/x.ts')).toBe('tools/gen/lib/sub.ts');
+    // `exports` is the whole public surface, for the package itself too.
+    expect(r('gen/lib/hidden', 'tools/gen/src/x.ts')).toBeUndefined();
+    // The package scope is the nearest package.json: a marker without the name or `exports` ends self-reference, as in Node.
+    expect(r('gen', 'tools/gen/src/esm/x.ts')).toBeUndefined();
+    expect(r('plain', 'tools/plain/src/x.ts')).toBeUndefined();
+    // Elsewhere the name is not linked: neither the package nor the fixture copying its name.
+    expect(r('gen', 'packages/a/x.ts')).toBeUndefined();
+    // Without any workspace declaration, the package's own name still beats a fixture copying it.
+    const undeclared = project({
+      'tools/gen/package.json': '{ "name": "gen", "exports": "./index.ts" }',
+      'tools/gen/index.ts': '',
+      'fixtures/gen/package.json': '{ "name": "gen", "main": "./index.ts" }',
+      'fixtures/gen/index.ts': '',
+    });
+    expect(undeclared('gen', 'tools/gen/src/x.ts')).toBe('tools/gen/index.ts');
+    expect(undeclared('gen', 'src/x.ts')).toBeUndefined();
+  });
+  // Issue 155 (3): a package.json that names no package and declares no dependencies (a `{"type": "module"}` marker) installs nothing, so the files under it see the dependencies of the package around it.
+  it('a file under a marker package.json sees the local dependencies of the package around it (issue 155, 3)', () => {
+    const r = project({
+      'package.json': '{ "workspaces": ["packages/*"] }',
+      'packages/app/package.json': '{ "name": "app", "dependencies": { "vend": "file:../../vendor/vend" } }',
+      'packages/app/src/esm/package.json': '{ "type": "commonjs" }',
+      'packages/app/src/esm/deep/package.json': '{ "type": "module", "sideEffects": false }',
+      'packages/app/src/nested/package.json': '{ "workspaces": ["libs/*"] }',
+      'packages/app/src/named/package.json': '{ "name": "named-sub" }',
+      'vendor/vend/package.json': '{ "name": "vend", "main": "./index.ts" }',
+      'vendor/vend/index.ts': '',
+    });
+    expect(r('vend', 'packages/app/src/y.ts')).toBe('vendor/vend/index.ts');
+    expect(r('vend', 'packages/app/src/esm/x.ts')).toBe('vendor/vend/index.ts');
+    expect(r('vend', 'packages/app/src/esm/deep/z.ts')).toBe('vendor/vend/index.ts');
+    // A package.json that names a package or declares a workspace is a package of its own, with its own dependencies.
+    expect(r('vend', 'packages/app/src/named/x.ts')).toBeUndefined();
+    expect(r('vend', 'packages/app/src/nested/x.ts')).toBeUndefined();
   });
   it('a malformed workspaces field is not a declaration', () => {
     const r = project({
@@ -509,6 +738,42 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('plain', 'packages/app/a.ts')).toBe('packages/plain/index.ts');
     expect(r('near', 'packages/app/a.ts')).toBe('packages/near/index.ts');
     expect(r('missing', 'packages/app/a.ts')).toBeUndefined();
+  });
+  // Issue 144: tsc reads a package `extends` from node_modules, where the package manager links members and local dependencies only, so the base config binds by the same rule as a bare import.
+  describe('a tsconfig extends naming a package binds by the same rule (issue 144)', () => {
+    const app = {
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/app/package.json': '{ "name": "app" }',
+      'packages/app/tsconfig.json': '{ "extends": "@acme/preset" }',
+      'packages/app/src/m.ts': '',
+    };
+    const member = {
+      'packages/preset/package.json': '{ "name": "@acme/preset" }',
+      'packages/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }',
+    };
+    const fixture = {
+      'packages/app/test/fixtures/preset/package.json': '{ "name": "@acme/preset" }',
+      'packages/app/test/fixtures/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["./fake/*"] } } }',
+      'packages/app/test/fixtures/preset/fake/m.ts': '',
+    };
+    it('a fixture outside the globs that copies the member name does not hide the member', () => {
+      expect(project({ ...app, ...member, ...fixture })('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+    });
+    it('a fixture outside the globs is never the base config, so its paths never apply', () => {
+      expect(project({ ...app, ...fixture })('~/m', 'packages/app/src/a.ts')).toBeUndefined();
+    });
+    it('a base the config package declares with a local spec binds there, and without a workspace any in-repo package still counts', () => {
+      const local = project({
+        ...app,
+        ...fixture,
+        'packages/app/package.json': '{ "name": "app", "devDependencies": { "@acme/preset": "file:../../tools/preset" } }',
+        'tools/preset/package.json': '{ "name": "@acme/preset" }',
+        'tools/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }',
+      });
+      expect(local('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+      const undeclared = project({ ...app, 'package.json': '{ "private": true }', ...fixture });
+      expect(undeclared('~/m', 'packages/app/src/a.ts')).toBe('packages/app/test/fixtures/preset/fake/m.ts');
+    });
   });
   it('a member under an excluded directory or with an excluded package.json is not a member', () => {
     const files = {
