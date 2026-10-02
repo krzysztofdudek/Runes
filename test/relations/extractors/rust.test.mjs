@@ -173,11 +173,31 @@ describe('rust extractor — uses()', () => {
     expect(specs(uses)).toEqual([]);
   });
 
-  it('ignores a bare top-level brace list with no prefix `use {a, b};`', async () => {
-    // A bare `use {a, b};` parses with the brace list as the argument node directly; it is
-    // not a recognised argument shape, so nothing is emitted (unhandled-argument case).
+  it('emits every item of a bare top-level brace list `use {a, b};`', async () => {
+    // Issue 017: a bare `use {a, b};` parses with the brace list (`use_list`) as the argument node directly; each item resolves on its own from the top level, as in a prefix-less group.
     const { uses } = await run('use {a, b};');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['a', 'b']);
+  });
+
+  it('emits every item of a top-level brace list of paths `use {core_lib::Invoice, std::fmt::Debug};`', async () => {
+    const { uses } = await run('use {core_lib::Invoice, std::fmt::Debug};');
+    expect(specs(uses)).toEqual(['core_lib::Invoice', 'std::fmt::Debug']);
+  });
+
+  it('descends a nested group inside a top-level brace list `use { core_lib::{Invoice, total}, std::fmt::Debug };`', async () => {
+    const { uses } = await run('use { core_lib::{Invoice, total}, std::fmt::Debug };');
+    expect(specs(uses)).toEqual(['core_lib::Invoice', 'core_lib::total', 'std::fmt::Debug']);
+  });
+
+  it('emits the items of a top-level brace list re-export `pub use {core_lib::total};`', async () => {
+    const { uses } = await run('pub use {core_lib::total};');
+    expect(specs(uses)).toEqual(['core_lib::total']);
+  });
+
+  it('skips a comment between the items of a group `use crate::{a, /* note */ b};`', async () => {
+    // The comment is a named child of the list, an argument shape that names no path.
+    const { uses } = await run('use crate::{a, /* note */ b};');
+    expect(specs(uses)).toEqual(['crate::a', 'crate::b']);
   });
 
   it('descends a nested group with the accumulated prefix `use crate::a::{b::{C, D}, e};`', async () => {
