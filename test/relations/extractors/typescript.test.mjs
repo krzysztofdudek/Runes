@@ -1,6 +1,6 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/typescript.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import { runExtractor } from '../../helpers/tree-sitter.mjs';
+import { runExtractor, withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 import { sfcScriptView } from '@chrisdudek/runes/relations';
 import { typescriptExtractor } from '../../helpers/internal/relations.mjs';
 
@@ -313,8 +313,48 @@ describe('typescript extractor — declarations()', () => {
   });
   it('does NOT return a class exported inside a namespace block (not program top level)', async () => {
     // The class is wrapped in an export_statement whose parent is the namespace body,
-    // not `program` — isTopLevel rejects it via the grandparent check.
+    // not `program` — only the children of `program`, and of an `export_statement` directly under it, are top level.
     const { declarations } = await run(`namespace N { export class Inner {} }`);
     expect(declarations.map((d) => d.symbolKey)).not.toContain('Inner');
+  });
+});
+
+// Issue 168: on a file the grammar reads as a long flat run of ERROR nodes (a binary video segment named .ts, unterminated strings), the walk asked `node.child(i)` for each child, which counts from the first child on every call, and the declarations asked every candidate for its parent, which tree-sitter answers by searching down from the root; both grew with the square of the file. The bound is generous: a 1 MB input takes well under a second here, and the quadratic walk took over four seconds on 128 KB of the same text.
+describe('typescript extractor — about 1 MB of source is read in linear time (issue 168)', () => {
+  const MB = 1024 * 1024;
+  const BOUND_MS = 15_000;
+  const timed = async (code) => {
+    let elapsed = 0;
+    const result = await withParsedFile('big.ts', code, (tree) => {
+      const file = parsedFile('big.ts', code, tree, 'typescript');
+      const start = performance.now();
+      const uses = typescriptExtractor.uses(file);
+      const declarations = typescriptExtractor.declarations(file);
+      elapsed = performance.now() - start;
+      return { uses, declarations };
+    });
+    return { ...result, elapsed };
+  };
+
+  it('a generated API client of about 1 MB', async () => {
+    let code = "import { http } from './http';\n";
+    let n = 0;
+    while (code.length < MB) {
+      code += `export interface Model${n} { id: string; items: Array<Item${n}>; }\nexport async function getModel${n}(id: string): Promise<Model${n}> {\n  return (await import('./models/m${n % 50}')).parse(await http.get(id)) as Model${n};\n}\n`;
+      n++;
+    }
+    const { uses, declarations, elapsed } = await timed(code);
+    expect(declarations.length).toBe(2 * n);
+    expect(declarations[2 * n - 1]).toEqual({ symbolKey: `getModel${n - 1}`, line: 4 * n - 1 });
+    expect(uses.length).toBe(1 + n);
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+
+  it('about 1 MB that parses into a flat run of ERROR nodes, with the edges of its swallowed imports still recovered', async () => {
+    const code = `${'"a(\n'.repeat(MB / 4)}import { x } from './kept';\n`;
+    const { uses, declarations, elapsed } = await timed(code);
+    expect(declarations).toEqual([]);
+    expect(uses.map((u) => u.candidates[0].specifier)).toEqual(['./kept']);
+    expect(elapsed).toBeLessThan(BOUND_MS);
   });
 });

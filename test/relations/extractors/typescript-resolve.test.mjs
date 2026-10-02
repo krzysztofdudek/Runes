@@ -775,6 +775,69 @@ describe('resolveTsPath — workspace membership', () => {
       expect(undeclared('~/m', 'packages/app/src/a.ts')).toBe('packages/app/test/fixtures/preset/fake/m.ts');
     });
   });
+  // Issue 178: tsc 5.0+ reads a package `extends` through the package's `exports` (a config lookup: CommonJS mode under NodeNext). Every expected base below is the one `tsc --showConfig` (6.0.3) read from the same layout under node_modules; each config sets a `paths` key naming itself.
+  describe('a tsconfig extends naming a package reads its exports as tsc does (issue 178)', () => {
+    const cfg = (name) => JSON.stringify({ compilerOptions: { paths: { [`marker/${name}`]: ['./x'] } } });
+    const inherited = (ext, files, leaf = 'tsconfig.json') => {
+      const root = materialize({ ...files, [leaf]: JSON.stringify({ extends: ext }) });
+      const config = makeTsResolveDeps(root).tsconfigFor(path.posix.join(path.posix.dirname(leaf), 'x.ts'));
+      return config === 'unknown' ? 'unknown' : Object.keys(config?.paths?.map ?? {}).join(',') || 'none';
+    };
+    const nm = (exportsField, files, extra = {}) => ({
+      'node_modules/@acme/cfg/package.json': JSON.stringify({ name: '@acme/cfg', ...(exportsField === undefined ? {} : { exports: exportsField }), ...extra }),
+      ...Object.fromEntries(Object.entries(files).map(([f, name]) => [`node_modules/@acme/cfg/${f}`, cfg(name)])),
+    });
+    const cases = [
+      ['a string export is the root, over a tsconfig.json beside it', '@acme/cfg', nm('./base.json', { 'base.json': 'base', 'tsconfig.json': 'decoy' }), 'marker/base'],
+      ['the "." key is the root', '@acme/cfg', nm({ '.': './configs/base.json' }, { 'configs/base.json': 'base', 'tsconfig.json': 'decoy' }), 'marker/base'],
+      ['a subpath key, over the file of that name', '@acme/cfg/base', nm({ './base': './configs/tsconfig.base.json' }, { 'configs/tsconfig.base.json': 'base', 'base.json': 'decoy' }), 'marker/base'],
+      ['require matches and import does not', '@acme/cfg', nm({ '.': { import: './esm.json', require: './cjs.json' } }, { 'esm.json': 'esm', 'cjs.json': 'cjs' }), 'marker/cjs'],
+      ['types matches and browser does not', '@acme/cfg', nm({ '.': { browser: './browser.json', types: './types.json', default: './def.json' } }, { 'browser.json': 'browser', 'types.json': 'types', 'def.json': 'def' }), 'marker/types'],
+      ['node matches and development does not', '@acme/cfg', nm({ '.': { development: './dev.json', node: './node.json', default: './def.json' } }, { 'dev.json': 'dev', 'node.json': 'node', 'def.json': 'def' }), 'marker/node'],
+      ['a condition naming a missing file falls through to the next', '@acme/cfg', nm({ '.': { require: './missing.json', default: './def.json' } }, { 'def.json': 'def' }), 'marker/def'],
+      ['an array falls through to its next entry', '@acme/cfg', nm({ '.': ['./missing.json', './second.json'] }, { 'second.json': 'second' }), 'marker/second'],
+      ['nested conditions', '@acme/cfg/strict', nm({ './strict': { node: { import: './a.json', default: './b.json' } } }, { 'a.json': 'a', 'b.json': 'b' }), 'marker/b'],
+      ['a * pattern', '@acme/cfg/strict', nm({ './*': './presets/*.json' }, { 'presets/strict.json': 'strict', 'strict.json': 'decoy' }), 'marker/strict'],
+      ['the pattern with the longest prefix', '@acme/cfg/presets/strict', nm({ './*': './other/*.json', './presets/*': './p/*.json' }, { 'p/strict.json': 'p', 'other/presets/strict.json': 'other' }), 'marker/p'],
+      ['a pattern with a trailer', '@acme/cfg/strict.json', nm({ './*.json': './p/*.json' }, { 'p/strict.json': 'p', 'strict.json': 'decoy' }), 'marker/p'],
+      ['a key spelled with .json', '@acme/cfg/base.json', nm({ './base.json': './real.json' }, { 'real.json': 'real', 'base.json': 'decoy' }), 'marker/real'],
+      ['the .json beside a .js, .ts or .d.ts target', '@acme/cfg', nm({ '.': './tsconfig.d.ts' }, { 'tsconfig.json': 'json-beside', 'tsconfig.d.ts': 'literal' }), 'marker/json-beside'],
+      ['a subpath the exports do not list is not found, whatever the layout holds', '@acme/cfg/base', nm({ './other': './o.json' }, { 'o.json': 'o', 'base.json': 'decoy' }), 'none'],
+      ['a root the exports do not list is not found', '@acme/cfg', nm({ './other': './o.json' }, { 'tsconfig.json': 'decoy' }), 'none'],
+      ['a target without .json, .js, .ts or .d.ts names nothing', '@acme/cfg', nm({ '.': './tsconfig.jsonc' }, { 'tsconfig.jsonc': 'literal', 'tsconfig.json': 'decoy' }), 'none'],
+      ['an extensionless target names nothing', '@acme/cfg', nm({ '.': './base' }, { base: 'bare', 'base.json': 'base', 'tsconfig.json': 'decoy' }), 'none'],
+      ['a target not starting with ./ names nothing', '@acme/cfg', nm({ '.': 'base.json' }, { 'base.json': 'base', 'tsconfig.json': 'decoy' }), 'none'],
+      ['a target through .. names nothing', '@acme/cfg', nm({ '.': './sub/../base.json' }, { 'base.json': 'base', 'tsconfig.json': 'decoy' }), 'none'],
+      ['a pattern capture through .. names nothing', '@acme/cfg/x/../base', nm({ './*': './*.json' }, { 'base.json': 'base' }), 'none'],
+      ['a null target blocks the subpath', '@acme/cfg/base', nm({ './*': './*.json', './base': null }, { 'base.json': 'decoy' }), 'none'],
+      ['empty exports block everything', '@acme/cfg', nm({}, { 'tsconfig.json': 'decoy' }), 'none'],
+      ['null exports are no exports', '@acme/cfg', nm(null, { 'tsconfig.json': 'plain' }), 'marker/plain'],
+      ['no exports keep the layout', '@acme/cfg', nm(undefined, { 'tsconfig.json': 'plain' }), 'marker/plain'],
+      // tsc 6.0.3 reads `types@>=4.0`; whether a versioned condition matches depends on the compiler's version, so the config is unknown.
+      ['a versioned types condition is unknown', '@acme/cfg', nm({ '.': { 'types@>=99': './future.json', 'types@>=4.0': './now.json', default: './def.json' } }, { 'future.json': 'future', 'now.json': 'now', 'def.json': 'def' }), 'unknown'],
+    ];
+    for (const [name, ext, files, want] of cases) it(name, () => expect(inherited(ext, files)).toBe(want));
+    it('a package whose exports name no file passes the lookup to the next node_modules up', () => {
+      const files = {
+        'app/node_modules/@acme/cfg/package.json': '{ "name": "@acme/cfg", "exports": { "./other": "./o.json" } }',
+        'app/node_modules/@acme/cfg/tsconfig.json': cfg('inner-decoy'),
+        'node_modules/@acme/cfg/package.json': '{ "name": "@acme/cfg", "exports": { ".": "./outer.json" } }',
+        'node_modules/@acme/cfg/outer.json': cfg('outer'),
+      };
+      expect(inherited('@acme/cfg', files, 'app/tsconfig.json')).toBe('marker/outer');
+    });
+    it('a package naming itself reads its own exports, and a workspace member is read through its exports', () => {
+      expect(inherited('@acme/self/base', { 'package.json': '{ "name": "@acme/self", "exports": { "./base": "./configs/base.json" } }', 'configs/base.json': cfg('self') })).toBe('marker/self');
+      const workspace = {
+        'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+        'packages/preset/package.json': '{ "name": "@acme/preset", "exports": { "./base": { "require": "./configs/base.json" } } }',
+        'packages/preset/configs/base.json': cfg('member'),
+        'packages/preset/base.json': cfg('decoy'),
+        'packages/app/package.json': '{ "name": "app" }',
+      };
+      expect(inherited('@acme/preset/base', workspace, 'packages/app/tsconfig.json')).toBe('marker/member');
+    });
+  });
   it('a member under an excluded directory or with an excluded package.json is not a member', () => {
     const files = {
       'package.json': '{ "workspaces": ["packages/*"] }',

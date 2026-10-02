@@ -156,10 +156,15 @@ function normalizeExports(exportsField) {
  * undefined when no key matches or the match is explicitly blocked (`null`).
  */
 function matchSubpathMap(map, key) {
+    const match = matchSubpathKey(map, key);
+    return match === undefined ? undefined : collectTargets(match.value, match.captured);
+}
+/** The entry of a subpath map `key` selects: the exact key, else the `*` pattern with the longest prefix, with what its `*` captured. */
+function matchSubpathKey(map, key) {
     if (!isRecord(map))
         return undefined;
     if (Object.hasOwn(map, key))
-        return collectTargets(map[key], undefined);
+        return { value: map[key], captured: undefined };
     let best;
     for (const [pattern, value] of Object.entries(map)) {
         const star = pattern.indexOf('*');
@@ -174,8 +179,42 @@ function matchSubpathMap(map, key) {
     }
     if (best === undefined)
         return undefined;
-    const captured = key.slice(best.prefix.length, key.length - best.suffix.length);
-    return collectTargets(best.value, captured);
+    return { value: best.value, captured: key.slice(best.prefix.length, key.length - best.suffix.length) };
+}
+// The conditions a tsconfig `extends` lookup matches: tsc (5.0+) resolves a package base in CommonJS mode under NodeNext, so `require`, `types` and `node`, besides `default`.
+const CONFIG_CONDITIONS = new Set(['require', 'types', 'node', 'default']);
+/**
+ * The base config a package's `exports` names for a tsconfig `extends` subpath (`.` or `./sub`), read as tsc reads a config lookup: conditions in the order the object declares them, an array's entries in order, and the first target naming a file wins. A target counts only as a `./` path with no `.`, `..` or `node_modules` segment (in what `*` captured too) and names a `.json` file, or the `.json` beside a `.ts`, `.d.ts` or `.js` target, as tsc reads one. `'unknown'` when a versioned `types@<range>` condition is reached, since whether it matches depends on the compiler's version; undefined when the map names no file.
+ */
+function exportedConfig(pkg, subpath, isFile) {
+    const match = matchSubpathKey(normalizeExports(pkg.manifest.exports), subpath);
+    if (match === undefined)
+        return undefined;
+    const badSegment = (segs) => segs.some((s) => s === '.' || s === '..' || s === 'node_modules');
+    if (match.captured !== undefined && badSegment(match.captured.split('/')))
+        return undefined;
+    const pick = (value) => {
+        if (typeof value === 'string') {
+            if (!value.startsWith('./') || badSegment(value.split('/').slice(1)))
+                return undefined;
+            const target = match.captured === undefined ? value : value.split('*').join(match.captured);
+            const json = /\.json$/.test(target) ? target : target.replace(/(?:\.d\.ts|\.ts|\.js)$/, '.json');
+            const file = json.endsWith('.json') ? joinUnder(pkg.dir, json) : undefined;
+            return file !== undefined && isFile(file) ? file : undefined;
+        }
+        const branches = Array.isArray(value) ? value.map((v) => ['default', v]) : isRecord(value) ? Object.entries(value) : [];
+        for (const [condition, branch] of branches) {
+            if (condition.startsWith('types@'))
+                return 'unknown';
+            if (!CONFIG_CONDITIONS.has(condition))
+                continue;
+            const hit = pick(branch);
+            if (hit !== undefined)
+                return hit;
+        }
+        return undefined;
+    };
+    return pick(match.value);
 }
 function collectTargets(value, captured) {
     if (value === null)
@@ -663,7 +702,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
                     return cand;
             return 'unknown'; // a relative base that is not there: its options are unknowable
         }
-        // A package base (`@tsconfig/node20/tsconfig.json`, `@acme/tsconfig`): an in-repo package first, bound by rule 4c as a bare import from the config would be (tsc reads it from node_modules, where the package manager links only members and local dependencies, so a fixture with the name is never it), then an installed one under an ancestor node_modules.
+        // A package base (`@tsconfig/node20/tsconfig.json`, `@acme/tsconfig`): an in-repo package first, bound by rule 4c as a bare import from the config would be (tsc reads it from node_modules, where the package manager links only members and local dependencies, so a fixture with the name is never it), then an installed one under an ancestor node_modules. A package whose package.json has `exports` (tsc 5.0+) is read through them alone, and one that names no file there passes the lookup on to the next node_modules up, as tsc does.
         const split = splitPackageSpecifier(ext);
         if (split !== undefined) {
             const [name, sub] = split;
@@ -674,6 +713,13 @@ export function makeTsResolveDeps(projectRoot, isExcluded) {
             for (const d of ancestors(fromDir === '' ? 'x' : `${fromDir}/x`))
                 roots.push(d === '' ? `node_modules/${name}` : `${d}/node_modules/${name}`);
             for (const root of roots) {
+                const pkg = packageAt(root);
+                if (pkg?.manifest.exports) {
+                    const exported = exportedConfig(pkg, sub, isFile);
+                    if (exported !== undefined)
+                        return exported;
+                    continue;
+                }
                 const target = sub === '.' ? joinUnder(root, 'tsconfig.json') : joinUnder(root, sub);
                 if (target === undefined)
                     continue;
