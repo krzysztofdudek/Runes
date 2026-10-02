@@ -355,6 +355,29 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     );
   });
 
+  it('reads a dotted key that names the dependency table itself, above the first header or inside [workspace] / [target.<cfg>]', () => {
+    // Issue 135: `dependencies.kit.path` above the first header and `dependencies.kit.path` inside [workspace] were ignored.
+    const kit = new Map([['kit', { path: '../kit', workspace: false }]]);
+    const parsed = (text) => parseCargoManifest(text);
+    expect(parsed('dependencies.kit.path = "../kit"\n\n[package]\nname = "app"\n').dependencies).toEqual(kit);
+    expect(parsed('dependencies.kit = { path = "../kit" }\n').dependencies).toEqual(kit);
+    expect(parsed('dev-dependencies."kit".path = "../kit"\n').dependencies).toEqual(kit);
+    expect(parsed("target.'cfg(unix)'.build-dependencies.kit.path = '../kit'\n").dependencies).toEqual(kit);
+    expect(parsed("[target.'cfg(unix)']\ndependencies.kit.path = \"../kit\"\n").dependencies).toEqual(kit);
+    expect(parsed('dependencies.kit.workspace = true\n').dependencies).toEqual(new Map([['kit', { workspace: true }]]));
+    const ws = new Map([['kit', { path: 'libs/kit', workspace: false }]]);
+    expect(parsed('[workspace]\nmembers = ["libs/*"]\ndependencies.kit.path = "libs/kit"\n').workspaceDependencies).toEqual(ws);
+    expect(parsed('[workspace]\ndependencies.kit = { path = "libs/kit" }\n').workspaceDependencies).toEqual(ws);
+    expect(parsed('workspace.dependencies.kit.path = "libs/kit"\n').workspaceDependencies).toEqual(ws);
+    // One table above the first header can hold both maps; each crate merges its own lines.
+    const both = parsed('workspace.dependencies.kit.path = "libs/kit"\ndependencies.kit.workspace = true\ndependencies.kit.package = "kit-pkg"\n');
+    expect(both.workspaceDependencies).toEqual(ws);
+    expect(both.dependencies).toEqual(new Map([['kit', { package: 'kit-pkg', workspace: true }]]));
+    // The first declaration keeps the crate here too, and keys that name no crate declare nothing.
+    expect(parsed('dependencies.kit.path = "../kit"\n\n[dependencies]\nkit = { path = "../other" }\n').dependencies).toEqual(kit);
+    expect(parsed('package.name = "x"\nworkspace.members = ["a"]\n[workspace]\nresolver = "2"\n').dependencies).toEqual(new Map());
+  });
+
   it('matches a declared or used name as a whole word only', () => {
     expect(rustFileDeclares('pub struct Engine;', 'Engine')).toBe(true);
     expect(rustFileDeclares('pub struct EngineRoom;', 'Engine')).toBe(false);
