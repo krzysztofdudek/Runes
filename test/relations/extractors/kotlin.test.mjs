@@ -314,6 +314,47 @@ describe('kotlin extractor — parse recovery for Kotlin 2.2+ syntax', () => {
   });
 });
 
+describe('kotlin extractor — top-level declarations the shipped grammar misreads without an ERROR', () => {
+  // The shipped grammar reads an annotation followed by a soft-keyword modifier (`annotation`, `enum`, `data`, `const`, `expect`, `actual`) at the top level as an annotated script expression or an assignment, with no ERROR node. Each such declaration is read from its leading tokens, like a damaged one.
+  const cases = [
+    ['import javax.inject.Qualifier\n\n@Qualifier\n@Retention(AnnotationRetention.RUNTIME)\nannotation class D1', ['com.acme.D1', 'com.acme.D1+*'], 6],
+    ['@Target(AnnotationTarget.FUNCTION)\nannotation class D4', ['com.acme.D4', 'com.acme.D4+*'], 3],
+    ['@Serializable\nenum class D6 {\n  A\n}', ['com.acme.D6', 'com.acme.D6+*'], 3],
+    ['@Serializable enum class C1 { X }', ['com.acme.C1', 'com.acme.C1+*'], 2],
+    ['@Keep annotation class C7', ['com.acme.C7', 'com.acme.C7+*'], 2],
+    ['@Keep\ndata object E2', ['com.acme.E2', 'com.acme.E2+*'], 3],
+    ['@Keep enum class E { A; fun f() = 1 }', ['com.acme.E', 'com.acme.E+*'], 2],
+    ['@Keep\nexpect class X', ['com.acme.X', 'com.acme.X+*'], 3],
+    ['@Keep\nconst val E14 = 1', ['com.acme.E14', 'com.acme.XKt'], 3],
+    ['@Keep\nactual typealias Y = Int', ['com.acme.Y', 'com.acme.XKt'], 3],
+  ];
+  for (const [body, keys, line] of cases) {
+    it(`declares ${keys[0]} (${keys[1]})`, async () => {
+      const { declarations } = await run(`package com.acme\n${body}\n`);
+      expect(declarations.map((d) => d.symbolKey)).toEqual(keys);
+      expect(declarations[0].line).toBe(line);
+    });
+  }
+
+  it('keeps the inline FQN types of a misread declaration among its uses', async () => {
+    const { declarations, uses } = await run('package p\n@com.acme.meta.Marker annotation class Q\nclass After\n');
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['p.After', 'p.Q', 'p.Q+*']);
+    expect(symbolKeys(uses)).toContain('com.acme.meta.Marker');
+  });
+
+  it('reads a misread declaration in a file that also needs recovery', async () => {
+    for (const damage of ['fun kind(v: Any) = when (v) {\n    is String if v.isNotEmpty() -> 1\n    else -> 3\n}', 'public %% class Thing']) {
+      const { declarations } = await run(`package p\n${damage}\n@Keep annotation class Q\nclass After\n`);
+      expect(declarations.map((d) => d.symbolKey), damage).toEqual(expect.arrayContaining(['p.Q', 'p.Q+*', 'p.After']));
+    }
+  });
+
+  it('a script statement that is no declaration stays undeclared', async () => {
+    const { declarations } = await runExtractor(kotlinExtractor, 'kotlin', '.kts', 'version = "1.0"\n@Suppress("x") foo()\n@Keep value = 2\n');
+    expect(declarations).toEqual([]);
+  });
+});
+
 describe('kotlin extractor — local declarations and JVM file facades', () => {
   it('does not key declarations local to a function, lambda, init block, accessor, constructor or object expression', async () => {
     const { declarations } = await run(
@@ -444,6 +485,61 @@ describe('kotlin extractor — parse recovery reads headers and lexes defensivel
       ].join('\n'),
     );
     expect(keysOf(declarations)).toEqual(expect.arrayContaining(['p.a', 'p.b', 'p.c', 'p.d', 'p.After']));
+  });
+
+  it('a nested class whose primary constructor sits on the next line keeps its members, its siblings and their lines', async () => {
+    const { declarations, uses } = await run(
+      [
+        'package com.acme',
+        'abstract class Reader {',
+        '  class Options',
+        '  private constructor(val s: List<com.acme.text.Word>) {',
+        '    fun size(): Int = s.size',
+        '  }',
+        '  data class Pair<T>',
+        '  @Inject',
+        '  constructor(val a: T, val b: T)',
+        '  enum class Token {',
+        '    BEGIN,',
+        '    END,',
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    expect(keysOf(declarations)).toEqual(['com.acme.Reader', 'com.acme.Reader+Options', 'com.acme.Reader+Options+size', 'com.acme.Reader+Pair', 'com.acme.Reader+Token']);
+    const lineOf = (key) => declarations.find((d) => d.symbolKey === key)?.line;
+    expect([lineOf('com.acme.Reader+Options'), lineOf('com.acme.Reader+Options+size'), lineOf('com.acme.Reader+Pair'), lineOf('com.acme.Reader+Token')]).toEqual([3, 5, 7, 10]);
+    expect(uses).toContainEqual(expect.objectContaining({ candidates: [{ kind: 'symbol', symbolKey: 'com.acme.text.Word' }], line: 4 }));
+  });
+
+  it('joins only a nested class header with nothing after its name, directly above its constructor', async () => {
+    // At the top level the grammar reads the form as it stands; a join there would put `Top` at column 0, where the declaration splitter cuts.
+    const top = await run('package p\npublic %% class Thing\nclass Top\nprivate constructor(val s: String)\n');
+    expect(keysOf(top.declarations)).toEqual(expect.arrayContaining(['p.Top', 'p.*']));
+    // A comment after the header, or a blank line above the constructor: no join, so the enclosing class keeps its header and a marker.
+    for (const header of ['  class B // note\n', '  class B\n\n']) {
+      const { declarations } = await run(`package p\nclass Box {\n${header}  private constructor(val s: String)\n}\n`);
+      expect(keysOf(declarations), header).toEqual(['p.Box', 'p.Box+*']);
+    }
+  });
+
+  it('never joins a header whose type parameters carry a use: a bound or an annotation would leave its row', async () => {
+    for (const params of ['<T : com.acme.Bound>', '<@com.acme.Ann T>', '<T : a.B, U>']) {
+      const { declarations, uses } = await run(`package p\nclass Outer {\n  class Box${params}\n  private constructor(val t: T)\n}\n`);
+      expect(keysOf(declarations), params).toEqual(['p.Outer', 'p.Outer+*']);
+      expect(uses.filter((u) => u.line !== 3), params).toEqual([]);
+    }
+    // Plain names with variance still join.
+    const { declarations } = await run('package p\nclass Outer {\n  class Box<in A, out B>\n  private constructor(val a: A)\n}\n');
+    expect(keysOf(declarations)).toEqual(['p.Outer', 'p.Outer+Box']);
+  });
+
+  it('joins a header to its next-line constructor in a file with CRLF line endings', async () => {
+    const code = ['package com.acme', 'abstract class Reader {', '  class Options', '  private constructor(val s: List<String>) {', '    fun size(): Int = s.size', '  }', '', '  enum class Token {', '    BEGIN,', '    END,', '  }', '}', ''].join('\r\n');
+    const { declarations } = await run(code);
+    expect(keysOf(declarations)).toEqual(['com.acme.Reader', 'com.acme.Reader+Options', 'com.acme.Reader+Options+size', 'com.acme.Reader+Token']);
+    expect(declarations.map((d) => d.line)).toEqual([2, 3, 5, 8]);
   });
 
   it('kotlinView releases its trees once, however often dispose is called', async () => {

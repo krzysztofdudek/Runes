@@ -150,6 +150,9 @@ describe('MATRIX — parse recovery: declarations after unknown syntax survive; 
   it('kotlin-context-parameter-subsequent-decls-edge', () => runCase('kotlin-context-parameter-subsequent-decls-edge'));
   it('kotlin-error-decl-no-ambiguity-flip-silence', () => runCase('kotlin-error-decl-no-ambiguity-flip-silence'));
   it('kotlin-unrecoverable-decl-fails-closed-silence', () => runCase('kotlin-unrecoverable-decl-fails-closed-silence'));
+  it('kotlin-annotated-annotation-class-edge', () => runCase('kotlin-annotated-annotation-class-edge'));
+  it('kotlin-annotated-const-val-edge', () => runCase('kotlin-annotated-const-val-edge'));
+  it('kotlin-nested-class-next-line-constructor-edge', () => runCase('kotlin-nested-class-next-line-constructor-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
