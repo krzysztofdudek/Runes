@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, listedFileView } from '@chrisdudek/runes/relations';
-import { parseJsoncAt, lineColumnAt, failureOffset, strictJsonFailure, makeDiagnosticSink } from '../helpers/internal/relations.mjs';
+import { parseJsoncAt, lineColumnAt, failureOffset, strictJsonFailure, makeDiagnosticSink, reportUnreadable } from '../helpers/internal/relations.mjs';
 
 /** A resolver over a listed view of `files`, collecting what it reports. */
 function resolverOver(files) {
@@ -58,7 +58,25 @@ describe('config-unreadable', () => {
   it('reports a failure behind a byte order mark at its position in the file as written', () => {
     const { resolve, diagnostics } = resolverOver({ 'composer.json': '\uFEFF{ "a" 1 }', 'src/Foo.php': '' });
     resolve('App\\Foo', 'src/Foo.php', 'php');
-    expect(diagnostics[0]).toMatchObject({ line: 1, column: 8 });
+    expect(diagnostics[0]).toMatchObject({ line: 1, column: 7 });
+  });
+
+  it('places a failure where the parser names no position (a single-quoted string, an unquoted value) at the offending token, not at the start of the file', () => {
+    const quoted = resolverOver({ 'tsconfig.json': '{\n  "compilerOptions": {\n    "baseUrl": ".",\n    "paths": { "@/*": [\'./src/*\'] }\n  }\n}\n', 'src/a.ts': '', 'src/x.ts': '' });
+    expect(quoted.resolve('@/x', 'src/a.ts', 'typescript')).toBeUndefined();
+    expect(quoted.diagnostics).toHaveLength(1);
+    expect(quoted.diagnostics[0]).toMatchObject({ file: 'tsconfig.json', line: 4, column: 24 });
+    expect(quoted.diagnostics[0].message).toContain('line 4, column 24');
+    const unquoted = resolverOver({ 'package.json': '{\n  "main": ./src/index.ts\n}', 'src/a.ts': '' });
+    unquoted.resolve('left-pad', 'src/a.ts', 'typescript');
+    expect(unquoted.diagnostics).toHaveLength(1);
+    expect(unquoted.diagnostics[0]).toMatchObject({ file: 'package.json', line: 2, column: 11 });
+  });
+
+  it('reports the file without a position, and a message that names none, when no position can be found', () => {
+    const got = [];
+    reportUnreadable(makeDiagnosticSink((d) => got.push(d)), 'a.json', {}, 'it is not used');
+    expect(got).toEqual([{ code: 'config-unreadable', file: 'a.json', message: 'a.json does not parse; it is not used' }]);
   });
 
   it('reports nothing for a broken file no resolution consulted', () => {
@@ -77,7 +95,7 @@ describe('config-unreadable', () => {
   it('reports a broken package.json of a workspace member when a bare import reaches it', () => {
     const files = {
       'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
-      'packages/core/package.json': '{ "name": "@acme/core",\n "main" "./src/index.ts" }',
+      'packages/core/package.json': '{ "name": "@acme/core",\n "main": ./src/index.ts }',
       'packages/core/src/index.ts': '',
       'packages/app/package.json': '{ "name": "@acme/app" }',
       'packages/app/src/a.ts': '',
@@ -153,6 +171,7 @@ describe('the pieces behind it', () => {
     expect(parseJsoncAt('﻿{ "a": [1,], }').failure).toBeUndefined();
     expect(parseJsoncAt('/* x\ny */ {\n "a": 1 // c\n "b": 2 }').failure).toEqual({ line: 4, column: 2 });
     expect(parseJsoncAt('{ "a": 1').failure).toEqual({ line: 1, column: 9 });
+    expect(parseJsoncAt('{\n// c\n"a": undefined, }').failure).toEqual({ line: 3, column: 6 });
     expect(parseJsoncAt('').failure).toEqual({ line: 1, column: 1 });
     expect(parseJsoncAt('{\n"a": "unterminated').failure.line).toBe(2);
   });
@@ -164,15 +183,21 @@ describe('the pieces behind it', () => {
     expect(lineColumnAt('ab', -3)).toEqual({ line: 1, column: 1 });
   });
 
-  it('failureOffset reads the position JSON.parse names, else the start, and the end for an unexpected end of input', () => {
-    expect(failureOffset(new Error('x in JSON at position 7 (line 1 column 8)'), 20)).toBe(7);
-    expect(failureOffset(new Error('Unexpected end of JSON input'), 20)).toBe(20);
-    expect(failureOffset('not an error', 5)).toBe(0);
-    expect(failureOffset(new Error('Unexpected token \uFEFF, "\uFEFF{}" is not valid JSON'), 5)).toBe(0);
-    expect(failureOffset(new Error('at position 90'), 5)).toBe(5);
+  it('failureOffset reads the position JSON.parse names, the end for an unexpected end of input, else the first token that cannot belong, else nothing', () => {
+    expect(failureOffset(new Error('x in JSON at position 7 (line 1 column 8)'), '12345678901234567890')).toBe(7);
+    expect(failureOffset(new Error('Unexpected end of JSON input'), '{ "a": ')).toBe(7);
+    expect(failureOffset(new Error('at position 90'), '12345')).toBe(5);
+    expect(failureOffset(new Error('Unexpected token \'\'\''), "{ \"a\": ['x'] }")).toBe(8);
+    expect(failureOffset(new Error('Unexpected token'), '{ "a": undefined }')).toBe(7);
+    expect(failureOffset(new Error('Unexpected token'), '{ "a": nul }')).toBe(7);
+    expect(failureOffset(new Error('Unexpected token'), '{ "a": "x }')).toBe(7);
+    expect(failureOffset(new Error('Unexpected token'), '[-, 1.5e3, -0.1, true, false, null, "a\\"b"]')).toBe(1);
+    expect(failureOffset(new Error('Unexpected token'), '[-0.1, 1.5e3, true, false, null, "a\\"b", {}]')).toBeUndefined();
+    expect(failureOffset('not an error', '{}')).toBeUndefined();
     expect(strictJsonFailure('{}')).toBeUndefined();
     expect(strictJsonFailure('{ "a" 1 }')).toEqual({ line: 1, column: 7 });
     expect(strictJsonFailure('{ "a": ')).toEqual({ line: 1, column: 8 });
+    expect(strictJsonFailure("{ 'a': 1 }")).toEqual({ line: 1, column: 3 });
     expect(strictJsonFailure('\uFEFF{}')).toBeUndefined();
   });
 

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { diskFileView, type FileSource } from '../file-view.mjs';
-import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink } from '../diagnostics.mjs';
+import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, type Failure } from '../diagnostics.mjs';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -411,16 +411,29 @@ export function parseJsonc(text: string): unknown {
 }
 
 /**
- * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written.
+ * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs.
  */
-export function parseJsoncAt(text: string): { value: unknown; failure?: { line: number; column: number } } {
+export function parseJsoncAt(text: string): { value: unknown; failure?: Failure } {
+  try {
+    return { value: JSON.parse(stripJsonc(text).cleaned) as unknown };
+  } catch (error) {
+    const { cleaned, cleanedFrom } = stripJsonc(text, true);
+    const at = failureOffset(error, cleaned);
+    if (at === undefined) return { value: undefined, failure: {} };
+    const base = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+    return { value: undefined, failure: lineColumnAt(text.slice(base), (at >= cleaned.length ? text.length : cleanedFrom![at]) - base) };
+  }
+}
+
+/** The text without comments and trailing commas, ready for `JSON.parse`; with `track`, also for each character of the result the offset in `text` it came from. */
+function stripJsonc(text: string, track = false): { cleaned: string; cleanedFrom?: number[] } {
   let out = '';
   // For each character of `out`, the offset in `text` it came from.
   const outFrom: number[] = [];
   const keep = (from: number, to: number): void => {
     const end = Math.min(to, text.length);
     out += text.slice(from, end);
-    for (let q = from; q < end; q++) outFrom.push(q);
+    if (track) for (let q = from; q < end; q++) outFrom.push(q);
   };
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const n = text.length;
@@ -449,7 +462,7 @@ export function parseJsoncAt(text: string): { value: unknown; failure?: { line: 
   const kept = (from: number, to: number): void => {
     const end = Math.min(to, out.length);
     cleaned += out.slice(from, end);
-    for (let q = from; q < end; q++) cleanedFrom.push(outFrom[q]);
+    if (track) for (let q = from; q < end; q++) cleanedFrom.push(outFrom[q]);
   };
   for (let k = 0; k < out.length; k++) {
     const c = out[k];
@@ -467,12 +480,7 @@ export function parseJsoncAt(text: string): { value: unknown; failure?: { line: 
     }
     kept(k, k + 1);
   }
-  try {
-    return { value: JSON.parse(cleaned) as unknown };
-  } catch (error) {
-    const at = failureOffset(error, cleaned.length);
-    return { value: undefined, failure: lineColumnAt(text, at >= cleaned.length ? text.length : cleanedFrom[at]) };
-  }
+  return track ? { cleaned, cleanedFrom } : { cleaned };
 }
 
 const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages']);
@@ -563,7 +571,7 @@ function expandBraces(glob: string): string[] {
 
 /** Where the top-level `packages:` key of a pnpm-workspace.yaml holds something {@link pnpmWorkspacePackages} cannot read as a list: a scalar after the key (`packages: apps/*`), a flow list never closed, or an indented line under the key that is no `- item`. undefined when there is no such key or it reads as a list (an empty one included). The reading is unchanged by this; it only says that it is a guess. */
 function pnpmPackagesFailure(text: string): { line: number; column: number } | undefined {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   const at = lines.findIndex((line) => /^packages\s*:/.test(line));
   if (at === -1) return undefined;
   const inline = lines[at].replace(/^packages\s*:/, '').replace(/(^|\s)#.*$/, '').trim();
@@ -620,7 +628,7 @@ export function makeTsResolveDeps(
   const readJson = (repoRel: string): unknown => {
     if (jsonCache.has(repoRel)) return jsonCache.get(repoRel);
     let parsed: unknown;
-    let failure: { line: number; column: number } | undefined;
+    let failure: Failure | undefined;
     const text = files.read(repoRel);
     if (text !== undefined) ({ value: parsed, failure } = parseJsoncAt(text));
     if (failure !== undefined && report !== undefined) reportUnreadable(report, repoRel, failure, 'the aliases and workspace packages it configures are not resolved');

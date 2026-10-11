@@ -1,5 +1,5 @@
 import { type FileSource } from '../file-view.mjs';
-import { type DiagnosticSink } from '../diagnostics.mjs';
+import { type DiagnosticSink, type Failure } from '../diagnostics.mjs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
@@ -78,14 +78,11 @@ export interface PackageManifest {
  */
 export declare function parseJsonc(text: string): unknown;
 /**
- * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written.
+ * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs.
  */
 export declare function parseJsoncAt(text: string): {
     value: unknown;
-    failure?: {
-        line: number;
-        column: number;
-    };
+    failure?: Failure;
 };
 /**
  * Build the {@link TsResolveDeps} for the files of one source: `source` when given (a caller's view), else the disk under the project root. Each tsconfig, package.json and directory lookup is cached for the life of the returned object, which one relation pass owns. The in-repo package index is built on the first bare specifier that reaches package lookup: one walk of the repository that skips `node_modules` (where a workspace package's own symlink lives), dot-directories and any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never read: it acts as though it does not exist.

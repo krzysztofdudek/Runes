@@ -365,17 +365,32 @@ export function parseJsonc(text) {
     return parseJsoncAt(text).value;
 }
 /**
- * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written.
+ * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs.
  */
 export function parseJsoncAt(text) {
+    try {
+        return { value: JSON.parse(stripJsonc(text).cleaned) };
+    }
+    catch (error) {
+        const { cleaned, cleanedFrom } = stripJsonc(text, true);
+        const at = failureOffset(error, cleaned);
+        if (at === undefined)
+            return { value: undefined, failure: {} };
+        const base = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+        return { value: undefined, failure: lineColumnAt(text.slice(base), (at >= cleaned.length ? text.length : cleanedFrom[at]) - base) };
+    }
+}
+/** The text without comments and trailing commas, ready for `JSON.parse`; with `track`, also for each character of the result the offset in `text` it came from. */
+function stripJsonc(text, track = false) {
     let out = '';
     // For each character of `out`, the offset in `text` it came from.
     const outFrom = [];
     const keep = (from, to) => {
         const end = Math.min(to, text.length);
         out += text.slice(from, end);
-        for (let q = from; q < end; q++)
-            outFrom.push(q);
+        if (track)
+            for (let q = from; q < end; q++)
+                outFrom.push(q);
     };
     let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
     const n = text.length;
@@ -409,8 +424,9 @@ export function parseJsoncAt(text) {
     const kept = (from, to) => {
         const end = Math.min(to, out.length);
         cleaned += out.slice(from, end);
-        for (let q = from; q < end; q++)
-            cleanedFrom.push(outFrom[q]);
+        if (track)
+            for (let q = from; q < end; q++)
+                cleanedFrom.push(outFrom[q]);
     };
     for (let k = 0; k < out.length; k++) {
         const c = out[k];
@@ -431,13 +447,7 @@ export function parseJsoncAt(text) {
         }
         kept(k, k + 1);
     }
-    try {
-        return { value: JSON.parse(cleaned) };
-    }
-    catch (error) {
-        const at = failureOffset(error, cleaned.length);
-        return { value: undefined, failure: lineColumnAt(text, at >= cleaned.length ? text.length : cleanedFrom[at]) };
-    }
+    return track ? { cleaned, cleanedFrom } : { cleaned };
 }
 const SKIPPED_DIRS = new Set(['node_modules', 'bower_components', 'jspm_packages']);
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
@@ -537,7 +547,7 @@ function expandBraces(glob) {
 }
 /** Where the top-level `packages:` key of a pnpm-workspace.yaml holds something {@link pnpmWorkspacePackages} cannot read as a list: a scalar after the key (`packages: apps/*`), a flow list never closed, or an indented line under the key that is no `- item`. undefined when there is no such key or it reads as a list (an empty one included). The reading is unchanged by this; it only says that it is a guess. */
 function pnpmPackagesFailure(text) {
-    const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
     const at = lines.findIndex((line) => /^packages\s*:/.test(line));
     if (at === -1)
         return undefined;
