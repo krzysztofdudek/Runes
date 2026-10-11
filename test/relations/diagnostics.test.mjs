@@ -46,6 +46,21 @@ describe('config-unreadable', () => {
     expect(pkgBom.diagnostics).toEqual([]);
   });
 
+  it('reads a composer.json and a compile_commands.json with a byte order mark, and reports nothing', () => {
+    const composer = resolverOver({ 'composer.json': '\uFEFF{ "autoload": { "psr-4": { "App\\\\": "src/" } } }', 'src/Foo.php': '' });
+    expect(composer.resolve('App\\Foo', 'src/Foo.php', 'php')).toBe('src/Foo.php');
+    expect(composer.diagnostics).toEqual([]);
+    const db = resolverOver({ 'compile_commands.json': '\uFEFF[{"directory":"/repo-absent","file":"main.c","command":"cc -Iinc main.c"}]', 'main.c': '', 'inc/h.h': '' });
+    db.resolve('<h.h>', 'main.c', 'c');
+    expect(db.diagnostics).toEqual([]);
+  });
+
+  it('reports a failure behind a byte order mark at its position in the file as written', () => {
+    const { resolve, diagnostics } = resolverOver({ 'composer.json': '\uFEFF{ "a" 1 }', 'src/Foo.php': '' });
+    resolve('App\\Foo', 'src/Foo.php', 'php');
+    expect(diagnostics[0]).toMatchObject({ line: 1, column: 8 });
+  });
+
   it('reports nothing for a broken file no resolution consulted', () => {
     const { resolve, diagnostics } = resolverOver({ 'tsconfig.json': BROKEN_TSCONFIG, 'src/a.ts': '', 'src/b.ts': '' });
     expect(resolve('./b', 'src/a.ts', 'typescript')).toBe('src/b.ts');
@@ -62,7 +77,7 @@ describe('config-unreadable', () => {
   it('reports a broken package.json of a workspace member when a bare import reaches it', () => {
     const files = {
       'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
-      'packages/core/package.json': '{ "name": "@acme/core",\n "main": ./src/index.ts }',
+      'packages/core/package.json': '{ "name": "@acme/core",\n "main" "./src/index.ts" }',
       'packages/core/src/index.ts': '',
       'packages/app/package.json': '{ "name": "@acme/app" }',
       'packages/app/src/a.ts': '',
@@ -149,13 +164,16 @@ describe('the pieces behind it', () => {
     expect(lineColumnAt('ab', -3)).toEqual({ line: 1, column: 1 });
   });
 
-  it('failureOffset reads the position JSON.parse names, else the end', () => {
+  it('failureOffset reads the position JSON.parse names, else the start, and the end for an unexpected end of input', () => {
     expect(failureOffset(new Error('x in JSON at position 7 (line 1 column 8)'), 20)).toBe(7);
     expect(failureOffset(new Error('Unexpected end of JSON input'), 20)).toBe(20);
-    expect(failureOffset('not an error', 5)).toBe(5);
+    expect(failureOffset('not an error', 5)).toBe(0);
+    expect(failureOffset(new Error('Unexpected token \uFEFF, "\uFEFF{}" is not valid JSON'), 5)).toBe(0);
     expect(failureOffset(new Error('at position 90'), 5)).toBe(5);
     expect(strictJsonFailure('{}')).toBeUndefined();
     expect(strictJsonFailure('{ "a" 1 }')).toEqual({ line: 1, column: 7 });
+    expect(strictJsonFailure('{ "a": ')).toEqual({ line: 1, column: 8 });
+    expect(strictJsonFailure('\uFEFF{}')).toBeUndefined();
   });
 
   it('the sink hands each pair on once and builds the position only when there is one', () => {
