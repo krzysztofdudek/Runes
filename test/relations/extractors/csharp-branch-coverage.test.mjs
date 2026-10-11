@@ -87,13 +87,11 @@ describe('csharp extractor — global:: and namespace-alias inline references', 
     expect(keys).toContain('App.Space.Widget');
   });
 
-  it('leaves a non-global `::`-qualified reference intact (silence-by-luck at resolution)', async () => {
+  it('emits no key for a non-global `::`-qualified reference that no using alias binds (R13 silence)', async () => {
     const { uses } = await run('namespace App;\nclass C {\n  Lib::Space.Widget W;\n}\n');
     const keys = symbolKeys(uses);
-    // With no `using Lib = ...;` the `::` text is kept verbatim: it can never match a dot-only
-    // declaration key, so it resolves to nothing (R13) rather than being rewritten to a real FQN.
-    expect(keys).toContain('Lib::Space.Widget');
-    // It is NOT rewritten into a resolvable dot-only key such as `Space.Widget`.
+    // With no `using Lib = ...;` the alias descriptor is dropped on assembly, so no key is emitted: the `::` text never reaches a dot-only declaration key (R13), and it is not rewritten into one such as `Space.Widget`.
+    expect(keys).not.toContain('Lib::Space.Widget');
     expect(keys).not.toContain('Space.Widget');
   });
 });
