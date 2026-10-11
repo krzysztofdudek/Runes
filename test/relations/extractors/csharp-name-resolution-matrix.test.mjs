@@ -271,3 +271,8 @@ describe('MATRIX — C# using aliases to a type, with and without use (issue 185
   it('csharp-using-alias-target-in-namespace-edge', () => runCase('csharp-using-alias-target-in-namespace-edge'));
   it('csharp-global-alias-program-unused-edge', () => runCase('csharp-global-alias-program-unused-edge'));
 });
+
+describe('MATRIX — C# alias-qualified type names (issue 188)', () => {
+  it('csharp-alias-colon-colon-generic-edge', () => runCase('csharp-alias-colon-colon-generic-edge'));
+  it('csharp-alias-colon-colon-qualified-tail-edge', () => runCase('csharp-alias-colon-colon-qualified-tail-edge'));
+});
