@@ -267,7 +267,7 @@ const TYPE_PARAMETER_OWNERS = new Set([
 ]);
 
 /**
- * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because every type parameter is a declared name (`collectDeclaredNames`).
+ * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because the receiver reading asks this function too.
  */
 function isTypeParameterInScope(name: string, node: Node): boolean {
   let child = node;
@@ -432,6 +432,15 @@ function hasTokenChild(directive: Node, token: string): boolean {
     if (c !== null && !c.isNamed && c.type === token) return true;
   }
   return false;
+}
+
+/** The dotted text of a chain of plain identifiers (`Shop.Core.Customer`, a member access or a qualified name), or undefined for any other expression. */
+function dottedName(node: Node): string | undefined {
+  if (node.type === 'identifier') return node.text;
+  if (node.type !== 'member_access_expression' && node.type !== 'qualified_name') return undefined;
+  const head = dottedName(node.childForFieldName(node.type === 'qualified_name' ? 'qualifier' : 'expression')!);
+  const tail = node.childForFieldName('name')!;
+  return head !== undefined && tail.type === 'identifier' ? `${head}.${tail.text}` : undefined;
 }
 
 /** Strip a leading `global::` alias qualifier (R12): `global::A.B.Base` → `A.B.Base`, resolved
@@ -633,7 +642,6 @@ const NAME_DECLARING_TYPES = new Set([
   'event_declaration',
   'enum_member_declaration',
   'delegate_declaration',
-  'type_parameter',
   'declaration_pattern',
   'declaration_expression',
   'catch_declaration',
@@ -649,8 +657,9 @@ const NAME_DECLARING_TYPES = new Set([
 /**
  * Every name this file DECLARES that is not a namespace: locals, parameters (method, lambda,
  * primary-constructor), fields, properties, events, methods and local functions, enum members,
- * type parameters, pattern/`out var`/deconstruction designations, `foreach`/`catch`/query range
- * variables, and the file's own type names — collected file-wide, not per scope.
+ * pattern/`out var`/deconstruction designations, `foreach`/`catch`/query range variables, and the
+ * file's own type names — collected file-wide, not per scope. A type parameter is not a value: it
+ * is scoped to its own declaration by `isTypeParameterInScope`, never file-wide.
  *
  * WHY FILE-WIDE (the M16 shadow guard): a member access `X.Member` reads as a static access
  * through the TYPE `X` only when no nearer value named `X` is in scope. Deciding real C# scoping
@@ -897,6 +906,36 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     }
     const { name, generics } = qualifiedNameParts(q);
     if (name !== undefined) pushRef(name, q, line, rooted);
+    for (const g of generics) emitTypeArguments(g);
+  }
+
+  /**
+   * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain that starts with a type parameter in scope (invalid C#, CS0704) or with a using alias (`S::A.B`, silent as a type is, R13) emits nothing, and so does any other shape.
+   */
+  function emitMemberAccessType(access: Node): void {
+    const segs: string[] = [];
+    const generics: Node[] = [];
+    let rooted = false;
+    const collect = (n: Node): boolean => {
+      switch (n.type) {
+        case 'identifier':
+          segs.push(n.text);
+          return true;
+        case 'generic_name':
+          segs.push(findChild(n, 'identifier')!.text);
+          generics.push(n);
+          return true;
+        case 'member_access_expression':
+          return collect(n.childForFieldName('expression')!) && collect(n.childForFieldName('name')!);
+        case 'alias_qualified_name':
+          rooted = n.childForFieldName('alias')!.text === 'global';
+          return rooted && collect(n.childForFieldName('name')!);
+        default:
+          return false;
+      }
+    };
+    if (!collect(access) || (!rooted && isTypeParameterInScope(segs[0], access))) return;
+    pushRef(segs.join('.'), access, access.startPosition.row + 1, rooted);
     for (const g of generics) emitTypeArguments(g);
   }
 
@@ -1157,7 +1196,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       const rootedName = expr !== null && expr.type === 'alias_qualified_name' && expr.childForFieldName('alias')!.text === 'global' ? expr.childForFieldName('name') : null;
       if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
         emitTypeNode(expr);
-      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text))) && !insideNameof(node)) {
+      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text) && !isTypeParameterInScope(expr.text, expr))) && !insideNameof(node)) {
         const rooted = rootedName !== null;
         const chain = [(rootedName ?? expr).text];
         let cur = node;
@@ -1228,7 +1267,9 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       if (elements.some((e) => e.type === 'declaration_expression')) {
         for (const e of elements) {
           if (e.type === 'declaration_expression') emitTypeNode(e.childForFieldName('type'));
-          else if (e.type === 'identifier') emitTypeNode(e);
+          // An unnamed element beside a named one is a type spelled as the grammar's expression: a bare, generic or `global::` name goes the type way, a dotted one is read as the qualified name it spells (177).
+          else if (e.type === 'identifier' || e.type === 'generic_name' || e.type === 'alias_qualified_name') emitTypeNode(e);
+          else if (e.type === 'member_access_expression') emitMemberAccessType(e);
         }
         let generic = node.childForFieldName('left')!;
         for (let level = 1; shift !== undefined && level < shift.childForFieldName('operator')!.type.length; level++) {
@@ -1242,7 +1283,27 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     }
     // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
     if (node.type === 'declaration_expression') {
-      if (!declaresVariable(node)) return false;
+      if (!declaresVariable(node)) {
+        // The comparison reading (177): `F(x < Limits.Max, y > z)` is two comparisons, so each type argument that is a member access `Limits.Max` is a receiver of its own, `Limits` being a type unless this file declares it as a value.
+        const type = node.childForFieldName('type');
+        const args = type?.type === 'generic_name' ? findChild(type, 'type_argument_list') : null;
+        for (let i = 0; args !== null && i < args.namedChildCount; i++) {
+          const arg = args.namedChild(i)!;
+          const qualifier = arg.type === 'qualified_name' ? arg.childForFieldName('qualifier') : null;
+          const chainText = qualifier !== null ? dottedName(qualifier) : undefined;
+          if (chainText === undefined) continue;
+          const head = chainText.split('.')[0];
+          if (declaredNames.has(head) || isTypeParameterInScope(head, qualifier!)) continue;
+          refs.push({
+            kind: 'receiver',
+            chain: chainText.split('.'),
+            line: arg.startPosition.row + 1,
+            enclosingNs: enclosingNamespaceChain(fileNs, arg),
+            rooted: false,
+          });
+        }
+        return false;
+      }
       emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
@@ -1521,7 +1582,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 5,
+  rev: 6,
   declarations,
   uses,
 };
