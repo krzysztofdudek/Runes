@@ -95,7 +95,7 @@ export type CsharpRefDescriptor =
     fqn: string;
     line: number;
 }
-/** The TARGET of a using alias directive (`using F = A.B.Foo;`), a dependency on that type whether or not the alias is used (185). C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (C# spec §14.6.2, §14.5.2 for a global alias), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
+/** The TARGET of a using alias directive (`using F = A.B.Foo;`), a dependency on that type whether or not the alias is used (185). C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
  | {
     kind: 'target';
     fqn: string;

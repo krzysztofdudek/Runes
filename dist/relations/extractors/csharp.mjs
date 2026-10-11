@@ -812,7 +812,7 @@ export function extractCsharpRefs(file) {
             emitTypeArguments(g);
     }
     /**
-     * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain that starts with a type parameter in scope (invalid C#, CS0704) or with a using alias (`S::A.B`, silent as a type is, R13) emits nothing, and so does any other shape.
+     * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does a chain through a using alias (`S::A.B`: a member access cannot spell one, and the qualified-name form rewrites it on assembly) or any other shape.
      */
     function emitMemberAccessType(access) {
         const segs = [];
@@ -909,19 +909,21 @@ export function extractCsharpRefs(file) {
         const aliasName = node.childForFieldName('name');
         if (aliasName === null)
             return false; // not an alias directive
-        // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.6.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target is rooted. A generic target (`using L = A.Repo<Order>;`) leaves its type arguments to the walk below and names no edge of its own.
+        // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.5.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target (`global::A.B.Foo`, `global::Program`) is rooted, its qualifier stripped as `using static` strips it. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and leaves the type arguments to the walk below.
         const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
         const targetLine = node.startPosition.row + 1;
-        if (target !== undefined && target !== null && !target.text.includes('<')) {
-            if (target.type === 'identifier' || target.type === 'qualified_name') {
-                // A directive above a file-scoped `namespace X;` sits in the compilation unit, below it in the namespace body.
-                const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
-                const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
-                if (!namesOwnProgram(target.text))
-                    refs.push({ kind: 'target', fqn: target.text, line: targetLine, enclosingNs: enclosingNamespaceChain(below ? fileNs : '', node) });
-            }
-            else if (target.type === 'alias_qualified_name' && target.childForFieldName('alias').text === 'global') {
-                pushRef(target.childForFieldName('name').text, node, targetLine, true);
+        if (target !== undefined && target !== null && (target.type === 'identifier' || target.type === 'qualified_name' || target.type === 'alias_qualified_name' || target.type === 'generic_name')) {
+            const parts = qualifiedNameParts(target);
+            if (parts.alias === undefined) {
+                if (target.text.startsWith('global::')) {
+                    pushRef(parts.name, node, targetLine, true);
+                }
+                else if (!namesOwnProgram(parts.name)) {
+                    // A directive above a file-scoped `namespace X;` sits in the compilation unit, below it in the namespace body.
+                    const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+                    const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
+                    refs.push({ kind: 'target', fqn: parts.name, line: targetLine, enclosingNs: enclosingNamespaceChain(below ? fileNs : '', node) });
+                }
             }
         }
         // Find every type_argument_list anywhere in the RHS and emit each argument's named types
@@ -1056,7 +1058,7 @@ export function extractCsharpRefs(file) {
             else if (named !== null && named.type === 'qualified_name' && !named.text.includes('<'))
                 emitAttribute(stripGlobalQualifier(named.text), nameField);
             else if (named !== null && named.type === 'qualified_name') {
-                // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) names nothing, as in a type position (R13).
+                // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) is rewritten onto the aliased namespace on assembly, as in a type position (the alias is read from the outer `S::` qualifier above, so `parts.alias` is empty here).
                 const parts = qualifiedNameParts(named);
                 if (parts.alias === undefined)
                     emitAttribute(parts.name, nameField);
