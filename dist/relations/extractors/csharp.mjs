@@ -738,13 +738,17 @@ export function extractCsharpRefs(file) {
                 if (aliasField !== null) {
                     const nameField = typeNode.childForFieldName('name');
                     if (nameField !== null) {
+                        // `S::Gen<int>`: the tail is the generic's base name, and its type arguments are references of their own (188).
+                        const generic = nameField.type === 'generic_name' ? nameField : null;
                         refs.push({
                             kind: 'alias',
                             aliasName: aliasField.text,
-                            tail: stripGlobalQualifier(nameField.text),
+                            tail: stripTypeArguments(generic !== null ? findChild(generic, 'identifier').text : stripGlobalQualifier(nameField.text)),
                             line: typeNode.startPosition.row + 1,
                             enclosingNs: enclosingNamespaceChain(fileNs, typeNode),
                         });
+                        if (generic !== null)
+                            emitTypeArguments(generic);
                     }
                 }
                 return;
@@ -796,14 +800,15 @@ export function extractCsharpRefs(file) {
     function emitQualified(q) {
         const line = q.startPosition.row + 1;
         const rooted = q.text.startsWith('global::');
-        if (!q.text.includes('<')) {
-            pushRef(stripGlobalQualifier(q.text), q, line, rooted);
-            return;
+        const parts = qualifiedNameParts(q);
+        if (parts.alias !== undefined) {
+            // `S::Core.Order` (188): the leftmost `S` is a using alias, rewritten on assembly to the namespace it names; an alias the map does not bind (an extern alias, `Lib::A.B`) is dropped there (R13).
+            refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q) });
         }
-        const { name, generics } = qualifiedNameParts(q);
-        if (name !== undefined)
-            pushRef(name, q, line, rooted);
-        for (const g of generics)
+        else {
+            pushRef(parts.name, q, line, rooted);
+        }
+        for (const g of parts.generics)
             emitTypeArguments(g);
     }
     /**
@@ -837,11 +842,11 @@ export function extractCsharpRefs(file) {
         for (const g of generics)
             emitTypeArguments(g);
     }
-    /** A generic qualified name's plain dotted name, its type-argument lists stripped (undefined when a qualifier is a using alias, `Lib::A<T>.B`, which can never match a dot-only key, R13), and its generic segments, whose type arguments are references of their own. */
+    /** A qualified name's plain dotted name, its type-argument lists stripped (`Shop.Core.Repository<int>` → `Shop.Core.Repository`, because declaration keys carry no arity), the using alias that leads it (`S::Core.Order` → `S`, with the tail `Core.Order`; a `global::` qualifier is not an alias and is stripped), and its generic segments, whose type arguments are references of their own. */
     function qualifiedNameParts(q) {
         const segs = [];
         const generics = [];
-        let ok = true;
+        let alias;
         const collect = (n) => {
             if (n.type === 'qualified_name') {
                 collect(n.childForFieldName('qualifier'));
@@ -852,19 +857,18 @@ export function extractCsharpRefs(file) {
                 generics.push(n);
             }
             else if (n.type === 'alias_qualified_name') {
-                // `global::A.B<T>` resolves from the root (R12); any other alias qualifier (`Lib::A<T>.B`)
-                // can never match a dot-only key (R13), so the name is not emitted at all.
-                if (n.childForFieldName('alias').text === 'global')
-                    collect(n.childForFieldName('name'));
-                else
-                    ok = false;
+                // `global::A.B<T>` resolves from the root (R12); any other alias qualifier is the using alias the tail follows.
+                const aliasText = n.childForFieldName('alias').text;
+                if (aliasText !== 'global')
+                    alias = aliasText;
+                collect(n.childForFieldName('name'));
             }
             else {
                 segs.push(n.text); // identifier
             }
         };
         collect(q);
-        return { name: ok ? segs.join('.') : undefined, generics };
+        return { name: segs.join('.'), alias, generics };
     }
     /** The first child of the given type, or null. */
     function findChild(node, childType) {
@@ -1053,10 +1057,10 @@ export function extractCsharpRefs(file) {
                 emitAttribute(stripGlobalQualifier(named.text), nameField);
             else if (named !== null && named.type === 'qualified_name') {
                 // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) names nothing, as in a type position (R13).
-                const { name, generics } = qualifiedNameParts(named);
-                if (name !== undefined)
-                    emitAttribute(name, nameField);
-                for (const g of generics)
+                const parts = qualifiedNameParts(named);
+                if (parts.alias === undefined)
+                    emitAttribute(parts.name, nameField);
+                for (const g of parts.generics)
                     emitTypeArguments(g);
             }
             else if (named !== null && named.type === 'generic_name') {
