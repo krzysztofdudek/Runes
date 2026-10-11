@@ -38,10 +38,10 @@ describe('config-unreadable', () => {
   });
 
   it('reports nothing for a valid file and nothing for a file with a byte order mark', () => {
-    const bom = resolverOver({ 'tsconfig.json': '﻿// c\n{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }', 'src/a.ts': '', 'src/x.ts': '' });
+    const bom = resolverOver({ 'tsconfig.json': '\uFEFF// c\n{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }', 'src/a.ts': '', 'src/x.ts': '' });
     expect(bom.resolve('@/x', 'src/a.ts', 'typescript')).toBe('src/x.ts');
     expect(bom.diagnostics).toEqual([]);
-    const pkgBom = resolverOver({ 'package.json': '﻿{ "name": "root" }', 'src/a.ts': '' });
+    const pkgBom = resolverOver({ 'package.json': '\uFEFF{ "name": "root" }', 'src/a.ts': '' });
     pkgBom.resolve('left-pad', 'src/a.ts', 'typescript');
     expect(pkgBom.diagnostics).toEqual([]);
   });
@@ -168,7 +168,7 @@ describe('config-unreadable', () => {
 describe('the pieces behind it', () => {
   it('parseJsoncAt maps a failure back through comments and trailing commas, and a BOM, to the original text', () => {
     expect(parseJsoncAt('{ "a": 1 }')).toEqual({ value: { a: 1 } });
-    expect(parseJsoncAt('﻿{ "a": [1,], }').failure).toBeUndefined();
+    expect(parseJsoncAt('\uFEFF{ "a": [1,], }').failure).toBeUndefined();
     expect(parseJsoncAt('/* x\ny */ {\n "a": 1 // c\n "b": 2 }').failure).toEqual({ line: 4, column: 2 });
     expect(parseJsoncAt('{ "a": 1').failure).toEqual({ line: 1, column: 9 });
     expect(parseJsoncAt('{\n// c\n"a": undefined, }').failure).toEqual({ line: 3, column: 6 });
@@ -183,16 +183,30 @@ describe('the pieces behind it', () => {
     expect(lineColumnAt('ab', -3)).toEqual({ line: 1, column: 1 });
   });
 
+  it('lineColumnAt counts LF, CR and CRLF each as one line break', () => {
+    expect(lineColumnAt('ab\rcd', 4)).toEqual({ line: 2, column: 2 });
+    expect(lineColumnAt('ab\r\ncd', 5)).toEqual({ line: 2, column: 2 });
+    expect(lineColumnAt('ab\r\ncd', 3)).toEqual({ line: 1, column: 4 });
+    expect(lineColumnAt('a\r\n\r\nb', 5)).toEqual({ line: 3, column: 1 });
+    expect(lineColumnAt('a\r\rb\nc', 5)).toEqual({ line: 4, column: 1 });
+    expect(lineColumnAt('a\rb\nc\r\nd', 8)).toEqual({ line: 4, column: 2 });
+  });
+
   it('failureOffset reads the position JSON.parse names, the end for an unexpected end of input, else the first token that cannot belong, else nothing', () => {
     expect(failureOffset(new Error('x in JSON at position 7 (line 1 column 8)'), '12345678901234567890')).toBe(7);
     expect(failureOffset(new Error('Unexpected end of JSON input'), '{ "a": ')).toBe(7);
-    expect(failureOffset(new Error('at position 90'), '12345')).toBe(5);
-    expect(failureOffset(new Error('Unexpected token \'\'\''), "{ \"a\": ['x'] }")).toBe(8);
-    expect(failureOffset(new Error('Unexpected token'), '{ "a": undefined }')).toBe(7);
-    expect(failureOffset(new Error('Unexpected token'), '{ "a": nul }')).toBe(7);
-    expect(failureOffset(new Error('Unexpected token'), '{ "a": "x }')).toBe(7);
-    expect(failureOffset(new Error('Unexpected token'), '[-, 1.5e3, -0.1, true, false, null, "a\\"b"]')).toBe(1);
-    expect(failureOffset(new Error('Unexpected token'), '[-0.1, 1.5e3, true, false, null, "a\\"b", {}]')).toBeUndefined();
+    expect(failureOffset(new Error('x in JSON at position 90'), '12345')).toBe(5);
+    const tok = (c, text) => new Error(`Unexpected token '${c}', "${text}" is not valid JSON`);
+    expect(failureOffset(tok("'", "{ \"a\": ['x'] }"), "{ \"a\": ['x'] }")).toBe(8);
+    expect(failureOffset(tok('u', '{ "a": undefined }'), '{ "a": undefined }')).toBe(7);
+    expect(failureOffset(tok('n', '{ "a": nul }'), '{ "a": nul }')).toBe(7);
+    expect(failureOffset(tok('x', '{ "a": "x }'), '{ "a": "x }')).toBeUndefined();
+    expect(failureOffset(tok('-', '[-, 1]'), '[-, 1.5e3, -0.1, true, false, null, "a\\"b"]')).toBe(1);
+    expect(failureOffset(tok(']', '[-0.1]'), '[-0.1, 1.5e3, true, false, null, "a\\"b", {}]')).toBeUndefined();
+    // the quoted character must be the one at the scanner's offset, else no position
+    expect(failureOffset(tok(',', '{"a": ,\n"b": \'x\'}'), '{"a": ,\n"b": \'x\'}')).toBeUndefined();
+    // a position inside the quoted snippet is not a position
+    expect(failureOffset(tok("'", "{\"a\": 'in JSON at position 5'}"), "{\"a\": 'in JSON at position 5'}")).toBe(6);
     expect(failureOffset('not an error', '{}')).toBeUndefined();
     expect(strictJsonFailure('{}')).toBeUndefined();
     expect(strictJsonFailure('{ "a" 1 }')).toEqual({ line: 1, column: 7 });

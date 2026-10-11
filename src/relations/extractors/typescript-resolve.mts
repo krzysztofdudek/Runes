@@ -407,16 +407,17 @@ function toPosix(p: string): string {
  * Parse JSON with comments and trailing commas (the tsconfig dialect). A leading UTF-8 byte order mark (Visual Studio saves one) is skipped, as tsc, Node and npm skip it. Returns undefined for anything that is still not JSON afterwards.
  */
 export function parseJsonc(text: string): unknown {
-  return parseJsoncAt(text).value;
+  return parseJsoncAt(text, false).value;
 }
 
 /**
- * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs.
+ * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs. With `describe` false a failure is not described at all (`failure` is absent), which is what a caller without a diagnostics callback asks for.
  */
-export function parseJsoncAt(text: string): { value: unknown; failure?: Failure } {
+export function parseJsoncAt(text: string, describe = true): { value: unknown; failure?: Failure } {
   try {
     return { value: JSON.parse(stripJsonc(text).cleaned) as unknown };
   } catch (error) {
+    if (!describe) return { value: undefined };
     const { cleaned, cleanedFrom } = stripJsonc(text, true);
     const at = failureOffset(error, cleaned);
     if (at === undefined) return { value: undefined, failure: {} };
@@ -630,7 +631,7 @@ export function makeTsResolveDeps(
     let parsed: unknown;
     let failure: Failure | undefined;
     const text = files.read(repoRel);
-    if (text !== undefined) ({ value: parsed, failure } = parseJsoncAt(text));
+    if (text !== undefined) ({ value: parsed, failure } = parseJsoncAt(text, report !== undefined));
     if (failure !== undefined && report !== undefined) reportUnreadable(report, repoRel, failure, 'the aliases and workspace packages it configures are not resolved');
     jsonCache.set(repoRel, parsed);
     return parsed;
