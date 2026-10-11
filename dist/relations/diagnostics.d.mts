@@ -19,7 +19,7 @@ export type DiagnosticSink = (code: string, file: string, message: string, offse
 /** The code for a configuration file that was consulted and does not parse. */
 export declare const CONFIG_UNREADABLE = "config-unreadable";
 /**
- * A sink that hands each `(code, file)` pair to `onDiagnostic` once, synchronously, however often resolution consults the file again. One sink belongs to one resolver instance, like the resolver's other caches. Without a callback there is no sink, and the resolvers skip the work of describing a failure.
+ * A sink that hands each `(code, file)` pair to `onDiagnostic` once, synchronously, however often resolution consults the file again. One sink belongs to one resolver instance, like the resolver's other caches. Without a callback there is no sink, and the resolvers do not describe a failure (they ask the parsers for no position).
  */
 export declare function makeDiagnosticSink(onDiagnostic: ((d: RelationDiagnostic) => void) | undefined): DiagnosticSink | undefined;
 /** The 1-based line and column of the character at `offset` of `text`; an offset past the end is the position after the last character. */
@@ -32,7 +32,7 @@ export type Failure = {
     line?: number;
     column?: number;
 };
-/** Where `JSON.parse` failed on `text`: the offset its message names; the end of the text for an unexpected end of input; otherwise, because V8 names no position for an unexpected token where a value belongs, the first token of `text` that cannot be JSON. undefined when none of these finds a place: the diagnostic then carries no position rather than a wrong one. */
+/** Where `JSON.parse` failed on `text`: the offset its message names (the message is read only where it ends in ` in JSON at position N`, so text quoted inside it cannot be mistaken for a position); the end of the text for the whole message "Unexpected end of JSON input"; for "Unexpected token 'X'", which names no position, the first token of `text` that cannot be JSON, but only when the character at that offset is the very one V8 quotes. undefined when none of these finds a place: the diagnostic then carries no position rather than a guessed one. */
 export declare function failureOffset(error: unknown, text: string): number | undefined;
 /** The failure of parsing `text` as strict JSON (no comments, as `JSON.parse` reads it; one leading byte order mark is skipped, as the readers do, and the position counts from after it, as an editor shows), or undefined when it parses. */
 export declare function strictJsonFailure(text: string): Failure | undefined;

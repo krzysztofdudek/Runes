@@ -78,9 +78,9 @@ export interface PackageManifest {
  */
 export declare function parseJsonc(text: string): unknown;
 /**
- * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs.
+ * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written (one leading byte order mark is not counted); with no position to be found it is an empty object. Reading allocates no offset map: the map is built only once a parse has failed, so a file that parses costs what {@link parseJsonc} costs. With `describe` false a failure is not described at all (`failure` is absent), which is what a caller without a diagnostics callback asks for.
  */
-export declare function parseJsoncAt(text: string): {
+export declare function parseJsoncAt(text: string, describe?: boolean): {
     value: unknown;
     failure?: Failure;
 };
