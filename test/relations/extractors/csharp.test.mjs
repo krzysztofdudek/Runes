@@ -184,7 +184,8 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // The aliased FQN is the dependency and sits FIRST in the ordered group (the alias is a
     // hard local override, nearest binding). The bare alias name `Gw` is only the harmless
     // verbatim last candidate — it resolves to nothing, so the alias FQN is what binds.
-    const group = groupContaining(uses, 'Foo.Bar.IGateway');
+    // The use's group is the one carrying the bare alias name `Gw`; the directive has its own one-candidate group (185).
+    const group = groupContaining(uses, 'Gw');
     expect(group?.[0]).toBe('Foo.Bar.IGateway');
     expect(group?.[group.length - 1]).toBe('Gw');
   });
@@ -242,7 +243,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     const { uses } = await run(
       ['global using Gw = Foo.Bar.IGateway;', 'class C { void M() { var x = new Gw(); } }', ''].join('\n'),
     );
-    const group = groupContaining(uses, 'Foo.Bar.IGateway');
+    const group = groupContaining(uses, 'Gw'); // the use's group, not the directive's own one-candidate group (185)
     expect(group?.[0]).toBe('Foo.Bar.IGateway'); // alias expansion is the first/nearest candidate
     expect(group?.[group.length - 1]).toBe('Gw'); // bare alias name only as harmless last
   });
@@ -1246,6 +1247,7 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
     // `[S::Foo]` emitted nothing.
     const { uses } = await run(['using S = Shop.Attrs;', 'namespace Shop.Web;', '[S::Foo, S::BarAttribute]', '[S::Gen<Order>(1)]', '[Lib::Foo]', 'class C { }', ''].join('\n'));
     expect(groups(uses)).toEqual([
+      ['Shop.Attrs'], // the directive's own target: a namespace, which binds no type (the alias RHS group, 185)
       ['Shop.Attrs.Foo', 'Shop.Attrs.FooAttribute'],
       ['Shop.Attrs.BarAttribute'],
       ['Shop.Attrs.Gen', 'Shop.Attrs.GenAttribute'],

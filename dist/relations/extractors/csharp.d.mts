@@ -95,6 +95,13 @@ export type CsharpRefDescriptor =
     fqn: string;
     line: number;
 }
+/** The TARGET of a using alias directive (`using F = A.B.Foo;`), a dependency on that type whether or not the alias is used (185). C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (C# spec §14.6.2, §14.5.2 for a global alias), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
+ | {
+    kind: 'target';
+    fqn: string;
+    line: number;
+    enclosingNs: string[];
+}
 /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
  | {
     kind: 'attr';

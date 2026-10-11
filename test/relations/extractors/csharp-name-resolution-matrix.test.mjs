@@ -95,7 +95,7 @@ describe('MATRIX — SILENCE cases (must NOT bind / must silence)', () => {
   it('csharp-using-subns-binds-top-level', () => runCase('csharp-using-subns-binds-top-level'));
   it('csharp-using-subns-no-misbind', () => runCase('csharp-using-subns-no-misbind'));
   it('csharp-using-import-cs0104-silence', () => runCase('csharp-using-import-cs0104-silence'));
-  it('csharp-alias-member-codefinition-silence', () => runCase('csharp-alias-member-codefinition-silence'));
+  it('csharp-alias-member-codefinition-edge', () => runCase('csharp-alias-member-codefinition-edge'));
   it('csharp-di-reflection-extension-silence', () => runCase('csharp-di-reflection-extension-silence'));
   it('csharp-per-file-using-no-leak', () => runCase('csharp-per-file-using-no-leak'));
 });
@@ -160,7 +160,7 @@ describe('MATRIX — edge-form learning (file-local FP fix + 8 learned edges)', 
 describe('MATRIX — project-scoped global usings (.csproj)', () => {
   it('csharp-global-using-other-project-no-leak', () => runCase('csharp-global-using-other-project-no-leak'));
   it('csharp-csproj-using-item-edge', () => runCase('csharp-csproj-using-item-edge'));
-  it('csharp-global-alias-cross-project-collision-silence', () => runCase('csharp-global-alias-cross-project-collision-silence'));
+  it('csharp-global-alias-cross-project-collision-edge', () => runCase('csharp-global-alias-cross-project-collision-edge'));
   it('csharp-global-alias-per-project-edge', () => runCase('csharp-global-alias-per-project-edge'));
 });
 
@@ -264,4 +264,10 @@ describe('MATRIX — C# forms of issue 177 (a tuple, comparisons, type-parameter
   it('csharp-tuple-unnamed-global-generic-element-edge', () => runCase('csharp-tuple-unnamed-global-generic-element-edge'));
   it('csharp-comparison-pair-qualified-operand-edge', () => runCase('csharp-comparison-pair-qualified-operand-edge'));
   it('csharp-type-parameter-sibling-receiver-edge', () => runCase('csharp-type-parameter-sibling-receiver-edge'));
+});
+
+describe('MATRIX — C# using aliases to a type, with and without use (issue 185)', () => {
+  it('csharp-using-alias-unused-type-edge', () => runCase('csharp-using-alias-unused-type-edge'));
+  it('csharp-using-alias-target-in-namespace-edge', () => runCase('csharp-using-alias-target-in-namespace-edge'));
+  it('csharp-global-alias-program-unused-edge', () => runCase('csharp-global-alias-program-unused-edge'));
 });

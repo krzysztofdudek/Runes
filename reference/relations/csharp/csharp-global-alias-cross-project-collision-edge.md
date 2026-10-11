@@ -1,14 +1,14 @@
 ---
-id: csharp-global-alias-cross-project-collision-silence
+id: csharp-global-alias-cross-project-collision-edge
 language: csharp
 category: trap
-expectation: silence
+expectation: edge
 cites: "C# spec §13.4 (global using alias directives are project-wide); CS1537 (duplicate alias within one compilation)"
 ---
 
 ## Rule
 
-When the pass cannot tell projects apart (no `.csproj` in the tree, so every file shares one implicit project) and two files define the same global alias name with different targets, the alias has no single binding. Every reference led by that alias stays silent. Neither target is picked.
+When the pass cannot tell projects apart (no `.csproj` in the tree, so every file shares one implicit project) and two files define the same global alias name with different targets, each directive still names its own real type, so each directive gives its edge (D3 b, 185). The alias has no single binding for a use, so every reference led by that alias stays silent. Neither target is picked for a use.
 
 ## Files
 
@@ -37,7 +37,9 @@ public class Money {}
 
 ## Expect
 
-- silence      # `Money` has two project-wide alias targets → ambiguous → no edge (never last-writer-wins)
+- src/billing/GlobalUsings.cs:1 -> node:bmodel    # the directive names Billing.Model.Money
+- src/shipping/GlobalUsings.cs:1 -> node:smodel   # the directive names Shipping.Model.Money
+# `Money _total` in Invoice.cs has two project-wide alias targets → ambiguous → no edge (never last-writer-wins)
 
 ## Why
 

@@ -902,8 +902,24 @@ export function extractCsharpRefs(file) {
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'using_directive')
             return undefined;
-        if (node.childForFieldName('name') === null)
+        const aliasName = node.childForFieldName('name');
+        if (aliasName === null)
             return false; // not an alias directive
+        // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.6.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target is rooted. A generic target (`using L = A.Repo<Order>;`) leaves its type arguments to the walk below and names no edge of its own.
+        const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
+        const targetLine = node.startPosition.row + 1;
+        if (target !== undefined && target !== null && !target.text.includes('<')) {
+            if (target.type === 'identifier' || target.type === 'qualified_name') {
+                // A directive above a file-scoped `namespace X;` sits in the compilation unit, below it in the namespace body.
+                const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+                const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
+                if (!namesOwnProgram(target.text))
+                    refs.push({ kind: 'target', fqn: target.text, line: targetLine, enclosingNs: enclosingNamespaceChain(below ? fileNs : '', node) });
+            }
+            else if (target.type === 'alias_qualified_name' && target.childForFieldName('alias').text === 'global') {
+                pushRef(target.childForFieldName('name').text, node, targetLine, true);
+            }
+        }
         // Find every type_argument_list anywhere in the RHS and emit each argument's named types
         // (covers `List<Customer>`, and a generic nested inside a tuple/array element).
         walk(node, (n) => {
@@ -1427,6 +1443,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // `using static N.C;` TARGET edge (A8/A11): resolve verbatim from root, sole candidate.
                 out.push({ candidates: [{ kind: 'symbol', symbolKey: r.fqn }], kind: 'import', line: r.line });
                 break;
+            case 'target': {
+                // A using alias target (185): the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+                const keys = dedupKeys([...r.enclosingNs.map((ns) => `${ns}.${r.fqn}`), r.fqn]);
+                const candidates = keys.map((symbolKey) => ({ kind: 'symbol', symbolKey }));
+                if (r.fqn === 'Program')
+                    candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
+                out.push({ candidates, kind: 'import', line: r.line });
+                break;
+            }
             case 'plain':
                 pushRef(r.ref, r.enclosingNs, r.line, r.rooted);
                 break;

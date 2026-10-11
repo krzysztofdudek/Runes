@@ -50,6 +50,8 @@ public class Money {}
 
 ## Expect
 
+- src/billing/GlobalUsings.cs:1 -> node:bmodel # Billing's directive names Billing.Model.Money (D3 b, 185)
+- src/shipping/GlobalUsings.cs:1 -> node:smodel # Shipping's directive names Shipping.Model.Money
 - src/billing/Invoice.cs:2 -> node:bmodel      # Billing's own alias → Billing.Model.Money
 - src/shipping/Parcel.cs:2 -> node:smodel      # Shipping's own alias → Shipping.Model.Money
 
