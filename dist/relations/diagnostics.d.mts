@@ -27,9 +27,9 @@ export declare function lineColumnAt(text: string, offset: number): {
     line: number;
     column: number;
 };
-/** Where `JSON.parse` says it failed: the offset its message names, else the end of the text (an unexpected end of input names none). */
+/** Where `JSON.parse` says it failed: the offset its message names; an unexpected end of input names none and is at the end of the text; any other message without a position is at the start. */
 export declare function failureOffset(error: unknown, textLength: number): number;
-/** The failure of parsing `text` as strict JSON (no comments, no byte order mark, as `JSON.parse` reads it), or undefined when it parses. */
+/** The failure of parsing `text` as strict JSON (no comments, as `JSON.parse` reads it; one leading byte order mark is skipped, as the readers do), or undefined when it parses. */
 export declare function strictJsonFailure(text: string): {
     line: number;
     column: number;
