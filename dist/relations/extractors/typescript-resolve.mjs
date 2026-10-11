@@ -598,14 +598,9 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
             return jsonCache.get(repoRel);
         let parsed;
         let failure;
-        try {
-            const text = files.read(repoRel);
-            if (text !== undefined)
-                ({ value: parsed, failure } = parseJsoncAt(text));
-        }
-        catch {
-            parsed = undefined;
-        }
+        const text = files.read(repoRel);
+        if (text !== undefined)
+            ({ value: parsed, failure } = parseJsoncAt(text));
         if (failure !== undefined && report !== undefined)
             reportUnreadable(report, repoRel, failure, 'the aliases and workspace packages it configures are not resolved');
         jsonCache.set(repoRel, parsed);
