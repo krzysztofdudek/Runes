@@ -240,7 +240,7 @@ function parseAutoloadSection(
   const out = new Map<string, string[]>();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(composerJsonText);
+    parsed = JSON.parse(composerJsonText.charCodeAt(0) === 0xfeff ? composerJsonText.slice(1) : composerJsonText);
   } catch {
     return out;
   }

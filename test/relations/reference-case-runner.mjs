@@ -10,7 +10,7 @@ import { expect } from '../helpers/expect.mjs';
 import { withParsedFiles, CATALOGUE_ROOT } from '../helpers/tree-sitter.mjs';
 import { getLanguageForExtension, relationLanguageForPath } from '@chrisdudek/runes/grammars';
 import {
-  extractorForLanguage, sfcScriptView, buildCsharpProjectScopes, SymbolTable, makeResolver, resolveDetectedEdges, makeResolvePathToFile,
+  extractorForLanguage, sfcScriptView, buildCsharpProjectScopes, SymbolTable, makeResolver, resolveDetectedEdges, makeResolvePathToFile, listedFileView,
 } from '@chrisdudek/runes/relations';
 import {
   csharpUses, collectGlobalUsings, collectGlobalUsingAliases,
@@ -140,8 +140,8 @@ function materializeProject(files, configFiles = []) {
   return root;
 }
 
-/** The cross-owner edges the real pipeline emits for one case: `{ fromFile, line, owner }`. */
-export async function caseEdges(doc) {
+/** The cross-owner edges the real pipeline emits for one case: `{ fromFile, line, owner }`. By default the resolvers read a throwaway directory holding the case's files; with `through: 'view'` they read a `listedFileView` of the same files and the project root names a directory that does not exist, so any read that bypasses the view finds nothing and the case fails. */
+export async function caseEdges(doc, through = 'disk') {
   return withParsedFiles(
     doc.files.map((f) => {
       // A component is parsed as its script view, under the view's grammar extension.
@@ -163,7 +163,10 @@ export async function caseEdges(doc) {
       const owned = new Map(doc.files.map((f) => [f.path, ownerOfPath(f.path)]));
       const ownerIndex = { ownerOf: (file) => owned.get(file) };
 
-      const projectRoot = materializeProject(doc.files, doc.configFiles);
+      const everyFile = [...doc.files, ...doc.configFiles];
+      const projectRoot = through === 'view' ? path.join(os.tmpdir(), `runes-refcase-absent-${process.pid}-${doc.id}`) : materializeProject(doc.files, doc.configFiles);
+      const contents = new Map(everyFile.map((f) => [f.path, f.code]));
+      const files = through === 'view' ? listedFileView(contents.keys(), (p) => contents.get(p)) : undefined;
       try {
         // The C# global-using pre-pass: per-project namespace prefixes and aliases.
         const csharpScopes = buildCsharpProjectScopes(
@@ -173,8 +176,9 @@ export async function caseEdges(doc) {
             globalPrefixes: collectGlobalUsings(parsedByPath.get(f.path)),
             globalAliases: collectGlobalUsingAliases(parsedByPath.get(f.path)),
           })),
+          { files },
         );
-        const resolver = makeResolver({ ownerIndex, symbolTable, resolvePathToFile: makeResolvePathToFile(projectRoot, ownerIndex.ownerOf) });
+        const resolver = makeResolver({ ownerIndex, symbolTable, resolvePathToFile: makeResolvePathToFile(projectRoot, ownerIndex.ownerOf, undefined, { files }) });
         const edges = [];
         for (const f of doc.files) {
           const extractor = extractorForLanguage(f.language);
@@ -190,7 +194,7 @@ export async function caseEdges(doc) {
         }
         return edges;
       } finally {
-        rmSync(projectRoot, { recursive: true, force: true });
+        if (through !== 'view') rmSync(projectRoot, { recursive: true, force: true });
       }
     },
   );
@@ -201,6 +205,9 @@ export async function runCase(id) {
   const doc = loadCaseDoc(id, locateCaseMd(id));
   const edges = await caseEdges(doc);
   const edgeKey = (e) => `${e.fromFile}:${e.line}->${e.owner}`;
+  // The same case through a listed view of its own files, over a project root that is not there, gives the same edges: no resolver reads past the view.
+  const viewEdges = await caseEdges(doc, 'view');
+  expect(viewEdges.map(edgeKey).sort(), `case ${id}: the edges through a listed view differ from those on disk`).toEqual(edges.map(edgeKey).sort());
   const actual = new Set(edges.map(edgeKey));
   const expected = new Set(doc.expectEdges.map(edgeKey));
   // One dependency, one report: the same file:line -> owner is never emitted twice.

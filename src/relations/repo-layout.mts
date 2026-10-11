@@ -1,7 +1,8 @@
 import path from 'node:path';
-import { readdirSync, readFileSync } from 'node:fs';
 import { parseCompileCommands, type CompileDb, type IncludeRoots } from './extractors/include-resolve.mjs';
 import { parseComposerAutoload, type ComposerAutoload } from './extractors/php-resolve.mjs';
+import { joinRel, type FileSource } from './file-view.mjs';
+import { reportUnreadable, strictJsonFailure, type DiagnosticSink } from './diagnostics.mjs';
 
 /**
  * Repository-wide build-layout facts the C/C++ and PHP path resolvers need beyond the
@@ -15,8 +16,7 @@ import { parseComposerAutoload, type ComposerAutoload } from './extractors/php-r
  * map), directories the caller excludes, and anything deeper than {@link MAX_DEPTH}; it stops
  * listing after {@link MAX_DIRS} directories so a pathological tree cannot stall a check.
  *
- * NOTE: like the other makeXResolveDeps factories this is pure filesystem access; it reads
- * and lists files, it does not parse source.
+ * NOTE: like the other makeXResolveDeps factories this reads and lists files through the `files` source (the disk or a caller's view); it does not parse source. `projectRoot` is only the base the compilation database's absolute paths are made relative to.
  */
 const MAX_DEPTH = 12;
 const MAX_DIRS = 50_000;
@@ -36,7 +36,9 @@ export interface RepoLayout {
 
 export function makeRepoLayout(
   projectRoot: string,
+  files: FileSource,
   isExcluded?: (repoRelPosix: string) => boolean,
+  report?: DiagnosticSink,
 ): RepoLayout {
   let layout: Layout | undefined;
   const scan = (): Layout => {
@@ -47,20 +49,16 @@ export function makeRepoLayout(
     while (queue.length > 0 && visited < MAX_DIRS) {
       const { dir, depth } = queue.shift()!;
       visited++;
-      let entries: import('node:fs').Dirent[];
-      try {
-        entries = readdirSync(path.join(projectRoot, dir), { withFileTypes: true });
-      } catch {
-        continue;
-      }
+      const entries = files.list(dir);
+      if (entries === undefined) continue;
       for (const e of entries) {
-        const rel = dir === '' ? e.name : `${dir}/${e.name}`;
-        if (e.isDirectory()) {
+        const rel = joinRel(dir, e.name);
+        if (e.kind === 'dir') {
           if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
           if (isExcluded?.(rel) === true) continue;
           if (e.name === 'include') found.includeDirs.push(rel);
           if (depth + 1 <= MAX_DEPTH) queue.push({ dir: rel, depth: depth + 1 });
-        } else if (e.isFile() && e.name === 'composer.json') {
+        } else if (e.kind === 'file' && e.name === 'composer.json') {
           if (isExcluded?.(rel) === true) continue;
           found.composerFiles.push(rel);
         }
@@ -78,12 +76,10 @@ export function makeRepoLayout(
     db = null;
     for (const dir of ['', 'build']) {
       const abs = path.join(projectRoot, dir, 'compile_commands.json');
-      let text: string;
-      try {
-        text = readFileSync(abs, 'utf-8');
-      } catch {
-        continue;
-      }
+      const text = files.read(joinRel(dir, 'compile_commands.json'));
+      if (text === undefined) continue;
+      const failure = report === undefined ? undefined : strictJsonFailure(text);
+      if (report !== undefined && failure !== undefined) reportUnreadable(report, joinRel(dir, 'compile_commands.json'), failure, 'its include roots are not used');
       const parsed = parseCompileCommands(text, path.dirname(abs), path.resolve(projectRoot));
       if (parsed !== undefined) {
         db = parsed;
@@ -105,12 +101,10 @@ export function makeRepoLayout(
     if (maps !== undefined) return maps;
     maps = [];
     for (const file of scan().composerFiles) {
-      let text: string;
-      try {
-        text = readFileSync(path.join(projectRoot, file), 'utf-8');
-      } catch {
-        continue;
-      }
+      const text = files.read(file);
+      if (text === undefined) continue;
+      const failure = report === undefined ? undefined : strictJsonFailure(text);
+      if (report !== undefined && failure !== undefined) reportUnreadable(report, file, failure, 'its autoload maps are not used');
       const dir = path.posix.dirname(file);
       maps.push(parseComposerAutoload(text, dir === '.' ? '' : dir));
     }
