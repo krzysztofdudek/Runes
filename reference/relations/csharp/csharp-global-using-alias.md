@@ -33,6 +33,7 @@ public class Customer { }
 
 ## Expect
 
+- src/g/Globals.cs:1 -> node:m  # the global using directive itself names MyApp.Models.Customer (D3 b, 185)
 - src/c/Use.cs:1 -> node:m      # bare `Cust` resolves via the project-wide global-using alias to MyApp.Models.Customer (node m)
 
 ## Why

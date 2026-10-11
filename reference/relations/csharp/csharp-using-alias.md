@@ -13,7 +13,10 @@ that file, to that exact type. The alias expansion is the NEAREST candidate for
 the short name `Alias`, so a reference to `Alias` (here `new Gw()`) is a real
 dependency on the node declaring `Namespace.Type` — never on a coincidental
 top-level type sharing the bare alias spelling. No alias chaining: the right-hand
-side is fully qualified against the global namespace, not the enclosing one.
+side is resolved in the namespace body that holds the directive (C# spec §14.6.2), with
+no other using directive or alias taking part. Here the directive sits above the
+namespace, in the compilation unit, so its target is read from the global namespace;
+the case csharp-using-alias-target-in-namespace-edge covers a directive inside a namespace.
 
 ## Files
 
@@ -30,6 +33,7 @@ public class IGateway { }
 
 ## Expect
 
+- src/c/Use.cs:1 -> node:g      # the directive itself names Foo.Bar.IGateway (D3 b, 185): an edge whether or not the alias is used
 - src/c/Use.cs:3 -> node:g      # `new Gw()` binds the alias target Foo.Bar.IGateway (node g)
 
 ## Why

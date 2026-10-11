@@ -596,6 +596,8 @@ export type CsharpRefDescriptor =
   /** A `using static N.C;` / `global using static N.C;` TARGET edge — the concrete type whose
    *  static members are imported. Resolves verbatim-from-root as its sole candidate (A8/A11). */
   | { kind: 'static'; fqn: string; line: number }
+  /** The TARGET of a using alias directive (`using F = A.B.Foo;`), a dependency on that type whether or not the alias is used (185). C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (C# spec §14.6.2, §14.5.2 for a global alias), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
+  | { kind: 'target'; fqn: string; line: number; enclosingNs: string[] }
   /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
   | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; rooted?: boolean; alias?: string }
   /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
@@ -1000,7 +1002,21 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   // and the tuple element LABELS (they are not types).
   walk(file.tree.rootNode, (node) => {
     if (node.type !== 'using_directive') return undefined;
-    if (node.childForFieldName('name') === null) return false; // not an alias directive
+    const aliasName = node.childForFieldName('name');
+    if (aliasName === null) return false; // not an alias directive
+    // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.6.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target is rooted. A generic target (`using L = A.Repo<Order>;`) leaves its type arguments to the walk below and names no edge of its own.
+    const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
+    const targetLine = node.startPosition.row + 1;
+    if (target !== undefined && target !== null && !target.text.includes('<')) {
+      if (target.type === 'identifier' || target.type === 'qualified_name') {
+        // A directive above a file-scoped `namespace X;` sits in the compilation unit, below it in the namespace body.
+        const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+        const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
+        if (!namesOwnProgram(target.text)) refs.push({ kind: 'target', fqn: target.text, line: targetLine, enclosingNs: enclosingNamespaceChain(below ? fileNs : '', node) });
+      } else if (target.type === 'alias_qualified_name' && target.childForFieldName('alias')!.text === 'global') {
+        pushRef(target.childForFieldName('name')!.text, node, targetLine, true);
+      }
+    }
     // Find every type_argument_list anywhere in the RHS and emit each argument's named types
     // (covers `List<Customer>`, and a generic nested inside a tuple/array element).
     walk(node, (n) => {
@@ -1524,6 +1540,14 @@ export function assembleCsharpCandidates(
         // `using static N.C;` TARGET edge (A8/A11): resolve verbatim from root, sole candidate.
         out.push({ candidates: [{ kind: 'symbol', symbolKey: r.fqn }], kind: 'import', line: r.line });
         break;
+      case 'target': {
+        // A using alias target (185): the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+        const keys = dedupKeys([...r.enclosingNs.map((ns) => `${ns}.${r.fqn}`), r.fqn]);
+        const candidates: TargetHint[] = keys.map((symbolKey) => ({ kind: 'symbol', symbolKey }));
+        if (r.fqn === 'Program') candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
+        out.push({ candidates, kind: 'import', line: r.line });
+        break;
+      }
       case 'plain':
         pushRef(r.ref, r.enclosingNs, r.line, r.rooted);
         break;
