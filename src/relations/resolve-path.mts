@@ -9,11 +9,16 @@ import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
 import { diskFileView, joinRel, type FileSource, type FileView } from './file-view.mjs';
+import { makeDiagnosticSink, reportUnreadable, strictJsonFailure, type DiagnosticSink, type RelationDiagnostic } from './diagnostics.mjs';
 
 /** What `makeResolvePathToFile` takes besides the root and the owner and exclusion lookups. Every field is optional; a minor release may add more. */
 export interface ResolvePathOptions {
   /** The files resolution sees (see `FileView`). Without it every resolver reads the disk under the project root. */
   files?: FileView;
+  /**
+   * Told, synchronously and at most once per `(code, file)` for this resolver, when resolution consults a configuration file it cannot read: a `tsconfig*.json`, `jsconfig*.json`, `package.json`, `composer.json` or `compile_commands.json` that does not parse, or a `pnpm-workspace.yaml` whose `packages:` list it cannot read. A file nothing consulted stays quiet, and a file with a byte order mark that a reader skips never reports. Resolution itself is unchanged: an unreadable file still governs nothing, so the diagnostic only makes that silence visible. The Cargo, `go.mod` and project-file readers take their lines as they find them and never fail to parse, so they report nothing.
+   */
+  onDiagnostic?: (diagnostic: RelationDiagnostic) => void;
 }
 
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
@@ -55,15 +60,16 @@ export function makeResolvePathToFile(
   const exists = (repoRelPosix: string): boolean => probe.exists(repoRelPosix);
   const goDeps = makeGoResolveDeps(plain, probe, ownerOf, isExcluded);
   const javaDeps = makeJavaResolveDeps(probe, exists, isExcluded);
-  const layout = makeRepoLayout(projectRoot, plain, isExcluded);
-  const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps);
+  const report = makeDiagnosticSink(options?.onDiagnostic);
+  const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
+  const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
   const rustDeps = makeRustResolveDeps(plain, exists);
   // One Python resolver for the whole pass: it memoizes its probes and indexes the discovered roots by the names they hold (issue 013).
   const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(plain, isExcluded), (repoRelPosix) => plain.list(repoRelPosix)?.map((e) => e.name));
   // TS/JS: a candidate is a FILE (a directory named like `./x.config` is never a module), and
   // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
   const isFile = (repoRelPosix: string): boolean => probe.isFile(repoRelPosix);
-  const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain);
+  const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
   return (specifier, fromFile, language, isPackage = false) => {
     if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
       return resolveTsPath(specifier, fromFile, isFile, tsDeps);
@@ -973,6 +979,7 @@ function makePhpResolveDeps(
   exists: (repoRelPosix: string) => boolean,
   isExcluded: ((repoRelPosix: string) => boolean) | undefined,
   allMaps: () => readonly ComposerAutoload[],
+  report?: DiagnosticSink,
 ): PhpResolveDeps {
   // Cache: composer.json directory (repo-rel POSIX, '' = root) → parsed autoload maps.
   const byDir = new Map<string, ComposerAutoload | undefined>();
@@ -980,8 +987,12 @@ function makePhpResolveDeps(
 
   /** Parse the autoload maps from a composer.json at the given repo-rel dir, or empty. */
   function readAutoload(repoRelDir: string): ComposerAutoload {
-    const text = plain.read(joinRel(repoRelDir, 'composer.json'));
-    return text === undefined ? EMPTY : parseComposerAutoload(text, repoRelDir);
+    const file = joinRel(repoRelDir, 'composer.json');
+    const text = plain.read(file);
+    if (text === undefined) return EMPTY;
+    const failure = report === undefined ? undefined : strictJsonFailure(text);
+    if (report !== undefined && failure !== undefined) reportUnreadable(report, file, failure, 'its autoload maps are not used');
+    return parseComposerAutoload(text, repoRelDir);
   }
 
   const usable = (a: ComposerAutoload | undefined): a is ComposerAutoload =>

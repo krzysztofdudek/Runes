@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { diskFileView, type FileSource } from '../file-view.mjs';
+import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink } from '../diagnostics.mjs';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -406,7 +407,21 @@ function toPosix(p: string): string {
  * Parse JSON with comments and trailing commas (the tsconfig dialect). A leading UTF-8 byte order mark (Visual Studio saves one) is skipped, as tsc, Node and npm skip it. Returns undefined for anything that is still not JSON afterwards.
  */
 export function parseJsonc(text: string): unknown {
+  return parseJsoncAt(text).value;
+}
+
+/**
+ * {@link parseJsonc} that also says where it failed. The text is stripped of comments and trailing commas before `JSON.parse` reads it, so the position `JSON.parse` names is in the stripped text; every character of the stripped text keeps the offset it came from, and `failure` is the line and column of that offset in the file as written.
+ */
+export function parseJsoncAt(text: string): { value: unknown; failure?: { line: number; column: number } } {
   let out = '';
+  // For each character of `out`, the offset in `text` it came from.
+  const outFrom: number[] = [];
+  const keep = (from: number, to: number): void => {
+    const end = Math.min(to, text.length);
+    out += text.slice(from, end);
+    for (let q = from; q < end; q++) outFrom.push(q);
+  };
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const n = text.length;
   while (i < n) {
@@ -414,7 +429,7 @@ export function parseJsonc(text: string): unknown {
     if (c === '"') {
       let j = i + 1;
       while (j < n && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-      out += text.slice(i, j + 1);
+      keep(i, j + 1);
       i = j + 1;
     } else if (c === '/' && text[i + 1] === '/') {
       while (i < n && text[i] !== '\n') i++;
@@ -422,7 +437,7 @@ export function parseJsonc(text: string): unknown {
       const end = text.indexOf('*/', i + 2);
       i = end === -1 ? n : end + 2;
     } else {
-      out += c;
+      keep(i, i + 1);
       i++;
     }
   }
@@ -430,12 +445,18 @@ export function parseJsonc(text: string): unknown {
   // comment pass above already removed every comment, and a string never contains a raw
   // newline-free `,}` that this could corrupt except inside quotes — re-scan quote-aware.
   let cleaned = '';
+  const cleanedFrom: number[] = [];
+  const kept = (from: number, to: number): void => {
+    const end = Math.min(to, out.length);
+    cleaned += out.slice(from, end);
+    for (let q = from; q < end; q++) cleanedFrom.push(outFrom[q]);
+  };
   for (let k = 0; k < out.length; k++) {
     const c = out[k];
     if (c === '"') {
       let j = k + 1;
       while (j < out.length && out[j] !== '"') j += out[j] === '\\' ? 2 : 1;
-      cleaned += out.slice(k, j + 1);
+      kept(k, j + 1);
       k = j;
       continue;
     }
@@ -444,12 +465,13 @@ export function parseJsonc(text: string): unknown {
       while (j < out.length && /\s/.test(out[j])) j++;
       if (out[j] === '}' || out[j] === ']') continue;
     }
-    cleaned += c;
+    kept(k, k + 1);
   }
   try {
-    return JSON.parse(cleaned) as unknown;
-  } catch {
-    return undefined;
+    return { value: JSON.parse(cleaned) as unknown };
+  } catch (error) {
+    const at = failureOffset(error, cleaned.length);
+    return { value: undefined, failure: lineColumnAt(text, at >= cleaned.length ? text.length : cleanedFrom[at]) };
   }
 }
 
@@ -539,6 +561,26 @@ function expandBraces(glob: string): string[] {
   return [glob];
 }
 
+/** Where the top-level `packages:` key of a pnpm-workspace.yaml holds something {@link pnpmWorkspacePackages} cannot read as a list: a scalar after the key (`packages: apps/*`), a flow list never closed, or an indented line under the key that is no `- item`. undefined when there is no such key or it reads as a list (an empty one included). The reading is unchanged by this; it only says that it is a guess. */
+function pnpmPackagesFailure(text: string): { line: number; column: number } | undefined {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+  const at = lines.findIndex((line) => /^packages\s*:/.test(line));
+  if (at === -1) return undefined;
+  const inline = lines[at].replace(/^packages\s*:/, '').replace(/(^|\s)#.*$/, '').trim();
+  const column = lines[at].indexOf(':') + 2;
+  if (inline.startsWith('[')) {
+    let joined = inline;
+    for (let k = at + 1; !joined.includes(']') && k < lines.length; k++) joined += ` ${lines[k]}`;
+    return joined.includes(']') ? undefined : { line: at + 1, column };
+  }
+  if (inline !== '') return { line: at + 1, column };
+  for (let k = at + 1; k < lines.length; k++) {
+    if (/^\s*(#.*)?$/.test(lines[k])) continue;
+    return /^\s*-\s+/.test(lines[k]) || !/^\s/.test(lines[k]) ? undefined : { line: k + 1, column: 1 };
+  }
+  return undefined;
+}
+
 /** The `packages` globs of a pnpm-workspace.yaml: a block list (`- 'apps/*'`) or a flow list (`['apps/*']`) under a top-level `packages:` key. undefined when the file has no such key (a file holding only settings such as catalogs); pnpm then takes the root alone, and the resolver counts every package under the file's directory, as it does where no workspace is declared. */
 function pnpmWorkspacePackages(text: string): string[] | undefined {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
@@ -571,18 +613,21 @@ export function makeTsResolveDeps(
   projectRoot: string,
   isExcluded?: (repoRelPosix: string) => boolean,
   source?: FileSource,
+  report?: DiagnosticSink,
 ): TsResolveDeps {
   const files = source ?? diskFileView(projectRoot, false);
   const jsonCache = new Map<string, unknown>();
   const readJson = (repoRel: string): unknown => {
     if (jsonCache.has(repoRel)) return jsonCache.get(repoRel);
     let parsed: unknown;
+    let failure: { line: number; column: number } | undefined;
     try {
       const text = files.read(repoRel);
-      parsed = text === undefined ? undefined : parseJsonc(text);
+      if (text !== undefined) ({ value: parsed, failure } = parseJsoncAt(text));
     } catch {
       parsed = undefined;
     }
+    if (failure !== undefined && report !== undefined) reportUnreadable(report, repoRel, failure, 'the aliases and workspace packages it configures are not resolved');
     jsonCache.set(repoRel, parsed);
     return parsed;
   };
@@ -658,6 +703,8 @@ export function makeTsResolveDeps(
     if (isFile(pnpm)) {
       // unreadable: read as a file with no packages list
       const text = files.read(pnpm) ?? '';
+      const unreadable = report === undefined ? undefined : pnpmPackagesFailure(text);
+      if (report !== undefined && unreadable !== undefined) reportUnreadable(report, pnpm, unreadable, 'its packages list is not read as written');
       globs = pnpmWorkspacePackages(text) ?? ['**'];
     } else {
       const field = packageAt(dir)?.manifest.workspaces;

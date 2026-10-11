@@ -2,6 +2,7 @@ import path from 'node:path';
 import { parseCompileCommands } from './extractors/include-resolve.mjs';
 import { parseComposerAutoload } from './extractors/php-resolve.mjs';
 import { joinRel } from './file-view.mjs';
+import { reportUnreadable, strictJsonFailure } from './diagnostics.mjs';
 /**
  * Repository-wide build-layout facts the C/C++ and PHP path resolvers need beyond the
  * importing file's own ancestors: every directory named `include` (the C/C++ probe roots),
@@ -19,7 +20,7 @@ import { joinRel } from './file-view.mjs';
 const MAX_DEPTH = 12;
 const MAX_DIRS = 50_000;
 const SKIP_DIRS = new Set(['node_modules', 'vendor']);
-export function makeRepoLayout(projectRoot, files, isExcluded) {
+export function makeRepoLayout(projectRoot, files, isExcluded, report) {
     let layout;
     const scan = () => {
         if (layout !== undefined)
@@ -67,6 +68,9 @@ export function makeRepoLayout(projectRoot, files, isExcluded) {
             const text = files.read(joinRel(dir, 'compile_commands.json'));
             if (text === undefined)
                 continue;
+            const failure = report === undefined ? undefined : strictJsonFailure(text);
+            if (report !== undefined && failure !== undefined)
+                reportUnreadable(report, joinRel(dir, 'compile_commands.json'), failure, 'its include roots are not used');
             const parsed = parseCompileCommands(text, path.dirname(abs), path.resolve(projectRoot));
             if (parsed !== undefined) {
                 db = parsed;
@@ -90,6 +94,9 @@ export function makeRepoLayout(projectRoot, files, isExcluded) {
             const text = files.read(file);
             if (text === undefined)
                 continue;
+            const failure = report === undefined ? undefined : strictJsonFailure(text);
+            if (report !== undefined && failure !== undefined)
+                reportUnreadable(report, file, failure, 'its autoload maps are not used');
             const dir = path.posix.dirname(file);
             maps.push(parseComposerAutoload(text, dir === '.' ? '' : dir));
         }

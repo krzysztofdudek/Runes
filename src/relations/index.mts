@@ -17,4 +17,5 @@ export { buildCsharpProjectScopes, type CsharpGlobalFacts, type CsharpProjectSco
 export { SymbolTable } from './symbol-table.mjs';
 export { makeResolver, resolveDetectedEdges, type OwnerLookup, type ResolvedTarget, type ResolverDeps, type Classification, type TargetResolver } from './resolver.mjs';
 export { makeResolvePathToFile, type ResolvePathOptions } from './resolve-path.mjs';
+export type { RelationDiagnostic } from './diagnostics.mjs';
 export { listedFileView, type FileView } from './file-view.mjs';
