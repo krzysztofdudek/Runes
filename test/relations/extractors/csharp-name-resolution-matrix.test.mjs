@@ -258,3 +258,10 @@ describe('MATRIX — a tuple type with named elements as a type argument', () =>
   it('csharp-nested-tuple-type-argument-edge', () => runCase('csharp-nested-tuple-type-argument-edge'));
   it('csharp-nested-tuple-type-argument-silence', () => runCase('csharp-nested-tuple-type-argument-silence'));
 });
+
+describe('MATRIX — C# forms of issue 177 (a tuple, comparisons, type-parameter receivers)', () => {
+  it('csharp-tuple-unnamed-qualified-element-edge', () => runCase('csharp-tuple-unnamed-qualified-element-edge'));
+  it('csharp-tuple-unnamed-global-generic-element-edge', () => runCase('csharp-tuple-unnamed-global-generic-element-edge'));
+  it('csharp-comparison-pair-qualified-operand-edge', () => runCase('csharp-comparison-pair-qualified-operand-edge'));
+  it('csharp-type-parameter-sibling-receiver-edge', () => runCase('csharp-type-parameter-sibling-receiver-edge'));
+});
