@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { diskFileView, type FileSource, type FileView } from '../file-view.mjs';
 
 /**
  * C# PROJECT SCOPING of global usings (M6/M7).
@@ -140,32 +140,26 @@ function applyUsingItems(xml: string, items: UsingItem[]): void {
 
 /**
  * Build the per-file project scope for every C# file. `projectRoot` is the absolute repository
- * root the repo-relative `files[].path` values are relative to. Deterministic: directory listings
+ * root the repo-relative `files[].path` values are relative to. `options.files`, when given, is the view of the repository the project files are found and read through (see `FileView`): a `.csproj` or `Directory.Build.props` the view does not list does not exist; without it the disk under `projectRoot` is read. Deterministic: directory listings
  * are sorted, projects are processed in sorted order, and each returned list is in a stable order.
  */
 export function buildCsharpProjectScopes(
   projectRoot: string,
   files: readonly CsharpGlobalFacts[],
+  options?: { files?: FileView },
 ): Map<string, CsharpProjectScope> {
+  const source: FileSource = options?.files ?? diskFileView(projectRoot, false);
   const listings = new Map<string, string[]>();
   const list = (dir: string): string[] => {
     const hit = listings.get(dir);
     if (hit !== undefined) return hit;
-    let names: string[];
-    try {
-      names = readdirSync(path.join(projectRoot, dir)).sort();
-    } catch {
-      names = [];
-    }
+    const names = (source.list(dir) ?? []).map((e) => e.name).sort();
     listings.set(dir, names);
     return names;
   };
   const read = (rel: string): string => {
-    try {
-      return stripComments(readFileSync(path.join(projectRoot, rel), 'utf-8'));
-    } catch {
-      return '';
-    }
+    const text = source.read(rel);
+    return text === undefined ? '' : stripComments(text);
   };
   /** `dir` and its ancestors up to the root ('.'), nearest first. */
   const ancestors = (dir: string): string[] => {

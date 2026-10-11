@@ -1,3 +1,4 @@
+import { type FileView } from '../file-view.mjs';
 /**
  * C# PROJECT SCOPING of global usings (M6/M7).
  *
@@ -50,7 +51,9 @@ export interface CsharpProjectScope {
 }
 /**
  * Build the per-file project scope for every C# file. `projectRoot` is the absolute repository
- * root the repo-relative `files[].path` values are relative to. Deterministic: directory listings
+ * root the repo-relative `files[].path` values are relative to. `options.files`, when given, is the view of the repository the project files are found and read through (see `FileView`): a `.csproj` or `Directory.Build.props` the view does not list does not exist; without it the disk under `projectRoot` is read. Deterministic: directory listings
  * are sorted, projects are processed in sorted order, and each returned list is in a stable order.
  */
-export declare function buildCsharpProjectScopes(projectRoot: string, files: readonly CsharpGlobalFacts[]): Map<string, CsharpProjectScope>;
+export declare function buildCsharpProjectScopes(projectRoot: string, files: readonly CsharpGlobalFacts[], options?: {
+    files?: FileView;
+}): Map<string, CsharpProjectScope>;

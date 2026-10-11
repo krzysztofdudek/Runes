@@ -1,3 +1,4 @@
+import { type FileSource } from '../file-view.mjs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
@@ -76,6 +77,6 @@ export interface PackageManifest {
  */
 export declare function parseJsonc(text: string): unknown;
 /**
- * Build the disk-backed {@link TsResolveDeps} for a project root. Each tsconfig, package.json and directory lookup is cached for the life of the returned object, which one relation pass owns. The in-repo package index is built on the first bare specifier that reaches package lookup: one walk of the repository that skips `node_modules` (where a workspace package's own symlink lives), dot-directories and any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never read: it acts as though it does not exist.
+ * Build the {@link TsResolveDeps} for the files of one source: `source` when given (a caller's view), else the disk under the project root. Each tsconfig, package.json and directory lookup is cached for the life of the returned object, which one relation pass owns. The in-repo package index is built on the first bare specifier that reaches package lookup: one walk of the repository that skips `node_modules` (where a workspace package's own symlink lives), dot-directories and any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never read: it acts as though it does not exist.
  */
-export declare function makeTsResolveDeps(projectRoot: string, isExcluded?: (repoRelPosix: string) => boolean): TsResolveDeps;
+export declare function makeTsResolveDeps(projectRoot: string, isExcluded?: (repoRelPosix: string) => boolean, source?: FileSource): TsResolveDeps;
