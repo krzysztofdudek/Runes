@@ -120,7 +120,7 @@ export function parseCompileCommands(
 ): CompileDb | undefined {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   } catch {
     return undefined;
   }

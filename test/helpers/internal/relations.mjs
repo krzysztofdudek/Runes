@@ -14,6 +14,7 @@ export * from '../../../dist/relations/extractors/typescript-resolve.mjs';
 export * from '../../../dist/relations/resolver.mjs';
 export * from '../../../dist/relations/resolve-path.mjs';
 export * from '../../../dist/relations/exact-case.mjs';
+export * from '../../../dist/relations/diagnostics.mjs';
 export * from '../../../dist/relations/repo-layout.mjs';
 export * from '../../../dist/relations/extractors/typescript.mjs';
 export * from '../../../dist/relations/extractors/python.mjs';

@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
 import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
@@ -9,10 +8,21 @@ import { resolveRustPath, type RustResolveDeps, type RustCrateRoot } from './ext
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
-import { makeExactCaseCheck } from './exact-case.mjs';
+import { diskFileView, joinRel, type FileSource, type FileView } from './file-view.mjs';
+import { makeDiagnosticSink, reportUnreadable, strictJsonFailure, type DiagnosticSink, type RelationDiagnostic } from './diagnostics.mjs';
+
+/** What `makeResolvePathToFile` takes besides the root and the owner and exclusion lookups. Every field is optional; a minor release may add more. */
+export interface ResolvePathOptions {
+  /** The files resolution sees (see `FileView`). Without it every resolver reads the disk under the project root. */
+  files?: FileView;
+  /**
+   * Told, synchronously and at most once per `(code, file)` for this resolver, when resolution consults a configuration file it cannot read: a `tsconfig*.json`, `jsconfig*.json`, `package.json`, `composer.json` or `compile_commands.json` that does not parse, or a `pnpm-workspace.yaml` whose `packages:` list it cannot read. A file nothing consulted stays quiet, and a file with a byte order mark that a reader skips never reports. Resolution itself is unchanged: an unreadable file still governs nothing, so the diagnostic only makes that silence visible. The Cargo, `go.mod` and project-file readers take their lines as they find them and never fail to parse, so they report nothing.
+   */
+  onDiagnostic?: (diagnostic: RelationDiagnostic) => void;
+}
 
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
- *  Checks existence against the project's files on disk. Symbol-resolved languages (and
+ *  Checks existence against the project's files: the disk under `projectRoot`, or, when `options.files` is given, only the files that view holds (every read of every resolver goes through it, so build output, a generated config or an installed package that the view does not list cannot decide where an import lands). Symbol-resolved languages (and
  *  not-yet-implemented ones) return undefined here — they resolve via the SymbolTable.
  *
  *  `ownerOf` and `isExcluded`, when supplied, feed every resolver below that can face
@@ -42,33 +52,24 @@ export function makeResolvePathToFile(
   projectRoot: string,
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
+  options?: ResolvePathOptions,
 ): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined {
-  // A candidate exists only under the name its directory lists: on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs (issue 482).
-  const exactCase = makeExactCaseCheck(projectRoot);
-  const exists = (repoRelPosix: string): boolean => existsSync(path.resolve(projectRoot, repoRelPosix)) && exactCase(repoRelPosix);
-  const goDeps = makeGoResolveDeps(projectRoot, ownerOf, isExcluded, exactCase);
-  const javaDeps = makeJavaResolveDeps(projectRoot, exists, isExcluded, exactCase);
-  const layout = makeRepoLayout(projectRoot, isExcluded);
-  const phpDeps = makePhpResolveDeps(projectRoot, exists, isExcluded, layout.composerMaps);
-  const rustDeps = makeRustResolveDeps(projectRoot, exists);
+  // Every read goes through one of two sources, and with a view given they are the same one. On the disk they differ in a single manner: a candidate probe exists only under the name its directory lists (on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs, issue 482), while a configuration read or a repository walk takes the file system's own rule.
+  const probe: FileSource = options?.files ?? diskFileView(projectRoot, true);
+  const plain: FileSource = options?.files ?? diskFileView(projectRoot, false);
+  const exists = (repoRelPosix: string): boolean => probe.exists(repoRelPosix);
+  const goDeps = makeGoResolveDeps(plain, probe, ownerOf, isExcluded);
+  const javaDeps = makeJavaResolveDeps(probe, exists, isExcluded);
+  const report = makeDiagnosticSink(options?.onDiagnostic);
+  const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
+  const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
+  const rustDeps = makeRustResolveDeps(plain, exists);
   // One Python resolver for the whole pass: it memoizes its probes and indexes the discovered roots by the names they hold (issue 013).
-  const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(projectRoot, isExcluded), (repoRelPosix) => {
-    try {
-      return readdirSync(path.join(projectRoot, repoRelPosix));
-    } catch {
-      return undefined;
-    }
-  });
+  const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(plain, isExcluded), (repoRelPosix) => plain.list(repoRelPosix)?.map((e) => e.name));
   // TS/JS: a candidate is a FILE (a directory named like `./x.config` is never a module), and
   // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
-  const isFile = (repoRelPosix: string): boolean => {
-    try {
-      return statSync(path.resolve(projectRoot, repoRelPosix)).isFile() && exactCase(repoRelPosix);
-    } catch {
-      return false;
-    }
-  };
-  const tsDeps = makeTsResolveDeps(projectRoot, isExcluded);
+  const isFile = (repoRelPosix: string): boolean => probe.isFile(repoRelPosix);
+  const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
   return (specifier, fromFile, language, isPackage = false) => {
     if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
       return resolveTsPath(specifier, fromFile, isFile, tsDeps);
@@ -164,7 +165,7 @@ export function makeResolvePathToFile(
  * source into a tree.
  */
 function makeRustResolveDeps(
-  projectRoot: string,
+  plain: FileSource,
   exists: (repoRelPosix: string) => boolean,
 ): RustResolveDeps {
   // Cache: directory (repo-rel POSIX, '' = root) → the Cargo.toml read there (null = none).
@@ -176,12 +177,7 @@ function makeRustResolveDeps(
 
   function manifestAt(dir: string): CargoManifest | undefined {
     if (!manifestByDir.has(dir)) {
-      let text: string | undefined;
-      try {
-        text = readFileSync(path.join(projectRoot, dir, 'Cargo.toml'), 'utf-8');
-      } catch {
-        text = undefined;
-      }
+      const text = plain.read(joinRel(dir, 'Cargo.toml'));
       manifestByDir.set(dir, text === undefined ? null : parseCargoManifest(text));
     }
     return manifestByDir.get(dir) ?? undefined;
@@ -199,7 +195,7 @@ function makeRustResolveDeps(
         break;
       }
       visited.push(cur);
-      if (existsSync(path.join(projectRoot, cur, 'Cargo.toml'))) {
+      if (plain.exists(joinRel(cur, 'Cargo.toml'))) {
         found = cur;
         break;
       }
@@ -290,11 +286,8 @@ function makeRustResolveDeps(
   function rootDeclares(rootFile: string, name: string): boolean {
     let text = rootTextByFile.get(rootFile);
     if (text === undefined) {
-      try {
-        text = stripRustComments(readFileSync(path.join(projectRoot, rootFile), 'utf-8'));
-      } catch {
-        text = '';
-      }
+      const raw = plain.read(rootFile);
+      text = raw === undefined ? '' : stripRustComments(raw);
       rootTextByFile.set(rootFile, text);
     }
     return rustFileDeclares(text, name);
@@ -715,40 +708,30 @@ const PYTHON_ROOT_SCAN_SKIP = new Set(['node_modules', '__pycache__', 'site-pack
  * checking for manifests is fine there, it parses nothing.
  */
 function makePythonProjectRoots(
-  projectRoot: string,
+  plain: FileSource,
   isExcluded?: (repoRelPosix: string) => boolean,
 ): () => readonly string[] {
   let roots: string[] | undefined;
-  const isDir = (repoRel: string): boolean => {
-    try {
-      return statSync(path.join(projectRoot, repoRel)).isDirectory();
-    } catch {
-      return false;
-    }
-  };
+  const isDir = (repoRel: string): boolean => plain.isDirectory(repoRel);
   return () => {
     if (roots !== undefined) return roots;
     const found: string[] = [];
     const stack: string[] = [''];
     while (stack.length > 0) {
       const dir = stack.pop()!;
-      let entries: import('node:fs').Dirent[];
-      try {
-        entries = readdirSync(path.join(projectRoot, dir), { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      if (entries.some((e) => e.isFile() && e.name === 'pyvenv.cfg')) continue; // a virtual environment
-      const rel = (name: string): string => (dir === '' ? name : `${dir}/${name}`);
+      const entries = plain.list(dir);
+      if (entries === undefined) continue;
+      if (entries.some((e) => e.kind === 'file' && e.name === 'pyvenv.cfg')) continue; // a virtual environment
+      const rel = (name: string): string => joinRel(dir, name);
       const isProject = entries.some(
-        (e) => e.isFile() && PYTHON_PROJECT_MANIFESTS.includes(e.name) && !(isExcluded?.(rel(e.name)) ?? false),
+        (e) => e.kind === 'file' && PYTHON_PROJECT_MANIFESTS.includes(e.name) && !(isExcluded?.(rel(e.name)) ?? false),
       );
       if (isProject) {
         const src = rel('src');
         found.push(isDir(src) ? src : dir);
       }
       for (const e of entries) {
-        if (!e.isDirectory() || e.name.startsWith('.') || PYTHON_ROOT_SCAN_SKIP.has(e.name)) continue;
+        if (e.kind !== 'dir' || e.name.startsWith('.') || PYTHON_ROOT_SCAN_SKIP.has(e.name)) continue;
         stack.push(rel(e.name));
       }
     }
@@ -768,24 +751,18 @@ function makePythonProjectRoots(
  * reading go.mod + readdirSync is fine there — it lists/reads files, it does not parse.
  */
 function makeGoResolveDeps(
-  projectRoot: string,
+  plain: FileSource,
+  probe: FileSource,
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
-  exactCase: (repoRelPosix: string) => boolean = () => true,
 ): GoResolveDeps {
   // Cache: go.mod directory (repo-rel POSIX, '' = root) → module path or undefined.
   const moduleByDir = new Map<string, string | undefined>();
 
   /** Read the `module <path>` declaration from a go.mod at the given repo-rel dir, or undefined. */
   function readModulePath(repoRelDir: string): string | undefined {
-    const abs = path.join(projectRoot, repoRelDir, 'go.mod');
-    let text: string;
-    try {
-      text = readFileSync(abs, 'utf-8');
-    } catch {
-      return undefined;
-    }
-    return parseGoModulePath(text);
+    const text = plain.read(joinRel(repoRelDir, 'go.mod'));
+    return text === undefined ? undefined : parseGoModulePath(text);
   }
 
   /** Find the nearest ancestor directory of `fromFile` that contains a go.mod, then
@@ -805,9 +782,7 @@ function makeGoResolveDeps(
         const cached = moduleByDir.get(dir);
         if (cached !== undefined) return { modulePath: cached, moduleDir: dir };
       } else {
-        const mod = existsSync(path.join(projectRoot, dir, 'go.mod'))
-          ? readModulePath(dir)
-          : undefined;
+        const mod = plain.exists(joinRel(dir, 'go.mod')) ? readModulePath(dir) : undefined;
         moduleByDir.set(dir, mod);
         if (mod !== undefined) return { modulePath: mod, moduleDir: dir };
       }
@@ -820,7 +795,7 @@ function makeGoResolveDeps(
   /** The module path of a go.mod directly in `dir`, or undefined (cached with the walk). */
   function moduleAt(dir: string): string | undefined {
     if (!moduleByDir.has(dir)) {
-      moduleByDir.set(dir, existsSync(path.join(projectRoot, dir, 'go.mod')) ? readModulePath(dir) : undefined);
+      moduleByDir.set(dir, plain.exists(joinRel(dir, 'go.mod')) ? readModulePath(dir) : undefined);
     }
     return moduleByDir.get(dir);
   }
@@ -833,15 +808,9 @@ function makeGoResolveDeps(
     const cached = workMembersByDir.get(dir);
     if (cached !== undefined) return cached;
     let members: string[] = [];
-    const abs = path.join(projectRoot, dir, 'go.work');
-    if (existsSync(abs)) {
-      let text: string;
-      try {
-        text = readFileSync(abs, 'utf-8');
-      } catch {
-        text = '';
-      }
-      for (const use of parseGoWorkUses(text)) {
+    const work = joinRel(dir, 'go.work');
+    if (plain.exists(work)) {
+      for (const use of parseGoWorkUses(plain.read(work) ?? '')) {
         const joined = path.posix.normalize(dir === '' ? use : path.posix.join(dir, use));
         if (joined === '..' || joined.startsWith('../') || path.posix.isAbsolute(joined)) continue;
         members.push(joined === '.' ? '' : joined);
@@ -877,32 +846,13 @@ function makeGoResolveDeps(
     return out;
   }
 
+  // The package directory exists only under the name its parent lists (issue 482); the probe source holds that rule.
   function dirExists(repoRelDir: string): boolean {
-    const abs = path.resolve(projectRoot, repoRelDir);
-    try {
-      // The package directory exists only under the name its parent lists (issue 482).
-      return statSync(abs).isDirectory() && exactCase(repoRelDir);
-    } catch {
-      return false;
-    }
+    return probe.isDirectory(repoRelDir);
   }
 
   function goFilesIn(repoRelDir: string): string[] {
-    if (!exactCase(repoRelDir)) return [];
-    const abs = path.resolve(projectRoot, repoRelDir);
-    let entries: import('node:fs').Dirent[];
-    try {
-      entries = readdirSync(abs, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    const out: string[] = [];
-    for (const e of entries) {
-      if (e.isFile() && e.name.endsWith('.go')) {
-        out.push(repoRelDir === '' ? e.name : path.posix.join(repoRelDir, e.name));
-      }
-    }
-    return out;
+    return filesNamed(probe, repoRelDir, '.go');
   }
 
   return { modulePathFor, modulesFor, moduleAt, dirExists, goFilesIn, ownerOf, isExcluded };
@@ -998,28 +948,13 @@ export function parseGoWorkUses(text: string): string[] {
  * readdirSync is fine there — it lists files, it does not parse.
  */
 function makeJavaResolveDeps(
-  projectRoot: string,
+  probe: FileSource,
   exists: (repoRelPosix: string) => boolean,
   isExcluded?: (repoRelPosix: string) => boolean,
-  exactCase: (repoRelPosix: string) => boolean = () => true,
 ): JavaResolveDeps {
+  // A package directory listed under another spelling is not the package (issue 482); the probe source holds that rule.
   function javaFilesIn(repoRelDir: string): string[] {
-    // A package directory listed under another spelling is not the package (issue 482).
-    if (!exactCase(repoRelDir)) return [];
-    const abs = path.resolve(projectRoot, repoRelDir);
-    let entries: import('node:fs').Dirent[];
-    try {
-      entries = readdirSync(abs, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    const out: string[] = [];
-    for (const e of entries) {
-      if (e.isFile() && e.name.endsWith('.java')) {
-        out.push(repoRelDir === '' ? e.name : path.posix.join(repoRelDir, e.name));
-      }
-    }
-    return out;
+    return filesNamed(probe, repoRelDir, '.java');
   }
   return { exists, javaFilesIn, isExcluded };
 }
@@ -1040,10 +975,11 @@ function makeJavaResolveDeps(
  * reading composer.json there is fine — it reads a file, it does not parse source.
  */
 function makePhpResolveDeps(
-  projectRoot: string,
+  plain: FileSource,
   exists: (repoRelPosix: string) => boolean,
   isExcluded: ((repoRelPosix: string) => boolean) | undefined,
   allMaps: () => readonly ComposerAutoload[],
+  report?: DiagnosticSink,
 ): PhpResolveDeps {
   // Cache: composer.json directory (repo-rel POSIX, '' = root) → parsed autoload maps.
   const byDir = new Map<string, ComposerAutoload | undefined>();
@@ -1051,13 +987,11 @@ function makePhpResolveDeps(
 
   /** Parse the autoload maps from a composer.json at the given repo-rel dir, or empty. */
   function readAutoload(repoRelDir: string): ComposerAutoload {
-    const abs = path.join(projectRoot, repoRelDir, 'composer.json');
-    let text: string;
-    try {
-      text = readFileSync(abs, 'utf-8');
-    } catch {
-      return EMPTY;
-    }
+    const file = joinRel(repoRelDir, 'composer.json');
+    const text = plain.read(file);
+    if (text === undefined) return EMPTY;
+    const failure = report === undefined ? undefined : strictJsonFailure(text);
+    if (report !== undefined && failure !== undefined) reportUnreadable(report, file, failure, 'its autoload maps are not used');
     return parseComposerAutoload(text, repoRelDir);
   }
 
@@ -1075,7 +1009,7 @@ function makePhpResolveDeps(
       if (byDir.has(dir)) {
         const cached = byDir.get(dir);
         if (usable(cached)) return cached;
-      } else if (existsSync(path.join(projectRoot, dir, 'composer.json'))) {
+      } else if (plain.exists(joinRel(dir, 'composer.json'))) {
         const maps = readAutoload(dir);
         byDir.set(dir, maps);
         if (usable(maps)) return maps;
@@ -1095,6 +1029,15 @@ function makePhpResolveDeps(
     exists,
     isExcluded,
   };
+}
+
+/** The files of the directory `dir` whose names end in `suffix`, as repository-relative paths; none when the directory is not one of the source. */
+function filesNamed(source: FileSource, dir: string, suffix: string): string[] {
+  const out: string[] = [];
+  for (const e of source.list(dir) ?? []) {
+    if (e.kind === 'file' && e.name.endsWith(suffix)) out.push(dir === '' ? e.name : path.posix.join(dir, e.name));
+  }
+  return out;
 }
 
 function toPosix(p: string): string {

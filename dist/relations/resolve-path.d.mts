@@ -1,5 +1,16 @@
+import { type FileView } from './file-view.mjs';
+import { type RelationDiagnostic } from './diagnostics.mjs';
+/** What `makeResolvePathToFile` takes besides the root and the owner and exclusion lookups. Every field is optional; a minor release may add more. */
+export interface ResolvePathOptions {
+    /** The files resolution sees (see `FileView`). Without it every resolver reads the disk under the project root. */
+    files?: FileView;
+    /**
+     * Told, synchronously and at most once per `(code, file)` for this resolver, when resolution consults a configuration file it cannot read: a `tsconfig*.json`, `jsconfig*.json`, `package.json`, `composer.json` or `compile_commands.json` that does not parse, or a `pnpm-workspace.yaml` whose `packages:` list it cannot read. A file nothing consulted stays quiet, and a file with a byte order mark that a reader skips never reports. Resolution itself is unchanged: an unreadable file still governs nothing, so the diagnostic only makes that silence visible. The Cargo, `go.mod` and project-file readers take their lines as they find them and never fail to parse, so they report nothing.
+     */
+    onDiagnostic?: (diagnostic: RelationDiagnostic) => void;
+}
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
- *  Checks existence against the project's files on disk. Symbol-resolved languages (and
+ *  Checks existence against the project's files: the disk under `projectRoot`, or, when `options.files` is given, only the files that view holds (every read of every resolver goes through it, so build output, a generated config or an installed package that the view does not list cannot decide where an import lands). Symbol-resolved languages (and
  *  not-yet-implemented ones) return undefined here — they resolve via the SymbolTable.
  *
  *  `ownerOf` and `isExcluded`, when supplied, feed every resolver below that can face
@@ -25,7 +36,7 @@
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate. */
-export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
+export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the

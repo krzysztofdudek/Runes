@@ -60,7 +60,7 @@ function isProbeable(name) {
 export function parseCompileCommands(text, dbDirAbs, projectRoot) {
     let parsed;
     try {
-        parsed = JSON.parse(text);
+        parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
     }
     catch {
         return undefined;
