@@ -251,7 +251,7 @@ const TYPE_PARAMETER_OWNERS = new Set([
     'extension_declaration',
 ]);
 /**
- * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because every type parameter is a declared name (`collectDeclaredNames`).
+ * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because the receiver reading asks this function too.
  */
 function isTypeParameterInScope(name, node) {
     let child = node;
@@ -397,6 +397,16 @@ function hasTokenChild(directive, token) {
     }
     return false;
 }
+/** The dotted text of a chain of plain identifiers (`Shop.Core.Customer`, a member access or a qualified name), or undefined for any other expression. */
+function dottedName(node) {
+    if (node.type === 'identifier')
+        return node.text;
+    if (node.type !== 'member_access_expression' && node.type !== 'qualified_name')
+        return undefined;
+    const head = dottedName(node.childForFieldName(node.type === 'qualified_name' ? 'qualifier' : 'expression'));
+    const tail = node.childForFieldName('name');
+    return head !== undefined && tail.type === 'identifier' ? `${head}.${tail.text}` : undefined;
+}
 /** Strip a leading `global::` alias qualifier (R12): `global::A.B.Base` → `A.B.Base`, resolved
  *  as a fully-qualified name from the root. A NON-`global` extern/using alias qualifier
  *  (`Lib::A.B`) is left intact — its `::` text never matches a dot-only declaration key, so it
@@ -527,7 +537,6 @@ const NAME_DECLARING_TYPES = new Set([
     'event_declaration',
     'enum_member_declaration',
     'delegate_declaration',
-    'type_parameter',
     'declaration_pattern',
     'declaration_expression',
     'catch_declaration',
@@ -542,8 +551,9 @@ const NAME_DECLARING_TYPES = new Set([
 /**
  * Every name this file DECLARES that is not a namespace: locals, parameters (method, lambda,
  * primary-constructor), fields, properties, events, methods and local functions, enum members,
- * type parameters, pattern/`out var`/deconstruction designations, `foreach`/`catch`/query range
- * variables, and the file's own type names — collected file-wide, not per scope.
+ * pattern/`out var`/deconstruction designations, `foreach`/`catch`/query range variables, and the
+ * file's own type names — collected file-wide, not per scope. A type parameter is not a value: it
+ * is scoped to its own declaration by `isTypeParameterInScope`, never file-wide.
  *
  * WHY FILE-WIDE (the M16 shadow guard): a member access `X.Member` reads as a static access
  * through the TYPE `X` only when no nearer value named `X` is in scope. Deciding real C# scoping
@@ -728,13 +738,17 @@ export function extractCsharpRefs(file) {
                 if (aliasField !== null) {
                     const nameField = typeNode.childForFieldName('name');
                     if (nameField !== null) {
+                        // `S::Gen<int>`: the tail is the generic's base name, and its type arguments are references of their own (188).
+                        const generic = nameField.type === 'generic_name' ? nameField : null;
                         refs.push({
                             kind: 'alias',
                             aliasName: aliasField.text,
-                            tail: stripGlobalQualifier(nameField.text),
+                            tail: stripTypeArguments(generic !== null ? findChild(generic, 'identifier').text : stripGlobalQualifier(nameField.text)),
                             line: typeNode.startPosition.row + 1,
                             enclosingNs: enclosingNamespaceChain(fileNs, typeNode),
                         });
+                        if (generic !== null)
+                            emitTypeArguments(generic);
                     }
                 }
                 return;
@@ -786,21 +800,53 @@ export function extractCsharpRefs(file) {
     function emitQualified(q) {
         const line = q.startPosition.row + 1;
         const rooted = q.text.startsWith('global::');
-        if (!q.text.includes('<')) {
-            pushRef(stripGlobalQualifier(q.text), q, line, rooted);
-            return;
+        const parts = qualifiedNameParts(q);
+        if (parts.alias !== undefined) {
+            // `S::Core.Order` (188): the leftmost `S` is a using alias, rewritten on assembly to the namespace it names; an alias the map does not bind (an extern alias, `Lib::A.B`) is dropped there (R13).
+            refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q) });
         }
-        const { name, generics } = qualifiedNameParts(q);
-        if (name !== undefined)
-            pushRef(name, q, line, rooted);
+        else {
+            pushRef(parts.name, q, line, rooted);
+        }
+        for (const g of parts.generics)
+            emitTypeArguments(g);
+    }
+    /**
+     * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does a chain through a using alias (`S::A.B`: a member access cannot spell one, and the qualified-name form rewrites it on assembly) or any other shape.
+     */
+    function emitMemberAccessType(access) {
+        const segs = [];
+        const generics = [];
+        let rooted = false;
+        const collect = (n) => {
+            switch (n.type) {
+                case 'identifier':
+                    segs.push(n.text);
+                    return true;
+                case 'generic_name':
+                    segs.push(findChild(n, 'identifier').text);
+                    generics.push(n);
+                    return true;
+                case 'member_access_expression':
+                    return collect(n.childForFieldName('expression')) && collect(n.childForFieldName('name'));
+                case 'alias_qualified_name':
+                    rooted = n.childForFieldName('alias').text === 'global';
+                    return rooted && collect(n.childForFieldName('name'));
+                default:
+                    return false;
+            }
+        };
+        if (!collect(access) || (!rooted && isTypeParameterInScope(segs[0], access)))
+            return;
+        pushRef(segs.join('.'), access, access.startPosition.row + 1, rooted);
         for (const g of generics)
             emitTypeArguments(g);
     }
-    /** A generic qualified name's plain dotted name, its type-argument lists stripped (undefined when a qualifier is a using alias, `Lib::A<T>.B`, which can never match a dot-only key, R13), and its generic segments, whose type arguments are references of their own. */
+    /** A qualified name's plain dotted name, its type-argument lists stripped (`Shop.Core.Repository<int>` → `Shop.Core.Repository`, because declaration keys carry no arity), the using alias that leads it (`S::Core.Order` → `S`, with the tail `Core.Order`; a `global::` qualifier is not an alias and is stripped), and its generic segments, whose type arguments are references of their own. */
     function qualifiedNameParts(q) {
         const segs = [];
         const generics = [];
-        let ok = true;
+        let alias;
         const collect = (n) => {
             if (n.type === 'qualified_name') {
                 collect(n.childForFieldName('qualifier'));
@@ -811,19 +857,18 @@ export function extractCsharpRefs(file) {
                 generics.push(n);
             }
             else if (n.type === 'alias_qualified_name') {
-                // `global::A.B<T>` resolves from the root (R12); any other alias qualifier (`Lib::A<T>.B`)
-                // can never match a dot-only key (R13), so the name is not emitted at all.
-                if (n.childForFieldName('alias').text === 'global')
-                    collect(n.childForFieldName('name'));
-                else
-                    ok = false;
+                // `global::A.B<T>` resolves from the root (R12); any other alias qualifier is the using alias the tail follows.
+                const aliasText = n.childForFieldName('alias').text;
+                if (aliasText !== 'global')
+                    alias = aliasText;
+                collect(n.childForFieldName('name'));
             }
             else {
                 segs.push(n.text); // identifier
             }
         };
         collect(q);
-        return { name: ok ? segs.join('.') : undefined, generics };
+        return { name: segs.join('.'), alias, generics };
     }
     /** The first child of the given type, or null. */
     function findChild(node, childType) {
@@ -861,8 +906,26 @@ export function extractCsharpRefs(file) {
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'using_directive')
             return undefined;
-        if (node.childForFieldName('name') === null)
+        const aliasName = node.childForFieldName('name');
+        if (aliasName === null)
             return false; // not an alias directive
+        // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.5.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target (`global::A.B.Foo`, `global::Program`) is rooted, its qualifier stripped as `using static` strips it. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and leaves the type arguments to the walk below.
+        const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
+        const targetLine = node.startPosition.row + 1;
+        if (target !== undefined && target !== null && (target.type === 'identifier' || target.type === 'qualified_name' || target.type === 'alias_qualified_name' || target.type === 'generic_name')) {
+            const parts = qualifiedNameParts(target);
+            if (parts.alias === undefined) {
+                if (target.text.startsWith('global::')) {
+                    pushRef(parts.name, node, targetLine, true);
+                }
+                else if (!namesOwnProgram(parts.name)) {
+                    // A directive above a file-scoped `namespace X;` sits in the compilation unit, below it in the namespace body.
+                    const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+                    const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
+                    refs.push({ kind: 'target', fqn: parts.name, line: targetLine, enclosingNs: enclosingNamespaceChain(below ? fileNs : '', node) });
+                }
+            }
+        }
         // Find every type_argument_list anywhere in the RHS and emit each argument's named types
         // (covers `List<Customer>`, and a generic nested inside a tuple/array element).
         walk(node, (n) => {
@@ -995,11 +1058,11 @@ export function extractCsharpRefs(file) {
             else if (named !== null && named.type === 'qualified_name' && !named.text.includes('<'))
                 emitAttribute(stripGlobalQualifier(named.text), nameField);
             else if (named !== null && named.type === 'qualified_name') {
-                // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) names nothing, as in a type position (R13).
-                const { name, generics } = qualifiedNameParts(named);
-                if (name !== undefined)
-                    emitAttribute(name, nameField);
-                for (const g of generics)
+                // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) is rewritten onto the aliased namespace on assembly, as in a type position (the alias is read from the outer `S::` qualifier above, so `parts.alias` is empty here).
+                const parts = qualifiedNameParts(named);
+                if (parts.alias === undefined)
+                    emitAttribute(parts.name, nameField);
+                for (const g of parts.generics)
                     emitTypeArguments(g);
             }
             else if (named !== null && named.type === 'generic_name') {
@@ -1064,7 +1127,7 @@ export function extractCsharpRefs(file) {
             if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
                 emitTypeNode(expr);
             }
-            else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text))) && !insideNameof(node)) {
+            else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text) && !isTypeParameterInScope(expr.text, expr))) && !insideNameof(node)) {
                 const rooted = rootedName !== null;
                 const chain = [(rootedName ?? expr).text];
                 let cur = node;
@@ -1137,8 +1200,11 @@ export function extractCsharpRefs(file) {
                 for (const e of elements) {
                     if (e.type === 'declaration_expression')
                         emitTypeNode(e.childForFieldName('type'));
-                    else if (e.type === 'identifier')
+                    // An unnamed element beside a named one is a type spelled as the grammar's expression: a bare, generic or `global::` name goes the type way, a dotted one is read as the qualified name it spells (177).
+                    else if (e.type === 'identifier' || e.type === 'generic_name' || e.type === 'alias_qualified_name')
                         emitTypeNode(e);
+                    else if (e.type === 'member_access_expression')
+                        emitMemberAccessType(e);
                 }
                 let generic = node.childForFieldName('left');
                 for (let level = 1; shift !== undefined && level < shift.childForFieldName('operator').type.length; level++) {
@@ -1154,8 +1220,29 @@ export function extractCsharpRefs(file) {
         }
         // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
         if (node.type === 'declaration_expression') {
-            if (!declaresVariable(node))
+            if (!declaresVariable(node)) {
+                // The comparison reading (177): `F(x < Limits.Max, y > z)` is two comparisons, so each type argument that is a member access `Limits.Max` is a receiver of its own, `Limits` being a type unless this file declares it as a value.
+                const type = node.childForFieldName('type');
+                const args = type?.type === 'generic_name' ? findChild(type, 'type_argument_list') : null;
+                for (let i = 0; args !== null && i < args.namedChildCount; i++) {
+                    const arg = args.namedChild(i);
+                    const qualifier = arg.type === 'qualified_name' ? arg.childForFieldName('qualifier') : null;
+                    const chainText = qualifier !== null ? dottedName(qualifier) : undefined;
+                    if (chainText === undefined)
+                        continue;
+                    const head = chainText.split('.')[0];
+                    if (declaredNames.has(head) || isTypeParameterInScope(head, qualifier))
+                        continue;
+                    refs.push({
+                        kind: 'receiver',
+                        chain: chainText.split('.'),
+                        line: arg.startPosition.row + 1,
+                        enclosingNs: enclosingNamespaceChain(fileNs, arg),
+                        rooted: false,
+                    });
+                }
                 return false;
+            }
             emitTypeNode(node.childForFieldName('type'));
             return undefined;
         }
@@ -1362,6 +1449,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // `using static N.C;` TARGET edge (A8/A11): resolve verbatim from root, sole candidate.
                 out.push({ candidates: [{ kind: 'symbol', symbolKey: r.fqn }], kind: 'import', line: r.line });
                 break;
+            case 'target': {
+                // A using alias target (185): the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+                const keys = dedupKeys([...r.enclosingNs.map((ns) => `${ns}.${r.fqn}`), r.fqn]);
+                const candidates = keys.map((symbolKey) => ({ kind: 'symbol', symbolKey }));
+                if (r.fqn === 'Program')
+                    candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
+                out.push({ candidates, kind: 'import', line: r.line });
+                break;
+            }
             case 'plain':
                 pushRef(r.ref, r.enclosingNs, r.line, r.rooted);
                 break;
@@ -1419,7 +1515,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 5,
+    rev: 6,
     declarations,
     uses,
 };
