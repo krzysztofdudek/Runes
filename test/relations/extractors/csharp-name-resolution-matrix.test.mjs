@@ -270,6 +270,8 @@ describe('MATRIX — C# using aliases to a type, with and without use (issue 185
   it('csharp-using-alias-unused-type-edge', () => runCase('csharp-using-alias-unused-type-edge'));
   it('csharp-using-alias-target-in-namespace-edge', () => runCase('csharp-using-alias-target-in-namespace-edge'));
   it('csharp-global-alias-program-unused-edge', () => runCase('csharp-global-alias-program-unused-edge'));
+  it('csharp-using-alias-global-dotted-edge', () => runCase('csharp-using-alias-global-dotted-edge'));
+  it('csharp-using-alias-generic-target-edge', () => runCase('csharp-using-alias-generic-target-edge'));
 });
 
 describe('MATRIX — C# alias-qualified type names (issue 188)', () => {
