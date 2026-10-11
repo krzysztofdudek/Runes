@@ -9,6 +9,7 @@ import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
 import { diskFileView, joinRel } from './file-view.mjs';
+import { makeDiagnosticSink, reportUnreadable, strictJsonFailure } from './diagnostics.mjs';
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
  *  Checks existence against the project's files: the disk under `projectRoot`, or, when `options.files` is given, only the files that view holds (every read of every resolver goes through it, so build output, a generated config or an installed package that the view does not list cannot decide where an import lands). Symbol-resolved languages (and
  *  not-yet-implemented ones) return undefined here — they resolve via the SymbolTable.
@@ -43,15 +44,16 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
     const exists = (repoRelPosix) => probe.exists(repoRelPosix);
     const goDeps = makeGoResolveDeps(plain, probe, ownerOf, isExcluded);
     const javaDeps = makeJavaResolveDeps(probe, exists, isExcluded);
-    const layout = makeRepoLayout(projectRoot, plain, isExcluded);
-    const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps);
+    const report = makeDiagnosticSink(options?.onDiagnostic);
+    const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
+    const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
     const rustDeps = makeRustResolveDeps(plain, exists);
     // One Python resolver for the whole pass: it memoizes its probes and indexes the discovered roots by the names they hold (issue 013).
     const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(plain, isExcluded), (repoRelPosix) => plain.list(repoRelPosix)?.map((e) => e.name));
     // TS/JS: a candidate is a FILE (a directory named like `./x.config` is never a module), and
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => probe.isFile(repoRelPosix);
-    const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain);
+    const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
     return (specifier, fromFile, language, isPackage = false) => {
         if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
             return resolveTsPath(specifier, fromFile, isFile, tsDeps);
@@ -958,14 +960,20 @@ function makeJavaResolveDeps(probe, exists, isExcluded) {
  * NOTE: makeResolvePathToFile's deps are pure filesystem access;
  * reading composer.json there is fine — it reads a file, it does not parse source.
  */
-function makePhpResolveDeps(plain, exists, isExcluded, allMaps) {
+function makePhpResolveDeps(plain, exists, isExcluded, allMaps, report) {
     // Cache: composer.json directory (repo-rel POSIX, '' = root) → parsed autoload maps.
     const byDir = new Map();
     const EMPTY = { psr4: new Map(), psr0: new Map() };
     /** Parse the autoload maps from a composer.json at the given repo-rel dir, or empty. */
     function readAutoload(repoRelDir) {
-        const text = plain.read(joinRel(repoRelDir, 'composer.json'));
-        return text === undefined ? EMPTY : parseComposerAutoload(text, repoRelDir);
+        const file = joinRel(repoRelDir, 'composer.json');
+        const text = plain.read(file);
+        if (text === undefined)
+            return EMPTY;
+        const failure = report === undefined ? undefined : strictJsonFailure(text);
+        if (report !== undefined && failure !== undefined)
+            reportUnreadable(report, file, failure, 'its autoload maps are not used');
+        return parseComposerAutoload(text, repoRelDir);
     }
     const usable = (a) => a !== undefined && (a.psr4.size > 0 || a.psr0.size > 0);
     /** Find the nearest ancestor directory of `fromFile` whose composer.json has a PSR-4 or

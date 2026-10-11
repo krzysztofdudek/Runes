@@ -2,6 +2,7 @@ import path from 'node:path';
 import { parseCompileCommands, type CompileDb, type IncludeRoots } from './extractors/include-resolve.mjs';
 import { parseComposerAutoload, type ComposerAutoload } from './extractors/php-resolve.mjs';
 import { joinRel, type FileSource } from './file-view.mjs';
+import { reportUnreadable, strictJsonFailure, type DiagnosticSink } from './diagnostics.mjs';
 
 /**
  * Repository-wide build-layout facts the C/C++ and PHP path resolvers need beyond the
@@ -37,6 +38,7 @@ export function makeRepoLayout(
   projectRoot: string,
   files: FileSource,
   isExcluded?: (repoRelPosix: string) => boolean,
+  report?: DiagnosticSink,
 ): RepoLayout {
   let layout: Layout | undefined;
   const scan = (): Layout => {
@@ -76,6 +78,8 @@ export function makeRepoLayout(
       const abs = path.join(projectRoot, dir, 'compile_commands.json');
       const text = files.read(joinRel(dir, 'compile_commands.json'));
       if (text === undefined) continue;
+      const failure = report === undefined ? undefined : strictJsonFailure(text);
+      if (report !== undefined && failure !== undefined) reportUnreadable(report, joinRel(dir, 'compile_commands.json'), failure, 'its include roots are not used');
       const parsed = parseCompileCommands(text, path.dirname(abs), path.resolve(projectRoot));
       if (parsed !== undefined) {
         db = parsed;
@@ -99,6 +103,8 @@ export function makeRepoLayout(
     for (const file of scan().composerFiles) {
       const text = files.read(file);
       if (text === undefined) continue;
+      const failure = report === undefined ? undefined : strictJsonFailure(text);
+      if (report !== undefined && failure !== undefined) reportUnreadable(report, file, failure, 'its autoload maps are not used');
       const dir = path.posix.dirname(file);
       maps.push(parseComposerAutoload(text, dir === '.' ? '' : dir));
     }

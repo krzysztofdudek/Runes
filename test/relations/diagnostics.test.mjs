@@ -1,0 +1,170 @@
+// Issue 234: a configuration file that resolution consults and cannot read is reported through `onDiagnostic`, once, at the line and column of the file as written; resolution itself is unchanged.
+import { describe, it, expect, afterEach } from '../helpers/expect.mjs';
+import path from 'node:path';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+import { makeResolvePathToFile, listedFileView } from '@chrisdudek/runes/relations';
+import { parseJsoncAt, lineColumnAt, failureOffset, strictJsonFailure, makeDiagnosticSink } from '../helpers/internal/relations.mjs';
+
+/** A resolver over a listed view of `files`, collecting what it reports. */
+function resolverOver(files) {
+  const diagnostics = [];
+  const view = listedFileView(Object.keys(files), (p) => files[p]);
+  const resolve = makeResolvePathToFile(path.join(tmpdir(), 'diagnostics-absent-root'), undefined, undefined, { files: view, onDiagnostic: (d) => diagnostics.push(d) });
+  return { resolve, diagnostics };
+}
+
+// A comment and a trailing comma before the failure: the position must be the one in this text, not in the stripped text JSON.parse reads.
+const BROKEN_TSCONFIG = '// generated\n{\n  "compilerOptions": {\n    "paths": { "@/*": ["./src/*",] }\n  }\n  "include": ["src"]\n}\n';
+
+describe('config-unreadable', () => {
+  it('reports a tsconfig that does not parse once, however many imports consult it, at its own line', () => {
+    const { resolve, diagnostics } = resolverOver({ 'tsconfig.json': BROKEN_TSCONFIG, 'src/a.ts': '', 'src/x.ts': '' });
+    for (let i = 0; i < 50; i++) expect(resolve(`@/x${i}`, 'src/a.ts', 'typescript')).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].code).toBe('config-unreadable');
+    expect(diagnostics[0].file).toBe('tsconfig.json');
+    expect(diagnostics[0].line).toBe(6);
+    expect(diagnostics[0].column).toBeGreaterThan(0);
+    expect(diagnostics[0].message).toContain('tsconfig.json');
+  });
+
+  it('keeps resolution as it was: the broken file governs nothing, and the same layout with a valid file resolves', () => {
+    const valid = '// generated\n{\n  "compilerOptions": {\n    "paths": { "@/*": ["./src/*",] }\n  },\n  "include": ["src"]\n}\n';
+    const ok = resolverOver({ 'tsconfig.json': valid, 'src/a.ts': '', 'src/x.ts': '' });
+    expect(ok.resolve('@/x', 'src/a.ts', 'typescript')).toBe('src/x.ts');
+    expect(ok.diagnostics).toEqual([]);
+  });
+
+  it('reports nothing for a valid file and nothing for a file with a byte order mark', () => {
+    const bom = resolverOver({ 'tsconfig.json': '﻿// c\n{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }', 'src/a.ts': '', 'src/x.ts': '' });
+    expect(bom.resolve('@/x', 'src/a.ts', 'typescript')).toBe('src/x.ts');
+    expect(bom.diagnostics).toEqual([]);
+    const pkgBom = resolverOver({ 'package.json': '﻿{ "name": "root" }', 'src/a.ts': '' });
+    pkgBom.resolve('left-pad', 'src/a.ts', 'typescript');
+    expect(pkgBom.diagnostics).toEqual([]);
+  });
+
+  it('reports nothing for a broken file no resolution consulted', () => {
+    const { resolve, diagnostics } = resolverOver({ 'tsconfig.json': BROKEN_TSCONFIG, 'src/a.ts': '', 'src/b.ts': '' });
+    expect(resolve('./b', 'src/a.ts', 'typescript')).toBe('src/b.ts');
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('reports a jsconfig the same way', () => {
+    const { resolve, diagnostics } = resolverOver({ 'jsconfig.json': '{\n "a": 1\n "b": 2\n}', 'src/a.js': '' });
+    resolve('@/x', 'src/a.js', 'javascript');
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ code: 'config-unreadable', file: 'jsconfig.json', line: 3 });
+  });
+
+  it('reports a broken package.json of a workspace member when a bare import reaches it', () => {
+    const files = {
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/core/package.json': '{ "name": "@acme/core",\n "main": ./src/index.ts }',
+      'packages/core/src/index.ts': '',
+      'packages/app/package.json': '{ "name": "@acme/app" }',
+      'packages/app/src/a.ts': '',
+    };
+    const quiet = resolverOver(files);
+    quiet.resolve('./b', 'packages/app/src/a.ts', 'typescript');
+    expect(quiet.diagnostics).toEqual([]);
+    const { resolve, diagnostics } = resolverOver(files);
+    expect(resolve('@acme/core', 'packages/app/src/a.ts', 'typescript')).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ code: 'config-unreadable', file: 'packages/core/package.json', line: 2 });
+  });
+
+  it('reports a pnpm-workspace.yaml whose packages list it cannot read, and not one it can', () => {
+    const base = { 'package.json': '{ "name": "root" }', 'src/a.ts': '' };
+    for (const yaml of ['packages: apps/*\n', 'packages: [apps/*, libs/*\n', 'packages:\n  apps/*\n']) {
+      const { resolve, diagnostics } = resolverOver({ ...base, 'pnpm-workspace.yaml': yaml });
+      resolve('@acme/core', 'src/a.ts', 'typescript');
+      expect(diagnostics.map((d) => [d.code, d.file])).toEqual([['config-unreadable', 'pnpm-workspace.yaml']]);
+    }
+    for (const yaml of ['packages:\n  - apps/*\n', "packages: ['apps/*']\n", 'catalog:\n  a: 1\n', 'packages:\n', 'packages:\n# c\n\nother: 1\n', 'packages: # none\n  - x\n']) {
+      const { resolve, diagnostics } = resolverOver({ ...base, 'pnpm-workspace.yaml': yaml });
+      resolve('@acme/core', 'src/a.ts', 'typescript');
+      expect(diagnostics).toEqual([]);
+    }
+  });
+
+  it('reports a composer.json that does not parse when a PHP resolution consults it, once for both lookups', () => {
+    const { resolve, diagnostics } = resolverOver({ 'composer.json': '{ "autoload": ', 'src/Foo.php': '' });
+    expect(resolve('App\\Foo', 'src/Foo.php', 'php')).toBeUndefined();
+    expect(resolve('App\\Bar', 'src/Foo.php', 'php')).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ code: 'config-unreadable', file: 'composer.json', line: 1 });
+    const valid = resolverOver({ 'composer.json': '{ "autoload": { "psr-4": { "App\\\\": "src/" } } }', 'src/Foo.php': '' });
+    expect(valid.resolve('App\\Foo', 'src/Foo.php', 'php')).toBe('src/Foo.php');
+    expect(valid.diagnostics).toEqual([]);
+  });
+
+  it('reports a compile_commands.json that does not parse when a C include consults it, and names the one in build/ as its own file', () => {
+    const files = { 'compile_commands.json': '[ {', 'build/compile_commands.json': '[]x', 'main.c': '', 'inc/h.h': '' };
+    const { resolve, diagnostics } = resolverOver(files);
+    resolve('<h.h>', 'main.c', 'c');
+    resolve('"inc/h.h"', 'main.c', 'c');
+    expect(diagnostics.map((d) => d.file).sort()).toEqual(['build/compile_commands.json', 'compile_commands.json']);
+  });
+
+  it('reads the disk the same way when no view is given', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'diagnostics-'));
+    try {
+      mkdirSync(path.join(root, 'src'));
+      writeFileSync(path.join(root, 'tsconfig.json'), BROKEN_TSCONFIG);
+      writeFileSync(path.join(root, 'src', 'a.ts'), '');
+      const diagnostics = [];
+      const resolve = makeResolvePathToFile(root, undefined, undefined, { onDiagnostic: (d) => diagnostics.push(d) });
+      resolve('@/x', 'src/a.ts', 'typescript');
+      expect(diagnostics.map((d) => [d.code, d.file, d.line])).toEqual([['config-unreadable', 'tsconfig.json', 6]]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('is silent without a callback', () => {
+    const view = listedFileView(['tsconfig.json', 'src/a.ts', 'composer.json', 'compile_commands.json'], () => '{');
+    const resolve = makeResolvePathToFile(path.join(tmpdir(), 'diagnostics-absent-root'), undefined, undefined, { files: view });
+    expect(resolve('@/x', 'src/a.ts', 'typescript')).toBeUndefined();
+    expect(resolve('A\\B', 'src/a.ts', 'php')).toBeUndefined();
+  });
+});
+
+describe('the pieces behind it', () => {
+  it('parseJsoncAt maps a failure back through comments and trailing commas, and a BOM, to the original text', () => {
+    expect(parseJsoncAt('{ "a": 1 }')).toEqual({ value: { a: 1 } });
+    expect(parseJsoncAt('﻿{ "a": [1,], }').failure).toBeUndefined();
+    expect(parseJsoncAt('/* x\ny */ {\n "a": 1 // c\n "b": 2 }').failure).toEqual({ line: 4, column: 2 });
+    expect(parseJsoncAt('{ "a": 1').failure).toEqual({ line: 1, column: 9 });
+    expect(parseJsoncAt('').failure).toEqual({ line: 1, column: 1 });
+    expect(parseJsoncAt('{\n"a": "unterminated').failure.line).toBe(2);
+  });
+
+  it('lineColumnAt counts from 1 and clamps', () => {
+    expect(lineColumnAt('ab\ncd', 0)).toEqual({ line: 1, column: 1 });
+    expect(lineColumnAt('ab\ncd', 4)).toEqual({ line: 2, column: 2 });
+    expect(lineColumnAt('ab\ncd', 99)).toEqual({ line: 2, column: 3 });
+    expect(lineColumnAt('ab', -3)).toEqual({ line: 1, column: 1 });
+  });
+
+  it('failureOffset reads the position JSON.parse names, else the end', () => {
+    expect(failureOffset(new Error('x in JSON at position 7 (line 1 column 8)'), 20)).toBe(7);
+    expect(failureOffset(new Error('Unexpected end of JSON input'), 20)).toBe(20);
+    expect(failureOffset('not an error', 5)).toBe(5);
+    expect(failureOffset(new Error('at position 90'), 5)).toBe(5);
+    expect(strictJsonFailure('{}')).toBeUndefined();
+    expect(strictJsonFailure('{ "a" 1 }')).toEqual({ line: 1, column: 7 });
+  });
+
+  it('the sink hands each pair on once and builds the position only when there is one', () => {
+    const got = [];
+    const sink = makeDiagnosticSink((d) => got.push(d));
+    sink('c', 'f', 'm');
+    sink('c', 'f', 'again');
+    sink('c', 'g', 'm', { line: 2, column: 3 });
+    expect(got).toEqual([{ code: 'c', file: 'f', message: 'm' }, { code: 'c', file: 'g', line: 2, column: 3, message: 'm' }]);
+    expect(makeDiagnosticSink(undefined)).toBeUndefined();
+  });
+});
