@@ -27,15 +27,14 @@ export declare function lineColumnAt(text: string, offset: number): {
     line: number;
     column: number;
 };
-/** Where `JSON.parse` says it failed: the offset its message names; an unexpected end of input names none and is at the end of the text; any other message without a position is at the start. */
-export declare function failureOffset(error: unknown, textLength: number): number;
-/** The failure of parsing `text` as strict JSON (no comments, as `JSON.parse` reads it; one leading byte order mark is skipped, as the readers do), or undefined when it parses. */
-export declare function strictJsonFailure(text: string): {
-    line: number;
-    column: number;
-} | undefined;
-/** Reports `file` as unreadable at `at`, in the one wording every reader uses. */
-export declare function reportUnreadable(sink: DiagnosticSink, file: string, at: {
-    line: number;
-    column: number;
-}, what: string): void;
+/** Where a failure lies in a file as written; both fields are absent when no position could be found. */
+export type Failure = {
+    line?: number;
+    column?: number;
+};
+/** Where `JSON.parse` failed on `text`: the offset its message names; the end of the text for an unexpected end of input; otherwise, because V8 names no position for an unexpected token where a value belongs, the first token of `text` that cannot be JSON. undefined when none of these finds a place: the diagnostic then carries no position rather than a wrong one. */
+export declare function failureOffset(error: unknown, text: string): number | undefined;
+/** The failure of parsing `text` as strict JSON (no comments, as `JSON.parse` reads it; one leading byte order mark is skipped, as the readers do, and the position counts from after it, as an editor shows), or undefined when it parses. */
+export declare function strictJsonFailure(text: string): Failure | undefined;
+/** Reports `file` as unreadable at `at`, in the one wording every reader uses; with no position the file is reported without a line and column. */
+export declare function reportUnreadable(sink: DiagnosticSink, file: string, at: Failure, what: string): void;
