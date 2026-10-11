@@ -1,5 +1,8 @@
 // Issue 235: resolution reads the files it is given a view of, not the disk, so a commit's edges do not depend on what is built or installed beside it. The whole catalogue runs through a listed view too (reference-case-runner.mjs); these tests hold the view itself and the cases the catalogue cannot reach (a file on disk that the view does not list).
 import { describe, it, expect, beforeEach, afterEach } from '../helpers/expect.mjs';
+import { mock } from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -188,5 +191,70 @@ describe('a resolver given a view reads the view, not the disk', () => {
     expect(resolve('crate::m', 'src/lib.rs', 'rust')).toBe('src/m.rs');
     expect(resolve('App\\Foo', 'app/Foo.php', 'php')).toBe('app/Foo.php');
     expect(resolve('lib/h.h', 'main.c', 'c')).toBe('include/lib/h.h');
+  });
+
+  it('calls no file system function of node:fs while resolving through a view, whatever the project root holds', () => {
+    const root = materialize({ 'tsconfig.json': '{}', 'src/a.ts': '', 'src/x.ts': '' });
+    const files = {
+      'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+      'package.json': '{ "name": "root" }',
+      'src/a.ts': '',
+      'src/x.ts': '',
+      'go.mod': 'module ex.com/m\n',
+      'pkg/a.go': 'package pkg\n',
+      'cmd/main.go': 'package main\n',
+      'Cargo.toml': '[package]\nname = "c"\n',
+      'src/lib.rs': 'pub mod m;\n',
+      'src/m.rs': '',
+      'composer.json': '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }',
+      'app/Foo.php': '<?php\n',
+      'compile_commands.json': '[]',
+      'main.c': '',
+      'inc/h.h': '',
+      'pyproject.toml': '',
+      'py/a.py': '',
+      'py/b.py': '',
+    };
+    const view = commitView(files);
+    const calls = [];
+    const spied = ['existsSync', 'readdirSync', 'readFileSync', 'statSync', 'lstatSync', 'realpathSync', 'accessSync', 'openSync'];
+    for (const name of spied) {
+      if (typeof fs[name] !== 'function') continue;
+      mock.method(fs, name, () => {
+        calls.push(name);
+        throw new Error(`disk touched: ${name}`);
+      });
+    }
+    syncBuiltinESMExports();
+    let got;
+    try {
+      // The control: without a view the same call reaches the disk, and the spy says so.
+      makeResolvePathToFile(root)('@/x', 'src/a.ts', 'typescript');
+      expect(calls.length).toBeGreaterThan(0);
+      calls.length = 0;
+      const resolve = makeResolvePathToFile(root, undefined, undefined, { files: view });
+      got = [
+        resolve('@/x', 'src/a.ts', 'typescript'),
+        resolve('ex.com/m/pkg', 'cmd/main.go', 'go'),
+        resolve('crate::m', 'src/lib.rs', 'rust'),
+        resolve('App\\Foo', 'app/Foo.php', 'php'),
+        resolve('<h.h>', 'main.c', 'c'),
+        resolve('b', 'py/a.py', 'python'),
+      ];
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    expect(calls).toEqual([]);
+    expect(got.slice(0, 5)).toEqual(['src/x.ts', 'pkg/a.go', 'src/m.rs', 'app/Foo.php', undefined]);
+  });
+
+  it('lets an exception a view throws reach the caller, from a configuration read too', () => {
+    const files = { 'tsconfig.json': '{}', 'src/a.ts': '', 'src/x.ts': '' };
+    const view = listedFileView(Object.keys(files), (p) => {
+      throw new Error(`blob unreadable: ${p}`);
+    });
+    const resolve = makeResolvePathToFile(path.join(tmpdir(), 'file-view-absent-root'), undefined, undefined, { files: view });
+    expect(() => resolve('@/x', 'src/a.ts', 'typescript')).toThrow('blob unreadable: tsconfig.json');
   });
 });
