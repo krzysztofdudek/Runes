@@ -24,7 +24,7 @@ A type marked "—" is imported by no tool and is kept because a kept export's s
 
 ## `@chrisdudek/runes/relations`
 
-Relation extraction. Each language's extractor, reached through `extractorForLanguage`, turns a parsed file into declared symbols and ordered candidate groups; `SymbolTable`, `makeResolver` and `resolveDetectedEdges` resolve them in three states; `makeResolvePathToFile` resolves specifiers against the files on disk. The C# project facts (`extractCsharpRefs`, `buildCsharpProjectScopes`, `assembleCsharpCandidates`), `includeUses`, `parsePsr4` and `sfcScriptView` are the pieces a consumer that runs its own pass (Grain) composes. Of the extractors only `csharpExtractor` is exported by name, because Yggdrasil's relation-pass test imports it; the other ten are internal modules, the same objects `extractorForLanguage` returns.
+Relation extraction. Each language's extractor, reached through `extractorForLanguage`, turns a parsed file into declared symbols and ordered candidate groups; `SymbolTable`, `makeResolver` and `resolveDetectedEdges` resolve them in three states; `makeResolvePathToFile` resolves specifiers against the files on disk, or against a `FileView` the caller passes. The C# project facts (`extractCsharpRefs`, `buildCsharpProjectScopes`, `assembleCsharpCandidates`), `includeUses`, `parsePsr4` and `sfcScriptView` are the pieces a consumer that runs its own pass (Grain) composes. Of the extractors only `csharpExtractor` is exported by name, because Yggdrasil's relation-pass test imports it; the other ten are internal modules, the same objects `extractorForLanguage` returns.
 
 | Export | Kind | Consumers |
 |---|---|---|
@@ -59,6 +59,11 @@ Relation extraction. Each language's extractor, reached through `extractorForLan
 | `Classification` | type | — |
 | `TargetResolver` | type | — |
 | `makeResolvePathToFile` | value | Grain, Yggdrasil |
+| `ResolvePathOptions` | type | Grain, Yggdrasil |
+| `FileView` | type | Grain, Yggdrasil |
+| `listedFileView` | value | Grain, Yggdrasil |
+
+**The file view (added in 1.1.0).** Resolution reads the repository: whether a candidate file exists, which files a directory holds, the text of a `tsconfig.json`, a `package.json`, a `Cargo.toml`, a `go.mod`, a `composer.json`, a `compile_commands.json`, a `pyproject.toml` or a `.csproj`. By default it reads the disk under the project root, as 1.0.x did, and a consumer that passes nothing sees no change. A consumer that resolves the contents of one commit passes `makeResolvePathToFile(projectRoot, ownerOf, isExcluded, { files })` (and `buildCsharpProjectScopes(projectRoot, facts, { files })`) with a `FileView`, so an untracked or ignored file on disk (build output, a generated config, an installed package) cannot decide where an import lands, and the same commit gives the same edges on every machine. `FileView` has five methods (`exists`, `isFile`, `isDirectory`, `list`, `read`) over POSIX paths relative to the project root, `''` being the root. `listedFileView(paths, read)` builds one from a list of file paths (the directories are the ones the list implies) and a reader for their text: anything not listed does not exist, so a symbolic link is absent unless it is listed, there is no `node_modules` unless it is listed, and names are compared exactly. Runes spawns no git and makes no decision about what "the commit" is: the consumer supplies the list and the reader. `isExcluded` keeps its meaning on top of the view. Every read of every language's resolver goes through the view; with a view given, the disk is not touched.
 
 ## `@chrisdudek/runes/ast`
 

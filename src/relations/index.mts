@@ -16,4 +16,5 @@ export { csharpExtractor, extractCsharpRefs, assembleCsharpCandidates, type Csha
 export { buildCsharpProjectScopes, type CsharpGlobalFacts, type CsharpProjectScope } from './extractors/csharp-project.mjs';
 export { SymbolTable } from './symbol-table.mjs';
 export { makeResolver, resolveDetectedEdges, type OwnerLookup, type ResolvedTarget, type ResolverDeps, type Classification, type TargetResolver } from './resolver.mjs';
-export { makeResolvePathToFile } from './resolve-path.mjs';
+export { makeResolvePathToFile, type ResolvePathOptions } from './resolve-path.mjs';
+export { listedFileView, type FileView } from './file-view.mjs';

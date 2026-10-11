@@ -1,5 +1,11 @@
+import { type FileView } from './file-view.mjs';
+/** What `makeResolvePathToFile` takes besides the root and the owner and exclusion lookups. Every field is optional; a minor release may add more. */
+export interface ResolvePathOptions {
+    /** The files resolution sees (see `FileView`). Without it every resolver reads the disk under the project root. */
+    files?: FileView;
+}
 /** Production resolvePathToFile: dispatches by language to the per-language path resolver.
- *  Checks existence against the project's files on disk. Symbol-resolved languages (and
+ *  Checks existence against the project's files: the disk under `projectRoot`, or, when `options.files` is given, only the files that view holds (every read of every resolver goes through it, so build output, a generated config or an installed package that the view does not list cannot decide where an import lands). Symbol-resolved languages (and
  *  not-yet-implemented ones) return undefined here — they resolve via the SymbolTable.
  *
  *  `ownerOf` and `isExcluded`, when supplied, feed every resolver below that can face
@@ -25,7 +31,7 @@
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate. */
-export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
+export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the

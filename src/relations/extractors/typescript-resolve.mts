@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { diskFileView, type FileSource } from '../file-view.mjs';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -565,18 +565,21 @@ function pnpmWorkspacePackages(text: string): string[] | undefined {
 }
 
 /**
- * Build the disk-backed {@link TsResolveDeps} for a project root. Each tsconfig, package.json and directory lookup is cached for the life of the returned object, which one relation pass owns. The in-repo package index is built on the first bare specifier that reaches package lookup: one walk of the repository that skips `node_modules` (where a workspace package's own symlink lives), dot-directories and any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never read: it acts as though it does not exist.
+ * Build the {@link TsResolveDeps} for the files of one source: `source` when given (a caller's view), else the disk under the project root. Each tsconfig, package.json and directory lookup is cached for the life of the returned object, which one relation pass owns. The in-repo package index is built on the first bare specifier that reaches package lookup: one walk of the repository that skips `node_modules` (where a workspace package's own symlink lives), dot-directories and any path `isExcluded` names. An excluded tsconfig, jsconfig or package.json is never read: it acts as though it does not exist.
  */
 export function makeTsResolveDeps(
   projectRoot: string,
   isExcluded?: (repoRelPosix: string) => boolean,
+  source?: FileSource,
 ): TsResolveDeps {
+  const files = source ?? diskFileView(projectRoot, false);
   const jsonCache = new Map<string, unknown>();
   const readJson = (repoRel: string): unknown => {
     if (jsonCache.has(repoRel)) return jsonCache.get(repoRel);
     let parsed: unknown;
     try {
-      parsed = parseJsonc(readFileSync(path.join(projectRoot, repoRel), 'utf-8'));
+      const text = files.read(repoRel);
+      parsed = text === undefined ? undefined : parseJsonc(text);
     } catch {
       parsed = undefined;
     }
@@ -584,11 +587,7 @@ export function makeTsResolveDeps(
     return parsed;
   };
   const isFile = (repoRel: string): boolean => {
-    try {
-      return statSync(path.join(projectRoot, repoRel)).isFile() && !isExcluded?.(repoRel);
-    } catch {
-      return false;
-    }
+    return files.isFile(repoRel) && !isExcluded?.(repoRel);
   };
   const dirOf = (repoRelFile: string): string => {
     const d = path.posix.dirname(repoRelFile);
@@ -622,19 +621,15 @@ export function makeTsResolveDeps(
     const stack: string[] = [''];
     while (stack.length > 0) {
       const dir = stack.pop()!;
-      let entries: import('node:fs').Dirent[];
-      try {
-        entries = readdirSync(path.join(projectRoot, dir), { withFileTypes: true });
-      } catch {
-        continue;
-      }
+      const entries = files.list(dir);
+      if (entries === undefined) continue;
       for (const e of entries) {
         const rel = dir === '' ? e.name : `${dir}/${e.name}`;
-        if (e.isDirectory()) {
+        if (e.kind === 'dir') {
           if (e.name.startsWith('.') || SKIPPED_DIRS.has(e.name)) continue;
           if (isExcluded?.(rel)) continue;
           stack.push(rel);
-        } else if (e.isFile() && e.name === 'package.json') {
+        } else if (e.kind === 'file' && e.name === 'package.json') {
           const pkg = packageAt(dir); // undefined for an excluded or unparseable package.json
           if (pkg !== undefined) inRepo.push(pkg);
         }
@@ -661,12 +656,8 @@ export function makeTsResolveDeps(
     let globs: string[] | undefined;
     const pnpm = dir === '' ? 'pnpm-workspace.yaml' : `${dir}/pnpm-workspace.yaml`;
     if (isFile(pnpm)) {
-      let text = '';
-      try {
-        text = readFileSync(path.join(projectRoot, pnpm), 'utf-8');
-      } catch {
-        // unreadable: read as a file with no packages list
-      }
+      // unreadable: read as a file with no packages list
+      const text = files.read(pnpm) ?? '';
       globs = pnpmWorkspacePackages(text) ?? ['**'];
     } else {
       const field = packageAt(dir)?.manifest.workspaces;

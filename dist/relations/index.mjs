@@ -15,3 +15,4 @@ export { buildCsharpProjectScopes } from './extractors/csharp-project.mjs';
 export { SymbolTable } from './symbol-table.mjs';
 export { makeResolver, resolveDetectedEdges } from './resolver.mjs';
 export { makeResolvePathToFile } from './resolve-path.mjs';
+export { listedFileView } from './file-view.mjs';
