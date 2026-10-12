@@ -8,12 +8,7 @@ cites: "JLS SE25 §7.5.2, §6.5.5.1 (on-demand ambiguity); research D3 (C17 in 0
 
 ## Rule
 
-Two type-import-on-demand declarations offering the same simple name (`Foo`) make the
-bare `Foo` use a COMPILE ERROR in Java (ambiguous), but the analyzer never binds the
-bare simple name through the wildcards. It emits two independent PACKAGE hints (`com.x`, `com.y`), each
-owner-set-collapsed on its own. Here each package maps to exactly one owner, so each
-wildcard attributes ITS package edge (import = edge); the ambiguous `Foo` use is
-silent (no type of the package `com.app` is named `Foo`, so no same-package candidate binds either).
+Two type-import-on-demand declarations offering the same simple name (`Foo`) make the bare `Foo` use a COMPILE ERROR in Java (ambiguous), but the analyzer never binds the bare simple name through the wildcards. It emits two independent PACKAGE hints (`com.x`, `com.y`), each owner-set-collapsed on its own. Here each package maps to exactly one owner, so each wildcard attributes ITS package edge (import = edge); the ambiguous `Foo` use is silent (no type of the package `com.app` is named `Foo`, so no same-package candidate binds either).
 
 ## Files
 
@@ -41,5 +36,4 @@ class C { Foo f; }
 
 ## Why
 
-Each wildcard is its own package dependency resolved independently; the ambiguous bare
-name is never the binding axis, so no arbitrary use-site edge is fabricated.
+Each wildcard is its own package dependency resolved independently; the ambiguous bare name is never the binding axis, so no arbitrary use-site edge is fabricated.
