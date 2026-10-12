@@ -8,13 +8,7 @@ cites: "Kotlin spec — Scopes (ctor name = type name); research Form D8 (constr
 
 ## Rule
 
-A constructor call (`com.acme.model.Order()`) is in EXPRESSION position. It parses as a
-`navigation_expression` / member-access chain that is syntactically indistinguishable
-from `localVariable.field.method`, so resolving it could bind the wrong target — the
-extractor therefore emits nothing for it. Stdlib ctors (`Result.success(...)`,
-`Pair(1, 2)`) additionally carry the stdlib-collision trap. All stay silent — a
-zero-false-positive boundary. (An inline FQN in a TYPE position is shadow-free and DOES
-edge; the distinction is the syntactic position, not the FQN.)
+A constructor call (`com.acme.model.Order()`) is in EXPRESSION position. It parses as a `navigation_expression` / member-access chain that is syntactically indistinguishable from `localVariable.field.method`, so resolving it could bind the wrong target — the extractor therefore emits nothing for it. Stdlib ctors (`Result.success(...)`, `Pair(1, 2)`) are bare names: each gives only the same-package candidate (`com.acme.app.Result`, `com.acme.app.Pair`), and no file of that package declares one, so they stay silent as well. All stay silent — a zero-false-positive boundary. (An inline FQN in a TYPE position is shadow-free and DOES edge; the distinction is the syntactic position, not the FQN.)
 
 ## Files
 
@@ -38,8 +32,4 @@ fun f() {
 
 ## Why
 
-A constructor call sits in expression position and parses as a member-access chain
-indistinguishable from `localVariable.field.method`; binding it could pick the wrong
-target, so it is deliberately silent. The stdlib ctor trap makes a bare-name guess
-doubly dangerous. A fully-qualified name in TYPE position has no such ambiguity and does
-edge — the boundary is the syntactic position.
+A constructor call sits in expression position and parses as a member-access chain indistinguishable from `localVariable.field.method`; binding it could pick the wrong target, so it is deliberately silent. A bare name binds only to a declaration of the file's own package, never to the stdlib (see kotlin-same-package-*). A fully-qualified name in TYPE position has no such ambiguity and does edge — the boundary is the syntactic position.

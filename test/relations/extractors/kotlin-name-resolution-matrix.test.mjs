@@ -15,16 +15,7 @@ import { withParsedFile } from '../../helpers/tree-sitter.mjs';
  * (reference/relations/case-has-test + case-is-tested) enforce the 1:1 catalogue↔test
  * correspondence, so this file cannot drift from the catalogue.
  *
- * THE GOVERNING DECISION (.plans/2026-06-14-import-only-languages-decision.md): the Kotlin
- * extractor is and STAYS IMPORT-ONLY. A dependency edge is established ONLY by an `import`,
- * whose operand is a fully-qualified symbol resolved through the shared SymbolTable. Adding
- * usage-site / same-package / wildcard-expansion / bare-simple-name resolution is FORBIDDEN —
- * it would reintroduce the precedence trap (explicit-import > same-package > star > stdlib) and
- * the stdlib-collision trap (a project `Result`/`Pair`/`List` colliding with an invisible
- * stdlib name). The cardinal invariant — ZERO false positives, a hard wall with no adopter
- * waiver — outranks recall; a missed edge is a tolerated false-NEGATIVE. A star import is
- * still an import: it names a package, and is collapsed by owner exactly like Java's on-demand
- * import (one owning node → one edge), never expanded into per-name bindings.
+ * THE GOVERNING DECISION (.plans/2026-06-14-import-only-languages-decision.md, amended by the same-package binding of 1.1.0): a dependency edge is established by an `import`, whose operand is a fully-qualified symbol resolved through the shared SymbolTable, by an inline fully-qualified type, and — since 1.1.0 — by a bare simple name of a type of the file's OWN package, bound only where the precedence (explicit import > same package > star import > default imports) leaves it unshadowed. Wildcard-expansion and the resolution of a bare name through a star import or the default imports stay FORBIDDEN: they would reintroduce the stdlib-collision trap (a project `Result`/`Pair`/`List` of another package colliding with an invisible stdlib name). The cardinal invariant — no false positive the shadowing rules can exclude — outranks recall; a missed edge is a tolerated false-NEGATIVE. A star import is still an import: it names a package, and is collapsed by owner exactly like Java's on-demand import (one owning node → one edge), never expanded into per-name bindings.
  *
  * The catalogue covers the full research enumeration (.plans/2026-06-15-kotlin-name-resolution-
  * research.md): import forms (A1/A3/A4/A5/A6/A7/A8/A9), implicit stdlib (B1), nested/JVM
@@ -157,10 +148,27 @@ describe('MATRIX — parse recovery: declarations after unknown syntax survive; 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('MATRIX — keying and source layout: locals are not keys; KMP source sets; same package needs an import', () => {
+describe('MATRIX — keying and source layout: locals are not keys; KMP source sets', () => {
   it('kotlin-local-val-not-a-top-level-key', () => runCase('kotlin-local-val-not-a-top-level-key'));
   it('kotlin-kmp-source-set-import-edge', () => runCase('kotlin-kmp-source-set-import-edge'));
-  it('kotlin-same-package-cross-node-silence', () => runCase('kotlin-same-package-cross-node-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAME-PACKAGE references: a declaration of the file's own package is in scope by its simple name in every file of the package, after an explicit import and before a star import and the default imports. The shadowing rules (type parameter, declaration of the file, explicit import or alias, variable) keep it from binding where the name means something else, and the source-set rule keeps main code from seeing test classes. Owners are named in the fence (`owner=`) where two source roots of one package are two owners.
+describe('MATRIX — same-package references without an import', () => {
+  it('kotlin-same-package-cross-node-edge', () => runCase('kotlin-same-package-cross-node-edge'));
+  it('kotlin-same-package-test-to-main-edge', () => runCase('kotlin-same-package-test-to-main-edge'));
+  it('kotlin-same-package-main-never-sees-test-silence', () => runCase('kotlin-same-package-main-never-sees-test-silence'));
+  it('kotlin-same-package-explicit-import-wins-edge', () => runCase('kotlin-same-package-explicit-import-wins-edge'));
+  it('kotlin-same-package-beats-star-import-edge', () => runCase('kotlin-same-package-beats-star-import-edge'));
+  it('kotlin-same-package-type-parameter-silence', () => runCase('kotlin-same-package-type-parameter-silence'));
+  it('kotlin-same-package-declared-type-shadow-silence', () => runCase('kotlin-same-package-declared-type-shadow-silence'));
+  it('kotlin-same-package-inherited-member-type-edge', () => runCase('kotlin-same-package-inherited-member-type-edge'));
+  it('kotlin-same-package-external-supertype-member-trap', () => runCase('kotlin-same-package-external-supertype-member-trap'));
+  it('kotlin-same-package-variable-obscures-silence', () => runCase('kotlin-same-package-variable-obscures-silence'));
+  it('kotlin-same-package-split-owners-silence', () => runCase('kotlin-same-package-split-owners-silence'));
+  it('kotlin-same-package-java-class-edge', () => runCase('kotlin-same-package-java-class-edge'));
+  it('kotlin-same-package-root-package-silence', () => runCase('kotlin-same-package-root-package-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

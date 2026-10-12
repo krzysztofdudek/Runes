@@ -613,3 +613,99 @@ describe('kotlin extractor — registry wiring', () => {
     expect(kotlinExtractor.languages.has('kotlin')).toBe(true);
   });
 });
+
+// The same-package candidate group: what is emitted where, and where a simple name means something else.
+describe('kotlin extractor — same-package references (uses())', () => {
+  const groups = async (body, pkg = 'package com.a') => {
+    const { uses } = await run(`${pkg}\n${body}\n`);
+    return uses.map((u) => ({ line: u.line, keys: u.candidates.map((c) => c.symbolKey), flags: u.candidates.map((c) => c.samePackage === true) }));
+  };
+  const keysOf = async (body, pkg) => (await groups(body, pkg)).flatMap((g) => g.keys);
+
+  it('gives one group per name and line, marked samePackage', async () => {
+    expect(await groups('class T { val a: Owner = Owner(); val b: Owner? = null }')).toEqual([{ line: 2, keys: ['com.a.Owner'], flags: [true] }]);
+  });
+
+  it('reads every type position and a capitalised receiver or callee', async () => {
+    const keys = await keysOf([
+      '@Mark',
+      'class T<U : Bound>(val p: Param) : Base<Arg>(), Face {',
+      '  val f: Field? = null',
+      '  fun m(a: Arg2): Ret {',
+      '    val c = Cast::class',
+      '    val d = x as Casted',
+      '    if (x is Test) {}',
+      '    val e = Callee(1)',
+      '    Recv.call()',
+      '    Recv2.CONST.x()',
+      '    return Maker.make()',
+      '  }',
+      '}',
+      'typealias TA = Target',
+      'fun Ext.go() {}',
+    ].join('\n'));
+    for (const n of ['Mark', 'Bound', 'Param', 'Base', 'Arg', 'Face', 'Field', 'Arg2', 'Ret', 'Cast', 'Casted', 'Test', 'Callee', 'Recv', 'Recv2', 'Maker', 'Target', 'Ext']) {
+      expect(keys).toContain(`com.a.${n}`);
+    }
+  });
+
+  it('gives nothing in the root package or for a file whose declarations could not all be read', async () => {
+    expect(await keysOf('class T { val a: Owner? = null }', '')).toEqual([]);
+    // The shipped grammar cuts a generic function out of a one-line class body: the file reports an unreadable type, so any declaration it holds could shadow a name, and no group is given.
+    expect(await keysOf('class Box { fun <Item> a(i: Item) {} val b: Item? = null }\nclass U(val o: Owner)')).toEqual([]);
+  });
+
+  it('gives nothing for a type parameter in scope, but binds it outside that scope', async () => {
+    expect(await keysOf('class Box<Owner>(val v: Owner) {\n  fun <Item> get(i: Item): Item = i\n}')).toEqual([]);
+    expect(await keysOf('class Box {\n  fun <Item> a(i: Item) {}\n  val b: Item? = null\n}')).toEqual(['com.a.Item']);
+  });
+
+  it('gives nothing for a declaration of the file, or an import of that name; an alias frees the original name', async () => {
+    expect(await keysOf('class T { class Owner; val o: Owner? = null }')).toEqual([]);
+    expect(await keysOf('fun Owner() = 1\nval x = Owner()')).toEqual([]);
+    expect(await keysOf('import x.Owner\nclass T { val o: Owner? = null }')).toEqual(['x.Owner']);
+    expect(await keysOf('import x.Owner as Own\nclass T(val a: Own, val b: Owner)')).toEqual(['x.Owner', 'com.a.Owner']);
+    expect(await keysOf('import x.Other\nclass T(val o: Owner)')).toEqual(['x.Other', 'com.a.Owner']);
+  });
+
+  it('offers the nested classes of an enclosing declaration\'s supertypes before the package', async () => {
+    const g = await groups('import y.Imp\nclass T : Base(), Imp, ext.Q {\n  inner class In : Deep() {\n    val o: Owner? = null\n  }\n  val p: Owner? = null\n}');
+    const ownerGroups = g.filter((x) => x.keys.includes('com.a.Owner'));
+    expect(ownerGroups).toEqual([
+      { line: 5, keys: ['com.a.Deep+Owner', 'com.a.Base+Owner', 'y.Imp+Owner', 'ext.Q+Owner', 'com.a.Owner'], flags: [true, true, false, false, true] },
+      { line: 7, keys: ['com.a.Base+Owner', 'y.Imp+Owner', 'ext.Q+Owner', 'com.a.Owner'], flags: [true, false, false, true] },
+    ]);
+    const a = await groups('import z.*\nclass T {\n  val o = object : Anon() {\n    val x: Owner? = null\n  }\n}');
+    expect(a.find((x) => x.keys.includes('com.a.Owner'))?.keys).toEqual(['com.a.Anon+Owner', 'z.Anon+Owner', 'com.a.Owner']);
+    // The supertype list itself is not inside the body.
+    expect((await groups('class T : Owner()')).map((x) => x.keys)).toContainEqual(['com.a.Owner']);
+  });
+
+  it('silences a capitalised receiver or callee that a variable of the file obscures', async () => {
+    const bodies = [
+      'fun m(Owner: String) = Owner.length',
+      'fun m() { val Owner = 1; Owner.toString() }',
+      'val Owner = 1\nfun m() = Owner.toString()',
+      'fun m(l: List<String>) { for (Owner in l) { Owner.length } }',
+      'fun m() { try {} catch (Owner: Exception) { Owner.message } }',
+      'val f = { Owner: Int -> Owner.toString() }',
+      'val g = { Owner, b -> Owner.go() }',
+      'fun m(p: Pair<Int, Int>) { val (Owner, b) = p; Owner.toString() }',
+      'class T(val Owner: String) { fun m() = Owner.length }',
+      'enum class E { Owner; fun m() = Owner.name }',
+    ];
+    for (const body of bodies) expect((await keysOf(body)).filter((k) => k === 'com.a.Owner'), body).toEqual([]);
+    // A variable obscures a type only in an expression: the type position keeps its binding.
+    expect(await keysOf('class T(val Owner: Owner)')).toEqual(['com.a.Owner']);
+  });
+
+  it('reads the leftmost simple name of a qualified type and no package segment', async () => {
+    const keys = await keysOf('class T(val a: Owner.Inner, val b: java.util.Map.Entry<String, x.Y>, val c: com.app.Z)');
+    expect(keys).toContain('com.a.Owner');
+    for (const k of ['com.a.Inner', 'com.a.Entry', 'com.a.java', 'com.a.util', 'com.a.com', 'com.a.app', 'com.a.x', 'com.a.Y', 'com.a.Z']) expect(keys).not.toContain(k);
+  });
+
+  it('does not read a lowercase callee, a this-label or a member after a dot', async () => {
+    expect(await keysOf('class T {\n  fun m(o: Other) {\n    lower()\n    o.Member()\n    this@T.go()\n  }\n}')).toEqual(['com.a.Other']);
+  });
+});

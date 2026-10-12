@@ -1,8 +1,9 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
-import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
+import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
 import { kotlinView, type KotlinView } from './kotlin-recover.mjs';
+import { isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
 
 /**
  * Kotlin dependency extractor — the FIRST language that resolves through the shared
@@ -18,13 +19,9 @@ import { kotlinView, type KotlinView } from './kotlin-recover.mjs';
  * `resolveUnique`. There is NO `resolve-path.ts` branch for Kotlin — symbol hints never
  * touch `resolvePathToFile`.
  *
- * v1 scope = EXISTENCE, not relation type. The unit of an inter-component edge in
- * Kotlin is the IMPORT: an `import` statement names a fully-qualified symbol (or, for a
- * wildcard import, a package). Usage-site nodes — `:` supertype lists, `by` delegation,
- * qualified calls, type references, `::` callable references — would only REFINE the
- * relation type of an already-imported binding, and v1 does not enforce relation type.
- * This extractor performs NO usage-site refinement: it emits exactly one symbol hint
- * per import.
+ * v1 scope = EXISTENCE, not relation type. An inter-component edge in Kotlin comes from an IMPORT (an `import` statement names a fully-qualified symbol or, for a wildcard import, a package), from an inline fully-qualified type, and from a SIMPLE NAME of a type of the file's own package, which needs no import (see SAME-PACKAGE REFERENCES below). The extractor does not refine the relation type of a usage: it emits one symbol hint per import.
+ *
+ * SAME-PACKAGE REFERENCES. Every declaration of a package is visible by its simple name to every file of that package without an import, and a name an import gives (explicit or alias) beats the package, which beats a star import and the default imports. At each simple name in a type position (a `user_type`: a declaration's type, a supertype, a type argument, a cast, an `is` test, an annotation, a typealias target) and at a capitalised receiver or callee in an expression (`Foo.make()`, `Foo::class`, `Foo(...)`) the extractor emits ONE ordered candidate group: first the member types a supertype of an enclosing declaration may inherit (`<Super>+<Name>`), then `<package>.<Name>`, resolved through the shared JVM namespace (so a Java class of the package counts too) with the resolver's source-set rule (`main` never sees `test`). The group is NOT emitted when the name is a type parameter in scope, a declaration of the file (a class, object, function, property or typealias, nested and local ones included), an import (a plain one, or an alias), or, for an expression, a variable of the file (read file-wide). A file with a package it could not read in full, a file in the root package and a file with an unreadable type body emit nothing, in keeping with the fail-closed rule below. Known limits: a member type inherited from a supertype OUTSIDE the repository (or from a supertype's own supertype) is not known, so a type of the package with that name in another owner gives a false edge; a capitalised property or function inherited from a supertype outside this file shadows a package type used as a receiver or callee and is not seen; a lowercase name (a top-level function called without a receiver) is never read.
  *
  * D6 PROBE (empirically confirmed against the shipped tree-sitter-grammars wasm):
  *  - The import node is `import` (a NAMED node), NOT `import_header`. Its FQN is the
@@ -136,9 +133,147 @@ function uses(file: ParsedFile): DetectedDep[] {
   return withView(file, (view) => usesOf(view));
 }
 
+/** The package of a file: its first `package_header`'s qualified identifier, or '' for the root package. */
+function packageOf(view: KotlinView): string {
+  let pkg = '';
+  walkView(view, (node) => {
+    if (node.type !== 'package_header') return undefined;
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const c = node.namedChild(i);
+      if (c !== null && c.type === 'qualified_identifier') {
+        pkg = c.text;
+        return false; // first package_header wins; stop descending it
+      }
+    }
+    return false;
+  });
+  return pkg;
+}
+
+/** What the same-package binding needs to know of one file, read once. */
+interface KotlinScope extends SamePackageScope {
+  declared: Set<string>;
+  imports: Map<string, string>;
+  importedOther: Set<string>;
+  onDemand: string[];
+  /** Names the file binds as variables (properties, parameters, locals, lambda and catch parameters, enum entries). */
+  variables: Set<string>;
+}
+
+/** Nodes whose own simple name is bound as a variable: the name is their first `identifier` child. */
+const VARIABLE_NAME_OWNERS = new Set(['variable_declaration', 'parameter', 'class_parameter', 'catch_block', 'enum_entry']);
+
+/** The declarations whose body brings the member types of their supertypes into scope. */
+const SUPERTYPE_OWNERS = new Set(['class_declaration', 'object_declaration', 'companion_object', 'object_literal']);
+
+/** The nodes that can carry `type_parameters`. */
+const TYPE_PARAMETER_OWNERS = new Set(['class_declaration', 'function_declaration', 'property_declaration', 'type_alias']);
+
+/** The scope of a file, or undefined when it gets no same-package group: the root package, or a file the recovery could not read in full (an unreadable declaration could shadow any name). */
+function kotlinScope(view: KotlinView): KotlinScope | undefined {
+  if (view.packageIncomplete || view.incompleteTypes.size > 0) return undefined;
+  const pkg = packageOf(view);
+  if (pkg === '') return undefined;
+  const scope: KotlinScope = { pkg, declared: new Set(), imports: new Map(), importedOther: new Set(), onDemand: [], variables: new Set() };
+  for (const d of view.lexical) scope.declared.add(d.name);
+  walkView(view, (node) => {
+    if (DECLARATION_TYPES.has(node.type)) {
+      const name = declarationName(node);
+      if (name !== undefined && name !== '') scope.declared.add(name);
+    }
+    if (VARIABLE_NAME_OWNERS.has(node.type)) {
+      const name = firstIdentifier(node);
+      if (name !== undefined) scope.variables.add(name);
+    } else if (node.type === 'lambda_parameters') {
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (c?.type === 'identifier') scope.variables.add(c.text);
+      }
+    } else if (node.type === 'import' && node.isNamed) {
+      const fqn = importFqn(node);
+      if (fqn === undefined) return false;
+      if (isStarImport(node)) scope.onDemand.push(fqn);
+      else {
+        const alias = node.namedChildren.filter((c) => c?.type === 'identifier').at(-1)?.text;
+        scope.imports.set(alias ?? fqn.slice(fqn.lastIndexOf('.') + 1), fqn);
+      }
+      return false;
+    }
+    return undefined;
+  });
+  return scope;
+}
+
+/** The dotted name of a supertype (a `user_type`, a constructor invocation of one, or the type of a `by` delegation). */
+function supertypeName(spec: Node): string | undefined {
+  const t = spec.type === 'user_type' ? spec : spec.namedChildren.find((c) => c?.type === 'user_type');
+  if (t === undefined || t === null) return undefined;
+  const segs: string[] = [];
+  for (let i = 0; i < t.namedChildCount; i++) {
+    const c = t.namedChild(i);
+    if (c === null || c.type !== 'identifier') break;
+    segs.push(c.text);
+  }
+  return segs.length === 0 ? undefined : segs.join('.');
+}
+
+/** The supertype names a declaration lists (`class C : Base(), Face`, `object : Base()`). */
+function supertypeNames(decl: Node): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < decl.namedChildCount; i++) {
+    const list = decl.namedChild(i);
+    if (list?.type !== 'delegation_specifiers') continue;
+    for (let j = 0; j < list.namedChildCount; j++) {
+      const spec = list.namedChild(j)?.namedChild(0);
+      const name = spec === null || spec === undefined ? undefined : supertypeName(spec);
+      if (name !== undefined) out.push(name);
+    }
+  }
+  return out;
+}
+
+/** The names a `type_parameters` child of `decl` declares. */
+function kotlinTypeParameters(decl: Node): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < decl.namedChildCount; i++) {
+    const tps = decl.namedChild(i);
+    if (tps?.type !== 'type_parameters') continue;
+    for (let j = 0; j < tps.namedChildCount; j++) {
+      const name = tps.namedChild(j)?.namedChildren.find((c) => c?.type === 'identifier')?.text;
+      if (name !== undefined) out.add(name);
+    }
+  }
+  return out;
+}
+
+/** The candidate group for a simple name at `node` (see the file doc comment), or undefined. */
+function samePackageCandidates(scope: KotlinScope, name: string, node: Node): TargetHint[] | undefined {
+  const supertypeLists: string[][] = [];
+  let child: Node = node;
+  for (let a = node.parent; a !== null; child = a, a = a.parent) {
+    if (TYPE_PARAMETER_OWNERS.has(a.type) && kotlinTypeParameters(a).has(name)) return undefined;
+    if (SUPERTYPE_OWNERS.has(a.type) && (child.type === 'class_body' || child.type === 'enum_class_body')) supertypeLists.push(supertypeNames(a));
+  }
+  return samePackageGroup(scope, name, supertypeLists);
+}
+
 function usesOf(view: KotlinView): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
+  const scope = kotlinScope(view);
+
+  // Same-package references (no import): one ordered candidate group per simple name and line.
+  const seenGroups = new Set<string>();
+  const emitSamePackage = (name: string, node: Node): void => {
+    if (scope === undefined || name === '') return;
+    const candidates = samePackageCandidates(scope, name, node);
+    if (candidates === undefined) return;
+    const line = node.startPosition.row + 1;
+    const dedupKey = `${candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : '')).join('|')} ${line}`;
+    if (seenGroups.has(dedupKey)) return;
+    seenGroups.add(dedupKey);
+    out.push({ candidates, kind: 'type-ref', line });
+  };
 
   const emit = (symbolKey: string | undefined, node: Node, kind: 'import' | 'type-ref' = 'import'): void => {
     if (symbolKey === undefined || symbolKey === '') return;
@@ -154,6 +289,17 @@ function usesOf(view: KotlinView): DetectedDep[] {
     // expression-position dotted reference is a navigation_expression, never a user_type).
     if (node.type === 'user_type') {
       emit(dottedUserType(node), node, 'type-ref');
+      // The leftmost simple name is a type of the package; the leading segment of a dotted name is a package unless it is capitalised.
+      const head = node.namedChild(0);
+      if (head?.type === 'identifier' && (node.namedChild(1)?.type !== 'identifier' || isCapitalised(head.text))) emitSamePackage(head.text, head);
+      return undefined;
+    }
+    // A capitalised receiver or callee: `Foo.make()`, `Foo::class`, `Foo(...)`. A variable of that name obscures it.
+    if (node.type === 'identifier') {
+      const p = node.parent;
+      if (p !== null && (p.type === 'navigation_expression' || p.type === 'call_expression') && p.namedChild(0)?.id === node.id && isCapitalised(node.text) && scope !== undefined && !scope.variables.has(node.text)) {
+        emitSamePackage(node.text, node);
+      }
       return undefined;
     }
 
@@ -334,18 +480,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
     out.push({ symbolKey, line });
   };
 
-  let pkg = '';
-  walkView(view, (node) => {
-    if (node.type !== 'package_header') return undefined;
-    for (let i = 0; i < node.namedChildCount; i++) {
-      const c = node.namedChild(i);
-      if (c !== null && c.type === 'qualified_identifier') {
-        pkg = c.text;
-        return false; // first package_header wins; stop descending it
-      }
-    }
-    return false;
-  });
+  const pkg = packageOf(view);
 
   const qualify = (typeKey: string): string => (pkg === '' ? typeKey : `${pkg}.${typeKey}`);
   let topLevelCallable = false;
@@ -380,7 +515,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
 
 export const kotlinExtractor: DependencyExtractor = {
   languages: new Set(['kotlin']),
-  rev: 5,
+  rev: 6,
   declarations,
   uses,
 };
