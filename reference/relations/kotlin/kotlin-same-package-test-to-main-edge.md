@@ -24,13 +24,20 @@ package com.a
 class OwnerTest {
   val owner: Owner = Owner()
   val made = Owner.make()
+  val outcome: Result = Result()
 }
+```
+
+```kotlin path=src/main/kotlin/com/a/Result.kt owner=main
+package com.a
+class Result
 ```
 
 ## Expect
 
 - src/test/kotlin/com/a/OwnerTest.kt:3 -> node:main      # type position and constructor call, one edge
 - src/test/kotlin/com/a/OwnerTest.kt:4 -> node:main      # capitalised receiver
+- src/test/kotlin/com/a/OwnerTest.kt:5 -> node:main      # the package's own `Result` shadows `kotlin.Result`
 
 ## Why
 
