@@ -2,38 +2,14 @@ import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
+import { isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
 
 /**
  * Java dependency extractor.
  *
- * v1 scope = EXISTENCE, not relation type. An inter-component edge in Java comes from
- * an IMPORT (an `import_declaration` names a fully-qualified type or, for a wildcard
- * import, a package), from an inline fully-qualified type, and from a SIMPLE NAME of a
- * type of the file's own package, which needs no import (see SAME-PACKAGE REFERENCES
- * below). The extractor does not refine the relation type of a usage. It emits one path
- * hint per import, whose specifier is a Java FULLY-QUALIFIED NAME (a type FQN, or a
- * package FQN for a wildcard); the resolver maps that FQN → a file by Java's
- * package = directory convention.
+ * v1 scope = EXISTENCE, not relation type. An inter-component edge in Java comes from an IMPORT (an `import_declaration` names a fully-qualified type or, for a wildcard import, a package), from an inline fully-qualified type, and from a SIMPLE NAME of a type of the file's own package, which needs no import (see SAME-PACKAGE REFERENCES below). The extractor does not refine the relation type of a usage. It emits one path hint per import, whose specifier is a Java FULLY-QUALIFIED NAME (a type FQN, or a package FQN for a wildcard); the resolver maps that FQN → a file by Java's package = directory convention.
  *
- * SAME-PACKAGE REFERENCES. Every type in a package is visible by its simple name to every
- * file of that package without an import (JLS §7.6), and a test in the package of the class
- * it tests is the usual case. At each simple type name in a type position (a declaration's
- * type, a generic argument, `extends`/`implements`/`throws`, a cast, `instanceof`, `new Foo()`,
- * a `catch`, `Foo.class`, a pattern, an annotation) and at a capitalised receiver in an
- * expression (`Foo.m()`, `Foo.X`, `Foo::m`) the extractor emits ONE ordered candidate group:
- * first the member types a supertype of an enclosing declaration may inherit
- * (`<Super>+<Name>`), then `<package>.<Name>`, resolved through the shared JVM namespace (so
- * a Kotlin class of the package counts too) with the source-set rule of the resolver (`main`
- * never sees `test`). The group is NOT emitted when the name is a type parameter in scope, a
- * type the file declares (nested and local ones included), a single-type import or a single
- * static import of that simple name (the import's own hint gives that edge), or, for an
- * expression receiver, a variable of the file (JLS §6.4.2 obscuring, read file-wide). It
- * wins over an on-demand import and `java.lang`, as in Java. Known limits: a member type
- * inherited from a supertype OUTSIDE the repository (or from a supertype's own supertype)
- * is not known, so a type of the package with that name in another owner gives a false
- * edge; a field of that name brought by a static on-demand import obscures a receiver and
- * is not seen; and a file in the unnamed package emits nothing, because two directories of
- * it are one package only when a build compiles them together.
+ * SAME-PACKAGE REFERENCES. Every type in a package is visible by its simple name to every file of that package without an import (JLS §7.6), and a test in the package of the class it tests is the usual case. At each simple type name in a type position (a declaration's type, a generic argument, `extends`/`implements`/`throws`, a cast, `instanceof`, `new Foo()`, a `catch`, `Foo.class`, a pattern, an annotation) and at a capitalised receiver in an expression (`Foo.m()`, `Foo.X`, `Foo::m`) the extractor emits ONE ordered candidate group: first the member types a supertype of an enclosing declaration may inherit (`<Super>+<Name>`), then `<package>.<Name>`, resolved through the shared JVM namespace (so a Kotlin class of the package counts too) with the source-set rule of the resolver (`main` never sees `test`). The group is NOT emitted when the name is a type parameter in scope, a type the file declares (nested and local ones included), a single-type import or a single static import of that simple name (the import's own hint gives that edge), or, for an expression receiver, a variable of the file (JLS §6.4.2 obscuring, read file-wide). It wins over an on-demand import and `java.lang`, as in Java. Known limits: a member type inherited from a supertype OUTSIDE the repository (or from a supertype's own supertype) is not known, so a type of the package with that name in another owner gives a false edge; a field of that name that a static on-demand import or a supertype brings obscures a receiver and is not seen; and a file in the unnamed package emits nothing, because two directories of it are one package only when a build compiles them together.
  *
  * Each `import_declaration` carries one named `scoped_identifier` whose `.text` is
  * the dotted FQN (the grammar nests dotted names rightmost-outermost, so the
@@ -205,15 +181,10 @@ const VARIABLE_NAME_OWNERS = new Set([
 ]);
 
 /** What the same-package binding needs to know of one file, read once. */
-interface FileScope {
-  pkg: string;
-  /** Simple names of every type the file declares, nested and local ones included. */
+interface FileScope extends SamePackageScope {
   declared: Set<string>;
-  /** Simple name → fully-qualified name of each single-type import. */
-  singleImports: Map<string, string>;
-  /** Simple names a single static import brings (a member type, a method, a field). */
-  staticImports: Set<string>;
-  /** The packages of the on-demand imports (`import a.b.*;`). */
+  imports: Map<string, string>;
+  importedOther: Set<string>;
   onDemand: string[];
   /** Names the file binds as variables. */
   variables: Set<string>;
@@ -227,7 +198,7 @@ function fileScope(file: ParsedFile): FileScope | undefined {
   const pkg = packageFqn(file);
   // The unnamed package is not one namespace across a repository: two directories of it are the same package only when a build compiles them together, which a source tree does not say.
   if (pkg === '') return undefined;
-  const scope: FileScope = { pkg, declared: new Set(), singleImports: new Map(), staticImports: new Set(), onDemand: [], variables: new Set() };
+  const scope: FileScope = { pkg, declared: new Set(), imports: new Map(), importedOther: new Set(), onDemand: [], variables: new Set() };
   walk(file.tree.rootNode, (node) => {
     if (NAMED_TYPE_DECLARATIONS.has(node.type)) {
       const name = node.childForFieldName('name')?.text;
@@ -250,9 +221,9 @@ function fileScope(file: ParsedFile): FileScope | undefined {
       if (isWildcardImport(node)) {
         if (!isStaticImport(node)) scope.onDemand.push(fqn);
       } else if (isStaticImport(node)) {
-        scope.staticImports.add(lastSegment(fqn));
+        scope.importedOther.add(lastSegment(fqn));
       } else {
-        scope.singleImports.set(lastSegment(fqn), fqn);
+        scope.imports.set(lastSegment(fqn), fqn);
       }
       return false;
     }
@@ -312,45 +283,19 @@ function typeParameterNames(node: Node): Set<string> {
 }
 
 /**
- * The ordered candidates for one simple type name written without an import, in the file's package (JLS §6.4.1, §6.3, §7.6): nothing when the name is a type parameter in scope, a type the file declares or a single import (the import's own hint already gives that edge); then the member types a supertype of an enclosing declaration may inherit (`<Super>+<Name>`, which bind only when the supertype is in the repository and declares it), then `<package>.<Name>` through the shared JVM namespace. Same-package beats an on-demand import and `java.lang`, as in Java.
+ * The ordered candidates for one simple type name written without an import, in the file's package (JLS §6.4.1, §6.3, §7.6), see samePackageGroup: nothing when the name is a type parameter in scope; the member types a supertype of an enclosing declaration may inherit (collected here from the declarations whose body holds the use), then the package's own type.
  */
 function samePackageCandidates(scope: FileScope, name: string, node: Node): TargetHint[] | undefined {
-  if (scope.declared.has(name) || scope.singleImports.has(name) || scope.staticImports.has(name)) return undefined;
-  const out: TargetHint[] = [];
-  const seenKeys = new Set<string>();
-  const add = (symbolKey: string, samePackage: boolean): void => {
-    if (seenKeys.has(symbolKey)) return;
-    seenKeys.add(symbolKey);
-    out.push(samePackage ? { kind: 'symbol', symbolKey, samePackage: true } : { kind: 'symbol', symbolKey });
-  };
+  const supertypeLists: string[][] = [];
   let child: Node = node;
   for (let a = node.parent; a !== null; child = a, a = a.parent) {
     const typeParameters = a.childForFieldName('type_parameters');
     if (typeParameters !== null && typeParameterNames(typeParameters).has(name)) return undefined;
     if (!TYPE_BODIES.has(child.type)) continue;
     if (!NAMED_TYPE_DECLARATIONS.has(a.type) && a.type !== 'object_creation_expression') continue;
-    for (const sup of superTypeNames(a)) {
-      if (sup.includes('.')) {
-        add(`${sup}+${name}`, false);
-        continue;
-      }
-      if (scope.declared.has(sup)) continue;
-      const imported = scope.singleImports.get(sup);
-      if (imported !== undefined) {
-        add(`${imported}+${name}`, false);
-        continue;
-      }
-      add(`${scope.pkg}.${sup}+${name}`, true);
-      for (const p of scope.onDemand) add(`${p}.${sup}+${name}`, false);
-    }
+    supertypeLists.push(superTypeNames(a));
   }
-  add(`${scope.pkg}.${name}`, true);
-  return out;
-}
-
-/** True for a name written with a capital first letter, the form of a type name in an expression. */
-function isCapitalised(name: string): boolean {
-  return /^\p{Lu}/u.test(name);
+  return samePackageGroup(scope, name, supertypeLists);
 }
 
 /** True when `n` is the receiver of a member access or method reference: `Owner` of `Owner.m()`, `Owner.X`, `Owner::m`. */

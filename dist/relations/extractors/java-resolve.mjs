@@ -66,15 +66,7 @@ function isTestLikeSet(set) {
     return /^(?:test|testFixtures|integrationTest|it|jmh|androidTest|androidInstrumentedTest)$/.test(set) || /[a-z]Test$/.test(set);
 }
 /**
- * Whether a class declared in `definerFile` is visible by its simple name to code in `fromFile`
- * that sits in the same package, going by the Maven and Gradle source-set layout
- * (`<module>/src/<set>/java|kotlin/...`). The code of a main-like set (`main`, a variant such as
- * `debug`) never sees a class of a test-like set (`test`, `testFixtures`, `integrationTest`,
- * `it`, `jmh`, `androidTest`, a multiplatform `jvmTest`), whichever module holds it. Code of a
- * test-like set sees its own set and every main-like one, and the `testFixtures` of any module;
- * it does not see a different test-like set of its own module (`integrationTest` does not see
- * `test`). Whenever either file is outside that layout, nothing is known and the class counts as
- * visible: the resolver then relies on the owner and the distinct-file rules alone.
+ * Whether a class declared in `definerFile` is visible by its simple name to code in `fromFile` that sits in the same package, going by the Maven and Gradle source-set layout (`<module>/src/<set>/java|kotlin/...`). The code of a main-like set (`main`, a variant such as `debug`) never sees a class of a test-like set (`test`, `testFixtures`, `integrationTest`, `it`, `jmh`, `androidTest`, a multiplatform `jvmTest`), whichever module holds it. Code of a test-like set sees its own set and every main-like one, and the `testFixtures` of any module; it does not see a different test-like set of its own module (`integrationTest` does not see `test`). Whenever either file is outside that layout, nothing is known and the class counts as visible: the resolver then relies on the owner and the distinct-file rules alone.
  */
 export function jvmSourceSetVisible(fromFile, definerFile) {
     const from = SOURCE_SET_LAYOUT.exec(toPosix(fromFile));
