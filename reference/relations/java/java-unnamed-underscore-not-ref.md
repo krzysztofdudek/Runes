@@ -10,9 +10,9 @@ cites: "JEP 456 Unnamed Variables & Patterns (Java 22); JLS SE25; research G4 (N
 
 The underscore `_` is an UNNAMED variable (local / exception / lambda parameter) or an
 unnamed pattern — it means "no name," NOT a type and NOT a reference. The grammar parses
-`_` as `underscore_pattern`, never a `type_identifier` or `identifier`. With no import
-and no usage-site analysis the extractor emits nothing; for any future usage-site walker,
-`_` must never be read as a type or binding name.
+`_` as `underscore_pattern`, never a `type_identifier` or `identifier`. Since it is neither a
+`type_identifier` nor an `identifier`, the extractor reads nothing from it, and `_` must
+never be read as a type or binding name.
 
 ## Files
 
