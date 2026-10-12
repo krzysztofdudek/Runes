@@ -14,7 +14,9 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
  *   - `<Compile Include>` naming files outside the project's directory, an `<Import>` of a `.projitems` shared project, and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups): the project is OPEN. An import of a file the view holds is read like the project file itself.
  * Conditions are read, never evaluated: every branch counts. References are transitive, as in SDK-style projects (`PrivateAssets` and `DisableTransitiveProjectReferences` are not read: only more reach). An OPEN project reaches everything, and so does every project that reaches an open one.
  *
- * Everything unknown fails OPEN: the answer then allows the candidate, so the worst case is the answer before this module existed.
+ * A file that another project compiles through a `Compile` item outside that project's directory (a linked file) is code of that project too: as a caller it sees what the linking project references, as a target it is seen by it (the linking project is open, so it reaches everything).
+ *
+ * Every path is matched segment by segment in any case (a Windows or macOS author's spelling builds there). Everything unknown fails OPEN: a reference, a `Directory.Build.*` name or an import that names a file of the repository this reader cannot find opens its project, and the answer then allows the candidate, so the worst case is the answer before this module existed.
  */
 
 /** How one file sees another: `same` (one project), `reachable` (the other file's project is in the caller's closure), `unreachable` (it is not, and the closure is closed), `unknown` (the graph cannot say: no project facts exist for one of the files, or the caller's project reaches an open one, so it may see anything). A consumer that filters candidates keeps `unknown` like `reachable`; only a rule that must tell "the graph shows it" from "nothing is known" reads the difference. */
@@ -110,16 +112,30 @@ export function buildCsharpReachability(
     return text === undefined ? '' : stripComments(text);
   };
 
-  /** The names a project answers to for `<Reference>` and `<PackageReference>`: its project file's name, its `<AssemblyName>` and `<PackageId>` values. Lower-cased. */
+  /** The `Directory.Build.props` and `Directory.Build.targets` that apply to a project directory, outermost directory first (the names matched in any case, as a Windows author may write them). */
+  const directoryBuildFilesOf = (projectDir: string): string[] => {
+    const out: string[] = [];
+    for (const dir of loc.ancestors(projectDir).reverse()) {
+      for (const name of ['directory.build.props', 'directory.build.targets']) {
+        const hit = loc.list(dir).find((n) => n.toLowerCase() === name);
+        if (hit !== undefined) out.push(dir === '.' ? hit : `${dir}/${hit}`);
+      }
+    }
+    return out;
+  };
+
+  /** The names a project answers to for `<Reference>` and `<PackageReference>`: its project file's name, and the `<AssemblyName>` and `<PackageId>` values of its project file and of the `Directory.Build.*` files above it (a company prefix is usually set there). Lower-cased. */
   const namesOfProject = (projectFile: string): string[] => {
-    const text = readText(projectFile);
     const names = [stem(projectFile).toLowerCase()];
-    for (const prop of ['AssemblyName', 'PackageId']) {
-      const re = new RegExp(`<${prop}\\b[^>]*>([^<]*)</${prop}>`, 'gi');
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(text)) !== null) {
-        const value = m[1].trim().replace(/\$\(MSBuildProjectName\)/gi, stem(projectFile));
-        if (value !== '' && !/[$%@]\(/.test(value)) names.push(value.toLowerCase());
+    for (const file of [projectFile, ...directoryBuildFilesOf(path.posix.dirname(projectFile))]) {
+      const text = readText(file);
+      for (const prop of ['AssemblyName', 'PackageId']) {
+        const re = new RegExp(`<${prop}\\b[^>]*>([^<]*)</${prop}>`, 'gi');
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(text)) !== null) {
+          const value = m[1].trim().replace(/\$\(MSBuildProjectName\)/gi, stem(projectFile));
+          if (value !== '' && !/[$%@]\(/.test(value)) names.push(value.toLowerCase());
+        }
       }
     }
     return names;
@@ -140,15 +156,17 @@ export function buildCsharpReachability(
     return nameIndex.get(name.toLowerCase()) ?? new Set();
   };
 
-  /** An existing file of the view at `p`, the case of its name matched loosely (Windows authors write the case their file system forgives). */
+  /** An existing file of the view at `p`, every segment (directories and file name) matched loosely in case (Windows and macOS authors write the case their file system forgives), an exact spelling preferred. Returns the file's own spelling, which is what the project directories of the graph are written in. */
   const findFile = (p: string): string | undefined => {
     if (p === '.' || p.startsWith('../') || p === '..' || p.startsWith('/')) return undefined;
-    if (source.isFile(p)) return p;
-    const dir = path.posix.dirname(p);
-    const want = path.posix.basename(p).toLowerCase();
-    const hit = loc.list(dir).find((n) => n.toLowerCase() === want);
-    const found = hit === undefined ? undefined : dir === '.' ? hit : `${dir}/${hit}`;
-    return found !== undefined && source.isFile(found) ? found : undefined;
+    let at = '.';
+    for (const want of p.split('/')) {
+      const names = loc.list(at);
+      const hit = names.includes(want) ? want : names.find((n) => n.toLowerCase() === want.toLowerCase());
+      if (hit === undefined) return undefined;
+      at = at === '.' ? hit : `${at}/${hit}`;
+    }
+    return source.isFile(at) ? at : undefined;
   };
 
   /** A path an item names, resolved against the directory of the file that holds it, or `unresolved` when it needs a property this reader does not know, or `outside` when it leaves the repository. */
@@ -174,12 +192,12 @@ export function buildCsharpReachability(
     return declDir === projectDir ? [own] : [own, resolveItemPath(raw, projectDir, projectDir)];
   };
 
-  interface Facts { refs: Set<string>; open: boolean }
+  interface Facts { refs: Set<string>; open: boolean; links: RegExp[] }
   const factsCache = new Map<string, Facts>();
   const factsOf = (projectDir: string): Facts => {
     const hit = factsCache.get(projectDir);
     if (hit !== undefined) return hit;
-    const facts: Facts = { refs: new Set(), open: false };
+    const facts: Facts = { refs: new Set(), open: false, links: [] };
     factsCache.set(projectDir, facts);
 
     const queue: string[] = [];
@@ -190,11 +208,7 @@ export function buildCsharpReachability(
         queue.push(file);
       }
     };
-    for (const dir of loc.ancestors(projectDir).reverse()) {
-      for (const name of ['Directory.Build.props', 'Directory.Build.targets']) {
-        if (loc.list(dir).includes(name)) enqueue(dir === '.' ? name : `${dir}/${name}`);
-      }
-    }
+    for (const f of directoryBuildFilesOf(projectDir)) enqueue(f);
     for (const f of projectFilesIn(projectDir)) enqueue(f);
 
     const projectDirPrefix = projectDir === '.' ? '' : `${projectDir}/`;
@@ -207,6 +221,9 @@ export function buildCsharpReachability(
       const projectRefs = /<ProjectReference\b([^>]*?)\/?>/gi;
       while ((m = projectRefs.exec(text)) !== null) {
         for (const item of includes(m[1])) {
+          // A path that lies in the repository and names no file under any reading is a reference the graph cannot follow (a spelling this reader does not know): the project is open, never silently without it.
+          let named = false;
+          let found = false;
           for (const r of resolveItemPaths(item, declDir, projectDir)) {
             if (r.kind === 'unresolved') facts.open = true;
             else if (r.kind === 'path') {
@@ -214,18 +231,24 @@ export function buildCsharpReachability(
                 const re = globToRegExp(r.path);
                 for (const p of everyProjectFile()) if (re.test(p)) facts.refs.add(path.posix.dirname(p));
               } else {
-                const found = findFile(r.path);
-                if (found !== undefined && PROJECT_FILE.test(found)) facts.refs.add(path.posix.dirname(found));
+                named = true;
+                const file = findFile(r.path);
+                if (file !== undefined) {
+                  found = true;
+                  if (PROJECT_FILE.test(file)) facts.refs.add(path.posix.dirname(file));
+                }
               }
             }
           }
+          if (named && !found) facts.open = true;
         }
       }
 
       const references = /<Reference\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Reference>)/gi;
       while ((m = references.exec(text)) !== null) {
         const hintPath = m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim();
-        const names = includes(m[1]).map((s) => s.split(',')[0].trim());
+        // The name is the part before the first comma; an Include that is the assembly's file path (`..\bin\Acme.Api.dll`) names it by the file name.
+        const names = includes(m[1]).map((s) => s.split(',')[0].trim()).map((s) => (/[\\/]|\.(?:dll|exe)$/i.test(s) ? stem(s) : s));
         if (hintPath !== undefined && hintPath !== '') names.push(stem(hintPath));
         for (const name of names) for (const dir of projectDirsNamed(name)) facts.refs.add(dir);
       }
@@ -240,7 +263,10 @@ export function buildCsharpReachability(
         for (const item of includes(m[1])) {
           for (const r of resolveItemPaths(item, declDir, projectDir)) {
             if (r.kind !== 'path') facts.open = true;
-            else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix)) facts.open = true;
+            else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix)) {
+              facts.open = true;
+              facts.links.push(globToRegExp(r.path));
+            }
           }
         }
       }
@@ -263,6 +289,8 @@ export function buildCsharpReachability(
           else {
             const found = findFile(r.path);
             if (found !== undefined) enqueue(found);
+            // An import that is written without a condition and names no file of the repository stops the build, so it is one this reader cannot see; a conditional one (`Exists(...)`) is the author's own optional file.
+            else if (!attrs.has('condition')) facts.open = true;
           }
         }
       }
@@ -292,13 +320,30 @@ export function buildCsharpReachability(
     return closure;
   };
 
+  /** Every project's `Compile` links that leave its directory, as `[project directory, pattern]`, read once. */
+  let linkIndex: Array<[string, RegExp]> | undefined;
+  /** The projects, other than the file's own, that compile the file through a `Compile` item outside their directory: the file is also code of each of them, so it sees what they reference. */
+  const linkersOf = (file: string, own: string): string[] => {
+    if (linkIndex === undefined) {
+      linkIndex = [];
+      for (const dir of new Set(everyProjectFile().map((f) => path.posix.dirname(f)))) {
+        for (const re of factsOf(dir).links) linkIndex.push([dir, re]);
+      }
+    }
+    return [...new Set(linkIndex.filter(([dir, re]) => dir !== own && re.test(file)).map(([dir]) => dir))];
+  };
+
   return (fromFile, targetFile) => {
     const from = projectOf.get(fromFile);
     const target = projectOf.get(targetFile);
     if (from === undefined || target === undefined) return 'unknown';
     if (from === target) return 'same';
-    const closure = closureOf(from);
-    if (closure.reaches.has(target)) return 'reachable';
-    return closure.open ? 'unknown' : 'unreachable';
+    let open = false;
+    for (const root of [from, ...linkersOf(fromFile, from)]) {
+      const closure = closureOf(root);
+      if (closure.reaches.has(target)) return 'reachable';
+      if (closure.open) open = true;
+    }
+    return open ? 'unknown' : 'unreachable';
   };
 }

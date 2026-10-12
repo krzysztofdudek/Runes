@@ -8,7 +8,7 @@ cites: "MSBuild — Directory.Build.props is imported by every project below it,
 
 ## Rule
 
-A `<ProjectReference>` written in a `Directory.Build.props` applies to every project under it: MSBuild imports the file into each of them. Billing's project file says nothing about Common, but the props file above it does, so Billing reaches Common and the extension method declared there binds. The path in the props file is relative to the props file, not to the project.
+A `<ProjectReference>` written in a `Directory.Build.props` applies to every project under it: MSBuild imports the file into each of them. Billing's project file says nothing about Common, but the props file above it does, so Billing reaches Common and the extension method declared there binds. MSBuild resolves a relative item path of an imported file against the project that is being built; it is the `$(MSBuildThisFileDirectory)` prefix, as written here, that makes the path relative to the props file.
 
 ## Files
 

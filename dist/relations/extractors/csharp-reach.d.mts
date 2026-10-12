@@ -11,7 +11,9 @@ import { type FileView } from '../file-view.mjs';
  *   - `<Compile Include>` naming files outside the project's directory, an `<Import>` of a `.projitems` shared project, and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups): the project is OPEN. An import of a file the view holds is read like the project file itself.
  * Conditions are read, never evaluated: every branch counts. References are transitive, as in SDK-style projects (`PrivateAssets` and `DisableTransitiveProjectReferences` are not read: only more reach). An OPEN project reaches everything, and so does every project that reaches an open one.
  *
- * Everything unknown fails OPEN: the answer then allows the candidate, so the worst case is the answer before this module existed.
+ * A file that another project compiles through a `Compile` item outside that project's directory (a linked file) is code of that project too: as a caller it sees what the linking project references, as a target it is seen by it (the linking project is open, so it reaches everything).
+ *
+ * Every path is matched segment by segment in any case (a Windows or macOS author's spelling builds there). Everything unknown fails OPEN: a reference, a `Directory.Build.*` name or an import that names a file of the repository this reader cannot find opens its project, and the answer then allows the candidate, so the worst case is the answer before this module existed.
  */
 /** How one file sees another: `same` (one project), `reachable` (the other file's project is in the caller's closure), `unreachable` (it is not, and the closure is closed), `unknown` (the graph cannot say: no project facts exist for one of the files, or the caller's project reaches an open one, so it may see anything). A consumer that filters candidates keeps `unknown` like `reachable`; only a rule that must tell "the graph shows it" from "nothing is known" reads the difference. */
 export type Reach = 'same' | 'reachable' | 'unreachable' | 'unknown';

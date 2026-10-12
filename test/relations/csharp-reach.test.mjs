@@ -94,12 +94,17 @@ describe('buildCsharpReachability — projects and references', () => {
     expect(reach('a/x.cs', 'other/p.cs')).toBe('unreachable');
   });
 
-  it('ignores a reference to a project that is not there, or that lies outside the repository', () => {
-    const reach = reachOf({
-      'a/A.csproj': withItems(projectRef('../gone/Gone.csproj'), projectRef('../../outside/Out.csproj')), 'a/x.cs': '',
+  it('reads a project as open for a reference to a path of the repository that names no file, and ignores one that lies outside the repository', () => {
+    const open = reachOf({
+      'a/A.csproj': withItems(projectRef('../gone/Gone.csproj')), 'a/x.cs': '',
       'b/B.csproj': PROJECT, 'b/z.cs': '',
     });
-    expect(reach('a/x.cs', 'b/z.cs')).toBe('unreachable');
+    expect(open('a/x.cs', 'b/z.cs')).toBe('unknown');
+    const outside = reachOf({
+      'a/A.csproj': withItems(projectRef('../../outside/Out.csproj')), 'a/x.cs': '',
+      'b/B.csproj': PROJECT, 'b/z.cs': '',
+    });
+    expect(outside('a/x.cs', 'b/z.cs')).toBe('unreachable');
   });
 
   it('matches a path whose case differs from the file name (a Windows author)', () => {
@@ -108,6 +113,29 @@ describe('buildCsharpReachability — projects and references', () => {
       'B/B.csproj': PROJECT, 'B/z.cs': '',
     });
     expect(reach('a/x.cs', 'B/z.cs')).toBe('reachable');
+  });
+
+  it('matches every directory of a path in any case, through a listed view and on the disk', () => {
+    const files = {
+      'src/Billing/Billing.csproj': withItems(projectRef('..\\shared\\Shared.csproj')), 'src/Billing/Invoice.cs': '',
+      'src/Shared/Shared.csproj': PROJECT, 'src/Shared/Clock.cs': '',
+      'src/Other/Other.csproj': PROJECT, 'src/Other/o.cs': '',
+    };
+    const reach = reachOf(files);
+    expect(reach('src/Billing/Invoice.cs', 'src/Shared/Clock.cs')).toBe('reachable');
+    expect(reach('src/Billing/Invoice.cs', 'src/Other/o.cs')).toBe('unreachable');
+    const root = mkdtempSync(path.join(os.tmpdir(), 'runes-reach-case-'));
+    try {
+      for (const [rel, text] of Object.entries(files)) {
+        mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        writeFileSync(path.join(root, rel), text, 'utf-8');
+      }
+      const onDisk = buildCsharpReachability(root, Object.keys(files).filter((p) => p.endsWith('.cs')));
+      expect(onDisk('src/Billing/Invoice.cs', 'src/Shared/Clock.cs')).toBe('reachable');
+      expect(onDisk('src/Billing/Invoice.cs', 'src/Other/o.cs')).toBe('unreachable');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('passes through a project file that holds no C# (an F# project) on the way', () => {
@@ -161,6 +189,27 @@ describe('buildCsharpReachability — assemblies and packages', () => {
     expect(reach('f/x.cs', 'serilog/s.cs')).toBe('unreachable');
   });
 
+  it('reads a Reference whose Include is the path of the assembly file by its file name', () => {
+    const reach = reachOf({
+      'f/F.csproj': withItems('<Reference Include="..\\..\\src\\Acme.Api\\bin\\Release\\net8.0\\Acme.Api.dll" />', '<Reference Include="../libs/Newtonsoft.Json.dll" />'), 'f/x.cs': '',
+      'src/Acme.Api/Acme.Api.csproj': PROJECT, 'src/Acme.Api/a.cs': '',
+      'src/Json/Json.csproj': PROJECT, 'src/Json/j.cs': '',
+    });
+    expect(reach('f/x.cs', 'src/Acme.Api/a.cs')).toBe('reachable');
+    expect(reach('f/x.cs', 'src/Json/j.cs')).toBe('unreachable');
+  });
+
+  it('reads an AssemblyName set in a Directory.Build.props, with $(MSBuildProjectName)', () => {
+    const reach = reachOf({
+      'f/F.csproj': withItems('<Reference Include="Acme.Core" />'), 'f/x.cs': '',
+      'src/Directory.Build.props': '<Project><PropertyGroup><AssemblyName>Acme.$(MSBuildProjectName)</AssemblyName></PropertyGroup></Project>',
+      'src/Core/Core.csproj': PROJECT, 'src/Core/c.cs': '',
+      'src/Other/Other.csproj': PROJECT, 'src/Other/o.cs': '',
+    });
+    expect(reach('f/x.cs', 'src/Core/c.cs')).toBe('reachable');
+    expect(reach('f/x.cs', 'src/Other/o.cs')).toBe('unreachable');
+  });
+
   it('does not walk dot-directories, bin, obj or node_modules for assembly names', () => {
     const reach = reachOf({
       'f/F.csproj': withItems('<Reference Include="Hidden" />'), 'f/x.cs': '',
@@ -190,13 +239,12 @@ describe('buildCsharpReachability — Directory.Build files and imports', () => 
 
   it('reads a relative path of a props file against the props file and against the project, both', () => {
     const reach = reachOf({
-      'src/Directory.Build.props': withItems(projectRef('../core/Core.csproj'), projectRef('../../shared/Shared.csproj')),
+      'src/Directory.Build.props': withItems(projectRef('../core/Core.csproj')),
       'src/a/A.csproj': PROJECT, 'src/a/x.cs': '',
       'core/Core.csproj': PROJECT, 'core/c.cs': '',
-      'src/shared/Shared.csproj': PROJECT, 'src/shared/s.cs': '',
       'other/Other.csproj': PROJECT, 'other/o.cs': '',
     });
-    // From the props file's directory, ../core is core/; from the project's directory src/a, ../../shared is shared/ (absent) and ../core is src/core (absent).
+    // From the props file's directory, ../core is core/; from the project's directory src/a, ../core is src/core (absent): one reading finds the file, so the project stays closed.
     expect(reach('src/a/x.cs', 'core/c.cs')).toBe('reachable');
     expect(reach('src/a/x.cs', 'other/o.cs')).toBe('unreachable');
     // A project-relative reading of ../shared from src/a lands on src/shared.
@@ -217,6 +265,28 @@ describe('buildCsharpReachability — Directory.Build files and imports', () => 
     });
     expect(reach('a/x.cs', 'b/z.cs')).toBe('reachable');
     expect(reach('a/x.cs', 'c/w.cs')).toBe('unreachable');
+  });
+
+  it('finds a Directory.Build file and an imported file whose directories or names are spelled in another case', () => {
+    const reach = reachOf({
+      'src/directory.build.PROPS': withItems(projectRef('$(MSBuildThisFileDirectory)Core/Core.csproj')),
+      'src/a/A.csproj': '<Project><Import Project="..\\BUILD\\refs.props" /></Project>', 'src/a/x.cs': '',
+      'src/build/refs.props': withItems(projectRef('$(MSBuildThisFileDirectory)../lib/Lib.csproj')),
+      'src/Core/Core.csproj': PROJECT, 'src/Core/c.cs': '',
+      'src/Lib/Lib.csproj': PROJECT, 'src/Lib/l.cs': '',
+      'src/other/Other.csproj': PROJECT, 'src/other/o.cs': '',
+    });
+    expect(reach('src/a/x.cs', 'src/Core/c.cs')).toBe('reachable');
+    expect(reach('src/a/x.cs', 'src/Lib/l.cs')).toBe('reachable');
+    expect(reach('src/a/x.cs', 'src/other/o.cs')).toBe('unreachable');
+  });
+
+  it('reads a project as open for an unconditional import of a file the view does not hold', () => {
+    const reach = reachOf({
+      'a/A.csproj': '<Project><Import Project="missing.props" /></Project>', 'a/x.cs': '',
+      'b/B.csproj': PROJECT, 'b/z.cs': '',
+    });
+    expect(reach('a/x.cs', 'b/z.cs')).toBe('unknown');
   });
 
   it('reads an import cycle once', () => {
@@ -272,6 +342,19 @@ describe('buildCsharpReachability — open projects', () => {
       'b/B.csproj': PROJECT, 'b/z.cs': '',
     });
     expect(reach('a/x.cs', 'b/z.cs')).toBe('unreachable');
+  });
+
+  it('sees a linked file as code of the project that links it: as a caller it reaches what that project references', () => {
+    const reach = reachOf({
+      'src/Lib/Lib.csproj': PROJECT, 'src/Lib/Feature.cs': '',
+      'src/Lib.NetFx/Lib.NetFx.csproj': withItems('<Compile Include="..\\Lib\\**\\*.cs" />', projectRef('../Legacy/Legacy.csproj')),
+      'src/Legacy/Legacy.csproj': PROJECT, 'src/Legacy/Helper.cs': '',
+      'src/Other/Other.csproj': PROJECT, 'src/Other/o.cs': '',
+    });
+    expect(reach('src/Lib/Feature.cs', 'src/Legacy/Helper.cs')).toBe('reachable');
+    // The linking project is open, so the linked file is an unknown to everything else, as before.
+    expect(reach('src/Lib/Feature.cs', 'src/Other/o.cs')).toBe('unknown');
+    expect(reach('src/Other/o.cs', 'src/Legacy/Helper.cs')).toBe('unreachable');
   });
 
   it('reads a project at the repository root as open for a Compile item that leaves the root', () => {
