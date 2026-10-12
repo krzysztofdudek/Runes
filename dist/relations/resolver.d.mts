@@ -1,5 +1,6 @@
 import type { SymbolTable } from './symbol-table.mjs';
 import type { DetectedDep, TargetHint } from './extractors/types.mjs';
+import type { Reachability } from './extractors/csharp-reach.mjs';
 /**
  * Who owns a repository file: the unit a resolved reference is attributed to (a module, a package, a directory, whatever the caller groups files by). `undefined` means the file is not owned by any unit, which the resolver treats as the non-event of an unmapped target.
  */
@@ -15,6 +16,10 @@ export interface ResolverDeps {
     symbolTable: SymbolTable;
     /** language-specific path → repo-rel file (or undefined). Injected per language. */
     resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
+    /**
+     * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). Both `resolve`, `classify` and `resolveFile` apply it.
+     */
+    reach?: Reachability;
 }
 /**
  * The tri-state outcome of probing ONE candidate hint:

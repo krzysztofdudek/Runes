@@ -10,7 +10,7 @@ import { expect } from '../helpers/expect.mjs';
 import { withParsedFiles, CATALOGUE_ROOT } from '../helpers/tree-sitter.mjs';
 import { getLanguageForExtension, relationLanguageForPath } from '@chrisdudek/runes/grammars';
 import {
-  extractorForLanguage, sfcScriptView, buildCsharpProjectScopes, SymbolTable, makeResolver, resolveDetectedEdges, makeResolvePathToFile, listedFileView,
+  extractorForLanguage, sfcScriptView, buildCsharpProjectScopes, buildCsharpReachability, SymbolTable, makeResolver, resolveDetectedEdges, makeResolvePathToFile, listedFileView,
 } from '@chrisdudek/runes/relations';
 import {
   csharpUses, collectGlobalUsings, collectGlobalUsingAliases,
@@ -178,7 +178,8 @@ export async function caseEdges(doc, through = 'disk') {
           })),
           { files },
         );
-        const resolver = makeResolver({ ownerIndex, symbolTable, resolvePathToFile: makeResolvePathToFile(projectRoot, ownerIndex.ownerOf, undefined, { files }) });
+        const reach = buildCsharpReachability(projectRoot, doc.files.filter((f) => f.language === 'csharp').map((f) => f.path), { files });
+        const resolver = makeResolver({ ownerIndex, symbolTable, resolvePathToFile: makeResolvePathToFile(projectRoot, ownerIndex.ownerOf, undefined, { files }), reach });
         const edges = [];
         for (const f of doc.files) {
           const extractor = extractorForLanguage(f.language);
