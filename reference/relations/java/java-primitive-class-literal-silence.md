@@ -8,10 +8,7 @@ cites: "JLS SE25 §15.8.2 (class literal); research G2 (C28 in 06-14)"
 
 ## Rule
 
-Primitives and `void` have no `.java` file. `int.class` / `void.class` /
-`boolean.class` reference primitives, not types. With no import and no usage-site
-analysis, the extractor emits nothing — and these tokens MUST be excluded from any
-future type-reference walk.
+Primitives and `void` have no `.java` file. `int.class` / `void.class` / `boolean.class` reference primitives, not types. They are never type identifiers, so the extractor reads nothing from them — and these tokens MUST be excluded from any type-reference walk.
 
 ## Files
 
@@ -30,5 +27,4 @@ class C {
 
 ## Why
 
-A primitive has no source file; treating `int`/`void`/`boolean` as a type would be a
-phantom.
+A primitive has no source file; treating `int`/`void`/`boolean` as a type would be a phantom.

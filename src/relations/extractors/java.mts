@@ -1,22 +1,15 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
-import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
+import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
+import { isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
 
 /**
  * Java dependency extractor.
  *
- * v1 scope = EXISTENCE, not relation type. The unit of an inter-component edge in
- * Java is the IMPORT: an `import_declaration` names a fully-qualified type (or, for
- * a wildcard import, a package). A dependency edge is therefore established ONLY by
- * an import declaration. Usage-site nodes (`extends`/`implements` super-types,
- * `object_creation_expression`, `method_invocation`, fully-qualified type
- * references, same-package references) would only REFINE the relation type of an
- * already-imported binding, and v1 does not enforce relation type — so this
- * extractor performs NO usage-site refinement. It emits exactly one path hint per
- * import, whose specifier is a Java FULLY-QUALIFIED NAME (a type FQN, or a package
- * FQN for a wildcard); the resolver maps that FQN → a file by Java's
- * package = directory convention.
+ * v1 scope = EXISTENCE, not relation type. An inter-component edge in Java comes from an IMPORT (an `import_declaration` names a fully-qualified type or, for a wildcard import, a package), from an inline fully-qualified type, and from a SIMPLE NAME of a type of the file's own package, which needs no import (see SAME-PACKAGE REFERENCES below). The extractor does not refine the relation type of a usage. It emits one path hint per import, whose specifier is a Java FULLY-QUALIFIED NAME (a type FQN, or a package FQN for a wildcard); the resolver maps that FQN → a file by Java's package = directory convention.
+ *
+ * SAME-PACKAGE REFERENCES. Every type in a package is visible by its simple name to every file of that package without an import (JLS §7.6), and a test in the package of the class it tests is the usual case. At each simple type name in a type position (a declaration's type, a generic argument, `extends`/`implements`/`throws`, a cast, `instanceof`, `new Foo()`, a `catch`, `Foo.class`, a pattern, an annotation) and at a capitalised receiver in an expression (`Foo.m()`, `Foo.X`, `Foo::m`) the extractor emits ONE ordered candidate group: first the member types a supertype of an enclosing declaration may inherit (`<Super>+<Name>`), then `<package>.<Name>`, resolved through the shared JVM namespace (so a Kotlin class of the package counts too) with the source-set rule of the resolver (`main` never sees `test`). The group is NOT emitted when the name is a type parameter in scope, a type the file declares (nested and local ones included), a single-type import or a single static import of that simple name (the import's own hint gives that edge), or, for an expression receiver, a variable of the file (JLS §6.4.2 obscuring, read file-wide). It wins over an on-demand import and `java.lang`, as in Java. Known limits: a member type inherited from a supertype OUTSIDE the repository (or from a supertype's own supertype) is not known, so a type of the package with that name in another owner gives a false edge; a field of that name that a static on-demand import or a supertype brings obscures a receiver and is not seen; and a file in the unnamed package emits nothing, because two directories of it are one package only when a build compiles them together.
  *
  * Each `import_declaration` carries one named `scoped_identifier` whose `.text` is
  * the dotted FQN (the grammar nests dotted names rightmost-outermost, so the
@@ -164,9 +157,193 @@ function firstIdentifierText(node: Node): string | undefined {
   return undefined;
 }
 
+/** Type declarations whose simple name a file declares (a nested or local one included). */
+const NAMED_TYPE_DECLARATIONS = new Set([
+  'class_declaration',
+  'interface_declaration',
+  'enum_declaration',
+  'record_declaration',
+  'annotation_type_declaration',
+]);
+
+/** The body nodes inside which the members of a declaration's supertypes are in scope. */
+const TYPE_BODIES = new Set(['class_body', 'interface_body', 'enum_body', 'annotation_type_body']);
+
+/** The names a file binds as variables (fields, parameters, locals, pattern bindings, enum constants): a capitalised receiver of one of these names is a variable, which obscures a type of that name (JLS §6.4.2). Read file-wide, which only ever silences more. */
+const VARIABLE_NAME_OWNERS = new Set([
+  'variable_declarator',
+  'formal_parameter',
+  'catch_formal_parameter',
+  'enhanced_for_statement',
+  'instanceof_expression',
+  'resource',
+  'enum_constant',
+]);
+
+/** What the same-package binding needs to know of one file, read once. */
+interface FileScope extends SamePackageScope {
+  declared: Set<string>;
+  imports: Map<string, string>;
+  importedOther: Set<string>;
+  onDemand: string[];
+  /** Names the file binds as variables. */
+  variables: Set<string>;
+}
+
+function lastSegment(fqn: string): string {
+  return fqn.slice(fqn.lastIndexOf('.') + 1);
+}
+
+function fileScope(file: ParsedFile): FileScope | undefined {
+  const pkg = packageFqn(file);
+  // The unnamed package is not one namespace across a repository: two directories of it are the same package only when a build compiles them together, which a source tree does not say.
+  if (pkg === '') return undefined;
+  const scope: FileScope = { pkg, declared: new Set(), imports: new Map(), importedOther: new Set(), onDemand: [], variables: new Set() };
+  walk(file.tree.rootNode, (node) => {
+    if (NAMED_TYPE_DECLARATIONS.has(node.type)) {
+      const name = node.childForFieldName('name')?.text;
+      if (name !== undefined && name !== '') scope.declared.add(name);
+    } else if (VARIABLE_NAME_OWNERS.has(node.type)) {
+      const name = node.childForFieldName('name')?.text;
+      if (name !== undefined) scope.variables.add(name);
+    } else if (node.type === 'inferred_parameters') {
+      for (let i = 0; i < node.namedChildCount; i++) scope.variables.add(node.namedChild(i)?.text ?? '');
+    } else if (node.type === 'lambda_expression') {
+      const p = node.childForFieldName('parameters');
+      if (p?.type === 'identifier') scope.variables.add(p.text);
+    } else if (node.type === 'type_pattern' || node.type === 'record_pattern_component') {
+      const last = node.namedChild(node.namedChildCount - 1);
+      if (last?.type === 'identifier') scope.variables.add(last.text);
+    } else if (node.type === 'import_declaration') {
+      if (isModuleImport(node)) return false;
+      const fqn = importFqn(node);
+      if (fqn === undefined) return false;
+      if (isWildcardImport(node)) {
+        if (!isStaticImport(node)) scope.onDemand.push(fqn);
+      } else if (isStaticImport(node)) {
+        scope.importedOther.add(lastSegment(fqn));
+      } else {
+        scope.imports.set(lastSegment(fqn), fqn);
+      }
+      return false;
+    }
+    return undefined;
+  });
+  return scope;
+}
+
+/** The simple (or dotted) name a supertype node reads as, or undefined for a form not read. */
+function superTypeName(node: Node): string | undefined {
+  if (node.type === 'type_identifier' || node.type === 'scoped_type_identifier') return node.text;
+  if (node.type === 'generic_type') {
+    const head = node.namedChild(0);
+    return head === null ? undefined : superTypeName(head);
+  }
+  return undefined;
+}
+
+/** The names of the supertypes a type declaration (or an anonymous class creation) extends or implements. */
+function superTypeNames(decl: Node): string[] {
+  const out: string[] = [];
+  const take = (n: Node | null): void => {
+    if (n === null) return;
+    for (let i = 0; i < n.namedChildCount; i++) {
+      const c = n.namedChild(i);
+      if (c === null) continue;
+      if (c.type === 'type_list') take(c);
+      else {
+        const name = superTypeName(c);
+        if (name !== undefined) out.push(name);
+      }
+    }
+  };
+  if (decl.type === 'object_creation_expression') {
+    const t = decl.childForFieldName('type');
+    const name = t === null ? undefined : superTypeName(t);
+    if (name !== undefined) out.push(name);
+    return out;
+  }
+  take(decl.childForFieldName('superclass'));
+  take(decl.childForFieldName('interfaces'));
+  for (let i = 0; i < decl.namedChildCount; i++) {
+    const c = decl.namedChild(i);
+    if (c?.type === 'extends_interfaces') take(c);
+  }
+  return out;
+}
+
+/** The names a `type_parameters` node declares. */
+function typeParameterNames(node: Node): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const c = node.namedChild(i)?.namedChild(0);
+    if (c !== null && c !== undefined) out.add(c.text);
+  }
+  return out;
+}
+
+/**
+ * The ordered candidates for one simple type name written without an import, in the file's package (JLS §6.4.1, §6.3, §7.6), see samePackageGroup: nothing when the name is a type parameter in scope; the member types a supertype of an enclosing declaration may inherit (collected here from the declarations whose body holds the use), then the package's own type.
+ */
+function samePackageCandidates(scope: FileScope, name: string, node: Node): TargetHint[] | undefined {
+  const supertypeLists: string[][] = [];
+  let child: Node = node;
+  for (let a = node.parent; a !== null; child = a, a = a.parent) {
+    const typeParameters = a.childForFieldName('type_parameters');
+    if (typeParameters !== null && typeParameterNames(typeParameters).has(name)) return undefined;
+    if (!TYPE_BODIES.has(child.type)) continue;
+    if (!NAMED_TYPE_DECLARATIONS.has(a.type) && a.type !== 'object_creation_expression') continue;
+    supertypeLists.push(superTypeNames(a));
+  }
+  return samePackageGroup(scope, name, supertypeLists);
+}
+
+/** True when `n` is the receiver of a member access or method reference: `Owner` of `Owner.m()`, `Owner.X`, `Owner::m`. */
+function isReceiver(n: Node): boolean {
+  const p = n.parent;
+  if (p === null) return false;
+  if (p.type === 'method_invocation' || p.type === 'field_access') return p.childForFieldName('object')?.id === n.id;
+  if (p.type === 'method_reference') return p.namedChild(0)?.id === n.id;
+  return false;
+}
+
 function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
+  const scope = fileScope(file);
+
+  // Same-package references (no import): one ordered candidate group per simple name, see samePackageCandidates.
+  const seenGroups = new Set<string>();
+  const emitSamePackage = (name: string, node: Node): void => {
+    if (scope === undefined || name === '' || name === 'var') return;
+    const candidates = samePackageCandidates(scope, name, node);
+    if (candidates === undefined) return;
+    const line = node.startPosition.row + 1;
+    const dedupKey = `${candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : '')).join('|')} ${line}`;
+    if (seenGroups.has(dedupKey)) return;
+    seenGroups.add(dedupKey);
+    out.push({ candidates, kind: 'type-ref', line });
+  };
+  // A name in a type position: not a type parameter's own name, not the member of a qualified type (`Entry` of `Map.Entry`), not a package segment (`com` of `com.app.X`), not the type of `outer.new Inner()`.
+  const typeIdentifier = (node: Node): void => {
+    const p = node.parent;
+    if (p === null) return;
+    if (p.type === 'type_parameter' && p.namedChild(0)?.id === node.id) return;
+    if (p.type === 'scoped_type_identifier' && (p.namedChild(0)?.id !== node.id || !isCapitalised(node.text))) return;
+    if (p.type === 'object_creation_expression' && p.child(0)?.type !== 'new') return;
+    emitSamePackage(node.text, node);
+  };
+  const identifier = (node: Node): void => {
+    const p = node.parent;
+    if (p === null) return;
+    if ((p.type === 'marker_annotation' || p.type === 'annotation') && p.childForFieldName('name')?.id === node.id) {
+      emitSamePackage(node.text, node);
+    } else if (p.type === 'record_pattern' && p.namedChild(0)?.id === node.id) {
+      emitSamePackage(node.text, node);
+    } else if (isCapitalised(node.text) && isReceiver(node) && scope !== undefined && !scope.variables.has(node.text)) {
+      emitSamePackage(node.text, node);
+    }
+  };
 
   const emit = (specifier: string | undefined, node: Node, isPackage = false): void => {
     if (specifier === undefined || specifier === '') return;
@@ -195,6 +372,15 @@ function uses(file: ParsedFile): DetectedDep[] {
   };
 
   walk(file.tree.rootNode, (node) => {
+    if (node.type === 'type_identifier') {
+      typeIdentifier(node);
+      return undefined;
+    }
+    if (node.type === 'identifier') {
+      identifier(node);
+      return undefined;
+    }
+
     // Inline FQN type reference: the OUTERMOST scoped_type_identifier of a chain carries the
     // complete dotted FQN; inner ones are its `scope` segments. Type positions only — an
     // expression-position dotted access is a field_access chain, never this node.
@@ -246,12 +432,7 @@ function uses(file: ParsedFile): DetectedDep[] {
   return out;
 }
 
-const DECLARATION_TYPES = new Set([
-  'class_declaration',
-  'interface_declaration',
-  'enum_declaration',
-  'record_declaration',
-]);
+const DECLARATION_TYPES = NAMED_TYPE_DECLARATIONS;
 
 /** The package FQN of a compilation unit, read from its `package_declaration`'s
  *  `scoped_identifier` (a bare `identifier` for a single-segment package). Empty string
@@ -334,7 +515,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const javaExtractor: DependencyExtractor = {
   languages: new Set(['java']),
-  rev: 3,
+  rev: 4,
   declarations,
   uses,
 };

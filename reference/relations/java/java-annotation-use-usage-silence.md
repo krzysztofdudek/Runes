@@ -8,8 +8,7 @@ cites: "JLS SE25 §9.6, §9.7 (annotation use); research F6 (C26 in 06-14)"
 
 ## Rule
 
-A user-package annotation use `@com.acme.audit.Audit` is a usage site referencing the
-annotation type, but it carries no import. The import-only extractor emits no hint.
+A user-package annotation use `@com.acme.audit.Audit` is a usage site referencing the annotation type, but it carries no import. An annotation written with its package-qualified name has no simple-name form to read, so the extractor emits no hint (a simple-name annotation of the referencing file's own package binds: see java-same-package-qualified-and-annotation-edge).
 
 ## Files
 
@@ -30,4 +29,4 @@ class C {}
 
 ## Why
 
-Annotation USE is a usage site; the import-only model silences it.
+A package-qualified annotation name is not a type position; only a simple name of the own package binds.

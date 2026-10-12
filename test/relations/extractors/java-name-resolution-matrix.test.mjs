@@ -16,17 +16,7 @@ import { withParsedFile } from '../../helpers/tree-sitter.mjs';
  * (reference/relations/case-has-test + case-is-tested) enforce the 1:1 catalogue↔test
  * correspondence, so this file cannot drift from the catalogue.
  *
- * THE GOVERNING INVARIANT: a Java dependency edge is established ONLY by a SHADOW-FREE
- * FULLY-QUALIFIED type reference. Three forms qualify: an `import_declaration` (operand is
- * a fully-qualified type, or a package for a wildcard), a `module-info.java`
- * `uses`/`provides` directive (a shadow-free service-TYPE FQN), and — NEW — an INLINE
- * fully-qualified TYPE reference written WITHOUT an import (the outermost
- * `scoped_type_identifier`: a dotted type in any TYPE position). Because the name is
- * fully qualified it is shadow-free per JLS §6.5.5.2 — there is no simple-name precedence
- * trap to fall into. What stays FORBIDDEN is resolving a PARTIALLY-qualified name, a bare
- * SAME-PACKAGE simple name, or EXPRESSION-position dotted access — those would reintroduce
- * the §6.5.5 trap. The cardinal invariant — ZERO false positives, a hard wall with no
- * adopter waiver — outranks recall; a missed edge is a tolerated false-NEGATIVE.
+ * THE GOVERNING INVARIANT: a Java dependency edge is established ONLY by a SHADOW-FREE FULLY-QUALIFIED type reference. Three forms qualify: an `import_declaration` (operand is a fully-qualified type, or a package for a wildcard), a `module-info.java` `uses`/`provides` directive (a shadow-free service-TYPE FQN), and — NEW — an INLINE fully-qualified TYPE reference written WITHOUT an import (the outermost `scoped_type_identifier`: a dotted type in any TYPE position). Because the name is fully qualified it is shadow-free per JLS §6.5.5.2 — there is no simple-name precedence trap to fall into. What stays FORBIDDEN is resolving a PARTIALLY-qualified name or EXPRESSION-position dotted access (`com.app.Helper.m()`) — those would reintroduce the §6.5.5 trap. A bare SAME-PACKAGE simple name is resolved since 1.1.0, but only where JLS §6.4 leaves it unshadowed (see the same-package block below). The cardinal invariant — no false positives that the shadowing rules can exclude — outranks recall; a missed edge is a tolerated false-NEGATIVE.
  *
  * THE ZERO-FP BOUNDARY: the inline-FQN form edges ONLY in a TYPE position, because the
  * grammar node `scoped_type_identifier` occurs only in type positions. An EXPRESSION-position
@@ -145,21 +135,32 @@ describe('MATRIX — inline fully-qualified TYPE reference (no import): the FQN 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// USAGE-SITE forms that STAY SILENT (deliberate tolerated false-NEGATIVE, not a bug). These
-// are the residual silences AFTER inline fully-qualified TYPE references began to edge: a
-// reference is silent here because it is NOT a shadow-free `scoped_type_identifier` in a TYPE
-// position. Three residual families remain — PARTIALLY-qualified inline names (would need the
-// §6.5.5 simple-name precedence trap to resolve), SAME-PACKAGE bare simple names (same trap),
-// and EXPRESSION-position dotted access (`com.app.Helper.staticMethod()`, a qualified enum
-// constant, an annotation-use name) which parses as a field_access/method_invocation chain,
-// never a `scoped_type_identifier` — the zero-FP boundary. Each case puts the referenced type
-// IN-GRAPH, so the silence proves the extractor emits no edge even when the target is mapped.
-describe('MATRIX — partially-qualified / same-package / expression-position forms (deliberate tolerated false-NEGATIVE: SILENT)', () => {
+// USAGE-SITE forms that STAY SILENT (deliberate tolerated false-NEGATIVE, not a bug). These are the residual silences AFTER inline fully-qualified TYPE references began to edge: a reference is silent here because it is NOT a shadow-free `scoped_type_identifier` in a TYPE position. Two residual families remain — PARTIALLY-qualified inline names (would need the §6.5.5 simple-name precedence trap to resolve) and EXPRESSION-position dotted access (`com.app.Helper.staticMethod()`, a qualified enum constant) which parses as a field_access/method_invocation chain, never a `scoped_type_identifier` — the zero-FP boundary. (A bare same-package simple name is no longer one of them: it binds, see the same-package block below; java-same-package-no-import-silence keeps the case where the definer is in the referencing file's own owner.) Each case puts the referenced type IN-GRAPH, so the silence proves the extractor emits no edge even when the target is mapped.
+describe('MATRIX — partially-qualified / expression-position forms (deliberate tolerated false-NEGATIVE: SILENT)', () => {
   it('java-same-package-no-import-silence', () => runCase('java-same-package-no-import-silence'));
   it('java-partially-qualified-inline-silence', () => runCase('java-partially-qualified-inline-silence'));
   it('java-fully-qualified-expression-call-silence', () => runCase('java-fully-qualified-expression-call-silence'));
   it('java-annotation-use-usage-silence', () => runCase('java-annotation-use-usage-silence'));
   it('java-enum-constant-use-usage-silence', () => runCase('java-enum-constant-use-usage-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAME-PACKAGE references: a type of the file's own package is in scope by its simple name in every file of the package (JLS §7.6), so a use without an import is an edge. The shadowing rules of JLS §6.4 (type parameter, declared type, single import, inherited member type, obscuring variable) keep it from binding where the simple name means something else, and the source-set rule keeps main code from seeing test classes. Owners of these cases are named in the fence (`owner=`), since two source roots of one package are two owners.
+describe('MATRIX — same-package references without an import', () => {
+  it('java-same-package-test-to-main-edge', () => runCase('java-same-package-test-to-main-edge'));
+  it('java-same-package-main-never-sees-test-silence', () => runCase('java-same-package-main-never-sees-test-silence'));
+  it('java-same-package-single-import-wins-edge', () => runCase('java-same-package-single-import-wins-edge'));
+  it('java-same-package-static-import-wins-edge', () => runCase('java-same-package-static-import-wins-edge'));
+  it('java-same-package-beats-on-demand-import-edge', () => runCase('java-same-package-beats-on-demand-import-edge'));
+  it('java-same-package-type-parameter-silence', () => runCase('java-same-package-type-parameter-silence'));
+  it('java-same-package-nested-type-shadow-silence', () => runCase('java-same-package-nested-type-shadow-silence'));
+  it('java-same-package-inherited-member-type-edge', () => runCase('java-same-package-inherited-member-type-edge'));
+  it('java-same-package-external-supertype-member-trap', () => runCase('java-same-package-external-supertype-member-trap'));
+  it('java-same-package-local-variable-obscures-silence', () => runCase('java-same-package-local-variable-obscures-silence'));
+  it('java-same-package-split-owners-silence', () => runCase('java-same-package-split-owners-silence'));
+  it('java-same-package-kotlin-class-edge', () => runCase('java-same-package-kotlin-class-edge'));
+  it('java-same-package-unnamed-package-silence', () => runCase('java-same-package-unnamed-package-silence'));
+  it('java-same-package-qualified-and-annotation-edge', () => runCase('java-same-package-qualified-and-annotation-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

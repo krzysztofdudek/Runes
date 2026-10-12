@@ -8,11 +8,7 @@ cites: "Kotlin spec — Packages and imports (implicit stdlib imports); research
 
 ## Rule
 
-Stdlib packages (`kotlin.*`, plus platform `java.lang` on JVM) are implicitly imported
-into every Kotlin file — `List`, `Pair`, `Result`, `listOf` are usable with NO import
-line. An import-only extractor sees no import for them and emits nothing. There is no
-key to bind, so a same-named project type can never be mis-bound through an implicit
-stdlib usage.
+Stdlib packages (`kotlin.*`, plus platform `java.lang` on JVM) are implicitly imported into every Kotlin file — `List`, `Pair`, `Result`, `listOf` are usable with NO import line. Such a name gives only the same-package candidate (`com.acme.List`, …); no file of the package declares one, so nothing binds, and a same-named project type of ANOTHER package can never be mis-bound through an implicit stdlib usage. (A project type of the file's own package does shadow the stdlib name in Kotlin, and does bind: kotlin-same-package-test-to-main-edge for `Result`, kotlin-same-package-cross-node-edge for `List`.)
 
 ## Files
 
@@ -29,6 +25,4 @@ fun g(): Result<Int> = Result.success(1)
 
 ## Why
 
-Resolving a bare stdlib simple name to an in-graph same-named type is the classic
-collision FP; the import-only design structurally avoids it by emitting nothing for
-unimported names.
+Resolving a bare stdlib simple name to an in-graph same-named type of another package is the classic collision FP; only a declaration of the file's own package is a candidate, so it cannot happen.

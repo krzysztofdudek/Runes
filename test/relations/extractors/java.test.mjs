@@ -179,14 +179,15 @@ describe('java extractor — uses()', () => {
     expect(uses.every((u) => u.candidates[0].kind === 'path' && u.candidates[0].isPackage !== true)).toBe(true);
   });
 
-  it('emits a SYMBOL hint for an inline fully-qualified TYPE reference (extends), but NOT for expression-position dotted calls or same-package bare names', async () => {
+  it('emits a SYMBOL hint for an inline fully-qualified TYPE reference (extends), but NOT for expression-position dotted calls; a bare same-package name is its own group', async () => {
     // The inline fully-qualified TYPE reference `extends com.acme.base.Base` is the
     // outermost `scoped_type_identifier` in a TYPE position. A fully-qualified name is
     // shadow-free (JLS §6.5.5.2), so it now emits a `symbol` hint that resolves through
     // the shared SymbolTable like an import. The EXPRESSION-position dotted static call
     // `com.acme.audit.AuditLog.record(...)` parses as a field_access/method_invocation
     // chain — never a `scoped_type_identifier` — so it emits NOTHING (the zero-FP boundary);
-    // the bare same-package supertype `Other` is a simple name, also no hint.
+    // the bare same-package supertype `Other` is a simple name: it gives the same-package candidate
+    // `com.acme.app.Other` (marked samePackage), never the bare key `Other`.
     const { uses } = await run(
       [
         'package com.acme.app;',
@@ -211,8 +212,117 @@ describe('java extractor — uses()', () => {
     expect(uses.every((u) => u.candidates[0].kind === 'symbol')).toBe(true);
     // Expression-position dotted static call → NO hint (field_access/method_invocation chain).
     expect(symbolKeys.some((k) => k.startsWith('com.acme.audit'))).toBe(false);
-    // Same-package bare simple-name supertype `Other` → NO hint.
+    // Same-package bare simple-name supertype `Other` → the package-qualified candidate, not the bare key.
     expect(symbolKeys).not.toContain('Other');
+    expect(uses.map((u) => u.candidates[0])).toContainEqual({ kind: 'symbol', symbolKey: 'com.acme.app.Other', samePackage: true });
+  });
+});
+
+// The same-package candidate group (JLS §6.4.1, §7.6): what is emitted where, and where a simple name means something else.
+describe('java extractor — same-package references (uses())', () => {
+  /** The candidate keys of every group of the snippet, one array per group, with the line. */
+  const groups = async (body, pkg = 'package com.a;') => {
+    const { uses } = await run(`${pkg}\n${body}\n`);
+    return uses.map((u) => ({ line: u.line, keys: u.candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : c.specifier)), flags: u.candidates.map((c) => c.samePackage === true) }));
+  };
+  const keysOf = async (body, pkg) => (await groups(body, pkg)).flatMap((g) => g.keys);
+
+  it('gives one group per name and line, marked samePackage', async () => {
+    const g = await groups('class T { Owner a = new Owner(); Owner b; }');
+    expect(g).toEqual([{ line: 2, keys: ['com.a.Owner'], flags: [true] }]);
+  });
+
+  it('reads every type position and a capitalised receiver', async () => {
+    const keys = await keysOf([
+      '@Mark',
+      'class T<U extends Bound> extends Base<Arg> implements Face {',
+      '  Field f;',
+      '  Ret m(Param p) throws Boom {',
+      '    Object o = (Cast) p;',
+      '    if (o instanceof Inst i) {}',
+      '    try {} catch (Err1 | Err2 e) {}',
+      '    Object c = Lit.class;',
+      '    Recv.call(); Recv2.CONST.x(); Mref::go;',
+      '    switch (o) { case Pat q -> {} case Rec(Comp x) -> {} default -> {} }',
+      '    return null;',
+      '  }',
+      '}',
+    ].join('\n'));
+    for (const n of ['Mark', 'Bound', 'Base', 'Arg', 'Face', 'Field', 'Ret', 'Param', 'Boom', 'Cast', 'Inst', 'Err1', 'Err2', 'Lit', 'Recv', 'Recv2', 'Mref', 'Pat', 'Rec', 'Comp']) {
+      expect(keys).toContain(`com.a.${n}`);
+    }
+  });
+
+  it('gives nothing in the unnamed package', async () => {
+    expect(await keysOf('class T { Owner a; }', '')).toEqual([]);
+  });
+
+  it('gives nothing for a type parameter in scope, but binds it outside that scope', async () => {
+    expect(await keysOf('class Box<Owner> { Owner v; <Item> Item get(Item i) { return i; } }')).toEqual([]);
+    expect(await keysOf('class Box { <Item> void a(Item i) {} Item b; }')).toEqual(['com.a.Item']);
+  });
+
+  it('gives nothing for a type the file declares or imports', async () => {
+    expect(await keysOf('class T { class Owner {} Owner o; }')).toEqual([]);
+    expect(await keysOf('@interface Mark {} @Mark class T {}')).toEqual([]);
+    expect(await keysOf('import x.Owner;\nclass T { Owner o; }')).toEqual(['x.Owner']);
+    expect(await keysOf('import static x.Consts.Owner;\nclass T { Owner o; }')).toEqual(['x.Consts']);
+    // An alias of another name leaves the simple name to the package.
+    expect(await keysOf('import x.Other;\nclass T { Owner o; }')).toEqual(['x.Other', 'com.a.Owner']);
+  });
+
+  it('offers the member types of an enclosing declaration\'s supertypes before the package', async () => {
+    const g = await groups('import y.Imp;\nclass T extends Base implements Imp, ext.Q { class In extends Deep { Owner o; } Owner p; }');
+    const ownerGroups = g.filter((x) => x.keys.includes('com.a.Owner'));
+    expect(ownerGroups).toEqual([
+      { line: 3, keys: ['com.a.Deep+Owner', 'com.a.Base+Owner', 'y.Imp+Owner', 'ext.Q+Owner', 'com.a.Owner'], flags: [true, true, false, false, true] },
+      // `Owner p` sits in T itself: no Deep.
+      { line: 3, keys: ['com.a.Base+Owner', 'y.Imp+Owner', 'ext.Q+Owner', 'com.a.Owner'], flags: [true, false, false, true] },
+    ]);
+    // Anonymous classes and on-demand imports.
+    const a = await groups('import z.*;\nclass T { Object o = new Anon() { Owner x; }; }');
+    expect(a.find((x) => x.keys.includes('com.a.Owner'))?.keys).toEqual(['com.a.Anon+Owner', 'z.Anon+Owner', 'com.a.Owner']);
+    // The supertype clause itself is not inside the body.
+    expect((await groups('class T extends Owner {}')).map((x) => x.keys)).toContainEqual(['com.a.Owner']);
+  });
+
+  it('silences a capitalised receiver that a variable of the file obscures', async () => {
+    const bodies = [
+      'class T { void m(String Owner) { Owner.go(); } }',
+      'class T { void m() { int Owner = 1; Owner.go(); } }',
+      'class T { String Owner; void m() { Owner.go(); } }',
+      'class T { void m(java.util.List<String> l) { for (String Owner : l) { Owner.go(); } } }',
+      'class T { void m() { try {} catch (Exception Owner) { Owner.go(); } } }',
+      'class T { void m(Object o) { if (o instanceof Foo Owner) { Owner.go(); } } }',
+      'class T { Object f = Owner -> Owner.go(); }',
+      'class T { Object f = (Owner, b) -> Owner.go(); }',
+      'class T { void m(Object o) { switch (o) { case Foo Owner -> Owner.go(); default -> {} } } }',
+      'class T { void m() throws Exception { try (Res Owner = r()) { Owner.go(); } } }',
+      'class T { void m(Object o) { if (o instanceof Rec(Comp Owner)) { Owner.go(); } } }',
+      'enum T { Owner; void m() { Owner.go(); } }',
+    ];
+    for (const body of bodies) {
+      expect((await keysOf(body)).filter((k) => k === 'com.a.Owner'), body).toEqual([]);
+    }
+    // A variable obscures a type only in an expression: the type position keeps its binding.
+    expect(await keysOf('class T { Owner Owner; }')).toEqual(['com.a.Owner']);
+  });
+
+  it('reads the leftmost simple name of a qualified type and no package segment', async () => {
+    const keys = await keysOf('class T { Owner.Inner a; java.util.Map.Entry<String, x.Y> b; com.app.Z c; Map.Entry d; }');
+    expect(keys).toContain('com.a.Owner');
+    expect(keys).toContain('com.a.Map');
+    for (const k of ['com.a.Inner', 'com.a.Entry', 'com.a.java', 'com.a.util', 'com.a.com', 'com.a.app', 'com.a.x', 'com.a.Y', 'com.a.Z']) expect(keys).not.toContain(k);
+  });
+
+  it('does not read the type of a qualified instance creation, a type parameter\'s own name, `var` or a lowercase receiver', async () => {
+    const keys = await keysOf('class T { <Q> void m(T outer) { var x = outer.new Inner(); lower.go(); this.Field.go(); } }');
+    expect(keys).toEqual([]);
+  });
+
+  it('keeps one group per name and line even with several supertypes that repeat a key', async () => {
+    const g = await groups('class T extends Base implements Base { Owner o; }');
+    expect(g.find((x) => x.keys.includes('com.a.Owner'))?.keys).toEqual(['com.a.Base+Owner', 'com.a.Owner']);
   });
 });
 

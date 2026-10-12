@@ -8,12 +8,7 @@ cites: "Kotlin spec — Packages and imports (stdlib collision); research Form B
 
 ## Rule
 
-A project may declare a type whose simple name collides with an implicit stdlib name
-— here `com.acme.util.Result` vs the implicit `kotlin.Result`. A file that uses the
-bare `Result` with no import binds (in Kotlin) the implicit `kotlin.Result`. The
-import-only extractor emits NOTHING for the bare usage, so the project `Result` can
-never be mis-bound. If a future version resolved the bare simple name it would be
-ambiguous (project vs stdlib) → must silence; here it is structurally silent.
+A project may declare a type whose simple name collides with an implicit stdlib name — here `com.acme.util.Result` vs the implicit `kotlin.Result`. A file that uses the bare `Result` with no import binds (in Kotlin) the implicit `kotlin.Result`. The extractor gives the bare usage only the same-package candidate `com.acme.app.Result`, which no file declares, so the project `Result` of ANOTHER package is never mis-bound. (Had the file been in `com.acme.util`, the package type would shadow the stdlib one, as in Kotlin, and the extractor would bind it: kotlin-same-package-test-to-main-edge.)
 
 ## Files
 
@@ -29,9 +24,8 @@ fun f(): Result<Int> = TODO()
 
 ## Expect
 
-- silence      # bare `Result` usage with no import → nothing emitted; the project `com.acme.util.Result` is never mis-bound
+- silence      # bare `Result` usage in another package → no same-package candidate declares it; the project `com.acme.util.Result` is never mis-bound
 
 ## Why
 
-The stdlib-collision trap is the single biggest FP source for a bare-name binder;
-emitting nothing for the unimported bare name closes it.
+The stdlib-collision trap is the single biggest FP source for a bare-name binder; binding a bare name only to the file's own package closes it.
