@@ -37,6 +37,8 @@ export type TargetHint = {
      *  constant named `A` (`X::A`), that constant may reach the reference through the
      *  enclosing class's ancestors, so the fallback is silenced (ambiguous). */
     rubyInheritGuard?: string;
+    /** Java and Kotlin: the key names a type of the referencing file's own package (or a member type of one), written without an import. The resolver then sees only the definers that file's source set can see (`src/test` sees `src/main`, `src/main` never sees `src/test`). Absent = every definer counts. */
+    samePackage?: boolean;
 };
 /**
  * A detected reference carries an ORDERED list of alternative target hints, in the

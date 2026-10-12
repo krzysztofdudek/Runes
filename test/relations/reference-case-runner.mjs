@@ -2,7 +2,7 @@
 //
 // The runner does not reimplement name resolution. It loads the case, builds an in-memory project from its `## Files`, and drives the real pipeline over the real extractor, symbol table and resolver: the universe symbol table from extractor.declarations(), the C# global-using pre-pass, then the per-reference ordered-candidate walk (resolved: edge and stop; a nearer ambiguous: silence the group; absent: continue). It then asserts every `## Expect` line and that no unexpected cross-owner edge appears, so a case cannot pass while emitting a spurious edge.
 //
-// Ownership follows the catalogue's `node:<id>` convention: a file at `<root>/<id>/<...>` belongs to `<id>`, the basename of its parent directory. Only the case's source files are owned; any other file (a support file, or a file the resolver finds on disk) is unowned, exactly as an owner index built from one exact mapping per source file answers.
+// Ownership follows the catalogue's `node:<id>` convention: a file at `<root>/<id>/<...>` belongs to `<id>`, the basename of its parent directory, unless its fence names one: ```java path=src/test/java/com/a/OwnerTest.java owner=tests. The attribute is what lets two source roots of one package (`src/main/java/com/a`, `src/test/java/com/a`) be two owners. Only the case's source files are owned; any other file (a support file, or a file the resolver finds on disk) is unowned, exactly as an owner index built from one exact mapping per source file answers.
 import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,7 +70,7 @@ export function loadCaseDoc(id, mdPath) {
 
   const files = [];
   const configFiles = [];
-  const fenceRe = /```[a-zA-Z+]*\s+path=([^\s`]+)\n([\s\S]*?)```/g;
+  const fenceRe = /```[a-zA-Z+]*\s+path=([^\s`]+)(?:[ \t]+owner=([^\s`]+))?\n([\s\S]*?)```/g;
   const filesSection = sectionBody(body, 'Files');
   let m;
   while ((m = fenceRe.exec(filesSection)) !== null) {
@@ -78,9 +78,9 @@ export function loadCaseDoc(id, mdPath) {
     const ext = path.extname(fpath);
     const base = path.posix.basename(fpath);
     // A Vue/Svelte component has no grammar of its own; relation extraction reads its `<script>` view (sfcScriptView), and so does this runner.
-    const lang = TS_CONFIG_BASENAME.test(base) ? null : (getLanguageForExtension(ext) ?? sfcScriptView(fpath, m[2])?.language ?? null);
-    if (lang) files.push({ path: fpath, language: lang, code: m[2] });
-    else if (CONFIG_BASENAMES.has(base) || CONFIG_EXTENSIONS.has(ext) || TS_CONFIG_BASENAME.test(base)) configFiles.push({ path: fpath, code: m[2] });
+    const lang = TS_CONFIG_BASENAME.test(base) ? null : (getLanguageForExtension(ext) ?? sfcScriptView(fpath, m[3])?.language ?? null);
+    if (lang) files.push({ path: fpath, language: lang, code: m[3], owner: m[2] ?? ownerOfPath(fpath) });
+    else if (CONFIG_BASENAMES.has(base) || CONFIG_EXTENSIONS.has(ext) || TS_CONFIG_BASENAME.test(base)) configFiles.push({ path: fpath, code: m[3] });
     else throw new Error(`reference-case ${id}: no language for extension '${ext}' (${fpath})`);
   }
   if (files.length === 0) throw new Error(`reference-case ${id}: ## Files has no path-tagged code blocks`);
@@ -160,7 +160,7 @@ export async function caseEdges(doc, through = 'disk') {
         for (const decl of extractor.declarations(parsedByPath.get(f.path))) symbolTable.declare(f.language, decl.symbolKey, f.path);
       }
 
-      const owned = new Map(doc.files.map((f) => [f.path, ownerOfPath(f.path)]));
+      const owned = new Map(doc.files.map((f) => [f.path, f.owner]));
       const ownerIndex = { ownerOf: (file) => owned.get(file) };
 
       const everyFile = [...doc.files, ...doc.configFiles];
@@ -184,7 +184,7 @@ export async function caseEdges(doc, through = 'disk') {
           const extractor = extractorForLanguage(f.language);
           if (!extractor) continue;
           const parsed = parsedByPath.get(f.path);
-          const fromOwner = ownerOfPath(f.path);
+          const fromOwner = f.owner;
           const detected = f.language === 'csharp'
             ? csharpUses(parsed, { projectGlobalUsings: csharpScopes.get(f.path)?.usings ?? [], projectGlobalUsingAliases: csharpScopes.get(f.path)?.aliases ?? [] })
             : extractor.uses(parsed);
