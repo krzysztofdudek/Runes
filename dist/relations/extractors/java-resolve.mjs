@@ -59,6 +59,40 @@ function resolveType(segments, fromFile, deps) {
     }
     return undefined;
 }
+/** `<module>/src/<set>/java|kotlin/...`: the Maven and Gradle source-set layout. */
+const SOURCE_SET_LAYOUT = /^(?:(.*?)\/)?src\/([^/]+)\/(?:java|kotlin)\//;
+/** A set that is compiled apart from `main` and that `main` can never see: the conventional test sets and the Kotlin multiplatform `…Test` ones. */
+function isTestLikeSet(set) {
+    return /^(?:test|testFixtures|integrationTest|it|jmh|androidTest|androidInstrumentedTest)$/.test(set) || /[a-z]Test$/.test(set);
+}
+/**
+ * Whether a class declared in `definerFile` is visible by its simple name to code in `fromFile`
+ * that sits in the same package, going by the Maven and Gradle source-set layout
+ * (`<module>/src/<set>/java|kotlin/...`). The code of a main-like set (`main`, a variant such as
+ * `debug`) never sees a class of a test-like set (`test`, `testFixtures`, `integrationTest`,
+ * `it`, `jmh`, `androidTest`, a multiplatform `jvmTest`), whichever module holds it. Code of a
+ * test-like set sees its own set and every main-like one, and the `testFixtures` of any module;
+ * it does not see a different test-like set of its own module (`integrationTest` does not see
+ * `test`). Whenever either file is outside that layout, nothing is known and the class counts as
+ * visible: the resolver then relies on the owner and the distinct-file rules alone.
+ */
+export function jvmSourceSetVisible(fromFile, definerFile) {
+    const from = SOURCE_SET_LAYOUT.exec(toPosix(fromFile));
+    const def = SOURCE_SET_LAYOUT.exec(toPosix(definerFile));
+    if (from === null || def === null)
+        return true;
+    const fromSet = from[2];
+    const defSet = def[2];
+    if (!isTestLikeSet(defSet))
+        return true;
+    if (!isTestLikeSet(fromSet))
+        return false;
+    if (fromSet === defSet)
+        return true;
+    if (defSet === 'testFixtures')
+        return true;
+    return (from[1] ?? '') !== (def[1] ?? '');
+}
 /** The importing file's directory and every ancestor directory up to the repo root,
  *  nearest-first. '' (the repo root) is the final entry. */
 function ancestorDirs(dir) {

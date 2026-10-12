@@ -401,3 +401,50 @@ describe('resolver — owner collapse with Kotlin incompleteness markers', () =>
     expect(mk(st2).classify({ kind: 'symbol', symbolKey: 'a.T' }, 'src/use/U.kt', 'kotlin')).toEqual({ kind: 'absent' });
   });
 });
+
+// A same-package hint (Java, Kotlin) sees only the definers its source set can see: main code never sees a test class, a test sees main.
+describe('resolver — same-package hints and source sets', () => {
+  const jvmOwner = { ownerOf: (f) => ({ 'm/src/main/java/a/Owner.java': 'main', 'm/src/test/java/a/Owner.java': 'tests', 'm/src/test/java/a/Fixture.java': 'tests' })[f] };
+  const table = () => {
+    const st = new SymbolTable();
+    st.declare('java', 'a.Owner', 'm/src/main/java/a/Owner.java');
+    st.declare('java', 'a.Fixture', 'm/src/test/java/a/Fixture.java');
+    return st;
+  };
+  const make = (st) => makeResolver({ ownerIndex: jvmOwner, symbolTable: st, resolvePathToFile: () => undefined });
+  const fromMain = 'm/src/main/java/a/Use.java';
+  const fromTest = 'm/src/test/java/a/UseTest.java';
+  const same = (symbolKey) => ({ kind: 'symbol', symbolKey, samePackage: true });
+
+  it('a test file sees main, a main file never sees a test class', () => {
+    const r = make(table());
+    expect(r.classify(same('a.Owner'), fromTest, 'java')).toEqual({ kind: 'resolved', owner: 'main', resolvedFile: 'm/src/main/java/a/Owner.java' });
+    expect(r.classify(same('a.Fixture'), fromMain, 'java')).toEqual({ kind: 'absent' });
+    expect(r.classify(same('a.Fixture'), fromTest, 'java')).toEqual({ kind: 'resolved', owner: 'tests', resolvedFile: 'm/src/test/java/a/Fixture.java' });
+    expect(r.resolve(same('a.Fixture'), fromMain, 'java')).toBeUndefined();
+    expect(r.resolveFile(same('a.Fixture'), fromMain, 'java')).toBeUndefined();
+    expect(r.resolveFile(same('a.Owner'), fromTest, 'java')).toBe('m/src/main/java/a/Owner.java');
+  });
+
+  it('a hint without the flag counts every definer, as an import does', () => {
+    const r = make(table());
+    expect(r.classify({ kind: 'symbol', symbolKey: 'a.Fixture' }, fromMain, 'java')).toEqual({ kind: 'resolved', owner: 'tests', resolvedFile: 'm/src/test/java/a/Fixture.java' });
+  });
+
+  it('a test copy of a main class: a test file sees both owners (ambiguous), a main file only its own', () => {
+    const st = table();
+    st.declare('java', 'a.Owner', 'm/src/test/java/a/Owner.java');
+    const r = make(st);
+    expect(r.classify(same('a.Owner'), fromTest, 'java')).toEqual({ kind: 'ambiguous' });
+    // From main the test copy is not seen, so the main one binds alone.
+    expect(r.classify(same('a.Owner'), fromMain, 'java')).toEqual({ kind: 'resolved', owner: 'main', resolvedFile: 'm/src/main/java/a/Owner.java' });
+  });
+
+  it('an incompleteness marker of an invisible source set creates no ambiguity', () => {
+    const st = table();
+    st.declare('kotlin', 'a.*', 'm/src/test/java/a/Fixture.java');
+    const r = make(st);
+    expect(r.classify(same('a.Owner'), fromMain, 'java').kind).toBe('resolved');
+    expect(r.classify({ kind: 'symbol', symbolKey: 'a.Owner' }, fromMain, 'java').kind).toBe('ambiguous');
+  });
+});
