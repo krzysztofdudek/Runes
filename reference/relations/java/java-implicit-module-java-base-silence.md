@@ -12,8 +12,8 @@ A compact compilation unit (an implicitly-declared class with an instance `main`
 512) implicitly imports, on demand, all public top-level types of every package exported
 by `java.base` — "as if `import module java.base;` appeared at the beginning." So
 `List` / `Map` / `Path` are usable with no import. Like the implicit `java.lang.*`,
-these are JDK module-path metadata with no in-repo `.java`; with no import and no
-usage-site analysis, the extractor emits nothing.
+these are JDK module-path metadata with no in-repo `.java`; with no import, each name gives only a same-package
+candidate that no file of the repository declares, so the extractor finds no edge.
 
 ## Files
 

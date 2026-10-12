@@ -10,7 +10,8 @@ cites: "JLS SE25 §7.3, §9.6; research C1 (C11 in 06-14)"
 
 The meta-annotations `@Override @Deprecated @SuppressWarnings` come from `java.lang` /
 `java.lang.annotation` and need no import. Used at a usage site with no
-`import_declaration`, the import-only extractor emits no hint.
+`import_declaration`, each gives only the same-package candidate (`com.app.Override`, …), which no file
+declares, so the extractor finds no edge.
 
 ## Files
 
@@ -28,4 +29,4 @@ class C {
 
 ## Why
 
-Annotation USE is a usage site (no import); the extractor never produces an edge for it.
+An annotation with no import binds only to a type of its own package; these are in no package of the repository.

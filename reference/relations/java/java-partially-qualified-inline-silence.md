@@ -10,11 +10,11 @@ cites: "JLS SE25 §6.5.5.2; research D2' (C23 in 06-14)"
 
 A partially-qualified inline reference `Outer.Inner` (with `Outer` same-package, no
 import) is NOT a fully-qualified `scoped_type_identifier` — its leading `Outer` is a bare
-simple name, not a package prefix. Unlike a fully-qualified inline type reference (which
-now edges because the FQN is shadow-free per §6.5.5.2), a partially-qualified name carries
-no shadow-free hint → silence. Reading the partially-qualified chain as deeper packages,
-or binding `Outer` by bare simple name, would reintroduce the §6.5.5 precedence trap and
-is FORBIDDEN.
+simple name, not a package prefix, so no hint reads the chain as `com.a.Outer.Inner`. Its
+leading simple name is a same-package reference like any other and binds to the owner of
+`Outer` (see java-same-package-qualified-and-annotation-edge); here `Outer` and `X` belong to
+one owner, so there is no cross-owner edge. Reading the partially-qualified chain as deeper
+packages is FORBIDDEN: it would reintroduce the §6.5.5 precedence trap.
 
 ## Files
 
@@ -34,9 +34,9 @@ class X {
 
 ## Expect
 
-- silence      # partially-qualified inline ref carries no import → no hint
+- silence      # Outer binds, but to the owner of X itself: no cross-owner edge
 
 ## Why
 
-The same-package bare `Outer` is unresolvable without the §6.5.5 trap; the missed edge
-is tolerated.
+Only the leading simple name is read, as a type of the own package; the dotted chain is never
+taken for a package path.

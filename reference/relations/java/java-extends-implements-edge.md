@@ -13,8 +13,9 @@ names are `scoped_type_identifier`s in TYPE positions. Because each name is full
 qualified it is shadow-free per §6.5.5.2, so the extractor emits a SYMBOL hint that
 resolves like an import → real cross-node edges. `extends com.acme.base.Base` edges to
 node `base` and `implements com.acme.flow.Flowable` edges to node `flow`. `Runnable` is
-a bare simple name (auto-imported java.lang), not a fully-qualified `scoped_type_identifier`,
-so it stays silent — binding it by simple name would reintroduce the §6.5.5 precedence trap.
+a bare simple name (auto-imported java.lang), not a fully-qualified `scoped_type_identifier`:
+it gives only the same-package candidate `com.app.Runnable`, which no file declares, so it
+stays silent (a bare name is never read through an on-demand import or `java.lang`).
 
 ## Files
 
@@ -41,4 +42,4 @@ class C extends com.acme.base.Base implements com.acme.flow.Flowable, Runnable {
 ## Why
 
 A fully-qualified supertype reference is shadow-free, so it resolves like an import — a
-real cross-node edge. The bare `Runnable` is not fully qualified and stays silent.
+real cross-node edge. The bare `Runnable` is not fully qualified, no file of its package declares it, and it stays silent.

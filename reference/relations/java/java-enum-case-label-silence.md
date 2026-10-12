@@ -10,8 +10,8 @@ cites: "JLS SE25 §14.11.1, §8.9 (enum constant in switch); research G1 (C37 in
 
 An unqualified enum constant in a `switch` `case` is resolved against the switch
 selector's enum type, NOT as a package/type name (JLS §14.11.1). `case RED:` is a
-constant, not a type reference. There is no import, and the import-only extractor emits
-nothing; a name-based analyzer that treated `RED` as a candidate type/package would
+constant, not a type reference. There is no import, and the extractor emits
+nothing for a bare constant (it reads capitalised receivers and type positions, not a case label); a name-based analyzer that treated `RED` as a candidate type/package would
 mis-resolve — this MUST be excluded.
 
 ## Files

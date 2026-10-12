@@ -10,7 +10,7 @@ cites: "JLS SE25 §6.5.5.2 (qualified type name); research D1'' (C20 in 06-14)"
 
 With `import com.foo.Outer;` and inline qualified uses `Outer.Inner` / `Outer.Mid.Deep`,
 the ONLY emitted hint is the outer import (resolved to `com/foo/Outer.java`). The
-`.Inner` / `.Mid.Deep` qualifiers at the use site add no separate hint (import-only),
+`.Inner` / `.Mid.Deep` qualifiers at the use site add no separate hint (the single-type import of `Outer` shadows any type of the package named `Outer`, so no same-package candidate is read either),
 and since the nested types live in the same file as `Outer`, the same node owns them —
 nothing additional to miss. The outer import IS the edge.
 

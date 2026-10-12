@@ -11,7 +11,7 @@ cites: "JLS SE25 §7.5.3, §7.5.4; research B3/B4 (C8 in 06-14)"
 `import static com.util.Maths.max;` and `import static com.util.Limits.*;` — each
 import IS a real syntactic dependency on its declaring TYPE; both resolve
 independently to their type files. Which `max` actually binds at a call site is
-irrelevant under the import-only model. Both edges fire.
+irrelevant: the dependency is the import. Both edges fire.
 
 ## Files
 
