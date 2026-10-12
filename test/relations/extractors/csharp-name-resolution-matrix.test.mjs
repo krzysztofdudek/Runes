@@ -289,6 +289,11 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
   it('csharp-hintpath-reference-edge', () => runCase('csharp-hintpath-reference-edge'));
   it('csharp-directory-build-props-reference-edge', () => runCase('csharp-directory-build-props-reference-edge'));
   it('csharp-unresolved-msbuild-property-reaches-everything-edge', () => runCase('csharp-unresolved-msbuild-property-reaches-everything-edge'));
+  it('csharp-project-reference-directory-case-edge', () => runCase('csharp-project-reference-directory-case-edge'));
+  it('csharp-reference-dll-path-edge', () => runCase('csharp-reference-dll-path-edge'));
+  it('csharp-assembly-name-in-props-reference-edge', () => runCase('csharp-assembly-name-in-props-reference-edge'));
+  it('csharp-linked-file-caller-edge', () => runCase('csharp-linked-file-caller-edge'));
+  it('csharp-extension-overload-own-project-silence', () => runCase('csharp-extension-overload-own-project-silence'));
 });
 
 describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {

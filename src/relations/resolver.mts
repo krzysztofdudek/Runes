@@ -232,15 +232,15 @@ function incompletenessMarkers(bindingKey: string): string[] {
 }
 
 /**
- * The C# reference filter: the definers a file can see. A definer in a project the file's project cannot reach is dropped (the compiler never binds it); when a definer lies in the file's own project, only those stay, because a type of the compilation wins over a type of the same name in a referenced assembly (warning CS0436, not an ambiguity).
+ * The C# reference filter: the definers a file can see. A definer in a project the file's project cannot reach is dropped (the compiler never binds it); when `preferOwn` and a definer lies in the file's own project, only those stay, because a type of the compilation wins over a type of the same name in a referenced assembly (warning CS0436, not an ambiguity). Extension methods are not types: they are not given that preference.
  */
-function withinReach(files: Set<string>, fromFile: string, reach: Reachability): Set<string> {
+function withinReach(files: Set<string>, fromFile: string, reach: Reachability, preferOwn: boolean): Set<string> {
   const seen = new Map<string, ReturnType<Reachability>>();
   for (const f of files) {
     const r = reach(fromFile, f);
     if (r !== 'unreachable') seen.set(f, r);
   }
-  const same = [...seen].filter(([, r]) => r === 'same').map(([f]) => f);
+  const same = preferOwn ? [...seen].filter(([, r]) => r === 'same').map(([f]) => f) : [];
   return new Set(same.length > 0 ? same : seen.keys());
 }
 
@@ -292,9 +292,10 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     if (hint.set === undefined && hint.nestedOnly !== true && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
       // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
       const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
-      if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach);
+      if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach, true);
     }
-    return withinReach(files, fromFile, deps.reach);
+    // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
+    return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'));
   };
 
   /**
