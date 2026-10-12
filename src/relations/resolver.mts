@@ -1,6 +1,8 @@
 import type { SymbolTable } from './symbol-table.mjs';
 import type { DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
+import type { Reachability } from './extractors/csharp-reach.mjs';
+import { IMPLICIT_PROGRAM_KEY } from './extractors/csharp.mjs';
 
 /**
  * Who owns a repository file: the unit a resolved reference is attributed to (a module, a package, a directory, whatever the caller groups files by). `undefined` means the file is not owned by any unit, which the resolver treats as the non-event of an unmapped target.
@@ -13,6 +15,10 @@ export interface ResolverDeps {
   symbolTable: SymbolTable;
   /** language-specific path → repo-rel file (or undefined). Injected per language. */
   resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
+  /**
+   * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). Both `resolve`, `classify` and `resolveFile` apply it.
+   */
+  reach?: Reachability;
 }
 
 /**
@@ -225,6 +231,19 @@ function incompletenessMarkers(bindingKey: string): string[] {
   return markers;
 }
 
+/**
+ * The C# reference filter: the definers a file can see. A definer in a project the file's project cannot reach is dropped (the compiler never binds it); when `preferOwn` and a definer lies in the file's own project, only those stay, because a type of the compilation wins over a type of the same name in a referenced assembly (warning CS0436, not an ambiguity). Extension methods are not types: they are not given that preference.
+ */
+function withinReach(files: Set<string>, fromFile: string, reach: Reachability, preferOwn: boolean): Set<string> {
+  const seen = new Map<string, ReturnType<Reachability>>();
+  for (const f of files) {
+    const r = reach(fromFile, f);
+    if (r !== 'unreachable') seen.set(f, r);
+  }
+  const same = preferOwn ? [...seen].filter(([, r]) => r === 'same').map(([f]) => f) : [];
+  return new Set(same.length > 0 ? same : seen.keys());
+}
+
 export function makeResolver(deps: ResolverDeps): TargetResolver {
   /** The DISTINCT defining files a dotted symbol candidate maps to, across the verbatim key
    *  AND the guarded nested-type `+`-splits. The set-level rule: 0 distinct files → absent,
@@ -258,15 +277,25 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   const hintFiles = (
     hint: Extract<TargetHint, { kind: 'symbol' }>,
     language: string,
+    fromFile: string,
   ): Set<string> => {
+    let files: Set<string>;
     if (hint.set !== undefined) {
-      const files = new Set<string>();
+      files = new Set<string>();
       for (const m of hint.set) {
         for (const f of memberFiles(language, m.symbolKey, m.nestedOnly === true)) files.add(f);
       }
-      return files;
+    } else {
+      files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true);
     }
-    return memberFiles(language, hint.symbolKey, hint.nestedOnly === true);
+    if (language !== 'csharp' || deps.reach === undefined) return files;
+    if (hint.set === undefined && hint.nestedOnly !== true && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
+      // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
+      const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
+      if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach, true);
+    }
+    // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
+    return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'));
   };
 
   /**
@@ -389,7 +418,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     }
     if (hint.kind === 'symbol') {
       if (language === 'ruby' && rubyGate(hint, undefined, deps.symbolTable) !== undefined) return undefined;
-      const files = hintFiles(hint, language);
+      const files = hintFiles(hint, language, fromFile);
       if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined) return undefined;
       const outcome = symbolOutcome(files);
       // absent / ambiguous (2+ owners) → silence; resolved (one file, or one owner) → edge.
@@ -425,7 +454,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owners is a real
       // ambiguity (silence the group); 0 is absent (continue); one file or one owner binds
       // (see symbolOutcome).
-      const files = hintFiles(hint, language);
+      const files = hintFiles(hint, language, fromFile);
       if (language === 'ruby') {
         const forced = rubyGate(hint, files, deps.symbolTable);
         if (forced !== undefined) return { kind: forced };
@@ -450,7 +479,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     if (jvmFirst !== undefined) return jvmFirst.kind === 'file' ? jvmFirst.file : undefined;
     if (hint.kind === 'symbol') {
       if (language === 'ruby' && rubyGate(hint, undefined, deps.symbolTable) !== undefined) return undefined;
-      const files = hintFiles(hint, language);
+      const files = hintFiles(hint, language, fromFile);
       if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined) return undefined;
       return files.size === 1 ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
     }

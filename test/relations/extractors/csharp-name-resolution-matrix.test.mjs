@@ -278,3 +278,31 @@ describe('MATRIX — C# alias-qualified type names (issue 188)', () => {
   it('csharp-alias-colon-colon-generic-edge', () => runCase('csharp-alias-colon-colon-generic-edge'));
   it('csharp-alias-colon-colon-qualified-tail-edge', () => runCase('csharp-alias-colon-colon-qualified-tail-edge'));
 });
+
+describe('MATRIX — C# reachability: a candidate binds only inside the caller\'s project references (issue 014)', () => {
+  it('csharp-extension-unreferenced-project-silence', () => runCase('csharp-extension-unreferenced-project-silence'));
+  it('csharp-extension-reverse-reference-silence', () => runCase('csharp-extension-reverse-reference-silence'));
+  it('csharp-member-read-unreferenced-type-silence', () => runCase('csharp-member-read-unreferenced-type-silence'));
+  it('csharp-member-read-reachable-type-edge', () => runCase('csharp-member-read-reachable-type-edge'));
+  it('csharp-extension-referenced-project-edge', () => runCase('csharp-extension-referenced-project-edge'));
+  it('csharp-transitive-project-reference-edge', () => runCase('csharp-transitive-project-reference-edge'));
+  it('csharp-hintpath-reference-edge', () => runCase('csharp-hintpath-reference-edge'));
+  it('csharp-directory-build-props-reference-edge', () => runCase('csharp-directory-build-props-reference-edge'));
+  it('csharp-unresolved-msbuild-property-reaches-everything-edge', () => runCase('csharp-unresolved-msbuild-property-reaches-everything-edge'));
+  it('csharp-project-reference-directory-case-edge', () => runCase('csharp-project-reference-directory-case-edge'));
+  it('csharp-reference-dll-path-edge', () => runCase('csharp-reference-dll-path-edge'));
+  it('csharp-assembly-name-in-props-reference-edge', () => runCase('csharp-assembly-name-in-props-reference-edge'));
+  it('csharp-linked-file-caller-edge', () => runCase('csharp-linked-file-caller-edge'));
+  it('csharp-extension-overload-own-project-silence', () => runCase('csharp-extension-overload-own-project-silence'));
+});
+
+describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {
+  it('csharp-top-level-program-two-entries-referenced-edge', () => runCase('csharp-top-level-program-two-entries-referenced-edge'));
+});
+
+describe('MATRIX — C# Program across project references (issue 164)', () => {
+  it('csharp-logger-of-program-own-project-silence', () => runCase('csharp-logger-of-program-own-project-silence'));
+  it('csharp-program-unreferenced-partial-silence', () => runCase('csharp-program-unreferenced-partial-silence'));
+  it('csharp-program-two-referenced-programs-silence', () => runCase('csharp-program-two-referenced-programs-silence'));
+  it('csharp-program-referenced-partial-edge', () => runCase('csharp-program-referenced-partial-edge'));
+});

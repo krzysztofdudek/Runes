@@ -401,3 +401,94 @@ describe('resolver — owner collapse with Kotlin incompleteness markers', () =>
     expect(mk(st2).classify({ kind: 'symbol', symbolKey: 'a.T' }, 'src/use/U.kt', 'kotlin')).toEqual({ kind: 'absent' });
   });
 });
+
+// Issue 014: the C# reference filter. `reach` is the predicate buildCsharpReachability builds; here a hand-written one, so the resolver's use of it is held apart from the graph.
+describe('resolver — the C# reach filter', () => {
+  const owners = { ownerOf: (f) => f.split('/')[1] };
+  const reachBy = (table) => (from, target) => table[`${from}>${target}`] ?? 'reachable';
+  const mk = (st, reach) => makeResolver({ ownerIndex: owners, symbolTable: st, resolvePathToFile: () => undefined, reach });
+  const hint = { kind: 'symbol', symbolKey: 'N.T' };
+
+  it('drops a definer the caller cannot reach, so the candidate is absent, never a binding', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'N.T', 'src/lib/T.cs');
+    const reach = reachBy({ 'src/app/A.cs>src/lib/T.cs': 'unreachable' });
+    expect(mk(st, reach).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'absent' });
+    expect(mk(st, reach).resolve(hint, 'src/app/A.cs', 'csharp')).toBeUndefined();
+    expect(mk(st, reach).resolveFile(hint, 'src/app/A.cs', 'csharp')).toBeUndefined();
+    expect(mk(st, undefined).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+  });
+
+  it('turns an ambiguity between two owners into a binding when one of them is out of reach', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'N.T', 'src/one/T.cs'); st.declare('csharp', 'N.T', 'src/two/T.cs');
+    const reach = reachBy({ 'src/app/A.cs>src/two/T.cs': 'unreachable' });
+    expect(mk(st, undefined).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    expect(mk(st, reach).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'one', resolvedFile: 'src/one/T.cs' });
+    expect(mk(st, reach).resolveFile(hint, 'src/app/A.cs', 'csharp')).toBe('src/one/T.cs');
+  });
+
+  it('prefers the definer of the caller\'s own project to a referenced one of the same name', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'N.T', 'src/app/T.cs'); st.declare('csharp', 'N.T', 'src/lib/T.cs');
+    const reach = reachBy({ 'src/app/A.cs>src/app/T.cs': 'same' });
+    expect(mk(st, reach).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'app' });
+    // Without a definer of its own project the two referenced owners stay ambiguous.
+    expect(mk(st, reachBy({})).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('filters the members of a set hint, each of them', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'A.T', 'src/one/T.cs'); st.declare('csharp', 'B.T', 'src/two/T.cs');
+    const set = { kind: 'symbol', symbolKey: 'A.T', set: [{ symbolKey: 'A.T' }, { symbolKey: 'B.T' }] };
+    const reach = reachBy({ 'src/app/A.cs>src/two/T.cs': 'unreachable' });
+    expect(mk(st, undefined).classify(set, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    expect(mk(st, reach).classify(set, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'one' });
+  });
+
+  it('never consults the predicate for another language', () => {
+    const st = new SymbolTable(); st.declare('kotlin', 'N.T', 'src/lib/T.kt');
+    const asked = [];
+    const reach = (from, target) => { asked.push([from, target]); return 'unreachable'; };
+    expect(mk(st, reach).classify(hint, 'src/app/A.kt', 'kotlin')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+    expect(asked).toEqual([]);
+  });
+});
+
+// Issue 164: the global Program of C# is one name whether declared or synthesized from top-level statements.
+describe('resolver — the C# global Program under a reference graph', () => {
+  const owners = { ownerOf: (f) => f.split('/')[1] };
+  const mk = (st, reach) => makeResolver({ ownerIndex: owners, symbolTable: st, resolvePathToFile: () => undefined, reach });
+  const IMPLICIT = '<Program>$';
+  const program = { kind: 'symbol', symbolKey: 'Program' };
+  const implicit = { kind: 'symbol', symbolKey: IMPLICIT };
+  const declared = () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'Program', 'src/lib/Program.cs');
+    st.declare('csharp', IMPLICIT, 'src/web/Program.cs');
+    return st;
+  };
+  const known = (answers) => (from, target) => answers[target] ?? 'reachable';
+
+  it('chooses among the declared and the implicit class together when the graph says something about each', () => {
+    const both = known({});
+    expect(mk(declared(), both).classify(program, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    expect(mk(declared(), both).classify(implicit, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    const onlyImplicit = known({ 'src/lib/Program.cs': 'unreachable' });
+    expect(mk(declared(), onlyImplicit).classify(program, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'web' });
+    const own = known({ 'src/web/Program.cs': 'same' });
+    expect(mk(declared(), own).classify(program, 'src/web/H.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'web' });
+  });
+
+  it('keeps the order of a pass without a graph, the declared class first, where the graph can say nothing about a definer', () => {
+    const unknown = known({ 'src/web/Program.cs': 'unknown' });
+    expect(mk(declared(), unknown).classify(program, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+    expect(mk(declared(), unknown).classify(implicit, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'web' });
+    const droppedStill = known({ 'src/web/Program.cs': 'unknown', 'src/lib/Program.cs': 'unreachable' });
+    expect(mk(declared(), droppedStill).classify(program, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'absent' });
+  });
+
+  it('does not join the two keys without a graph, and does not join a nested or set hint', () => {
+    expect(mk(declared(), undefined).classify(program, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+    const nested = { kind: 'symbol', symbolKey: 'Program', nestedOnly: true };
+    expect(mk(declared(), known({})).classify(nested, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'absent' });
+    const set = { kind: 'symbol', symbolKey: 'Program', set: [{ symbolKey: 'Program' }] };
+    expect(mk(declared(), known({})).classify(set, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+  });
+});
