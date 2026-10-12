@@ -31,4 +31,4 @@ builder.Build().Run();
 
 ## Why
 
-A worker, a migrator or an app host routinely names its own entry class (user secrets, logging categories, assembly lookups). Reading that as the web project's `Program` would invent a worker → web dependency. Another file of the same project naming `Program` (`ILogger<Program>` in a class file) still needs the project-reference graph to tell the two classes apart, which is not read here.
+A worker, a migrator or an app host routinely names its own entry class (user secrets, logging categories, assembly lookups). Reading that as the web project's `Program` would invent a worker → web dependency. Another file of the same project naming `Program` (`ILogger<Program>` in a class file) is told from the web node's class by the project files, which put the project's own class first (csharp-logger-of-program-own-project-silence); a layout with no project files still has nothing to tell them apart by.

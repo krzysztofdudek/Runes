@@ -294,3 +294,10 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
 describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {
   it('csharp-top-level-program-two-entries-referenced-edge', () => runCase('csharp-top-level-program-two-entries-referenced-edge'));
 });
+
+describe('MATRIX — C# Program across project references (issue 164)', () => {
+  it('csharp-logger-of-program-own-project-silence', () => runCase('csharp-logger-of-program-own-project-silence'));
+  it('csharp-program-unreferenced-partial-silence', () => runCase('csharp-program-unreferenced-partial-silence'));
+  it('csharp-program-two-referenced-programs-silence', () => runCase('csharp-program-two-referenced-programs-silence'));
+  it('csharp-program-referenced-partial-edge', () => runCase('csharp-program-referenced-partial-edge'));
+});
