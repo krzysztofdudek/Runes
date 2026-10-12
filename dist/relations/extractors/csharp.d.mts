@@ -1,4 +1,8 @@
 import type { DependencyExtractor, DetectedDep, ParsedFile } from './types.mjs';
+/**
+ * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). A resolver given the reference graph (`ResolverDeps.reach`) reads the explicit and the implicit class as ONE name instead, as the compiler does, and chooses among those the referencing project can see, as long as the graph can say something about each of them. `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
+ */
+export declare const IMPLICIT_PROGRAM_KEY = "<Program>$";
 interface UsingScope {
     /** Namespace prefixes from plain `using Foo.Bar;` directives (file-local). */
     prefixes: string[];

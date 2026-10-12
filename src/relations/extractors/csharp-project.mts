@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { diskFileView, type FileSource, type FileView } from '../file-view.mjs';
+import { attributes, stripComments, lastProperty, isCsproj, makeProjectLocator } from './csharp-msbuild.mjs';
 
 /**
  * C# PROJECT SCOPING of global usings (M6/M7).
@@ -93,29 +93,6 @@ const IMPLICIT_USINGS_BY_SDK = new Map<string, string[]>([
 
 interface UsingItem { include: string; alias?: string; isStatic: boolean }
 
-/** The attributes of one XML start tag's attribute text, keys lower-cased. */
-function attributes(attrText: string): Map<string, string> {
-  const out = new Map<string, string>();
-  const re = /([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(attrText)) !== null) out.set(m[1].toLowerCase(), (m[2] ?? m[3] ?? '').trim());
-  return out;
-}
-
-/** The text with XML comments removed. */
-function stripComments(xml: string): string {
-  return xml.replace(/<!--[\s\S]*?-->/g, '');
-}
-
-/** The last value of `<Name>value</Name>` in the text, or undefined. */
-function lastProperty(xml: string, name: string): string | undefined {
-  const re = new RegExp(`<${name}\\b[^>]*>([^<]*)</${name}>`, 'gi');
-  let value: string | undefined;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) value = m[1].trim();
-  return value;
-}
-
 /** Apply the `<Using Include|Remove …>` items of one MSBuild file, in document order. */
 function applyUsingItems(xml: string, items: UsingItem[]): void {
   const re = /<Using\b([^>]*?)\/?>/g;
@@ -149,36 +126,10 @@ export function buildCsharpProjectScopes(
   options?: { files?: FileView },
 ): Map<string, CsharpProjectScope> {
   const source: FileSource = options?.files ?? diskFileView(projectRoot, false);
-  const listings = new Map<string, string[]>();
-  const list = (dir: string): string[] => {
-    const hit = listings.get(dir);
-    if (hit !== undefined) return hit;
-    const names = (source.list(dir) ?? []).map((e) => e.name).sort();
-    listings.set(dir, names);
-    return names;
-  };
+  const { list, projectDirOf, nearestFile } = makeProjectLocator(source);
   const read = (rel: string): string => {
     const text = source.read(rel);
     return text === undefined ? '' : stripComments(text);
-  };
-  /** `dir` and its ancestors up to the root ('.'), nearest first. */
-  const ancestors = (dir: string): string[] => {
-    // path.posix.dirname never yields ''; it is a fixed point at the root ('.', or '/').
-    const out = [dir];
-    for (let up = path.posix.dirname(dir); up !== out[out.length - 1]; up = path.posix.dirname(up)) out.push(up);
-    return out;
-  };
-  const projectDirOf = (file: string): string | null => {
-    for (const dir of ancestors(path.posix.dirname(file))) {
-      if (list(dir).some((n) => n.toLowerCase().endsWith('.csproj'))) return dir;
-    }
-    return null;
-  };
-  const nearestFile = (dir: string, basename: string): string | undefined => {
-    for (const d of ancestors(dir)) {
-      if (list(d).includes(basename)) return d === '.' ? basename : `${d}/${basename}`;
-    }
-    return undefined;
   };
 
   // Group the files by project directory (null = the implicit project of csproj-less files).
@@ -210,7 +161,7 @@ export function buildCsharpProjectScopes(
 
     if (key !== null) {
       const csprojs = list(key)
-        .filter((n) => n.toLowerCase().endsWith('.csproj'))
+        .filter(isCsproj)
         .map((n) => (key === '.' ? n : `${key}/${n}`));
       const props = nearestFile(key, 'Directory.Build.props');
       const targets = nearestFile(key, 'Directory.Build.targets');
