@@ -450,3 +450,45 @@ describe('resolver — the C# reach filter', () => {
     expect(asked).toEqual([]);
   });
 });
+
+// Issue 164: the global Program of C# is one name whether declared or synthesized from top-level statements.
+describe('resolver — the C# global Program under a reference graph', () => {
+  const owners = { ownerOf: (f) => f.split('/')[1] };
+  const mk = (st, reach) => makeResolver({ ownerIndex: owners, symbolTable: st, resolvePathToFile: () => undefined, reach });
+  const IMPLICIT = '<Program>$';
+  const program = { kind: 'symbol', symbolKey: 'Program' };
+  const implicit = { kind: 'symbol', symbolKey: IMPLICIT };
+  const declared = () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'Program', 'src/lib/Program.cs');
+    st.declare('csharp', IMPLICIT, 'src/web/Program.cs');
+    return st;
+  };
+  const known = (answers) => (from, target) => answers[target] ?? 'reachable';
+
+  it('chooses among the declared and the implicit class together when the graph says something about each', () => {
+    const both = known({});
+    expect(mk(declared(), both).classify(program, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    expect(mk(declared(), both).classify(implicit, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    const onlyImplicit = known({ 'src/lib/Program.cs': 'unreachable' });
+    expect(mk(declared(), onlyImplicit).classify(program, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'web' });
+    const own = known({ 'src/web/Program.cs': 'same' });
+    expect(mk(declared(), own).classify(program, 'src/web/H.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'web' });
+  });
+
+  it('keeps the order of a pass without a graph, the declared class first, where the graph can say nothing about a definer', () => {
+    const unknown = known({ 'src/web/Program.cs': 'unknown' });
+    expect(mk(declared(), unknown).classify(program, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+    expect(mk(declared(), unknown).classify(implicit, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'web' });
+    const droppedStill = known({ 'src/web/Program.cs': 'unknown', 'src/lib/Program.cs': 'unreachable' });
+    expect(mk(declared(), droppedStill).classify(program, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'absent' });
+  });
+
+  it('does not join the two keys without a graph, and does not join a nested or set hint', () => {
+    expect(mk(declared(), undefined).classify(program, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+    const nested = { kind: 'symbol', symbolKey: 'Program', nestedOnly: true };
+    expect(mk(declared(), known({})).classify(nested, 'src/tests/T.cs', 'csharp')).toEqual({ kind: 'absent' });
+    const set = { kind: 'symbol', symbolKey: 'Program', set: [{ symbolKey: 'Program' }] };
+    expect(mk(declared(), known({})).classify(set, 'src/tests/T.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+  });
+});

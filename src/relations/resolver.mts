@@ -2,6 +2,7 @@ import type { SymbolTable } from './symbol-table.mjs';
 import type { DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
+import { IMPLICIT_PROGRAM_KEY } from './extractors/csharp.mjs';
 
 /**
  * Who owns a repository file: the unit a resolved reference is attributed to (a module, a package, a directory, whatever the caller groups files by). `undefined` means the file is not owned by any unit, which the resolver treats as the non-event of an unmapped target.
@@ -287,7 +288,13 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     } else {
       files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true);
     }
-    return language === 'csharp' && deps.reach !== undefined ? withinReach(files, fromFile, deps.reach) : files;
+    if (language !== 'csharp' || deps.reach === undefined) return files;
+    if (hint.set === undefined && hint.nestedOnly !== true && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
+      // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
+      const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
+      if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach);
+    }
+    return withinReach(files, fromFile, deps.reach);
   };
 
   /**

@@ -1,4 +1,5 @@
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
+import { IMPLICIT_PROGRAM_KEY } from './extractors/csharp.mjs';
 /**
  * The ordered first-unique-match-wins walk over a detected reference's candidate group:
  * nearest binding first (member → enclosing namespace → unique using-import → verbatim),
@@ -214,7 +215,15 @@ export function makeResolver(deps) {
         else {
             files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true);
         }
-        return language === 'csharp' && deps.reach !== undefined ? withinReach(files, fromFile, deps.reach) : files;
+        if (language !== 'csharp' || deps.reach === undefined)
+            return files;
+        if (hint.set === undefined && hint.nestedOnly !== true && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
+            // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
+            const both = new Set([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
+            if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown'))
+                return withinReach(both, fromFile, deps.reach);
+        }
+        return withinReach(files, fromFile, deps.reach);
     };
     /**
      * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import

@@ -17,8 +17,8 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
  * Everything unknown fails OPEN: the answer then allows the candidate, so the worst case is the answer before this module existed.
  */
 
-/** How one file sees another: `same` (one project), `reachable` (the other file's project is in the caller's closure, the caller's project is open, or no project facts exist for one of the files), `unreachable`. */
-export type Reach = 'same' | 'reachable' | 'unreachable';
+/** How one file sees another: `same` (one project), `reachable` (the other file's project is in the caller's closure), `unreachable` (it is not, and the closure is closed), `unknown` (the graph cannot say: no project facts exist for one of the files, or the caller's project reaches an open one, so it may see anything). A consumer that filters candidates keeps `unknown` like `reachable`; only a rule that must tell "the graph shows it" from "nothing is known" reads the difference. */
+export type Reach = 'same' | 'reachable' | 'unreachable' | 'unknown';
 
 /** Whether the project of `fromFile` can see the declarations of `targetFile` (repository-relative POSIX paths). See {@link buildCsharpReachability}. */
 export type Reachability = (fromFile: string, targetFile: string) => Reach;
@@ -68,7 +68,7 @@ function stem(p: string): string {
 }
 
 /**
- * The reference graph of the C# projects of a repository, as a predicate the resolver asks. `projectRoot` is the repository root the repo-relative `csFiles` are relative to; `options.files`, when given, is the view the project files are found and read through (see `FileView`): a project file the view does not list does not exist; without it the disk under `projectRoot` is read. A file not in `csFiles`, or under no project file, has no project facts, and a pair with such a file is `reachable`. Deterministic: the answer depends only on the files read.
+ * The reference graph of the C# projects of a repository, as a predicate the resolver asks. `projectRoot` is the repository root the repo-relative `csFiles` are relative to; `options.files`, when given, is the view the project files are found and read through (see `FileView`): a project file the view does not list does not exist; without it the disk under `projectRoot` is read. A file not in `csFiles`, or under no project file, has no project facts, and a pair with such a file is `unknown`. Deterministic: the answer depends only on the files read.
  */
 export function buildCsharpReachability(
   projectRoot: string,
@@ -295,9 +295,10 @@ export function buildCsharpReachability(
   return (fromFile, targetFile) => {
     const from = projectOf.get(fromFile);
     const target = projectOf.get(targetFile);
-    if (from === undefined || target === undefined) return 'reachable';
+    if (from === undefined || target === undefined) return 'unknown';
     if (from === target) return 'same';
     const closure = closureOf(from);
-    return closure.open || closure.reaches.has(target) ? 'reachable' : 'unreachable';
+    if (closure.reaches.has(target)) return 'reachable';
+    return closure.open ? 'unknown' : 'unreachable';
   };
 }

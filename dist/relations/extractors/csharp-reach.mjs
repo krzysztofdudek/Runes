@@ -45,7 +45,7 @@ function stem(p) {
     return dot > 0 ? base.slice(0, dot) : base;
 }
 /**
- * The reference graph of the C# projects of a repository, as a predicate the resolver asks. `projectRoot` is the repository root the repo-relative `csFiles` are relative to; `options.files`, when given, is the view the project files are found and read through (see `FileView`): a project file the view does not list does not exist; without it the disk under `projectRoot` is read. A file not in `csFiles`, or under no project file, has no project facts, and a pair with such a file is `reachable`. Deterministic: the answer depends only on the files read.
+ * The reference graph of the C# projects of a repository, as a predicate the resolver asks. `projectRoot` is the repository root the repo-relative `csFiles` are relative to; `options.files`, when given, is the view the project files are found and read through (see `FileView`): a project file the view does not list does not exist; without it the disk under `projectRoot` is read. A file not in `csFiles`, or under no project file, has no project facts, and a pair with such a file is `unknown`. Deterministic: the answer depends only on the files read.
  */
 export function buildCsharpReachability(projectRoot, csFiles, options) {
     const source = options?.files ?? diskFileView(projectRoot, false);
@@ -282,10 +282,12 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const from = projectOf.get(fromFile);
         const target = projectOf.get(targetFile);
         if (from === undefined || target === undefined)
-            return 'reachable';
+            return 'unknown';
         if (from === target)
             return 'same';
         const closure = closureOf(from);
-        return closure.open || closure.reaches.has(target) ? 'reachable' : 'unreachable';
+        if (closure.reaches.has(target))
+            return 'reachable';
+        return closure.open ? 'unknown' : 'unreachable';
     };
 }

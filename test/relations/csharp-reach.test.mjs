@@ -42,11 +42,11 @@ describe('buildCsharpReachability — projects and references', () => {
     expect(reach('a/x.cs', 'b/z.cs')).toBe('reachable');
   });
 
-  it('allows a pair when a file is under no project, or is not one of the files the graph was built for', () => {
+  it('answers unknown for a pair when a file is under no project, or is not one of the files the graph was built for', () => {
     const reach = reachOf({ 'a/A.csproj': PROJECT, 'a/x.cs': '', 'loose/y.cs': '' });
-    expect(reach('a/x.cs', 'loose/y.cs')).toBe('reachable');
-    expect(reach('loose/y.cs', 'a/x.cs')).toBe('reachable');
-    expect(reach('a/x.cs', 'a/unlisted.cs')).toBe('reachable');
+    expect(reach('a/x.cs', 'loose/y.cs')).toBe('unknown');
+    expect(reach('loose/y.cs', 'a/x.cs')).toBe('unknown');
+    expect(reach('a/x.cs', 'a/unlisted.cs')).toBe('unknown');
   });
 
   it('follows references through any number of projects and survives a cycle', () => {
@@ -244,13 +244,13 @@ describe('buildCsharpReachability — Directory.Build files and imports', () => 
     expect(reach('a/x.cs', 'b/z.cs')).toBe('unreachable');
   });
 
-  it('reads a project as open for an import it cannot resolve, a wildcard import and a shared project', () => {
+  it('reads a project as open for an import it cannot resolve, a wildcard import and a shared project: it may see anything, which is unknown, not reachable', () => {
     for (const imp of ['<Import Project="$(RepoRoot)build/refs.props" />', '<Import Project="build/*.props" />', '<Import Project="..\\Shared\\Shared.projitems" Label="Shared" />']) {
       const reach = reachOf({
         'a/A.csproj': `<Project>${imp}</Project>`, 'a/x.cs': '',
         'b/B.csproj': PROJECT, 'b/z.cs': '',
       });
-      expect(reach('a/x.cs', 'b/z.cs'), imp).toBe('reachable');
+      expect(reach('a/x.cs', 'b/z.cs'), imp).toBe('unknown');
     }
   });
 });
@@ -262,7 +262,7 @@ describe('buildCsharpReachability — open projects', () => {
         'a/A.csproj': withItems(item), 'a/x.cs': '',
         'b/B.csproj': PROJECT, 'b/z.cs': '',
       });
-      expect(reach('a/x.cs', 'b/z.cs'), item).toBe('reachable');
+      expect(reach('a/x.cs', 'b/z.cs'), item).toBe('unknown');
     }
   });
 
@@ -279,7 +279,7 @@ describe('buildCsharpReachability — open projects', () => {
       'A.csproj': withItems('<Compile Include="../x.cs" />'), 'x.cs': '',
       'b/B.csproj': PROJECT, 'b/z.cs': '',
     });
-    expect(reach('x.cs', 'b/z.cs')).toBe('reachable');
+    expect(reach('x.cs', 'b/z.cs')).toBe('unknown');
   });
 
   it('reaches everything through an open project the caller references', () => {
@@ -288,7 +288,7 @@ describe('buildCsharpReachability — open projects', () => {
       'b/B.csproj': withItems(projectRef('$(Mystery)/C.csproj')), 'b/y.cs': '',
       'c/C.csproj': PROJECT, 'c/z.cs': '',
     });
-    expect(reach('a/x.cs', 'c/z.cs')).toBe('reachable');
+    expect(reach('a/x.cs', 'c/z.cs')).toBe('unknown');
     expect(reach('c/z.cs', 'a/x.cs')).toBe('unreachable');
   });
 
