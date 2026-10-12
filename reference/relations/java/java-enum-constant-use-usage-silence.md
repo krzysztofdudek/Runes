@@ -8,8 +8,7 @@ cites: "JLS SE25 §8.9 (enum types); research F21 (C36 in 06-14)"
 
 ## Rule
 
-A qualified enum constant use `com.acme.model.Color.RED` references the enum TYPE
-`Color` at a usage site, carrying no import. The import-only extractor emits no hint.
+A qualified enum constant use `com.acme.model.Color.RED` references the enum TYPE `Color` at a usage site, carrying no import. A qualified name starting with a package segment gives no hint.
 
 ## Files
 
@@ -31,4 +30,4 @@ class C {
 
 ## Why
 
-An enum constant use is a usage site; the import-only model silences it.
+A name qualified by its package is an expression-position chain, not a type position, so it is silent.

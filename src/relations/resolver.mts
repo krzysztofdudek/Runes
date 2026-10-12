@@ -3,6 +3,7 @@ import type { DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
 import { IMPLICIT_PROGRAM_KEY } from './extractors/csharp.mjs';
+import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
 
 /**
  * Who owns a repository file: the unit a resolved reference is attributed to (a module, a package, a directory, whatever the caller groups files by). `undefined` means the file is not owned by any unit, which the resolver treats as the non-event of an unmapped target.
@@ -309,12 +310,14 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
    * closed) — UNLESS it belongs to the same owner as the definers, because an unreadable
    * declaration in that owner can only name that owner again and can never flip the edge.
    */
-  const jvmSymbolOutcome = (language: string, symbolKey: string): JvmOutcome => {
+  const jvmSymbolOutcome = (language: string, symbolKey: string, visibleFrom?: string): JvmOutcome => {
+    // A same-package hint (`visibleFrom` is the referencing file) sees only the definers its source set can see.
+    const visible = (f: string): boolean => visibleFrom === undefined || jvmSourceSetVisible(visibleFrom, f);
     const keys = nestedSplitKeys(deps.symbolTable, language, symbolKey);
     const files = new Set<string>();
     const bindingKeys: string[] = [];
     for (const key of keys) {
-      const defs = deps.symbolTable.filesFor(language, key);
+      const defs = deps.symbolTable.filesFor(language, key).filter(visible);
       if (defs.length > 0) bindingKeys.push(key);
       for (const f of defs) files.add(f);
     }
@@ -329,7 +332,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     for (const key of bindingKeys) {
       for (const marker of incompletenessMarkers(key)) {
         for (const f of deps.symbolTable.filesFor(language, marker)) {
-          if (files.has(f)) continue;
+          if (files.has(f) || !visible(f)) continue;
           if (owner === undefined || deps.ownerIndex.ownerOf(f) !== owner) return { kind: 'ambiguous' };
         }
       }
@@ -366,14 +369,14 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
    *  Kotlin star import (`<prefix>.*`), any plain JVM symbol hint, or — only after the Java
    *  source-root probe returned nothing (`pathMissed`) — a Java import resolved through the
    *  shared JVM namespace (cross-module, test → main, Java → Kotlin class or file facade). */
-  const jvmOutcome = (hint: TargetHint, language: string, pathMissed: boolean): JvmOutcome | undefined => {
+  const jvmOutcome = (hint: TargetHint, language: string, pathMissed: boolean, fromFile: string): JvmOutcome | undefined => {
     if (!JVM_LANGUAGES.has(language)) return undefined;
     if (hint.kind === 'symbol') {
       if (hint.set !== undefined || hint.nestedOnly === true) return undefined;
       if (language === 'kotlin' && hint.symbolKey.endsWith('.*')) {
         return jvmStarOutcome(language, hint.symbolKey.slice(0, -2));
       }
-      return jvmSymbolOutcome(language, hint.symbolKey);
+      return jvmSymbolOutcome(language, hint.symbolKey, hint.samePackage === true ? fromFile : undefined);
     }
     if (language !== 'java' || !pathMissed) return undefined;
     return hint.isPackage === true
@@ -411,7 +414,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   const resolve: TargetResolver['resolve'] = (hint, fromFile, language) => {
-    const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false) : undefined;
+    const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
     if (jvmFirst !== undefined) {
       const c = classifyJvm(jvmFirst);
       return c.kind === 'resolved' ? { owner: c.owner, resolvedFile: c.resolvedFile } : undefined;
@@ -426,7 +429,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     }
     const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage);
     if (!file) {
-      const fallback = jvmOutcome(hint, language, true);
+      const fallback = jvmOutcome(hint, language, true, fromFile);
       if (fallback === undefined) return undefined; // unresolved → silence
       const c = classifyJvm(fallback);
       return c.kind === 'resolved' ? { owner: c.owner, resolvedFile: c.resolvedFile } : undefined;
@@ -437,7 +440,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   const classify: TargetResolver['classify'] = (hint, fromFile, language) => {
-    const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false) : undefined;
+    const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
     if (jvmFirst !== undefined) return classifyJvm(jvmFirst);
     if (hint.kind === 'symbol') {
       // Ruby: a multi-segment constant whose ROOT namespace is not itself declared in-repo
@@ -467,7 +470,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     // declaration or a split package IS an ambiguity.
     const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage);
     if (!file) {
-      const fallback = jvmOutcome(hint, language, true);
+      const fallback = jvmOutcome(hint, language, true, fromFile);
       return fallback !== undefined ? classifyJvm(fallback) : { kind: 'absent' };
     }
     const owner = deps.ownerIndex.ownerOf(file);
@@ -475,7 +478,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   const resolveFile: TargetResolver['resolveFile'] = (hint, fromFile, language) => {
-    const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false) : undefined;
+    const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
     if (jvmFirst !== undefined) return jvmFirst.kind === 'file' ? jvmFirst.file : undefined;
     if (hint.kind === 'symbol') {
       if (language === 'ruby' && rubyGate(hint, undefined, deps.symbolTable) !== undefined) return undefined;
@@ -485,7 +488,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     }
     const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage);
     if (file) return file;
-    const fallback = jvmOutcome(hint, language, true);
+    const fallback = jvmOutcome(hint, language, true, fromFile);
     return fallback?.kind === 'file' ? fallback.file : undefined;
   };
 

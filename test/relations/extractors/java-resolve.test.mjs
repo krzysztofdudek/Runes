@@ -1,7 +1,7 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/java-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import {
-  resolveJavaFqn, resolveJavaPackageFiles,
+  resolveJavaFqn, resolveJavaPackageFiles, jvmSourceSetVisible,
 } from '../../helpers/internal/relations.mjs';
 
 // Fixed resolution universe (repo-relative POSIX). Two source roots are present —
@@ -214,5 +214,34 @@ describe('resolveJavaFqn — excluded nested-type candidate falls through within
   it('excluding both leaves the nested-type FQN unresolved', () => {
     const isExcluded = () => true;
     expect(resolveJavaFqn('com.foo.Outer.Inner', FROM, nestedDeps(isExcluded))).toBeUndefined();
+  });
+});
+
+describe('jvmSourceSetVisible', () => {
+  const at = (set, mod = '') => `${mod === '' ? '' : `${mod}/`}src/${set}/java/a/X.java`;
+  it('main code never sees a test-like set, whichever module holds it', () => {
+    for (const set of ['test', 'testFixtures', 'integrationTest', 'it', 'jmh', 'androidTest', 'jvmTest', 'commonTest']) {
+      expect(jvmSourceSetVisible(at('main'), at(set)), set).toBe(false);
+      expect(jvmSourceSetVisible(at('main', 'a'), at(set, 'b')), set).toBe(false);
+      expect(jvmSourceSetVisible(at('debug'), at(set)), set).toBe(false);
+    }
+  });
+  it('a test-like set sees main-like sets, its own set and the testFixtures', () => {
+    expect(jvmSourceSetVisible(at('test'), at('main'))).toBe(true);
+    expect(jvmSourceSetVisible(at('test'), at('debug'))).toBe(true);
+    expect(jvmSourceSetVisible(at('test'), at('test'))).toBe(true);
+    expect(jvmSourceSetVisible(at('test'), at('testFixtures'))).toBe(true);
+    expect(jvmSourceSetVisible(at('jvmTest'), at('jvmMain'))).toBe(true);
+  });
+  it('a test-like set does not see another test-like set of its own module, but may see one of another module', () => {
+    expect(jvmSourceSetVisible(at('integrationTest', 'm'), at('test', 'm'))).toBe(false);
+    expect(jvmSourceSetVisible(at('integrationTest'), at('test'))).toBe(false);
+    expect(jvmSourceSetVisible(at('test', 'a'), at('integrationTest', 'b'))).toBe(true);
+  });
+  it('outside the layout nothing is known and the class is visible', () => {
+    expect(jvmSourceSetVisible('lib/a/X.java', at('test'))).toBe(true);
+    expect(jvmSourceSetVisible(at('main'), 'lib/test/a/X.java')).toBe(true);
+    expect(jvmSourceSetVisible('src/test/resources/a.java', at('test'))).toBe(true);
+    expect(jvmSourceSetVisible('src\\main\\java\\a\\X.java', 'src\\test\\java\\a\\X.java')).toBe(false);
   });
 });

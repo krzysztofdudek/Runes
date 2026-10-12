@@ -8,10 +8,7 @@ cites: "JLS SE25 §7.5.3, §7.5.4; research B3/B4 (C8 in 06-14)"
 
 ## Rule
 
-`import static com.util.Maths.max;` and `import static com.util.Limits.*;` — each
-import IS a real syntactic dependency on its declaring TYPE; both resolve
-independently to their type files. Which `max` actually binds at a call site is
-irrelevant under the import-only model. Both edges fire.
+`import static com.util.Maths.max;` and `import static com.util.Limits.*;` — each import IS a real syntactic dependency on its declaring TYPE; both resolve independently to their type files. Which `max` actually binds at a call site is irrelevant: the dependency is the import. Both edges fire.
 
 ## Files
 
@@ -43,5 +40,4 @@ class C {}
 
 ## Why
 
-Each static import resolves to its own declaring type independently; a static member
-collision at the call site does not affect which TYPE files are the dependencies.
+Each static import resolves to its own declaring type independently; a static member collision at the call site does not affect which TYPE files are the dependencies.

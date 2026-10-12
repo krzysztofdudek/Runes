@@ -8,15 +8,7 @@ cites: "JLS SE25 §6.3, §7.6 (same-package simple-name visibility); research A2
 
 ## Rule
 
-A same-package top-level type is referenceable by simple name with NO `import`
-(JLS §7.6). `class Child extends Parent { Sibling s; }` references `Parent` and
-`Sibling` declared in sibling files of the same package by BARE SIMPLE NAME — not as a
-fully-qualified `scoped_type_identifier`. Unlike a fully-qualified inline type reference
-(which now edges because the FQN is shadow-free per §6.5.5.2), a bare simple name carries
-no shadow-free hint, so the extractor emits nothing. A same-node reference is benign
-(intra-node, not a relation); a cross-node split package is a REAL tolerated
-false-NEGATIVE. Adding bare-simple-name resolution to catch it would reintroduce the
-§6.5.5 precedence trap and is FORBIDDEN.
+A same-package top-level type is referenceable by simple name with NO `import` (JLS §7.6). `class Child extends Parent { Sibling s; }` references `Parent` and `Sibling` declared in sibling files of the same package by BARE SIMPLE NAME, and the extractor does bind them (see java-same-package-test-to-main-edge). Here all three files belong to ONE owner, so each reference resolves to the referencing file's own owner: that is intra-owner, not a relation, and the case expects silence. The cross-owner forms, the shadowing rules and the source-set rule have their own cases (java-same-package-*).
 
 ## Files
 
@@ -39,9 +31,8 @@ class Child extends Parent {
 
 ## Expect
 
-- silence      # same-package simple-name refs carry no import → no hint, even though Parent/Sibling are in-graph
+- silence      # Parent and Sibling resolve, but to the owner of the referencing file: no cross-owner edge
 
 ## Why
 
-Resolving a bare same-package simple name would hit the §6.5.5 precedence trap; the
-missed edge is the tolerated price of zero false positives.
+A reference inside one owner is never a dependency between owners, however it is spelled.
