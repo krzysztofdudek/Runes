@@ -8,9 +8,7 @@ cites: "JLS SE25 §14.4.1 (local variable type inference); research G3 (C38 in 0
 
 ## Rule
 
-`var` is a reserved type NAME, not a keyword and not a type (JLS §14.4.1). `var x = 1;`
-infers the type from the initializer; `var` itself is never a type reference. The extractor
-skips it explicitly — `var` MUST be excluded so no phantom same-package `var` edge is ever produced.
+`var` is a reserved type NAME, not a keyword and not a type (JLS §14.4.1). `var x = 1;` infers the type from the initializer; `var` itself is never a type reference. The extractor skips it explicitly — `var` MUST be excluded so no phantom same-package `var` edge is ever produced.
 
 ## Files
 

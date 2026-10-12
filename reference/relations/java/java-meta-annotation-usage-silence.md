@@ -8,10 +8,7 @@ cites: "JLS SE25 §7.3, §9.6; research C1 (C11 in 06-14)"
 
 ## Rule
 
-The meta-annotations `@Override @Deprecated @SuppressWarnings` come from `java.lang` /
-`java.lang.annotation` and need no import. Used at a usage site with no
-`import_declaration`, each gives only the same-package candidate (`com.app.Override`, …), which no file
-declares, so the extractor finds no edge.
+The meta-annotations `@Override @Deprecated @SuppressWarnings` come from `java.lang` / `java.lang.annotation` and need no import. Used at a usage site with no `import_declaration`, each gives only the same-package candidate (`com.app.Override`, …), which no file declares, so the extractor finds no edge.
 
 ## Files
 
