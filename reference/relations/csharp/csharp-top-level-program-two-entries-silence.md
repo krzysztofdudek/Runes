@@ -8,7 +8,7 @@ cites: "C# spec — top-level statements (one synthesized `Program` per project)
 
 ## Rule
 
-Every project with top-level statements has its own implicit global `Program`. When two nodes each hold such a file (a web project and an Aspire app host, a worker and a migrator) and no global `Program` is declared explicitly, the implicit class has two owners, and a bare `Program` reference cannot be bound by name alone: which one the referencing project sees depends on its project references, which are not read here. The reference stays silent. (An explicit `public partial class Program { }` in one of them binds instead: csharp-top-level-program-explicit-partial-wins-edge.)
+Every project with top-level statements has its own implicit global `Program`. When two nodes each hold such a file (a web project and an Aspire app host, a worker and a migrator) and no global `Program` is declared explicitly, the implicit class has two owners, and a bare `Program` reference cannot be bound by name alone: which one the referencing project sees depends on its project references, and this layout has no project files to say. The reference stays silent. (With project files that say which entry the tests reference, it binds that one: csharp-top-level-program-two-entries-referenced-edge.) (An explicit `public partial class Program { }` in one of them binds instead: csharp-top-level-program-explicit-partial-wins-edge.)
 
 ## Files
 
@@ -36,4 +36,4 @@ public class ApiTests {
 
 ## Why
 
-Picking either entry point would be a guess, and a wrong guess is a false edge that blocks the gate. Silence loses the real edge until the resolver can follow project references.
+Picking either entry point would be a guess, and a wrong guess is a false edge that blocks the gate. Silence loses the real edge only where nothing says which entry the referencing project sees; project files that do say it give the edge (csharp-top-level-program-two-entries-referenced-edge).

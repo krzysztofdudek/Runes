@@ -32,4 +32,4 @@ public class ApiTests {
 
 ## Why
 
-`WebApplicationFactory<Program>` is the standard entry of ASP.NET Core integration tests, and `Program` is often the only web type a test project names. Two top-level `Program` files in different nodes stay ambiguous and silent (csharp-top-level-program-two-entries-silence); telling them apart needs the project-reference graph, which is not read here.
+`WebApplicationFactory<Program>` is the standard entry of ASP.NET Core integration tests, and `Program` is often the only web type a test project names. Two top-level `Program` files in different nodes stay ambiguous and silent when no project file says which one the referencing project sees (csharp-top-level-program-two-entries-silence), and bind the referenced one when it does (csharp-top-level-program-two-entries-referenced-edge).
