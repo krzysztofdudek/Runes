@@ -8,7 +8,7 @@ cites: "Kotlin spec — Packages and imports (implicit stdlib imports); research
 
 ## Rule
 
-Stdlib packages (`kotlin.*`, plus platform `java.lang` on JVM) are implicitly imported into every Kotlin file — `List`, `Pair`, `Result`, `listOf` are usable with NO import line. Such a name gives only the same-package candidate (`com.acme.List`, …); no file of the package declares one, so nothing binds, and a same-named project type of ANOTHER package can never be mis-bound through an implicit stdlib usage. (A project type of the file's own package does shadow the stdlib name in Kotlin, and does bind: kotlin-stdlib-collision-project-result-silence.)
+Stdlib packages (`kotlin.*`, plus platform `java.lang` on JVM) are implicitly imported into every Kotlin file — `List`, `Pair`, `Result`, `listOf` are usable with NO import line. Such a name gives only the same-package candidate (`com.acme.List`, …); no file of the package declares one, so nothing binds, and a same-named project type of ANOTHER package can never be mis-bound through an implicit stdlib usage. (A project type of the file's own package does shadow the stdlib name in Kotlin, and does bind: kotlin-same-package-test-to-main-edge for `Result`, kotlin-same-package-cross-node-edge for `List`.)
 
 ## Files
 

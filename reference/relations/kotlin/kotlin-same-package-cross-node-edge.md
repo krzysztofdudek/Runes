@@ -19,12 +19,20 @@ class Order
 
 ```kotlin path=src/b/Refund.kt
 package com.acme.orders
-class Refund(val order: Order)
+class Refund(val order: Order) {
+  val lines: List = List()
+}
+```
+
+```kotlin path=src/a/List.kt
+package com.acme.orders
+class List
 ```
 
 ## Expect
 
 - src/b/Refund.kt:2 -> node:a      # same-package use without an import → edge to the node that declares Order
+- src/b/Refund.kt:3 -> node:a      # the package's own `List` shadows `kotlin.collections.List`
 
 ## Why
 
