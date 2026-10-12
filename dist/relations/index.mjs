@@ -12,6 +12,7 @@ export { parsePsr4 } from './extractors/php-resolve.mjs';
 export { includeUses } from './extractors/c-cpp-shared.mjs';
 export { csharpExtractor, extractCsharpRefs, assembleCsharpCandidates } from './extractors/csharp.mjs';
 export { buildCsharpProjectScopes } from './extractors/csharp-project.mjs';
+export { buildCsharpReachability } from './extractors/csharp-reach.mjs';
 export { SymbolTable } from './symbol-table.mjs';
 export { makeResolver, resolveDetectedEdges } from './resolver.mjs';
 export { makeResolvePathToFile } from './resolve-path.mjs';

@@ -278,3 +278,15 @@ describe('MATRIX — C# alias-qualified type names (issue 188)', () => {
   it('csharp-alias-colon-colon-generic-edge', () => runCase('csharp-alias-colon-colon-generic-edge'));
   it('csharp-alias-colon-colon-qualified-tail-edge', () => runCase('csharp-alias-colon-colon-qualified-tail-edge'));
 });
+
+describe('MATRIX — C# reachability: a candidate binds only inside the caller\'s project references (issue 014)', () => {
+  it('csharp-extension-unreferenced-project-silence', () => runCase('csharp-extension-unreferenced-project-silence'));
+  it('csharp-extension-reverse-reference-silence', () => runCase('csharp-extension-reverse-reference-silence'));
+  it('csharp-member-read-unreferenced-type-silence', () => runCase('csharp-member-read-unreferenced-type-silence'));
+  it('csharp-member-read-reachable-type-edge', () => runCase('csharp-member-read-reachable-type-edge'));
+  it('csharp-extension-referenced-project-edge', () => runCase('csharp-extension-referenced-project-edge'));
+  it('csharp-transitive-project-reference-edge', () => runCase('csharp-transitive-project-reference-edge'));
+  it('csharp-hintpath-reference-edge', () => runCase('csharp-hintpath-reference-edge'));
+  it('csharp-directory-build-props-reference-edge', () => runCase('csharp-directory-build-props-reference-edge'));
+  it('csharp-unresolved-msbuild-property-reaches-everything-edge', () => runCase('csharp-unresolved-msbuild-property-reaches-everything-edge'));
+});

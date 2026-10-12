@@ -14,6 +14,7 @@ export { parsePsr4 } from './extractors/php-resolve.mjs';
 export { includeUses } from './extractors/c-cpp-shared.mjs';
 export { csharpExtractor, extractCsharpRefs, assembleCsharpCandidates, type CsharpExtract, type CsharpRefDescriptor, type CsharpUsesOptions } from './extractors/csharp.mjs';
 export { buildCsharpProjectScopes, type CsharpGlobalFacts, type CsharpProjectScope } from './extractors/csharp-project.mjs';
+export { buildCsharpReachability, type Reachability } from './extractors/csharp-reach.mjs';
 export { SymbolTable } from './symbol-table.mjs';
 export { makeResolver, resolveDetectedEdges, type OwnerLookup, type ResolvedTarget, type ResolverDeps, type Classification, type TargetResolver } from './resolver.mjs';
 export { makeResolvePathToFile, type ResolvePathOptions } from './resolve-path.mjs';

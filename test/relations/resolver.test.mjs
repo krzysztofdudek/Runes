@@ -401,3 +401,52 @@ describe('resolver — owner collapse with Kotlin incompleteness markers', () =>
     expect(mk(st2).classify({ kind: 'symbol', symbolKey: 'a.T' }, 'src/use/U.kt', 'kotlin')).toEqual({ kind: 'absent' });
   });
 });
+
+// Issue 014: the C# reference filter. `reach` is the predicate buildCsharpReachability builds; here a hand-written one, so the resolver's use of it is held apart from the graph.
+describe('resolver — the C# reach filter', () => {
+  const owners = { ownerOf: (f) => f.split('/')[1] };
+  const reachBy = (table) => (from, target) => table[`${from}>${target}`] ?? 'reachable';
+  const mk = (st, reach) => makeResolver({ ownerIndex: owners, symbolTable: st, resolvePathToFile: () => undefined, reach });
+  const hint = { kind: 'symbol', symbolKey: 'N.T' };
+
+  it('drops a definer the caller cannot reach, so the candidate is absent, never a binding', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'N.T', 'src/lib/T.cs');
+    const reach = reachBy({ 'src/app/A.cs>src/lib/T.cs': 'unreachable' });
+    expect(mk(st, reach).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'absent' });
+    expect(mk(st, reach).resolve(hint, 'src/app/A.cs', 'csharp')).toBeUndefined();
+    expect(mk(st, reach).resolveFile(hint, 'src/app/A.cs', 'csharp')).toBeUndefined();
+    expect(mk(st, undefined).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+  });
+
+  it('turns an ambiguity between two owners into a binding when one of them is out of reach', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'N.T', 'src/one/T.cs'); st.declare('csharp', 'N.T', 'src/two/T.cs');
+    const reach = reachBy({ 'src/app/A.cs>src/two/T.cs': 'unreachable' });
+    expect(mk(st, undefined).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    expect(mk(st, reach).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'one', resolvedFile: 'src/one/T.cs' });
+    expect(mk(st, reach).resolveFile(hint, 'src/app/A.cs', 'csharp')).toBe('src/one/T.cs');
+  });
+
+  it('prefers the definer of the caller\'s own project to a referenced one of the same name', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'N.T', 'src/app/T.cs'); st.declare('csharp', 'N.T', 'src/lib/T.cs');
+    const reach = reachBy({ 'src/app/A.cs>src/app/T.cs': 'same' });
+    expect(mk(st, reach).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'app' });
+    // Without a definer of its own project the two referenced owners stay ambiguous.
+    expect(mk(st, reachBy({})).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('filters the members of a set hint, each of them', () => {
+    const st = new SymbolTable(); st.declare('csharp', 'A.T', 'src/one/T.cs'); st.declare('csharp', 'B.T', 'src/two/T.cs');
+    const set = { kind: 'symbol', symbolKey: 'A.T', set: [{ symbolKey: 'A.T' }, { symbolKey: 'B.T' }] };
+    const reach = reachBy({ 'src/app/A.cs>src/two/T.cs': 'unreachable' });
+    expect(mk(st, undefined).classify(set, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    expect(mk(st, reach).classify(set, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'one' });
+  });
+
+  it('never consults the predicate for another language', () => {
+    const st = new SymbolTable(); st.declare('kotlin', 'N.T', 'src/lib/T.kt');
+    const asked = [];
+    const reach = (from, target) => { asked.push([from, target]); return 'unreachable'; };
+    expect(mk(st, reach).classify(hint, 'src/app/A.kt', 'kotlin')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+    expect(asked).toEqual([]);
+  });
+});

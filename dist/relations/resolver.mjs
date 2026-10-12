@@ -158,6 +158,19 @@ function incompletenessMarkers(bindingKey) {
         markers.push(`${typePart}+*`);
     return markers;
 }
+/**
+ * The C# reference filter: the definers a file can see. A definer in a project the file's project cannot reach is dropped (the compiler never binds it); when a definer lies in the file's own project, only those stay, because a type of the compilation wins over a type of the same name in a referenced assembly (warning CS0436, not an ambiguity).
+ */
+function withinReach(files, fromFile, reach) {
+    const seen = new Map();
+    for (const f of files) {
+        const r = reach(fromFile, f);
+        if (r !== 'unreachable')
+            seen.set(f, r);
+    }
+    const same = [...seen].filter(([, r]) => r === 'same').map(([f]) => f);
+    return new Set(same.length > 0 ? same : seen.keys());
+}
 export function makeResolver(deps) {
     /** The DISTINCT defining files a dotted symbol candidate maps to, across the verbatim key
      *  AND the guarded nested-type `+`-splits. The set-level rule: 0 distinct files → absent,
@@ -189,16 +202,19 @@ export function makeResolver(deps) {
     /** The distinct files a symbol HINT maps to: the union across its `set` members (each honoring
      *  its own `nestedOnly`) when a set is present, else the single `symbolKey` honoring the hint's
      *  own `nestedOnly`. ≥2 distinct files anywhere = a real ambiguity (CS0104 / co-definition). */
-    const hintFiles = (hint, language) => {
+    const hintFiles = (hint, language, fromFile) => {
+        let files;
         if (hint.set !== undefined) {
-            const files = new Set();
+            files = new Set();
             for (const m of hint.set) {
                 for (const f of memberFiles(language, m.symbolKey, m.nestedOnly === true))
                     files.add(f);
             }
-            return files;
         }
-        return memberFiles(language, hint.symbolKey, hint.nestedOnly === true);
+        else {
+            files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true);
+        }
+        return language === 'csharp' && deps.reach !== undefined ? withinReach(files, fromFile, deps.reach) : files;
     };
     /**
      * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import
@@ -335,7 +351,7 @@ export function makeResolver(deps) {
         if (hint.kind === 'symbol') {
             if (language === 'ruby' && rubyGate(hint, undefined, deps.symbolTable) !== undefined)
                 return undefined;
-            const files = hintFiles(hint, language);
+            const files = hintFiles(hint, language, fromFile);
             if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined)
                 return undefined;
             const outcome = symbolOutcome(files);
@@ -375,7 +391,7 @@ export function makeResolver(deps) {
             // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owners is a real
             // ambiguity (silence the group); 0 is absent (continue); one file or one owner binds
             // (see symbolOutcome).
-            const files = hintFiles(hint, language);
+            const files = hintFiles(hint, language, fromFile);
             if (language === 'ruby') {
                 const forced = rubyGate(hint, files, deps.symbolTable);
                 if (forced !== undefined)
@@ -402,7 +418,7 @@ export function makeResolver(deps) {
         if (hint.kind === 'symbol') {
             if (language === 'ruby' && rubyGate(hint, undefined, deps.symbolTable) !== undefined)
                 return undefined;
-            const files = hintFiles(hint, language);
+            const files = hintFiles(hint, language, fromFile);
             if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined)
                 return undefined;
             return files.size === 1 ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
