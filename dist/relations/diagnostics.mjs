@@ -32,7 +32,7 @@ export function lineColumnAt(text, offset) {
     }
     return { line, column: end - lineStart + 1 };
 }
-/** The offset of the first character of `text` that cannot begin or continue any JSON token (a single-quoted string, an unquoted value, `undefined`, a misspelt literal, a string never closed, a whitespace character JSON does not allow), or undefined when every token is well formed. Structure (a missing colon or comma, a structural character where a value belongs) is not judged. Whitespace is exactly space, tab, LF and CR, as JSON defines it. */
+/** The offset of the first character of `text` that cannot begin or continue any JSON token (a single-quoted string, an unquoted value, `undefined`, a misspelt literal (at the first letter that differs from the real word, as V8 stops), a string never closed, a whitespace character JSON does not allow), or undefined when every token is well formed. Structure (a missing colon or comma, a structural character where a value belongs) is not judged. Whitespace is exactly space, tab, LF and CR, as JSON defines it. */
 function firstBadTokenOffset(text) {
     const token = /[ \t\n\r{}[\],:]+|"(?:[^"\\\u0000-\u001f]|\\.)*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y;
     let at = 0;
@@ -40,10 +40,21 @@ function firstBadTokenOffset(text) {
         token.lastIndex = at;
         const m = token.exec(text);
         if (m === null)
-            return at;
+            return literalStop(text, at, at > 0 && /[a-z]/.test(text[at - 1]));
         at += m[0].length;
     }
     return undefined;
+}
+const LITERALS = { t: 'true', f: 'false', n: 'null' };
+/** Where V8 stops in a word that starts like `true`, `false` or `null`: at the first letter that differs from the real word (`ttrue` at its second letter, `foo` at its second, `faflse` at its third). Any other start, and a word that follows a complete literal, is the offset itself. */
+function literalStop(text, at, afterLiteral) {
+    const word = afterLiteral ? undefined : LITERALS[text[at]];
+    if (word === undefined)
+        return at;
+    let k = 1;
+    while (k < word.length && text[at + k] === word[k])
+        k++;
+    return at + k;
 }
 /** Where `JSON.parse` failed on `text`: the offset its message names (the message is read only where it ends in ` in JSON at position N`, so text quoted inside it cannot be mistaken for a position); the end of the text for the whole message "Unexpected end of JSON input"; for "Unexpected token 'X'", which names no position, the first token of `text` that cannot be JSON, but only when the character at that offset is the very one V8 quotes. undefined when none of these finds a place: the diagnostic then carries no position rather than a guessed one. */
 export function failureOffset(error, text) {
@@ -57,7 +68,7 @@ export function failureOffset(error, text) {
     if (quoted === null)
         return undefined;
     const at = firstBadTokenOffset(text);
-    if (at === undefined)
+    if (at === undefined || at >= text.length)
         return undefined;
     return String.fromCodePoint(text.codePointAt(at)) === quoted[1] ? at : undefined;
 }

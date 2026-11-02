@@ -1,4 +1,4 @@
-// Issue 234, round four: a position a diagnostic carries is never one the parser contradicts. It is the position V8 names, or the place of an offending token only when that token is the very character V8 quotes; otherwise the file is reported without a line and column.
+// A position a diagnostic carries is never one the parser contradicts. It is the position V8 names, or the place of an offending token only when that token is the very character V8 quotes, and then it is the exact place V8 stops (found here by parsing ever longer prefixes); otherwise the file is reported without a line and column.
 import { describe, it, expect } from '../helpers/expect.mjs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -40,10 +40,10 @@ describe('a structural token where a value belongs has no position', () => {
 
 describe('whitespace is the four JSON characters only', () => {
   const cases = [
-    ['no-break space', ' '],
-    ['ideographic space', '　'],
-    ['line separator', ' '],
-    ['an inner byte order mark', '﻿'],
+    ['no-break space', '\u00a0'],
+    ['ideographic space', '\u3000'],
+    ['line separator', '\u2028'],
+    ['an inner byte order mark', '\ufeff'],
   ];
   for (const [name, ch] of cases) {
     it(`${name} before a value is placed at itself, not at a later bad token`, () => {
@@ -78,12 +78,48 @@ describe('the inputs verified in the earlier rounds', () => {
     expect(strictJsonFailure('{ "a": x }')).toEqual({ line: 1, column: 8 });
     expect(strictJsonFailure('{ "a": undefined }')).toEqual({ line: 1, column: 8 });
     expect(strictJsonFailure('{"a":1} x')).toEqual({ line: 1, column: 9 });
-    expect(strictJsonFailure('﻿{ "a" 1 }')).toEqual({ line: 1, column: 7 });
+    expect(strictJsonFailure('\ufeff{ "a" 1 }')).toEqual({ line: 1, column: 7 });
     expect(strictJsonFailure('')).toEqual({ line: 1, column: 1 });
     expect(strictJsonFailure('['.repeat(3000))).toEqual({ line: 1, column: 3001 });
     expect(strictJsonFailure('['.repeat(3000) + "'x'")).toEqual({ line: 1, column: 3001 });
     expect(parseJsoncAt('{ "a": undefined }').failure).toEqual({ line: 1, column: 8 });
     expect(parseJsoncAt('['.repeat(3000) + "'x'").failure).toEqual({ line: 1, column: 3001 });
+  });
+});
+
+/** The length of the shortest prefix of `text` that JSON.parse rejects with an "Unexpected token" message: its last character is where V8 stops. */
+function firstRejectedPrefix(text) {
+  for (let k = 1; k <= text.length; k++) {
+    try {
+      JSON.parse(text.slice(0, k));
+    } catch (error) {
+      if (/^Unexpected token '/.test(error.message)) return k;
+    }
+  }
+  throw new Error('no prefix is rejected');
+}
+
+describe('a word that starts like true, false or null is placed at the letter V8 stops at', () => {
+  const spellings = ['ttrue', 'ffalse', 'nnull', 'faflse', 'nulnull', 'foo', 'next-app'];
+  for (const word of spellings) {
+    it(`${word} on line 4 of a tsconfig`, () => {
+      const text = `{\n  "compilerOptions": {\n    "baseUrl": ".",\n    "strict": ${word}\n  }\n}\n`;
+      const stop = firstRejectedPrefix(text) - 1;
+      const expected = lineColumnAt(text, stop);
+      expect(expected.line).toBe(4);
+      expect(strictJsonFailure(text)).toEqual(expected);
+      expect(parseJsoncAt(text).failure).toEqual(expected);
+    });
+  }
+
+  it('the five misspellings are placed after the letters they share with the real word', () => {
+    expect(strictJsonFailure('{ "a": ttrue }')).toEqual({ line: 1, column: 9 });
+    expect(strictJsonFailure('{ "a": ffalse }')).toEqual({ line: 1, column: 9 });
+    expect(strictJsonFailure('{ "a": nnull }')).toEqual({ line: 1, column: 9 });
+    expect(strictJsonFailure('{ "a": faflse }')).toEqual({ line: 1, column: 10 });
+    expect(strictJsonFailure('{ "a": nulnull }')).toEqual({ line: 1, column: 11 });
+    expect(strictJsonFailure('{ "a": foo }')).toEqual({ line: 1, column: 9 });
+    expect(strictJsonFailure('{ "a": next-app }')).toEqual({ line: 1, column: 9 });
   });
 });
 
@@ -106,7 +142,7 @@ describe('mutating inputs never produces a position V8 contradicts', () => {
     '[1, "two", null, {"three": [3.5e2, false]}]',
     '{\r\n"a": 1,\r\n"b": "text with spaces"\r\n}',
   ];
-  const pieces = ["'x'", ',', ':', '}', ']', '{', '[', '"', 'undefined', 'tru', ' ', '　', ' ', '﻿', '//', '\n', '\r', '\t', '1.', '-', '\\', ' ', 'nul', "'", 'é', '😀'];
+  const pieces = ["'x'", ',', ':', '}', ']', '{', '[', '"', 'undefined', 'tru', '\u00a0', '\u3000', '\u2028', '\ufeff', '//', '\n', '\r', '\t', '1.', '-', '\\', ' ', 'nul', "'", '\u00e9', '\ud83d\ude00'];
 
   it('over 3000 seeded mutations, a reported position is the one V8 names, or the offending character V8 quotes, or none', () => {
     const rand = seeded(234);
@@ -146,15 +182,10 @@ describe('mutating inputs never produces a position V8 contradicts', () => {
         const quoted = /^Unexpected token '([^]+?)', /u.exec(message);
         expect(quoted).not.toBeNull();
         if (failure.line !== undefined) {
-          // find the offset back from the line and column and compare the character
-          let offset = 0;
-          for (;;) {
-            const p = lineColumnAt(body, offset);
-            if (p.line === failure.line && p.column === failure.column) break;
-            offset++;
-            if (offset > body.length) throw new Error('position outside the text');
-          }
-          expect(String.fromCodePoint(body.codePointAt(offset))).toBe(quoted[1]);
+          // V8's own stopping place, found independently: the shortest prefix it rejects for a bad token rather than for ending early
+          const stop = firstRejectedPrefix(body) - 1;
+          expect(failure).toEqual(lineColumnAt(body, stop));
+          expect(String.fromCodePoint(body.codePointAt(stop))).toBe(quoted[1]);
         }
       }
     }

@@ -199,7 +199,9 @@ describe('the pieces behind it', () => {
     const tok = (c, text) => new Error(`Unexpected token '${c}', "${text}" is not valid JSON`);
     expect(failureOffset(tok("'", "{ \"a\": ['x'] }"), "{ \"a\": ['x'] }")).toBe(8);
     expect(failureOffset(tok('u', '{ "a": undefined }'), '{ "a": undefined }')).toBe(7);
-    expect(failureOffset(tok('n', '{ "a": nul }'), '{ "a": nul }')).toBe(7);
+    expect(failureOffset(tok(' ', '{ "a": nul }'), '{ "a": nul }')).toBe(10);
+    expect(failureOffset(tok('n', '{ "a": nnull }'), '{ "a": nnull }')).toBe(8);
+    expect(failureOffset(tok('n', '{ "a": nul }'), '{ "a": nul }')).toBeUndefined();
     expect(failureOffset(tok('x', '{ "a": "x }'), '{ "a": "x }')).toBeUndefined();
     expect(failureOffset(tok('-', '[-, 1]'), '[-, 1.5e3, -0.1, true, false, null, "a\\"b"]')).toBe(1);
     expect(failureOffset(tok(']', '[-0.1]'), '[-0.1, 1.5e3, true, false, null, "a\\"b", {}]')).toBeUndefined();

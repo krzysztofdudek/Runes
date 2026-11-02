@@ -535,6 +535,21 @@ describe('resolveTsPath — workspace membership', () => {
     for (const dir of ['packages/core', 'packages/ui', 'apps/web', 'apps/admin', 'apps/docs', 'tools/z', 'odd/{unclosed', 'lit/{one}xb']) expect(r(path.posix.basename(dir), 'src/main.ts')).toBe(`${dir}/index.ts`);
     for (const outside of ['other', 'blog', 'x']) expect(r(outside, 'src/main.ts')).toBeUndefined();
   });
+  it('reads a pnpm-workspace.yaml whose lines end in a lone CR as it reads the LF twin', () => {
+    const tree = (yaml) => project({
+      'pnpm-workspace.yaml': yaml,
+      'libs/a/package.json': '{ "name": "a", "main": "./index.ts" }',
+      'libs/a/index.ts': '',
+      'libs/x/package.json': '{ "name": "x", "main": "./index.ts" }',
+      'libs/x/index.ts': '',
+    });
+    const lf = "packages:\n  # the libraries\n  - 'libs/*' # all of them\n  - '!libs/x'\n";
+    for (const yaml of [lf, lf.replaceAll('\n', '\r'), lf.replaceAll('\n', '\r\n')]) {
+      const r = tree(yaml);
+      expect(r('a', 'src/m.ts')).toBe('libs/a/index.ts');
+      expect(r('x', 'src/m.ts')).toBeUndefined();
+    }
+  });
   it('reads a pnpm-workspace.yaml flow list; one with no packages list (catalog settings only) counts every package under it, as an undeclared repository does', () => {
     const flow = project({
       'pnpm-workspace.yaml': "packages: ['pkgs/?', \"!pkgs/x\"]\n",
@@ -928,6 +943,8 @@ describe('parseJsonc', () => {
     expect(parseJsonc('{ // c\n "a": "x // y", /* b */ "b": [1, 2,], }')).toEqual({ a: 'x // y', b: [1, 2] });
     expect(parseJsonc('{ "a": "q\\"," }')).toEqual({ a: 'q",' });
     expect(parseJsonc('{ nope')).toBeUndefined();
+    expect(parseJsonc('{\r// a line comment\r"a": 1, // another\r"b": 2\r}')).toEqual({ a: 1, b: 2 });
+    expect(parseJsonc('{\r// a line comment\r"a": 1, // another\r"b": 2\r}')).toEqual(parseJsonc('{\n// a line comment\n"a": 1, // another\n"b": 2\n}'));
   });
   it('reads a file that starts with a UTF-8 byte order mark, as tsc, Node and npm do', () => {
     expect(parseJsonc('﻿{"a":1}')).toEqual({ a: 1 });

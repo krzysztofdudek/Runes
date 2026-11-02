@@ -67,6 +67,7 @@ export interface PackageManifest {
     module?: unknown;
     types?: unknown;
     typings?: unknown;
+    tsconfig?: unknown;
     workspaces?: unknown;
     dependencies?: unknown;
     devDependencies?: unknown;
