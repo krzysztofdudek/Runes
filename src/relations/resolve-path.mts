@@ -241,8 +241,30 @@ function makeRustResolveDeps(
       rootFiles: target.rootFiles.map(at),
       fileIsRoot: target.fileIsRoot,
       lib,
-      crateRelativeUses: isEdition2015(pkgDir, manifest),
+      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, target.rootFiles.filter((f) => exists(at(f)))),
     };
+  }
+
+  /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
+  function targetIsEdition2015(pkgDir: string, manifest: CargoManifest | undefined, roots: string[]): boolean {
+    const packageIs2015 = isEdition2015(pkgDir, manifest);
+    if (manifest === undefined || roots.length === 0) return packageIs2015;
+    const libRoot = path.posix.normalize(manifest.libPath ?? 'src/lib.rs');
+    const editionOf = (root: string): boolean => {
+      const own = root === libRoot ? manifest.libEdition : manifest.targetEditions.find((t) => targetRootsAt(t, root, manifest.packageName))?.edition;
+      return own === undefined ? packageIs2015 : own === '2015';
+    };
+    const editions = new Set(roots.map(editionOf));
+    return editions.size === 1 && editions.has(true);
+  }
+
+  /** Whether the target table `t` has its crate root at package-relative `root`: its `path`, else `<dir>/<name>.rs` or `<dir>/<name>/main.rs` in the directory Cargo discovers its kind in, and `src/main.rs` for a bin named like the package. */
+  function targetRootsAt(t: CargoTargetEdition, root: string, packageName: string | undefined): boolean {
+    if (t.path !== undefined) return path.posix.normalize(t.path) === root;
+    if (t.name === undefined) return false;
+    if (t.kind === 'bin' && t.name === packageName && root === 'src/main.rs') return true;
+    const dir = DISCOVERED_DIRS[t.kind].dir;
+    return root === `${dir}/${t.name}.rs` || root === `${dir}/${t.name}/main.rs`;
   }
 
   /** Whether the package at `pkgDir` is edition 2015: its `[package].edition` says so, or it gives none (Cargo's default). An edition inherited from a workspace that cannot be found is unknown, so not 2015. A manifest with no `[package]` is no crate. */
@@ -404,6 +426,14 @@ interface CargoManifest {
   editionInherited: boolean;
   /** `[workspace.package].edition`, which a member's `edition.workspace = true` inherits. */
   workspaceEdition: string | undefined;
+  /** `[lib].edition` as written, undefined when absent: the edition of the library target alone. */
+  libEdition: string | undefined;
+  /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
+  packageName: string | undefined;
+  /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
+  targetEditions: CargoTargetEdition[];
+  /** Whether a `[[bin]]` named like the package and giving no `path` is written: Cargo roots it at `src/main.rs`. */
+  declaresMainBin: boolean;
   dependencies: Map<string, CargoDependencySpec>;
   workspaceDependencies: Map<string, CargoDependencySpec>;
 }
@@ -558,11 +588,20 @@ function inlineTableMembers(value: string): string[] | undefined {
 /** The target tables whose array elements (`[[bin]]`, `[[test]]`, `[[example]]`, `[[bench]]`) can name a crate root with `path`. */
 const TARGET_TABLES = new Set(['bin', 'test', 'example', 'bench']);
 
-/** One element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array: its kind, and the `name` and `path` it gives (`null` when written but not a string). */
+/** One element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array: its kind, and the `name`, `path` and `edition` it gives (`null` when written but not a string). */
 interface CargoTarget {
   kind: string;
   name?: string | null;
   path?: string | null;
+  edition?: string | null;
+}
+
+/** The `edition` a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` table writes for its own target, and how its root file is told: by `path`, or by `name` alone (Cargo roots it in its kind's directory, or a bin named like the package at `src/main.rs`). */
+interface CargoTargetEdition {
+  kind: string;
+  name: string | undefined;
+  path: string | undefined;
+  edition: string;
 }
 
 /** The directory Cargo discovers each kind of target in, and the `[package]` key that turns that discovery off. */
@@ -592,6 +631,7 @@ export function parseCargoManifest(text: string): CargoManifest {
   let edition: string | undefined;
   let editionInherited = false;
   let workspaceEdition: string | undefined;
+  let libEdition: string | undefined;
   // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
   let inTarget: CargoTarget | undefined;
   const dependencies = new Map<string, CargoDependencySpec>();
@@ -636,6 +676,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     else if (keyPath.length === 3 && top === 'workspace' && keyPath[1] === 'package' && keyPath[2] === 'edition') workspaceEdition = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'name') libName = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'path') libPath = tomlString(value);
+    else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'edition') libEdition = tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && Object.values(DISCOVERED_DIRS).some((d) => d.flag === keyPath[1])) {
       const { dir } = Object.values(DISCOVERED_DIRS).find((d) => d.flag === keyPath[1])!;
       if (value === 'false' && !undiscoveredDirs.includes(dir)) undiscoveredDirs.push(dir);
@@ -643,7 +684,7 @@ export function parseCargoManifest(text: string): CargoManifest {
       // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
       for (const item of inlineArrayItems(value) ?? []) {
         const target: CargoTarget = { kind: top };
-        for (const [key, member] of membersOf(item)) if (key[0] === 'name' || key[0] === 'path') target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
+        for (const [key, member] of membersOf(item)) if (key[0] === 'name' || key[0] === 'path' || key[0] === 'edition') target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
         if (inlineTableMembers(item) !== undefined) targets.push(target);
       }
     } else if (keyPath.length === 1 && (top === 'package' || top === 'lib')) {
@@ -692,7 +733,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     // A key is one or more segments joined by dots (TOML dotted keys), each bare or quoted.
     const segments = keySegments(kv[1]);
     const value = kv[2].trim();
-    if (inTarget !== undefined && (segments[0] === 'path' || segments[0] === 'name')) inTarget[segments[0]] = segments.length === 1 ? (tomlString(value) ?? null) : null;
+    if (inTarget !== undefined && (segments[0] === 'path' || segments[0] === 'name' || segments[0] === 'edition')) inTarget[segments[0]] = segments.length === 1 ? (tomlString(value) ?? null) : null;
     else assign([...sectionPath, ...segments], value);
   }
   const name = libName ?? packageName;
@@ -706,6 +747,10 @@ export function parseCargoManifest(text: string): CargoManifest {
     edition,
     editionInherited,
     workspaceEdition,
+    libEdition,
+    packageName,
+    targetEditions: targets.flatMap((t) => (typeof t.edition === 'string' ? [{ kind: t.kind, name: typeof t.name === 'string' ? t.name : undefined, path: typeof t.path === 'string' ? t.path : undefined, edition: t.edition }] : [])),
+    declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),
     dependencies,
     workspaceDependencies,
   };
