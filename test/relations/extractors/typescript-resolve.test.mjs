@@ -770,6 +770,14 @@ describe('resolveTsPath — workspace membership', () => {
       const r = project({ ...base, 'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": 7 }' });
       expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
     });
+    it('a subpath directory whose own package.json has no usable tsconfig field reads its tsconfig.json', () => {
+      const sub = { ...base, 'packages/app/tsconfig.json': '{ "extends": "@acme/preset/base" }', 'packages/preset/package.json': '{ "name": "@acme/preset" }' };
+      const tsconfig = '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }';
+      for (const manifest of ['{ "tsconfig": 7 }', '{ "tsconfig": "configs/missing.json" }', '{ "name": "base" }']) {
+        const r = project({ ...sub, 'packages/preset/base/package.json': manifest, 'packages/preset/base/tsconfig.json': tsconfig });
+        expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+      }
+    });
     it('a field naming a file that exists still outranks tsconfig.json', () => {
       const r = project({
         ...base,
