@@ -20,6 +20,10 @@
  * `mod x;` beside itself (like `mod.rs`); `crateRootFor` says which target a file belongs to
  * and whether it is that target's root. The package's own name always means the library.
  *
+ * EDITION: in edition 2015 (also what Cargo assumes when `[package]` gives no edition) a `use` path
+ * is relative to the crate root, so `use a::b;` names the module `a` the root declares
+ * (`crateRelativeUses`). From edition 2018 on the same path names an external crate and stays silent.
+ *
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because
  * `#[macro_export]` macros also land in the crate-root namespace while being defined
@@ -59,6 +63,8 @@ export interface RustCrateRoot {
     /** The package's library tree, which the crate's own name addresses from any target.
      *  Absent → the same tree as `srcDir` / `rootFiles`. */
     lib?: RustCrateTree;
+    /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
+    crateRelativeUses?: boolean;
 }
 export interface RustResolveDeps {
     /**
