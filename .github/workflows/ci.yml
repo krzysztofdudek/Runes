@@ -5,6 +5,13 @@ on:
     branches: [main, 'jarl/**', 'release/**']
   pull_request:
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'Corpus tier: routine (blocking), heavy, or all'
+        type: choice
+        options: [routine, heavy, all]
+        default: routine
 
 permissions:
   contents: read
@@ -98,3 +105,44 @@ jobs:
         run: npm test
       - name: dist freshness
         run: npm run check:dist
+
+  # The corpus gate (corpus/manifest.json, scripts/corpus.mjs): public repositories pinned at full commits, every relation edge Runes finds in them held to the committed goldens (corpus/goldens), every change explained in corpus/explained.md, and the references compared with each language's own resolver. It runs on a release branch, on a release tag (release.yml calls this workflow as verify, so a red corpus stops the publish) and by hand with a tier; other pushes and pull requests do not run it. Each repository is fetched by its commit alone, and a fetch that fails fails the job. The oracles run with --strict: a toolchain that is missing fails the job instead of passing as a skip.
+  corpus:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUNES_CORPUS_DIR: ${{ github.workspace }}/../runes-corpus
+      TIER: ${{ inputs.tier || 'routine' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/runes/grammars
+          key: grammars-${{ hashFiles('grammars/manifest.json', 'grammars/patches/**') }}
+      - name: Grammars
+        run: npm run grammars
+      # The clones are named by their commit and checked against it on every run, so a restored cache cannot change an answer, only save the fetch.
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/../runes-corpus
+          key: corpus-${{ hashFiles('corpus/manifest.json') }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Edges against the goldens
+        run: npm run corpus -- --tier "$TIER"
+      - name: Resolver oracles, every toolchain required
+        run: npm run corpus:oracles -- --tier "$TIER" --strict
