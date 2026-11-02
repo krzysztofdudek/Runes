@@ -300,6 +300,48 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(makeResolvePathToFile(ws)('Error', 'src/api/client.rs', 'rust')).toBeUndefined();
   });
 
+  it('lets a target that writes an edition of its own decide how its files read use paths, by its path or its name', () => {
+    const lib = 'mod shapes;\n';
+    put('src/lib.rs', lib);
+    put('src/shapes.rs', '');
+    put('src/api/client.rs', '');
+    put('src/bin/tool.rs', 'mod local;\n');
+    put('src/bin/local.rs', '');
+    put('src/bin/multi/main.rs', 'mod ui;\n');
+    put('src/bin/multi/ui.rs', '');
+    put('tests/it.rs', 'mod helper;\n');
+    put('tests/helper.rs', '');
+    const resolve = (manifest, spec, from) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)(spec, from, 'rust');
+    };
+    const pkg = (edition, rest = '') => `[package]\nname = "app"\nedition = "${edition}"\n${rest}`;
+    // [lib].edition decides the library's files; the package's edition holds for the rest.
+    expect(resolve(pkg('2018', '[lib]\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    expect(resolve(pkg('2015', '[lib]\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[lib]\nedition = "2015"\npath = "src/lib.rs"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    // A bin given a name alone is rooted in src/bin/, and its edition is its own; so is the root of a bin directory, and a test target.
+    expect(resolve(pkg('2018', '[[bin]]\nname = "tool"\nedition = "2015"\n'), 'local::Thing', 'src/bin/tool.rs')).toBe('src/bin/local.rs');
+    expect(resolve(pkg('2015', '[[bin]]\nname = "tool"\nedition = "2018"\n'), 'local::Thing', 'src/bin/tool.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[[bin]]\nname = "multi"\nedition = "2015"\n'), 'ui::Widget', 'src/bin/multi/main.rs')).toBe('src/bin/multi/ui.rs');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "tool"\nedition = "2015"\n'), 'ui::Widget', 'src/bin/multi/main.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[[test]]\nname = "it"\nedition = "2015"\n'), 'helper::Util', 'tests/it.rs')).toBe('tests/helper.rs');
+    // The edition of one target does not leak to another: the library keeps the package's.
+    expect(resolve(pkg('2018', '[[bin]]\nname = "tool"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    // A bin named like the package and given no path is rooted at src/main.rs.
+    put('src/main.rs', 'mod shapes;\n');
+    put('src/lib.rs', '');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBe('src/shapes.rs');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "other"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
+    // A module of both the library and the binary is read in two editions when they differ, so it is not told; it is when they agree.
+    put('src/lib.rs', 'mod shapes;\n');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve(pkg('2015', '[[bin]]\nname = "app"\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[lib]\nedition = "2015"\n[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    // An edition written other than as a string, or a table with no name and no path, is no edition of any target.
+    expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = 2015\n[[bin]]\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
+  });
+
   it('takes the edition from the workspace for `edition.workspace = true`, and treats a workspace that gives none as unknown', () => {
     put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n[workspace.package]\nedition = "2015"\n');
     put('crates/a/Cargo.toml', '[package]\nname = "a"\nedition.workspace = true\n');
@@ -608,6 +650,17 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(read('[package]\nname = "p"\nedition.workspace = true\n')).toEqual({ hasPackage: true, edition: undefined, editionInherited: true, workspaceEdition: undefined });
     expect(read('[package]\nname = "p"\n')).toEqual({ hasPackage: true, edition: undefined, editionInherited: false, workspaceEdition: undefined });
     expect(read('[workspace]\n[workspace.package]\nedition = "2024"\n')).toEqual({ hasPackage: false, edition: undefined, editionInherited: false, workspaceEdition: '2024' });
+    // A target's own edition, written as a table, inline in the array or under `[lib]`, is read apart from the package's.
+    const targets = (text) => {
+      const m = parseCargoManifest(text);
+      return { libEdition: m.libEdition, targetEditions: m.targetEditions };
+    };
+    expect(targets('[package]\nname = "p"\nedition = "2021"\n[lib]\nedition = "2015"\n[[bin]]\nname = "a"\nedition = "2018"\n[[test]]\npath = "t.rs"\nedition = "2015"\n')).toEqual({
+      libEdition: '2015',
+      targetEditions: [{ kind: 'bin', name: 'a', path: undefined, edition: '2018' }, { kind: 'test', name: undefined, path: 't.rs', edition: '2015' }],
+    });
+    expect(targets('bin = [{ name = "b", edition = "2015" }, { name = "c", edition.workspace = true }]\nlib = { edition = \'2018\' }\n')).toEqual({ libEdition: '2018', targetEditions: [{ kind: 'bin', name: 'b', path: undefined, edition: '2015' }] });
+    expect(targets('[package]\nname = "p"\nedition = "2018"\n')).toEqual({ libEdition: undefined, targetEditions: [] });
     // Another table's `edition` is no package edition.
     expect(read('[dependencies]\nedition = "2018"\n[metadata]\nedition = "2018"\n[package.metadata]\nedition = "2018"\n[package]\nname = "p"\n').edition).toBeUndefined();
   });

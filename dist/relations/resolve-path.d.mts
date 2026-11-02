@@ -74,8 +74,23 @@ interface CargoManifest {
     editionInherited: boolean;
     /** `[workspace.package].edition`, which a member's `edition.workspace = true` inherits. */
     workspaceEdition: string | undefined;
+    /** `[lib].edition` as written, undefined when absent: the edition of the library target alone. */
+    libEdition: string | undefined;
+    /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
+    packageName: string | undefined;
+    /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
+    targetEditions: CargoTargetEdition[];
+    /** Whether a `[[bin]]` named like the package and giving no `path` is written: Cargo roots it at `src/main.rs`. */
+    declaresMainBin: boolean;
     dependencies: Map<string, CargoDependencySpec>;
     workspaceDependencies: Map<string, CargoDependencySpec>;
+}
+/** The `edition` a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` table writes for its own target, and how its root file is told: by `path`, or by `name` alone (Cargo roots it in its kind's directory, or a bin named like the package at `src/main.rs`). */
+interface CargoTargetEdition {
+    kind: string;
+    name: string | undefined;
+    path: string | undefined;
+    edition: string;
 }
 /** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export declare function parseCargoManifest(text: string): CargoManifest;
