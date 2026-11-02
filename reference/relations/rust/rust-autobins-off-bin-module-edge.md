@@ -8,7 +8,7 @@ cites: "The Cargo Book — Target auto-discovery (`autobins = false` in [package
 
 ## Rule
 
-With `autobins = false`, the files of `src/bin/` are no binary crates of their own: only the declared `[[bin]]` is (here `src/main.rs`, the package's default), and `src/bin/helper.rs` is not compiled unless a module declares it. So `crate::` in it is the tree of `src/main.rs`, never `src/bin/`: `use crate::util::Thing;` binds `src/util.rs` (node `src`), not a `src/bin/util.rs`. The control `src/bin/tool.rs` with `autobins` left on is its own crate root, as before.
+With `autobins = false`, the files of `src/bin/` are no binary crates of their own: only a declared `[[bin]]` is (here `path = "src/main.rs"`, written out because `autobins = false` also turns off inferring `src/main.rs` as a bin), and `src/bin/helper.rs` is not compiled unless a module declares it. So `crate::` in it is the tree of `src/main.rs`, never `src/bin/`: `use crate::util::Thing;` binds `src/util.rs` (node `src`), not a `src/bin/util.rs`.
 
 ## Files
 
@@ -17,6 +17,10 @@ With `autobins = false`, the files of `src/bin/` are no binary crates of their o
 name = "app"
 edition = "2021"
 autobins = false
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
 ```
 
 ```rust path=src/main.rs
@@ -43,4 +47,4 @@ use crate::util::Thing;
 
 ## Why
 
-Reading every file of `src/bin/` as a binary crate root, as auto-discovery would, makes `crate::` mean `src/bin/` and leaves the file's `crate::` items unbound.
+Reading every file of `src/bin/` as a binary crate root, as auto-discovery would (which `autobins = false` turns off), makes `crate::` mean `src/bin/` and leaves the file's `crate::` items unbound.
