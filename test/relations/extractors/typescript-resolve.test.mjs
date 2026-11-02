@@ -754,6 +754,31 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('near', 'packages/app/a.ts')).toBe('packages/near/index.ts');
     expect(r('missing', 'packages/app/a.ts')).toBeUndefined();
   });
+  describe('a package extends whose tsconfig field names no file reads the package tsconfig.json', () => {
+    const base = {
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/app/package.json': '{ "name": "app" }',
+      'packages/app/tsconfig.json': '{ "extends": "@acme/preset" }',
+      'packages/app/src/m.ts': '',
+      'packages/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }',
+    };
+    it('a field naming a file that does not exist falls back to tsconfig.json beside the package.json', () => {
+      const r = project({ ...base, 'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": "configs/missing.json" }' });
+      expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+    });
+    it('a field that is not a string falls back the same way', () => {
+      const r = project({ ...base, 'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": 7 }' });
+      expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+    });
+    it('a field naming a file that exists still outranks tsconfig.json', () => {
+      const r = project({
+        ...base,
+        'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": "configs/base.json" }',
+        'packages/preset/configs/base.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/other/*"] } } }',
+      });
+      expect(r('~/m', 'packages/app/src/a.ts')).toBeUndefined();
+    });
+  });
   // Issue 144: tsc reads a package `extends` from node_modules, where the package manager links members and local dependencies only, so the base config binds by the same rule as a bare import.
   describe('a tsconfig extends naming a package binds by the same rule (issue 144)', () => {
     const app = {
