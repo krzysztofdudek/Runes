@@ -228,6 +228,80 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::opts', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
+  it('with bin discovery turned off, roots src/bin/ files at the declared bins alone, and every other file in the tree of src/main.rs (autobins = false)', () => {
+    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n[[bin]]\nname = "multi"\n');
+    put('src/main.rs', 'mod util;\npub struct Main;\n');
+    put('src/util.rs', '');
+    put('src/bin/tool/app.rs', 'mod opts;\npub struct Tool;\n');
+    put('src/bin/tool/opts.rs', '');
+    put('src/bin/other.rs', 'mod util;\n');
+    put('src/bin/multi/main.rs', 'mod ui;\npub struct Multi;\n');
+    put('src/bin/multi/ui.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    // A declared bin, by its path and by its name alone, is a crate root of its own.
+    expect(resolve('crate::opts::Args', 'src/bin/tool/app.rs', 'rust')).toBe('src/bin/tool/opts.rs');
+    expect(resolve('crate::Multi', 'src/bin/multi/ui.rs', 'rust')).toBe('src/bin/multi/main.rs');
+    // An undeclared file is no bin: its crate is the one of src/main.rs.
+    expect(resolve('crate::util::Thing', 'src/bin/other.rs', 'rust')).toBe('src/util.rs');
+    expect(resolve('crate::Main', 'src/bin/other.rs', 'rust')).toBe('src/main.rs');
+    // With discovery on (the default) the same file roots its own crate.
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n');
+    expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/other.rs', 'rust')).toBeUndefined();
+  });
+
+  it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    put('src/lib.rs', 'mod shapes;\nextern crate serde;\nmod std;\n');
+    put('src/shapes.rs', '');
+    put('src/std.rs', '');
+    put('src/undeclared.rs', '');
+    put('src/api/client.rs', '');
+    put('src/bin/tool.rs', 'mod local;\n');
+    put('src/bin/local.rs', '');
+    put('src/bin/shapes.rs', '');
+    const edition = (value) => `[package]\nname = "app"\n${value}`;
+    const resolve = () => makeResolvePathToFile(ws);
+    // No edition: 2015. The root declares `shapes`, so the path binds its file from any module; a crate root is its own root.
+    expect(resolve()('shapes::Circle', 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
+    expect(resolve()('local::Thing', 'src/bin/tool.rs', 'rust')).toBe('src/bin/local.rs');
+    // The reserved crates, a name the root does not declare and a name the root only binds with `extern crate` are external.
+    expect(resolve()('std::fmt::Debug', 'src/api/client.rs', 'rust')).toBeUndefined();
+    expect(resolve()('undeclared::Thing', 'src/api/client.rs', 'rust')).toBeUndefined();
+    expect(resolve()('serde::Deserialize', 'src/api/client.rs', 'rust')).toBeUndefined();
+    // Written 2015 reads alike; 2018 and later do not.
+    put('Cargo.toml', edition('edition = "2015"\n'));
+    expect(resolve()('shapes::Circle', 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
+    for (const year of ['2018', '2021', '2024']) {
+      put('Cargo.toml', edition(`edition = "${year}"\n`));
+      expect(resolve()('shapes::Circle', 'src/api/client.rs', 'rust')).toBeUndefined();
+    }
+    // A manifest with no [package] is no crate; a target with no root file (tests/common/) has nothing to probe.
+    put('Cargo.toml', '[workspace]\n');
+    expect(resolve()('shapes::Circle', 'src/api/client.rs', 'rust')).toBeUndefined();
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    put('tests/common/mod.rs', '');
+    expect(resolve()('shapes::Circle', 'tests/common/mod.rs', 'rust')).toBeUndefined();
+  });
+
+  it('takes the edition from the workspace for `edition.workspace = true`, and treats a workspace that gives none as unknown', () => {
+    put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n[workspace.package]\nedition = "2015"\n');
+    put('crates/a/Cargo.toml', '[package]\nname = "a"\nedition.workspace = true\n');
+    put('crates/a/src/lib.rs', 'mod shapes;\n');
+    put('crates/a/src/shapes.rs', '');
+    put('crates/a/src/api/client.rs', '');
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust')).toBe('crates/a/src/shapes.rs');
+    put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n[workspace.package]\nedition = "2021"\n');
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust')).toBeUndefined();
+    put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n');
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust')).toBeUndefined();
+    // A package at the repository root, with no ancestor to look in.
+    put('Cargo.toml', '[package]\nname = "a"\nedition.workspace = true\n');
+    put('src/lib.rs', 'mod shapes;\n');
+    put('src/shapes.rs', '');
+    put('src/api/client.rs', '');
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'src/api/client.rs', 'rust')).toBeUndefined();
+  });
+
   it('roots crate:: of a [[bin]] path outside src/ at that binary, for the root and the files below its directory (the ripgrep shape)', () => {
     put('Cargo.toml', '[package]\nname = "ripgrep"\n\n[[bin]]\nbench = false\npath = "crates/core/main.rs"\nname = "rg"\n\n[[bin]]\nname = "gen"\npath = "./crates/core/gen/main.rs"\n\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n');
     put('crates/core/main.rs', 'mod flags;\nmod haystack;\npub struct Thing;\n');
@@ -499,12 +573,26 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     };
     // `bin = [{ path = … }]` was not read, so such a root was a module of another tree.
     expect(read('bin = [{ name = "x", path = "tools/x.rs" }, { path = \'tools/y.rs\' }]\ntest = [\n  { name = "a", path = "t/a.rs" }, # first\n  { name = "b", required-features = ["x,]"] },\n]\nexample = [{ name = "e", path = """ex/e.rs""" }]\nbench = []\n')).toEqual({ targetPaths: ['tools/x.rs', 'tools/y.rs', 't/a.rs', 'ex/e.rs'], undiscoveredDirs: [], namedTargets: ['tests/b'] });
-    // A name with no path is rooted by Cargo at <dir>/<name>.rs or <dir>/<name>/main.rs; a [[bin]] name is not read, and a path written but unreadable is no name-only target.
-    expect(read('[[test]]\nname = "integration"\n[[example]]\nname = "demo"\n[[bench]]\nname = "speed"\npath.x = 1\n[[bin]]\nname = "cli"\ntest = 1\n')).toEqual({ targetPaths: [], undiscoveredDirs: [], namedTargets: ['tests/integration', 'examples/demo'] });
-    // `autotests` was not read, so every file in tests/ was a test crate.
-    expect(read('[package]\nname = "p"\nautotests = false\nautoexamples = true\nautobins = false\n[package.metadata]\nautobenches = false\n').undiscoveredDirs).toEqual(['tests']);
+    // A name with no path is rooted by Cargo at <dir>/<name>.rs or <dir>/<name>/main.rs, a [[bin]] name at src/bin/<name>.rs or src/bin/<name>/main.rs; a path written but unreadable is no name-only target.
+    expect(read('[[test]]\nname = "integration"\n[[example]]\nname = "demo"\n[[bench]]\nname = "speed"\npath.x = 1\n[[bin]]\nname = "cli"\ntest = 1\n')).toEqual({ targetPaths: [], undiscoveredDirs: [], namedTargets: ['tests/integration', 'examples/demo', 'src/bin/cli'] });
+    // `autotests` and `autobins` were not read, so every file in tests/ and src/bin/ was a crate root.
+    expect(read('[package]\nname = "p"\nautotests = false\nautoexamples = true\nautobins = false\n[package.metadata]\nautobenches = false\n').undiscoveredDirs).toEqual(['tests', 'src/bin']);
     expect(read('package = { name = "p", autobenches = false, autoexamples = false }\n').undiscoveredDirs).toEqual(['benches', 'examples']);
     expect(read('package.autotests = false\r\n[package]\r\nautotests = "false"\r\n').undiscoveredDirs).toEqual(['tests']);
+  });
+
+  it('reads the edition a package writes, inherits or leaves out, and the edition [workspace.package] gives', () => {
+    const read = (text) => {
+      const m = parseCargoManifest(text);
+      return { hasPackage: m.hasPackage, edition: m.edition, editionInherited: m.editionInherited, workspaceEdition: m.workspaceEdition };
+    };
+    expect(read('[package]\nname = "p"\nedition = "2018"\n')).toEqual({ hasPackage: true, edition: '2018', editionInherited: false, workspaceEdition: undefined });
+    expect(read('package = { name = "p", edition = \'2021\' }\n')).toEqual({ hasPackage: true, edition: '2021', editionInherited: false, workspaceEdition: undefined });
+    expect(read('[package]\nname = "p"\nedition.workspace = true\n')).toEqual({ hasPackage: true, edition: undefined, editionInherited: true, workspaceEdition: undefined });
+    expect(read('[package]\nname = "p"\n')).toEqual({ hasPackage: true, edition: undefined, editionInherited: false, workspaceEdition: undefined });
+    expect(read('[workspace]\n[workspace.package]\nedition = "2024"\n')).toEqual({ hasPackage: false, edition: undefined, editionInherited: false, workspaceEdition: '2024' });
+    // Another table's `edition` is no package edition.
+    expect(read('[dependencies]\nedition = "2018"\n[metadata]\nedition = "2018"\n[package.metadata]\nedition = "2018"\n[package]\nname = "p"\n').edition).toBeUndefined();
   });
 
   it('reads a string value in each of its TOML forms, so a path written as a multi-line string is that path, not an empty one', () => {
