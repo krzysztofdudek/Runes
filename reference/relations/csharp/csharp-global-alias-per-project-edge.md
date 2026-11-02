@@ -3,7 +3,7 @@ id: csharp-global-alias-per-project-edge
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (global using alias directives apply to their own project); MSBuild — one .csproj is one compilation"
+cites: "C# spec §14.5 (global using alias directives apply to their own project); MSBuild — one .csproj is one compilation"
 ---
 
 ## Rule
