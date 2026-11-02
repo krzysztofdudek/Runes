@@ -3,7 +3,7 @@ id: csharp-using-subns-no-misbind
 language: csharp
 category: trap
 expectation: edge
-cites: "C# spec §13.4 (using imports types of EXACTLY N, not its nested namespace B); MS Learn — using-directive scope"
+cites: "C# spec §14.5 (using imports types of EXACTLY N, not its nested namespace B); MS Learn — using-directive scope"
 ---
 
 ## Rule

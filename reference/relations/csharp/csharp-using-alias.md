@@ -3,7 +3,7 @@ id: csharp-using-alias
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (using_alias_directive); MS Learn — using-directive (alias)"
+cites: "C# spec §14.5 (using_alias_directive); MS Learn — using-directive (alias)"
 ---
 
 ## Rule

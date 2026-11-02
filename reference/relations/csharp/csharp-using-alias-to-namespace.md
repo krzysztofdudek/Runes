@@ -3,7 +3,7 @@ id: csharp-using-alias-to-namespace
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (using_alias_directive, namespace alias); MS Learn — using-alias for a namespace"
+cites: "C# spec §14.5 (using_alias_directive, namespace alias); MS Learn — using-alias for a namespace"
 ---
 
 ## Rule
