@@ -229,7 +229,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
   });
 
   it('with bin discovery turned off, roots src/bin/ files at the declared bins alone, and every other file in the tree of src/main.rs (autobins = false)', () => {
-    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n[[bin]]\nname = "multi"\n');
+    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[[bin]]\nname = "app"\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n[[bin]]\nname = "multi"\n');
     put('src/main.rs', 'mod util;\npub struct Main;\n');
     put('src/util.rs', '');
     put('src/bin/tool/app.rs', 'mod opts;\npub struct Tool;\n');
@@ -247,6 +247,35 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // With discovery on (the default) the same file roots its own crate.
     put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n');
     expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/other.rs', 'rust')).toBeUndefined();
+  });
+
+  it('with bin discovery turned off, takes src/main.rs for a crate root only when a [[bin]] declares it, by its path or by the package name', () => {
+    put('src/lib.rs', 'pub mod util;\n');
+    put('src/util.rs', '');
+    put('src/main.rs', 'mod cli;\npub struct Main;\n');
+    put('src/cli.rs', '');
+    put('src/bin/tool.rs', '');
+    const resolve = (manifest, spec, from) => {
+      put('Cargo.toml', `[package]\nname = "app"\nautobins = false\n${manifest}`);
+      return makeResolvePathToFile(ws)(spec, from, 'rust');
+    };
+    // Undeclared: no crate root, so its `self::` reaches no module file beside it (the file is only its own module).
+    expect(resolve('', 'self::cli::Args', 'src/main.rs')).toBe('src/main.rs');
+    expect(resolve('[[bin]]\nname = "tool"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/main.rs');
+    // A file of src/bin/ that is no declared bin is a module of the library then, and src/main.rs is not tried for its crate-root items.
+    expect(resolve('', 'crate::util::Thing', 'src/bin/tool.rs')).toBe('src/util.rs');
+    expect(resolve('', 'crate::Main', 'src/bin/tool.rs')).toBeUndefined();
+    // Declared by its path, or by a bin named like the package, it is the root again.
+    expect(resolve('[[bin]]\nname = "x"\npath = "src/main.rs"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
+    expect(resolve('[[bin]]\nname = "app"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
+    expect(resolve('[[bin]]\nname = "app"\n', 'crate::Main', 'src/bin/tool.rs')).toBe('src/main.rs');
+    // With discovery on it is a root with nothing declared.
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    expect(makeResolvePathToFile(ws)('self::cli::Args', 'src/main.rs', 'rust')).toBe('src/cli.rs');
+    // A library outside src/ and no root in src/ leave a src/bin file the src/ tree with no root file to bind items to.
+    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[lib]\npath = "lib/lib.rs"\n');
+    expect(makeResolvePathToFile(ws)('crate::util::Thing', 'src/bin/tool.rs', 'rust')).toBe('src/util.rs');
+    expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
   it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', () => {
