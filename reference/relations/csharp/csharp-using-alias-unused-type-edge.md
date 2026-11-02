@@ -3,7 +3,7 @@ id: csharp-using-alias-unused-type-edge
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (using_alias_directive — the alias is bound for the whole file, whether or not it is used); §13.8 (compilation unit: the directive names its target when it is resolved)"
+cites: "C# spec §14.5 (using_alias_directive — the alias is bound for the whole file, whether or not it is used); §13.8 (compilation unit: the directive names its target when it is resolved)"
 ---
 
 ## Rule
