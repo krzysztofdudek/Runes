@@ -26,9 +26,17 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     if (dep !== undefined) {
         return resolveFromModuleDir(dep.srcDir, rest, exists, rootContext(dep.srcDir, dep.rootFiles, declares));
     }
+    // Edition 2015: a `use` path is relative to the crate root, so `use a::b;` names the root's module `a`. The reserved crates and any root that does not declare the first segment stay external; an `extern crate` of the same name is no module, so the root's own items are not probed.
+    if (crate.crateRelativeUses === true && !EDITION_2015_EXTERNAL_ROOTS.has(root)) {
+        const rootFiles = crate.rootFiles ?? [];
+        if (rootFiles.some((f) => exists(f) && declares(f, root)))
+            return resolveFromModuleDir(crate.srcDir, segments, exists);
+    }
     // External crate (std/core/alloc, third-party) — not a resolvable path.
     return undefined;
 }
+/** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */
+const EDITION_2015_EXTERNAL_ROOTS = new Set(['std', 'core', 'alloc', 'proc_macro', 'test']);
 /** The crate-root name check: the deps' own, or "every name is declared" when absent. */
 function declaresOf(deps) {
     return deps.rootDeclares ?? (() => true);

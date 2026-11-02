@@ -67,6 +67,9 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-target-paths-shared-dir-silence', () => runCase('rust-target-paths-shared-dir-silence'));
   it('rust-inline-target-array-crate-root-edge', () => runCase('rust-inline-target-array-crate-root-edge'));
   it('rust-autotests-off-test-module-edge', () => runCase('rust-autotests-off-test-module-edge'));
+  it('rust-autobins-off-bin-module-edge', () => runCase('rust-autobins-off-bin-module-edge'));
+  it('rust-edition-2015-use-crate-root-relative-edge', () => runCase('rust-edition-2015-use-crate-root-relative-edge'));
+  it('rust-edition-2018-use-external-crate-silence', () => runCase('rust-edition-2018-use-external-crate-silence'));
   it('rust-integration-test-mod-common-edge', () => runCase('rust-integration-test-mod-common-edge'));
   it('rust-workspace-path-dependency-edge', () => runCase('rust-workspace-path-dependency-edge'));
   it('rust-dotted-key-workspace-dependency-edge', () => runCase('rust-dotted-key-workspace-dependency-edge'));
