@@ -119,6 +119,7 @@ export interface PackageManifest {
   module?: unknown;
   types?: unknown;
   typings?: unknown;
+  tsconfig?: unknown;
   workspaces?: unknown;
   dependencies?: unknown;
   devDependencies?: unknown;
@@ -446,7 +447,7 @@ function stripJsonc(text: string, track = false): { cleaned: string; cleanedFrom
       keep(i, j + 1);
       i = j + 1;
     } else if (c === '/' && text[i + 1] === '/') {
-      while (i < n && text[i] !== '\n') i++;
+      while (i < n && text[i] !== '\n' && text[i] !== '\r') i++;
     } else if (c === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2);
       i = end === -1 ? n : end + 2;
@@ -572,7 +573,7 @@ function expandBraces(glob: string): string[] {
 
 /** Where the top-level `packages:` key of a pnpm-workspace.yaml holds something {@link pnpmWorkspacePackages} cannot read as a list: a scalar after the key (`packages: apps/*`), a flow list never closed, or an indented line under the key that is no `- item`. undefined when there is no such key or it reads as a list (an empty one included). The reading is unchanged by this; it only says that it is a guess. */
 function pnpmPackagesFailure(text: string): { line: number; column: number } | undefined {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
   const at = lines.findIndex((line) => /^packages\s*:/.test(line));
   if (at === -1) return undefined;
   const inline = lines[at].replace(/^packages\s*:/, '').replace(/(^|\s)#.*$/, '').trim();
@@ -592,7 +593,7 @@ function pnpmPackagesFailure(text: string): { line: number; column: number } | u
 
 /** The `packages` globs of a pnpm-workspace.yaml: a block list (`- 'apps/*'`) or a flow list (`['apps/*']`) under a top-level `packages:` key. undefined when the file has no such key (a file holding only settings such as catalogs); pnpm then takes the root alone, and the resolver counts every package under the file's directory, as it does where no workspace is declared. */
 function pnpmWorkspacePackages(text: string): string[] | undefined {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
   const unquote = (raw: string): string => {
     const quoted = /^\s*(['"])(.*?)\1/.exec(raw);
     return quoted !== null ? quoted[2] : raw.replace(/(^|\s)#.*$/, '').trim();
@@ -767,9 +768,19 @@ export function makeTsResolveDeps(
           if (exported !== undefined) return exported;
           continue;
         }
-        const target = sub === '.' ? joinUnder(root, 'tsconfig.json') : joinUnder(root, sub);
-        if (target === undefined) continue;
-        for (const cand of [target, `${target}.json`]) if (isFile(cand)) return cand;
+        const cands: string[] = [];
+        if (sub === '.') {
+          // The package's `tsconfig` field names the base config; without it (or when it names no file) the package's own tsconfig.json is read.
+          const field = pkg?.manifest.tsconfig;
+          const named = typeof field === 'string' ? joinUnder(root, field) : undefined;
+          if (named !== undefined) cands.push(named, `${named}.json`, `${named}/tsconfig.json`);
+          const own = joinUnder(root, 'tsconfig.json');
+          if (own !== undefined) cands.push(own);
+        } else {
+          const target = joinUnder(root, sub);
+          if (target !== undefined) cands.push(target, `${target}.json`, `${target}/tsconfig.json`);
+        }
+        for (const cand of cands) if (isFile(cand)) return cand;
       }
     }
     // Not installed: a published preset (the only kind a repository extends without
