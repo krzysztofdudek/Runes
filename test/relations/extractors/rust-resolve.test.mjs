@@ -283,6 +283,23 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve()('shapes::Circle', 'tests/common/mod.rs', 'rust')).toBeUndefined();
   });
 
+  it('in edition 2015 binds the crate root for a use path that names an item the root defines or imports, and not for an extern crate or an undefined name', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    put('src/lib.rs', 'extern crate serde;\npub use shapes::Circle;\npub enum Error { NotFound }\nmod shapes;\n');
+    put('src/shapes.rs', '');
+    put('src/api/client.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('Error', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('Error::NotFound', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('Circle', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('shapes', 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
+    expect(resolve('serde', 'src/api/client.rs', 'rust')).toBeUndefined();
+    expect(resolve('Missing', 'src/api/client.rs', 'rust')).toBeUndefined();
+    // The same root item is no `use` path from edition 2018 on.
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2018"\n');
+    expect(makeResolvePathToFile(ws)('Error', 'src/api/client.rs', 'rust')).toBeUndefined();
+  });
+
   it('takes the edition from the workspace for `edition.workspace = true`, and treats a workspace that gives none as unknown', () => {
     put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n[workspace.package]\nedition = "2015"\n');
     put('crates/a/Cargo.toml', '[package]\nname = "a"\nedition.workspace = true\n');
@@ -836,6 +853,18 @@ path = "..\u002fmore"
     expect(rustFileDeclares('extern crate r#async as r#await ;', 'await')).toBe(true);
     expect(rustFileDeclares('extern crate self as facade;', 'facade')).toBe(true);
     expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
+  });
+
+  it('as an item of the root, takes a defined or imported name and never an `extern crate` or a name that only leads a longer path', () => {
+    expect(rustFileDeclares('pub enum Error {}', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('mod shapes;', 'shapes', true)).toBe(true);
+    expect(rustFileDeclares('macro_rules! m { () => {} }', 'm', true)).toBe(true);
+    expect(rustFileDeclares('pub use a::{b::Error, c};', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('use a::b as Error;', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('extern crate serde;', 'serde', true)).toBe(false);
+    expect(rustFileDeclares('use serde::Deserialize;', 'serde', true)).toBe(false);
+    expect(rustFileDeclares('use a::Error as Other;', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('use a::Error as Other;', 'Other', true)).toBe(true);
   });
 });
 
