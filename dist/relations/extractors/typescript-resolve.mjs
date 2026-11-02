@@ -781,8 +781,15 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                 }
                 else {
                     const target = joinUnder(root, sub);
-                    if (target !== undefined)
-                        cands.push(target, `${target}.json`, `${target}/tsconfig.json`);
+                    if (target !== undefined) {
+                        cands.push(target, `${target}.json`);
+                        // A subpath that is a directory with a package.json of its own: that file's `tsconfig` field names the config, as tsc reads it for a package root; without it (or when it names no file) the directory's tsconfig.json is read.
+                        const field = packageAt(target)?.manifest.tsconfig;
+                        const named = typeof field === 'string' ? joinUnder(target, field) : undefined;
+                        if (named !== undefined)
+                            cands.push(named, `${named}.json`, `${named}/tsconfig.json`);
+                        cands.push(`${target}/tsconfig.json`);
+                    }
                 }
                 for (const cand of cands)
                     if (isFile(cand))
