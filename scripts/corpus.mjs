@@ -4,7 +4,7 @@
 //
 // Usage: node scripts/corpus.mjs [verify|update|oracles] [--only <id>[,<id>]] [--tier routine|heavy|all] [--strict] [--runes <dir>] [--manifest <file>] [--goldens <dir>] [--explained <file>] [--cache <dir>]
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -921,7 +921,8 @@ async function main() {
   const skips = [];
   for (const repo of selected) {
     const started = Date.now();
-    const dir = fetchRepository(repo, opts.cache);
+    // The clone by its real path: TypeScript, PathFinder, go list and the preprocessor answer with real paths, so a cache reached through a symbolic link (macOS's temporary directory) or an 8.3 short name (Windows) must not make every in-repository answer look like one outside it.
+    const dir = realpathSync.native(fetchRepository(repo, opts.cache));
     const result = await resolveRepository(dir, runes);
     const head = `${repo.id} @${repo.commit.slice(0, 10)}: ${result.parsed} files parsed, ${result.binaries} binary skipped, ${result.lines.length} edges, ${result.diagnostics.length} diagnostics, ${((Date.now() - started) / 1000).toFixed(1)} s`;
     if (result.failures.length > 0) {
