@@ -23,6 +23,8 @@ interface UsingScope {
         fqn: string;
         body: string[];
         rooted: boolean;
+        start: number;
+        end: number;
     }>>;
     /** Fully-resolved TARGET type FQN (with the directive's line) of each `using static N.C;` /
      *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
@@ -87,6 +89,7 @@ export type CsharpRefDescriptor =
     line: number;
     rooted: boolean;
     enclosingNs: string[];
+    at: number;
 }
 /** An `S::Tail` alias-qualified reference (`alias_qualified_name`, non-`global` alias). Emitted
  *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
@@ -97,6 +100,7 @@ export type CsharpRefDescriptor =
     tail: string;
     line: number;
     enclosingNs: string[];
+    at: number;
 }
 /** A `using static N.C;` / `global using static N.C;` TARGET edge — the concrete type whose
  *  static members are imported. Resolves verbatim-from-root as its sole candidate (A8/A11). */
@@ -119,6 +123,7 @@ export type CsharpRefDescriptor =
     suffixed?: string;
     line: number;
     enclosingNs: string[];
+    at: number;
     rooted?: boolean;
     alias?: string;
 }
@@ -128,6 +133,7 @@ export type CsharpRefDescriptor =
     chain: string[];
     line: number;
     enclosingNs: string[];
+    at: number;
     rooted?: boolean;
 }
 /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the

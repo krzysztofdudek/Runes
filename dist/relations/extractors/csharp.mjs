@@ -465,7 +465,8 @@ function buildUsingScope(file) {
                 aliases.set(aliasName.text, fqn);
                 const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
                 const decls = aliasDecls.get(aliasName.text) ?? [];
-                decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true });
+                const block = directiveBlock(file, node);
+                decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true, start: block.start, end: block.end });
                 aliasDecls.set(aliasName.text, decls);
                 if (hasTokenChild(node, 'global'))
                     globalAliases.set(aliasName.text, fqn);
@@ -487,6 +488,18 @@ function buildUsingScope(file) {
     return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, staticTargets };
 }
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
+/** The text range of the block that holds a using directive: the namespace declaration around it, or from a file-scoped `namespace X;` to the end of the file when the directive sits below one, or the whole file when it sits in the compilation unit. An alias reaches the uses inside that range and no other. */
+function directiveBlock(file, directive) {
+    for (let cur = directive.parent; cur !== null; cur = cur.parent) {
+        if (cur.type === 'namespace_declaration')
+            return { start: cur.startIndex, end: cur.endIndex };
+    }
+    const root = file.tree.rootNode;
+    const scoped = root.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+    if (scoped !== undefined && scoped !== null && directive.startIndex > scoped.startIndex)
+        return { start: scoped.startIndex, end: root.endIndex };
+    return { start: 0, end: root.endIndex };
+}
 function directiveBodyChain(file, directive) {
     const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
     const below = scoped !== undefined && scoped !== null && directive.startIndex > scoped.startIndex;
@@ -681,6 +694,7 @@ export function extractCsharpRefs(file) {
             line,
             rooted,
             enclosingNs: enclosingNamespaceChain(fileNs, node),
+            at: node.startIndex,
         });
     };
     /** Emit an attribute descriptor (the two-reading `[Foo]`/`[FooAttribute]` group). */
@@ -691,6 +705,7 @@ export function extractCsharpRefs(file) {
             suffixed,
             line,
             enclosingNs: enclosingNamespaceChain(fileNs, node),
+            at: node.startIndex,
             rooted,
             ...(alias !== undefined ? { alias } : {}),
         });
@@ -757,6 +772,7 @@ export function extractCsharpRefs(file) {
                             tail: stripTypeArguments(generic !== null ? findChild(generic, 'identifier').text : stripGlobalQualifier(nameField.text)),
                             line: typeNode.startPosition.row + 1,
                             enclosingNs: enclosingNamespaceChain(fileNs, typeNode),
+                            at: typeNode.startIndex,
                         });
                         if (generic !== null)
                             emitTypeArguments(generic);
@@ -814,7 +830,7 @@ export function extractCsharpRefs(file) {
         const parts = qualifiedNameParts(q);
         if (parts.alias !== undefined) {
             // `S::Core.Order` (188): the leftmost `S` is a using alias, rewritten on assembly to the namespace it names; an alias the map does not bind (an extern alias, `Lib::A.B`) is dropped there (R13).
-            refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q) });
+            refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q), at: q.startIndex });
         }
         else {
             pushRef(parts.name, q, line, rooted);
@@ -1155,6 +1171,7 @@ export function extractCsharpRefs(file) {
                         chain,
                         line: expr.startPosition.row + 1,
                         enclosingNs: enclosingNamespaceChain(fileNs, node),
+                        at: node.startIndex,
                         rooted,
                     });
             }
@@ -1246,6 +1263,7 @@ export function extractCsharpRefs(file) {
                         chain: chainText.split('.'),
                         line: arg.startPosition.row + 1,
                         enclosingNs: enclosingNamespaceChain(fileNs, arg),
+                        at: arg.startIndex,
                         rooted: false,
                     });
                 }
@@ -1292,8 +1310,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
         }
         targets.add(fqn);
     }
+    const projectAliases = new Map();
     const ambiguousAliases = new Set();
     for (const [name, targets] of projectAliasTargets) {
+        if (targets.size === 1)
+            projectAliases.set(name, [...targets][0]);
         if (aliases.has(name))
             continue;
         if (targets.size === 1)
@@ -1327,20 +1348,24 @@ export function assembleCsharpCandidates(extract, options = {}) {
         return out2;
     };
     /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
-    const viewAlias = (name, enclosingNs) => {
-        // A name this file declares as an alias is read from its own directives: the one whose body is nearest around the use. A name only the project declares (`global using`) sits in the compilation unit.
-        const local = scope.aliasDecls.get(name);
-        const projectTarget = aliases.get(name);
-        const decls = local ?? (projectTarget === undefined ? [] : [{ fqn: projectTarget, body: [], rooted: false }]);
+    const viewAlias = (name, enclosingNs, at) => {
+        // A name this file declares as an alias is read from its own directives: the one whose block is the innermost around the use. A block-only alias does not hide a project-wide `global using` alias of the same name, which sits in the compilation unit.
         let best;
-        for (const d of decls) {
-            const bodyNs = d.body[0];
-            const at = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
-            if (at < 0 || (best !== undefined && at > best.nearer.length))
+        let bestStart = -1;
+        for (const d of scope.aliasDecls.get(name) ?? []) {
+            if (at < d.start || at >= d.end || d.start < bestStart)
                 continue;
-            best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, at), bodyNs };
+            const bodyNs = d.body[0];
+            const index = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
+            if (index < 0)
+                continue;
+            best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, index), bodyNs };
+            bestStart = d.start;
         }
-        return best;
+        if (best !== undefined)
+            return best;
+        const projectTarget = projectAliases.get(name);
+        return projectTarget === undefined ? undefined : { target: projectTarget, chain: [], nearer: enclosingNs, bodyNs: undefined };
     };
     /** The keys an alias target (plus a dotted `tail`) reads as: the namespaces of the directive's body nearest first, then the global namespace. */
     const aliasTargetKeys = (view, tail) => dedupKeys([...view.chain.map((ns) => `${ns}.${view.target}${tail}`), `${view.target}${tail}`]);
@@ -1364,7 +1389,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
      *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
      */
-    const pushRef = (ref, enclosingNs, line, rooted) => {
+    const pushRef = (ref, enclosingNs, line, rooted, at) => {
         // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
         // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
         // candidate.
@@ -1380,7 +1405,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
         if (ambiguousAliases.has(lead))
             return; // M7: an alias with 2+ project-wide targets → silence
         const multi = ref.includes('.');
-        const aliasView = viewAlias(lead, enclosingNs);
+        const aliasView = viewAlias(lead, enclosingNs, at);
         const enclosing = enclosingNs.map((ns) => `${ns}.${ref}`);
         // The using-prefix expansions (one CS0104 set). A multi-segment ref under a using prefix is
         // nested-split-only (R4); a single-segment ref binds the verbatim namespace.type.
@@ -1430,11 +1455,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
     /** Emit a two-reading attribute group (`written` and its `Attribute`-suffixed form) as ONE
      *  ordered group, each reading carrying its own alias/enclosing-ns/using/verbatim candidates,
      *  concatenated so the verbatim short form is reached only when nothing nearer binds. */
-    const pushAttribute = (written, suffixed, enclosingNs, line, rooted) => {
+    const pushAttribute = (written, suffixed, enclosingNs, line, rooted, at) => {
         const before = out.length;
-        pushRef(written, enclosingNs, line, rooted);
+        pushRef(written, enclosingNs, line, rooted, at);
         if (suffixed !== undefined)
-            pushRef(suffixed, enclosingNs, line, rooted);
+            pushRef(suffixed, enclosingNs, line, rooted, at);
         // Merge the (at most two) groups just pushed into one ordered group so both readings live
         // in a single reference (an attribute is ONE dependency, resolved by whichever name binds).
         mergeGroupsFrom(before, line);
@@ -1494,25 +1519,25 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 break;
             }
             case 'plain':
-                pushRef(r.ref, r.enclosingNs, r.line, r.rooted);
+                pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at);
                 break;
             case 'alias': {
                 // `S::Tail` (B5): rewrite the leftmost alias to its aliased FQN and resolve `N.Tail` from
                 // the root (verbatim FQN). Fires ONLY when `S` is a confirmed alias in the MERGED map —
                 // an extern/unknown alias (`Lib::A.B`) is dropped (its `::` text cannot collide with a
                 // dot-only key → R13 silence-by-luck).
-                const view = viewAlias(r.aliasName, r.enclosingNs);
+                const view = viewAlias(r.aliasName, r.enclosingNs, r.at);
                 if (view !== undefined)
                     pushKeys(aliasTargetKeys(view, `.${r.tail}`), r.line);
                 break;
             }
             case 'attr': {
                 if (r.alias === undefined) {
-                    pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true);
+                    pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true, r.at);
                     break;
                 }
                 // `[S::Foo]`: both readings in the namespace `S` names, from the root (B5); nothing when `S` is no confirmed alias.
-                const view = viewAlias(r.alias, r.enclosingNs);
+                const view = viewAlias(r.alias, r.enclosingNs, r.at);
                 if (view !== undefined) {
                     const before = out.length;
                     pushKeys(aliasTargetKeys(view, `.${r.written}`), r.line);
@@ -1529,7 +1554,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                     break;
                 const before = out.length;
                 for (let i = 1; i <= r.chain.length; i++)
-                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted);
+                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at);
                 mergeGroupsFrom(before, r.line);
                 break;
             }
