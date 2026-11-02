@@ -3,7 +3,7 @@ id: csharp-using-static-target-edge
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (using_static_directive); MS Learn — using static directive"
+cites: "C# spec §14.5 (using_static_directive); MS Learn — using static directive"
 ---
 
 ## Rule

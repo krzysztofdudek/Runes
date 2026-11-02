@@ -3,7 +3,7 @@ id: csharp-plain-using-simple-name
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (using_namespace_directive); MS Learn — using-directive (namespace import); CS0246 (unique import binds)"
+cites: "C# spec §14.5 (using_namespace_directive); MS Learn — using-directive (namespace import); CS0246 (unique import binds)"
 ---
 
 ## Rule

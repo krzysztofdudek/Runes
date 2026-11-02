@@ -3,7 +3,7 @@ id: csharp-global-using-alias
 language: csharp
 category: import
 expectation: edge
-cites: "C# 10 — global using alias (§13.4, project-wide scope); MS Learn — global using directives"
+cites: "C# 10 — global using alias (§14.5, project-wide scope); MS Learn — global using directives"
 ---
 
 ## Rule

@@ -3,7 +3,7 @@ id: csharp-global-using-sibling-file
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (global using, project-wide scope); MS Learn — global using directives"
+cites: "C# spec §14.5 (global using, project-wide scope); MS Learn — global using directives"
 ---
 
 ## Rule

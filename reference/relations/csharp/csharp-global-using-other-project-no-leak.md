@@ -3,7 +3,7 @@ id: csharp-global-using-other-project-no-leak
 language: csharp
 category: trap
 expectation: silence
-cites: "C# spec §13.4 (global using directives apply to the compilation unit's project); MSBuild — one .csproj is one compilation"
+cites: "C# spec §14.5 (global using directives apply to the compilation unit's project); MSBuild — one .csproj is one compilation"
 ---
 
 ## Rule

@@ -3,7 +3,7 @@ id: csharp-alias-colon-colon-generic-edge
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.8 (qualified alias member `::`); §13.4 (using_alias_directive to a namespace)"
+cites: "C# spec §13.8 (qualified alias member `::`); §14.5 (using_alias_directive to a namespace)"
 ---
 
 ## Rule

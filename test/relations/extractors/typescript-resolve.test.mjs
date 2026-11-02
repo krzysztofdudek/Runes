@@ -754,6 +754,39 @@ describe('resolveTsPath — workspace membership', () => {
     expect(r('near', 'packages/app/a.ts')).toBe('packages/near/index.ts');
     expect(r('missing', 'packages/app/a.ts')).toBeUndefined();
   });
+  describe('a package extends whose tsconfig field names no file reads the package tsconfig.json', () => {
+    const base = {
+      'package.json': '{ "private": true, "workspaces": ["packages/*"] }',
+      'packages/app/package.json': '{ "name": "app" }',
+      'packages/app/tsconfig.json': '{ "extends": "@acme/preset" }',
+      'packages/app/src/m.ts': '',
+      'packages/preset/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }',
+    };
+    it('a field naming a file that does not exist falls back to tsconfig.json beside the package.json', () => {
+      const r = project({ ...base, 'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": "configs/missing.json" }' });
+      expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+    });
+    it('a field that is not a string falls back the same way', () => {
+      const r = project({ ...base, 'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": 7 }' });
+      expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+    });
+    it('a subpath directory whose own package.json has no usable tsconfig field reads its tsconfig.json', () => {
+      const sub = { ...base, 'packages/app/tsconfig.json': '{ "extends": "@acme/preset/base" }', 'packages/preset/package.json': '{ "name": "@acme/preset" }' };
+      const tsconfig = '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/src/*"] } } }';
+      for (const manifest of ['{ "tsconfig": 7 }', '{ "tsconfig": "configs/missing.json" }', '{ "name": "base" }']) {
+        const r = project({ ...sub, 'packages/preset/base/package.json': manifest, 'packages/preset/base/tsconfig.json': tsconfig });
+        expect(r('~/m', 'packages/app/src/a.ts')).toBe('packages/app/src/m.ts');
+      }
+    });
+    it('a field naming a file that exists still outranks tsconfig.json', () => {
+      const r = project({
+        ...base,
+        'packages/preset/package.json': '{ "name": "@acme/preset", "tsconfig": "configs/base.json" }',
+        'packages/preset/configs/base.json': '{ "compilerOptions": { "paths": { "~/*": ["${configDir}/other/*"] } } }',
+      });
+      expect(r('~/m', 'packages/app/src/a.ts')).toBeUndefined();
+    });
+  });
   // Issue 144: tsc reads a package `extends` from node_modules, where the package manager links members and local dependencies only, so the base config binds by the same rule as a bare import.
   describe('a tsconfig extends naming a package binds by the same rule (issue 144)', () => {
     const app = {
@@ -947,15 +980,15 @@ describe('parseJsonc', () => {
     expect(parseJsonc('{\r// a line comment\r"a": 1, // another\r"b": 2\r}')).toEqual(parseJsonc('{\n// a line comment\n"a": 1, // another\n"b": 2\n}'));
   });
   it('reads a file that starts with a UTF-8 byte order mark, as tsc, Node and npm do', () => {
-    expect(parseJsonc('﻿{"a":1}')).toEqual({ a: 1 });
-    expect(parseJsonc('﻿// c\n{ "a": [1,], }')).toEqual({ a: [1] });
+    expect(parseJsonc('\uFEFF{"a":1}')).toEqual({ a: 1 });
+    expect(parseJsonc('\uFEFF// c\n{ "a": [1,], }')).toEqual({ a: [1] });
     // Only a leading mark is a byte order mark; one anywhere else is still not JSON.
-    expect(parseJsonc('{"a":1}﻿﻿')).toBeUndefined();
+    expect(parseJsonc('{"a":1}\uFEFF\uFEFF')).toBeUndefined();
   });
 });
 
 describe('resolveTsPath — configuration files with a byte order mark', () => {
-  const BOM = '﻿';
+  const BOM = '\uFEFF';
   it('reads the paths of a tsconfig.json saved with a BOM (issue 074, case 1)', () => {
     const r = project({
       'tsconfig.json': `${BOM}{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }`,

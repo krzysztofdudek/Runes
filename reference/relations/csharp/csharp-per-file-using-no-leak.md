@@ -3,7 +3,7 @@ id: csharp-per-file-using-no-leak
 language: csharp
 category: import
 expectation: silence
-cites: "C# spec §13.4 (using directives are per compilation unit / file scope); MS Learn — using-directive scope"
+cites: "C# spec §14.5 (using directives are per compilation unit / file scope); MS Learn — using-directive scope"
 ---
 
 ## Rule

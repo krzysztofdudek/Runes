@@ -3,7 +3,7 @@ id: csharp-using-subns-binds-top-level
 language: csharp
 category: usage-site
 expectation: edge
-cites: "C# spec §13.4 (using imports types of EXACTLY N, not nested namespaces); MS Learn — using-directive scope"
+cites: "C# spec §14.5 (using imports types of EXACTLY N, not nested namespaces); MS Learn — using-directive scope"
 ---
 
 ## Rule

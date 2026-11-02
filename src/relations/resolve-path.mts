@@ -234,15 +234,37 @@ function makeRustResolveDeps(
     const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
     // Target sub-paths are package-relative and never climb, so a plain join is exact.
     const at = (sub: string): string => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.targetPaths, manifest?.undiscoveredDirs, manifest?.namedTargets);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.targetPaths, manifest?.undiscoveredDirs, manifest?.namedTargets, !(manifest?.undiscoveredDirs.includes('src/bin') ?? false) || (manifest?.declaresMainBin ?? false));
     return {
       srcDir: at(target.srcDir),
       crateName,
       rootFiles: target.rootFiles.map(at),
       fileIsRoot: target.fileIsRoot,
       lib,
-      crateRelativeUses: isEdition2015(pkgDir, manifest),
+      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, target.rootFiles.filter((f) => exists(at(f)))),
     };
+  }
+
+  /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
+  function targetIsEdition2015(pkgDir: string, manifest: CargoManifest | undefined, roots: string[]): boolean {
+    const packageIs2015 = isEdition2015(pkgDir, manifest);
+    if (manifest === undefined || roots.length === 0) return packageIs2015;
+    const libRoot = path.posix.normalize(manifest.libPath ?? 'src/lib.rs');
+    const editionOf = (root: string): boolean => {
+      const own = root === libRoot ? manifest.libEdition : manifest.targetEditions.find((t) => targetRootsAt(t, root, manifest.packageName))?.edition;
+      return own === undefined ? packageIs2015 : own === '2015';
+    };
+    const editions = new Set(roots.map(editionOf));
+    return editions.size === 1 && editions.has(true);
+  }
+
+  /** Whether the target table `t` has its crate root at package-relative `root`: its `path`, else `<dir>/<name>.rs` or `<dir>/<name>/main.rs` in the directory Cargo discovers its kind in, and `src/main.rs` for a bin named like the package. */
+  function targetRootsAt(t: CargoTargetEdition, root: string, packageName: string | undefined): boolean {
+    if (t.path !== undefined) return path.posix.normalize(t.path) === root;
+    if (t.name === undefined) return false;
+    if (t.kind === 'bin' && t.name === packageName && root === 'src/main.rs') return true;
+    const dir = DISCOVERED_DIRS[t.kind].dir;
+    return root === `${dir}/${t.name}.rs` || root === `${dir}/${t.name}/main.rs`;
   }
 
   /** Whether the package at `pkgDir` is edition 2015: its `[package].edition` says so, or it gives none (Cargo's default). An edition inherited from a workspace that cannot be found is unknown, so not 2015. A manifest with no `[package]` is no crate. */
@@ -301,14 +323,14 @@ function makeRustResolveDeps(
     return undefined;
   }
 
-  function rootDeclares(rootFile: string, name: string): boolean {
+  function rootDeclares(rootFile: string, name: string, asItem = false): boolean {
     let text = rootTextByFile.get(rootFile);
     if (text === undefined) {
       const raw = plain.read(rootFile);
       text = raw === undefined ? '' : stripRustComments(raw);
       rootTextByFile.set(rootFile, text);
     }
-    return rustFileDeclares(text, name);
+    return rustFileDeclares(text, name, asItem);
   }
 
   return { crateRootFor, dependencyFor, rootDeclares };
@@ -322,6 +344,8 @@ function makeRustResolveDeps(
  *
  *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`.
  *
+ *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
+ *
  *  `undiscoveredDirs` are the directories among `src/bin`, `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autobins = false`, `autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
 export function rustTargetFor(
   rel: string,
@@ -330,8 +354,12 @@ export function rustTargetFor(
   targetPaths: readonly string[] = [],
   undiscoveredDirs: readonly string[] = [],
   namedTargets: readonly string[] = [],
+  inferMain = true,
 ): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } {
   const targets = [...new Set(targetPaths.map((p) => path.posix.normalize(p)))];
+  // `src/main.rs` is a crate root when Cargo infers it (`inferMain`, false under `autobins = false` unless a `[[bin]]` is named like the package) or a `[[bin]]` names it by `path`; otherwise it belongs to no crate.
+  const mainIsRoot = inferMain || targets.includes('src/main.rs');
+  const mainRoots = mainIsRoot ? ['src/main.rs'] : [];
   const dirOfRoot = (root: string): string => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
   if (targets.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
   const libRoot = path.posix.normalize(libPath ?? 'src/lib.rs');
@@ -352,8 +380,8 @@ export function rustTargetFor(
     // `autobins = false`: only a declared bin is a crate, a `path`'s file or, for one that gives only a name, `src/bin/<name>.rs` or `src/bin/<name>/main.rs`; any other file is a module of the root holding it, if one does.
     const named = namedTargets.filter((n) => n.startsWith('src/bin/') && !n.slice('src/bin/'.length).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
     if (named.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
-    // `src/main.rs` always holds `rel` in its directory, so some tree is found.
-    return deepestTree(['src/main.rs', libRoot, ...named, ...targets])!;
+    // A root in `src/` holds `rel` in its directory; with no `src/main.rs` and a library elsewhere, none does.
+    return deepestTree([...mainRoots, libRoot, ...named, ...targets]) ?? { srcDir: 'src', rootFiles: [], fileIsRoot: false };
   } else if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3) {
     if (segs.length === 3) return { srcDir: 'src/bin', rootFiles: [rel], fileIsRoot: true };
     const dir = `src/bin/${segs[2]}`;
@@ -373,12 +401,12 @@ export function rustTargetFor(
   }
   if (rel === 'build.rs') return { srcDir: '', rootFiles: [rel], fileIsRoot: true };
   const mainRoot = 'src/main.rs';
-  if (rel === libRoot || rel === mainRoot) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
+  if (rel === libRoot || (rel === mainRoot && mainIsRoot)) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
   if (segs[0] !== 'src') {
     const tree = deepestTree([libRoot, ...targets]);
     if (tree !== undefined) return tree;
   }
-  return { srcDir: 'src', rootFiles: [...(libRoot.startsWith('src/') ? [libRoot] : []), mainRoot], fileIsRoot: false };
+  return { srcDir: 'src', rootFiles: [...(libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots], fileIsRoot: false };
 }
 
 /** The parts of a Cargo.toml the Rust resolver needs. */
@@ -404,6 +432,14 @@ interface CargoManifest {
   editionInherited: boolean;
   /** `[workspace.package].edition`, which a member's `edition.workspace = true` inherits. */
   workspaceEdition: string | undefined;
+  /** `[lib].edition` as written, undefined when absent: the edition of the library target alone. */
+  libEdition: string | undefined;
+  /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
+  packageName: string | undefined;
+  /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
+  targetEditions: CargoTargetEdition[];
+  /** Whether a `[[bin]]` named like the package and giving no `path` is written: Cargo roots it at `src/main.rs`. */
+  declaresMainBin: boolean;
   dependencies: Map<string, CargoDependencySpec>;
   workspaceDependencies: Map<string, CargoDependencySpec>;
 }
@@ -558,11 +594,20 @@ function inlineTableMembers(value: string): string[] | undefined {
 /** The target tables whose array elements (`[[bin]]`, `[[test]]`, `[[example]]`, `[[bench]]`) can name a crate root with `path`. */
 const TARGET_TABLES = new Set(['bin', 'test', 'example', 'bench']);
 
-/** One element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array: its kind, and the `name` and `path` it gives (`null` when written but not a string). */
+/** One element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array: its kind, and the `name`, `path` and `edition` it gives (`null` when written but not a string). */
 interface CargoTarget {
   kind: string;
   name?: string | null;
   path?: string | null;
+  edition?: string | null;
+}
+
+/** The `edition` a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` table writes for its own target, and how its root file is told: by `path`, or by `name` alone (Cargo roots it in its kind's directory, or a bin named like the package at `src/main.rs`). */
+interface CargoTargetEdition {
+  kind: string;
+  name: string | undefined;
+  path: string | undefined;
+  edition: string;
 }
 
 /** The directory Cargo discovers each kind of target in, and the `[package]` key that turns that discovery off. */
@@ -592,6 +637,7 @@ export function parseCargoManifest(text: string): CargoManifest {
   let edition: string | undefined;
   let editionInherited = false;
   let workspaceEdition: string | undefined;
+  let libEdition: string | undefined;
   // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
   let inTarget: CargoTarget | undefined;
   const dependencies = new Map<string, CargoDependencySpec>();
@@ -636,6 +682,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     else if (keyPath.length === 3 && top === 'workspace' && keyPath[1] === 'package' && keyPath[2] === 'edition') workspaceEdition = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'name') libName = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'path') libPath = tomlString(value);
+    else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'edition') libEdition = tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && Object.values(DISCOVERED_DIRS).some((d) => d.flag === keyPath[1])) {
       const { dir } = Object.values(DISCOVERED_DIRS).find((d) => d.flag === keyPath[1])!;
       if (value === 'false' && !undiscoveredDirs.includes(dir)) undiscoveredDirs.push(dir);
@@ -643,7 +690,7 @@ export function parseCargoManifest(text: string): CargoManifest {
       // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
       for (const item of inlineArrayItems(value) ?? []) {
         const target: CargoTarget = { kind: top };
-        for (const [key, member] of membersOf(item)) if (key[0] === 'name' || key[0] === 'path') target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
+        for (const [key, member] of membersOf(item)) if (key[0] === 'name' || key[0] === 'path' || key[0] === 'edition') target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
         if (inlineTableMembers(item) !== undefined) targets.push(target);
       }
     } else if (keyPath.length === 1 && (top === 'package' || top === 'lib')) {
@@ -692,7 +739,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     // A key is one or more segments joined by dots (TOML dotted keys), each bare or quoted.
     const segments = keySegments(kv[1]);
     const value = kv[2].trim();
-    if (inTarget !== undefined && (segments[0] === 'path' || segments[0] === 'name')) inTarget[segments[0]] = segments.length === 1 ? (tomlString(value) ?? null) : null;
+    if (inTarget !== undefined && (segments[0] === 'path' || segments[0] === 'name' || segments[0] === 'edition')) inTarget[segments[0]] = segments.length === 1 ? (tomlString(value) ?? null) : null;
     else assign([...sectionPath, ...segments], value);
   }
   const name = libName ?? packageName;
@@ -706,6 +753,10 @@ export function parseCargoManifest(text: string): CargoManifest {
     edition,
     editionInherited,
     workspaceEdition,
+    libEdition,
+    packageName,
+    targetEditions: targets.flatMap((t) => (typeof t.edition === 'string' ? [{ kind: t.kind, name: typeof t.name === 'string' ? t.name : undefined, path: typeof t.path === 'string' ? t.path : undefined, edition: t.edition }] : [])),
+    declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),
     dependencies,
     workspaceDependencies,
   };
@@ -720,13 +771,14 @@ function stripRustComments(text: string): string {
 }
 
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
-export function rustFileDeclares(text: string, name: string): boolean {
+export function rustFileDeclares(text: string, name: string, asItem = false): boolean {
   const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const decl = new RegExp(
-    `\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`,
+    `\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b` + (asItem ? '' : `|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`),
   );
   if (decl.test(text)) return true;
-  const word = new RegExp(`(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);
+  // As an item of the module, a name a `use` brings in is the last segment of its path, a member of its group or the alias of an `as`: a name that leads a longer path (`use serde::Deserialize;`) or is renamed away (`use a::Name as Other;`) binds nothing called `name`.
+  const word = new RegExp(asItem ? `(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])(?!\\s*::)(?!\\s+as\\b)` : `(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);
   for (const m of text.matchAll(/\buse\s+[^;]*;/g)) {
     if (word.test(m[0])) return true;
   }

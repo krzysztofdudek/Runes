@@ -26,11 +26,12 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     if (dep !== undefined) {
         return resolveFromModuleDir(dep.srcDir, rest, exists, rootContext(dep.srcDir, dep.rootFiles, declares));
     }
-    // Edition 2015: a `use` path is relative to the crate root, so `use a::b;` names the root's module `a`. The reserved crates and any root that does not declare the first segment stay external; an `extern crate` of the same name is no module, so the root's own items are not probed.
+    // Edition 2015: a `use` path is relative to the crate root, so `use a::b;` names the root's module `a`, and `use Error;` its item `Error`, which binds the root file as `crate::Error` does. The reserved crates and any root that does not declare the first segment stay external; an `extern crate` of the same name is a crate, no module or item of the root.
     if (crate.crateRelativeUses === true && !EDITION_2015_EXTERNAL_ROOTS.has(root)) {
         const rootFiles = crate.rootFiles ?? [];
-        if (rootFiles.some((f) => exists(f) && declares(f, root)))
-            return resolveFromModuleDir(crate.srcDir, segments, exists);
+        const declaresItem = (f, name) => (deps.rootDeclares?.(f, name, true) ?? true);
+        if (rootFiles.some((f) => exists(f) && declaresItem(f, root)))
+            return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem));
     }
     // External crate (std/core/alloc, third-party) — not a resolvable path.
     return undefined;
