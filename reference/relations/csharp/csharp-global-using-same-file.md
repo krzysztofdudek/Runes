@@ -3,7 +3,7 @@ id: csharp-global-using-same-file
 language: csharp
 category: import
 expectation: edge
-cites: "C# spec §13.4 (global using); MS Learn — global using directives (C# 10)"
+cites: "C# spec §14.5 (global using); MS Learn — global using directives (C# 10)"
 ---
 
 ## Rule

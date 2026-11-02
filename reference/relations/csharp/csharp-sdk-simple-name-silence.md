@@ -3,7 +3,7 @@ id: csharp-sdk-simple-name-silence
 language: csharp
 category: builtin
 expectation: silence
-cites: "C# spec §13.4 (implicit/SDK usings invisible to source); MS Learn — implicit usings"
+cites: "C# spec §14.5 (implicit/SDK usings invisible to source); MS Learn — implicit usings"
 ---
 
 ## Rule
