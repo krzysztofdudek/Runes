@@ -382,7 +382,7 @@ interface UsingScope {
    *  fully-qualified vs the global namespace, so the captured dotted text IS the target). */
   globalAliases: Map<string, string>;
   /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target,  `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
-  aliasDecls: Map<string, Array<{ fqn: string; body: string[]; rooted: boolean }>>;
+  aliasDecls: Map<string, Array<{ fqn: string; body: string[]; rooted: boolean; start: number; end: number }>>;
   /** Fully-resolved TARGET type FQN (with the directive's line) of each `using static N.C;` /
    *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
    *  type whose static members are imported — that target is a real type dependency of this file,
@@ -473,7 +473,7 @@ function buildUsingScope(file: ParsedFile): UsingScope {
   const globalPrefixes: string[] = [];
   const aliases = new Map<string, string>();
   const globalAliases = new Map<string, string>();
-  const aliasDecls = new Map<string, Array<{ fqn: string; body: string[]; rooted: boolean }>>();
+  const aliasDecls = new Map<string, Array<{ fqn: string; body: string[]; rooted: boolean; start: number; end: number }>>();
   const staticTargets: Array<{ fqn: string; line: number }> = [];
 
   walk(file.tree.rootNode, (node) => {
@@ -504,7 +504,8 @@ function buildUsingScope(file: ParsedFile): UsingScope {
         aliases.set(aliasName.text, fqn);
         const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
         const decls = aliasDecls.get(aliasName.text) ?? [];
-        decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true });
+        const block = directiveBlock(file, node);
+        decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true, start: block.start, end: block.end });
         aliasDecls.set(aliasName.text, decls);
         if (hasTokenChild(node, 'global')) globalAliases.set(aliasName.text, fqn);
       }
@@ -526,6 +527,17 @@ function buildUsingScope(file: ParsedFile): UsingScope {
 }
 
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
+/** The text range of the block that holds a using directive: the namespace declaration around it, or from a file-scoped `namespace X;` to the end of the file when the directive sits below one, or the whole file when it sits in the compilation unit. An alias reaches the uses inside that range and no other. */
+function directiveBlock(file: ParsedFile, directive: Node): { start: number; end: number } {
+  for (let cur: Node | null = directive.parent; cur !== null; cur = cur.parent) {
+    if (cur.type === 'namespace_declaration') return { start: cur.startIndex, end: cur.endIndex };
+  }
+  const root = file.tree.rootNode;
+  const scoped = root.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+  if (scoped !== undefined && scoped !== null && directive.startIndex > scoped.startIndex) return { start: scoped.startIndex, end: root.endIndex };
+  return { start: 0, end: root.endIndex };
+}
+
 function directiveBodyChain(file: ParsedFile, directive: Node): string[] {
   const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
   const below = scoped !== undefined && scoped !== null && directive.startIndex > scoped.startIndex;
@@ -602,20 +614,20 @@ export type CsharpRefDescriptor =
   /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
    *  identifier. `rooted` (a `global::`-stripped or `using static` target form) resolves
    *  verbatim-only; otherwise alias/enclosing-ns/using-prefix expansion applies on assembly. */
-  | { kind: 'plain'; ref: string; line: number; rooted: boolean; enclosingNs: string[] }
+  | { kind: 'plain'; ref: string; line: number; rooted: boolean; enclosingNs: string[]; at: number }
   /** An `S::Tail` alias-qualified reference (`alias_qualified_name`, non-`global` alias). Emitted
    *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
    *  resolves verbatim-from-root; otherwise dropped (extern/unknown alias → R13 silence). */
-  | { kind: 'alias'; aliasName: string; tail: string; line: number; enclosingNs: string[] }
+  | { kind: 'alias'; aliasName: string; tail: string; line: number; enclosingNs: string[]; at: number }
   /** A `using static N.C;` / `global using static N.C;` TARGET edge — the concrete type whose
    *  static members are imported. Resolves verbatim-from-root as its sole candidate (A8/A11). */
   | { kind: 'static'; fqn: string; line: number }
   /** The TARGET of a using alias directive (`using F = A.B.Foo;`), a dependency on that type whether or not the alias is used (185). C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
   | { kind: 'target'; fqn: string; line: number; enclosingNs: string[] }
   /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
-  | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; rooted?: boolean; alias?: string }
+  | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; at: number; rooted?: boolean; alias?: string }
   /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
-  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; rooted?: boolean }
+  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
    *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the imported
    *  namespaces as one set, then the global namespace. */
@@ -788,6 +800,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       line,
       rooted,
       enclosingNs: enclosingNamespaceChain(fileNs, node),
+      at: node.startIndex,
     });
   };
 
@@ -806,6 +819,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       suffixed,
       line,
       enclosingNs: enclosingNamespaceChain(fileNs, node),
+      at: node.startIndex,
       rooted,
       ...(alias !== undefined ? { alias } : {}),
     });
@@ -867,6 +881,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
               tail: stripTypeArguments(generic !== null ? findChild(generic, 'identifier')!.text : stripGlobalQualifier(nameField.text)),
               line: typeNode.startPosition.row + 1,
               enclosingNs: enclosingNamespaceChain(fileNs, typeNode),
+              at: typeNode.startIndex,
             });
             if (generic !== null) emitTypeArguments(generic);
           }
@@ -922,7 +937,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     const parts = qualifiedNameParts(q);
     if (parts.alias !== undefined) {
       // `S::Core.Order` (188): the leftmost `S` is a using alias, rewritten on assembly to the namespace it names; an alias the map does not bind (an extern alias, `Lib::A.B`) is dropped there (R13).
-      refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q) });
+      refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q), at: q.startIndex });
     } else {
       pushRef(parts.name, q, line, rooted);
     }
@@ -1248,6 +1263,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           chain,
           line: expr.startPosition.row + 1,
           enclosingNs: enclosingNamespaceChain(fileNs, node),
+          at: node.startIndex,
           rooted,
         });
       }
@@ -1333,6 +1349,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
             chain: chainText.split('.'),
             line: arg.startPosition.row + 1,
             enclosingNs: enclosingNamespaceChain(fileNs, arg),
+            at: arg.startIndex,
             rooted: false,
           });
         }
@@ -1386,8 +1403,10 @@ export function assembleCsharpCandidates(
     }
     targets.add(fqn);
   }
+  const projectAliases = new Map<string, string>();
   const ambiguousAliases = new Set<string>();
   for (const [name, targets] of projectAliasTargets) {
+    if (targets.size === 1) projectAliases.set(name, [...targets][0]);
     if (aliases.has(name)) continue;
     if (targets.size === 1) aliases.set(name, [...targets][0]);
     else ambiguousAliases.add(name);
@@ -1419,19 +1438,21 @@ export function assembleCsharpCandidates(
   };
 
   /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
-  const viewAlias = (name: string, enclosingNs: string[]): { target: string; chain: string[]; nearer: string[]; bodyNs: string | undefined } | undefined => {
-    // A name this file declares as an alias is read from its own directives: the one whose body is nearest around the use. A name only the project declares (`global using`) sits in the compilation unit.
-    const local = scope.aliasDecls.get(name);
-    const projectTarget = aliases.get(name);
-    const decls = local ?? (projectTarget === undefined ? [] : [{ fqn: projectTarget, body: [] as string[], rooted: false }]);
+  const viewAlias = (name: string, enclosingNs: string[], at: number): { target: string; chain: string[]; nearer: string[]; bodyNs: string | undefined } | undefined => {
+    // A name this file declares as an alias is read from its own directives: the one whose block is the innermost around the use. A block-only alias does not hide a project-wide `global using` alias of the same name, which sits in the compilation unit.
     let best: { target: string; chain: string[]; nearer: string[]; bodyNs: string | undefined } | undefined;
-    for (const d of decls) {
+    let bestStart = -1;
+    for (const d of scope.aliasDecls.get(name) ?? []) {
+      if (at < d.start || at >= d.end || d.start < bestStart) continue;
       const bodyNs = d.body[0];
-      const at = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
-      if (at < 0 || (best !== undefined && at > best.nearer.length)) continue;
-      best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, at), bodyNs };
+      const index = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
+      if (index < 0) continue;
+      best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, index), bodyNs };
+      bestStart = d.start;
     }
-    return best;
+    if (best !== undefined) return best;
+    const projectTarget = projectAliases.get(name);
+    return projectTarget === undefined ? undefined : { target: projectTarget, chain: [], nearer: enclosingNs, bodyNs: undefined };
   };
 
   /** The keys an alias target (plus a dotted `tail`) reads as: the namespaces of the directive's body nearest first, then the global namespace. */
@@ -1459,7 +1480,7 @@ export function assembleCsharpCandidates(
    *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
    *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
    */
-  const pushRef = (ref: string, enclosingNs: string[], line: number, rooted: boolean): void => {
+  const pushRef = (ref: string, enclosingNs: string[], line: number, rooted: boolean, at: number): void => {
     // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
     // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
     // candidate.
@@ -1474,7 +1495,7 @@ export function assembleCsharpCandidates(
     const lead = ref.split('.')[0];
     if (ambiguousAliases.has(lead)) return; // M7: an alias with 2+ project-wide targets → silence
     const multi = ref.includes('.');
-    const aliasView = viewAlias(lead, enclosingNs);
+    const aliasView = viewAlias(lead, enclosingNs, at);
     const enclosing = enclosingNs.map((ns) => `${ns}.${ref}`);
 
     // The using-prefix expansions (one CS0104 set). A multi-segment ref under a using prefix is
@@ -1533,10 +1554,11 @@ export function assembleCsharpCandidates(
     enclosingNs: string[],
     line: number,
     rooted: boolean,
+    at: number,
   ): void => {
     const before = out.length;
-    pushRef(written, enclosingNs, line, rooted);
-    if (suffixed !== undefined) pushRef(suffixed, enclosingNs, line, rooted);
+    pushRef(written, enclosingNs, line, rooted, at);
+    if (suffixed !== undefined) pushRef(suffixed, enclosingNs, line, rooted, at);
     // Merge the (at most two) groups just pushed into one ordered group so both readings live
     // in a single reference (an attribute is ONE dependency, resolved by whichever name binds).
     mergeGroupsFrom(before, line);
@@ -1596,24 +1618,24 @@ export function assembleCsharpCandidates(
         break;
       }
       case 'plain':
-        pushRef(r.ref, r.enclosingNs, r.line, r.rooted);
+        pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at);
         break;
       case 'alias': {
         // `S::Tail` (B5): rewrite the leftmost alias to its aliased FQN and resolve `N.Tail` from
         // the root (verbatim FQN). Fires ONLY when `S` is a confirmed alias in the MERGED map —
         // an extern/unknown alias (`Lib::A.B`) is dropped (its `::` text cannot collide with a
         // dot-only key → R13 silence-by-luck).
-        const view = viewAlias(r.aliasName, r.enclosingNs);
+        const view = viewAlias(r.aliasName, r.enclosingNs, r.at);
         if (view !== undefined) pushKeys(aliasTargetKeys(view, `.${r.tail}`), r.line);
         break;
       }
       case 'attr': {
         if (r.alias === undefined) {
-          pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true);
+          pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true, r.at);
           break;
         }
         // `[S::Foo]`: both readings in the namespace `S` names, from the root (B5); nothing when `S` is no confirmed alias.
-        const view = viewAlias(r.alias, r.enclosingNs);
+        const view = viewAlias(r.alias, r.enclosingNs, r.at);
         if (view !== undefined) {
           const before = out.length;
           pushKeys(aliasTargetKeys(view, `.${r.written}`), r.line);
@@ -1627,7 +1649,7 @@ export function assembleCsharpCandidates(
         const rooted = r.rooted === true;
         if (!rooted && ambiguousAliases.has(r.chain[0])) break;
         const before = out.length;
-        for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted);
+        for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at);
         mergeGroupsFrom(before, r.line);
         break;
       }
