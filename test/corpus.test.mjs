@@ -2,7 +2,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -167,6 +167,17 @@ describe('the corpus gate', () => {
     assert.equal(heavy.code, 1, heavy.out);
     assert.match(heavy.out, /FAIL heavy-one .*no golden yet/);
     manifest([fixture()]);
+  });
+
+  test('oracles through a cache reached by a symbolic link (as the temporary directory of macOS is) agree on the fixture as through its real path', () => {
+    const real = join(tmp, 'real-cache');
+    mkdirSync(real, { recursive: true });
+    const linked = join(tmp, 'linked-cache');
+    // A junction needs no privilege on Windows; elsewhere the type is ignored.
+    symlinkSync(real, linked, 'junction');
+    const r = corpus('oracles', '--cache', linked);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /ok {3}fixture .*checked: typescript 2; 0 disagreements/);
   });
 
   test('oracles: TypeScript agrees on the fixture, and a skipped oracle is reported as not passed, failing under --strict', () => {
