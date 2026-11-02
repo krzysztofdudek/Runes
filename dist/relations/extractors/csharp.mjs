@@ -436,7 +436,7 @@ function buildUsingScope(file) {
     const globalPrefixes = [];
     const aliases = new Map();
     const globalAliases = new Map();
-    const aliasScopes = new Map();
+    const aliasDecls = new Map();
     const staticTargets = [];
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'using_directive')
@@ -464,7 +464,9 @@ function buildUsingScope(file) {
             if (fqn !== undefined && fqn !== '') {
                 aliases.set(aliasName.text, fqn);
                 const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
-                aliasScopes.set(aliasName.text, { body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true });
+                const decls = aliasDecls.get(aliasName.text) ?? [];
+                decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true });
+                aliasDecls.set(aliasName.text, decls);
                 if (hasTokenChild(node, 'global'))
                     globalAliases.set(aliasName.text, fqn);
             }
@@ -482,7 +484,7 @@ function buildUsingScope(file) {
         }
         return undefined;
     });
-    return { prefixes, globalPrefixes, aliases, globalAliases, aliasScopes, staticTargets };
+    return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, staticTargets };
 }
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
 function directiveBodyChain(file, directive) {
@@ -1324,18 +1326,21 @@ export function assembleCsharpCandidates(extract, options = {}) {
         }
         return out2;
     };
-    /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body); `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
+    /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
     const viewAlias = (name, enclosingNs) => {
-        const target = aliases.get(name);
-        if (target === undefined)
-            return undefined;
-        const placed = scope.aliasScopes.get(name);
-        const body = placed?.body ?? [];
-        const bodyNs = body[0];
-        const at = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
-        if (at < 0)
-            return undefined;
-        return { target, chain: placed?.rooted === true ? [] : body, nearer: enclosingNs.slice(0, at), bodyNs };
+        // A name this file declares as an alias is read from its own directives: the one whose body is nearest around the use. A name only the project declares (`global using`) sits in the compilation unit.
+        const local = scope.aliasDecls.get(name);
+        const projectTarget = aliases.get(name);
+        const decls = local ?? (projectTarget === undefined ? [] : [{ fqn: projectTarget, body: [], rooted: false }]);
+        let best;
+        for (const d of decls) {
+            const bodyNs = d.body[0];
+            const at = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
+            if (at < 0 || (best !== undefined && at > best.nearer.length))
+                continue;
+            best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, at), bodyNs };
+        }
+        return best;
     };
     /** The keys an alias target (plus a dotted `tail`) reads as: the namespaces of the directive's body nearest first, then the global namespace. */
     const aliasTargetKeys = (view, tail) => dedupKeys([...view.chain.map((ns) => `${ns}.${view.target}${tail}`), `${view.target}${tail}`]);

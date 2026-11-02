@@ -18,11 +18,12 @@ interface UsingScope {
      *  project-wide (A12). The RHS FQN is the resolved alias target (C# resolves an alias RHS
      *  fully-qualified vs the global namespace, so the captured dotted text IS the target). */
     globalAliases: Map<string, string>;
-    /** alias local-name → where its directive sits: `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
-    aliasScopes: Map<string, {
+    /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target,  `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
+    aliasDecls: Map<string, Array<{
+        fqn: string;
         body: string[];
         rooted: boolean;
-    }>;
+    }>>;
     /** Fully-resolved TARGET type FQN (with the directive's line) of each `using static N.C;` /
      *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
      *  type whose static members are imported — that target is a real type dependency of this file,

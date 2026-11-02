@@ -381,8 +381,8 @@ interface UsingScope {
    *  project-wide (A12). The RHS FQN is the resolved alias target (C# resolves an alias RHS
    *  fully-qualified vs the global namespace, so the captured dotted text IS the target). */
   globalAliases: Map<string, string>;
-  /** alias local-name → where its directive sits: `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
-  aliasScopes: Map<string, { body: string[]; rooted: boolean }>;
+  /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target,  `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
+  aliasDecls: Map<string, Array<{ fqn: string; body: string[]; rooted: boolean }>>;
   /** Fully-resolved TARGET type FQN (with the directive's line) of each `using static N.C;` /
    *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
    *  type whose static members are imported — that target is a real type dependency of this file,
@@ -473,7 +473,7 @@ function buildUsingScope(file: ParsedFile): UsingScope {
   const globalPrefixes: string[] = [];
   const aliases = new Map<string, string>();
   const globalAliases = new Map<string, string>();
-  const aliasScopes = new Map<string, { body: string[]; rooted: boolean }>();
+  const aliasDecls = new Map<string, Array<{ fqn: string; body: string[]; rooted: boolean }>>();
   const staticTargets: Array<{ fqn: string; line: number }> = [];
 
   walk(file.tree.rootNode, (node) => {
@@ -503,7 +503,9 @@ function buildUsingScope(file: ParsedFile): UsingScope {
       if (fqn !== undefined && fqn !== '') {
         aliases.set(aliasName.text, fqn);
         const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
-        aliasScopes.set(aliasName.text, { body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true });
+        const decls = aliasDecls.get(aliasName.text) ?? [];
+        decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true });
+        aliasDecls.set(aliasName.text, decls);
         if (hasTokenChild(node, 'global')) globalAliases.set(aliasName.text, fqn);
       }
       return undefined;
@@ -520,7 +522,7 @@ function buildUsingScope(file: ParsedFile): UsingScope {
     return undefined;
   });
 
-  return { prefixes, globalPrefixes, aliases, globalAliases, aliasScopes, staticTargets };
+  return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, staticTargets };
 }
 
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
@@ -1416,16 +1418,20 @@ export function assembleCsharpCandidates(
     return out2;
   };
 
-  /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body); `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
+  /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
   const viewAlias = (name: string, enclosingNs: string[]): { target: string; chain: string[]; nearer: string[]; bodyNs: string | undefined } | undefined => {
-    const target = aliases.get(name);
-    if (target === undefined) return undefined;
-    const placed = scope.aliasScopes.get(name);
-    const body = placed?.body ?? [];
-    const bodyNs = body[0];
-    const at = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
-    if (at < 0) return undefined;
-    return { target, chain: placed?.rooted === true ? [] : body, nearer: enclosingNs.slice(0, at), bodyNs };
+    // A name this file declares as an alias is read from its own directives: the one whose body is nearest around the use. A name only the project declares (`global using`) sits in the compilation unit.
+    const local = scope.aliasDecls.get(name);
+    const projectTarget = aliases.get(name);
+    const decls = local ?? (projectTarget === undefined ? [] : [{ fqn: projectTarget, body: [] as string[], rooted: false }]);
+    let best: { target: string; chain: string[]; nearer: string[]; bodyNs: string | undefined } | undefined;
+    for (const d of decls) {
+      const bodyNs = d.body[0];
+      const at = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
+      if (at < 0 || (best !== undefined && at > best.nearer.length)) continue;
+      best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, at), bodyNs };
+    }
+    return best;
   };
 
   /** The keys an alias target (plus a dotted `tail`) reads as: the namespaces of the directive's body nearest first, then the global namespace. */
