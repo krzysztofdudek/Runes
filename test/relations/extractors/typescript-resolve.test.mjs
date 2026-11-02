@@ -947,15 +947,15 @@ describe('parseJsonc', () => {
     expect(parseJsonc('{\r// a line comment\r"a": 1, // another\r"b": 2\r}')).toEqual(parseJsonc('{\n// a line comment\n"a": 1, // another\n"b": 2\n}'));
   });
   it('reads a file that starts with a UTF-8 byte order mark, as tsc, Node and npm do', () => {
-    expect(parseJsonc('﻿{"a":1}')).toEqual({ a: 1 });
-    expect(parseJsonc('﻿// c\n{ "a": [1,], }')).toEqual({ a: [1] });
+    expect(parseJsonc('\uFEFF{"a":1}')).toEqual({ a: 1 });
+    expect(parseJsonc('\uFEFF// c\n{ "a": [1,], }')).toEqual({ a: [1] });
     // Only a leading mark is a byte order mark; one anywhere else is still not JSON.
-    expect(parseJsonc('{"a":1}﻿﻿')).toBeUndefined();
+    expect(parseJsonc('{"a":1}\uFEFF\uFEFF')).toBeUndefined();
   });
 });
 
 describe('resolveTsPath — configuration files with a byte order mark', () => {
-  const BOM = '﻿';
+  const BOM = '\uFEFF';
   it('reads the paths of a tsconfig.json saved with a BOM (issue 074, case 1)', () => {
     const r = project({
       'tsconfig.json': `${BOM}{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }`,
