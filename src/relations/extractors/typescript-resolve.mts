@@ -447,7 +447,7 @@ function stripJsonc(text: string, track = false): { cleaned: string; cleanedFrom
       keep(i, j + 1);
       i = j + 1;
     } else if (c === '/' && text[i + 1] === '/') {
-      while (i < n && text[i] !== '\n') i++;
+      while (i < n && text[i] !== '\n' && text[i] !== '\r') i++;
     } else if (c === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2);
       i = end === -1 ? n : end + 2;
@@ -573,7 +573,7 @@ function expandBraces(glob: string): string[] {
 
 /** Where the top-level `packages:` key of a pnpm-workspace.yaml holds something {@link pnpmWorkspacePackages} cannot read as a list: a scalar after the key (`packages: apps/*`), a flow list never closed, or an indented line under the key that is no `- item`. undefined when there is no such key or it reads as a list (an empty one included). The reading is unchanged by this; it only says that it is a guess. */
 function pnpmPackagesFailure(text: string): { line: number; column: number } | undefined {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
   const at = lines.findIndex((line) => /^packages\s*:/.test(line));
   if (at === -1) return undefined;
   const inline = lines[at].replace(/^packages\s*:/, '').replace(/(^|\s)#.*$/, '').trim();
@@ -593,7 +593,7 @@ function pnpmPackagesFailure(text: string): { line: number; column: number } | u
 
 /** The `packages` globs of a pnpm-workspace.yaml: a block list (`- 'apps/*'`) or a flow list (`['apps/*']`) under a top-level `packages:` key. undefined when the file has no such key (a file holding only settings such as catalogs); pnpm then takes the root alone, and the resolver counts every package under the file's directory, as it does where no workspace is declared. */
 function pnpmWorkspacePackages(text: string): string[] | undefined {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
   const unquote = (raw: string): string => {
     const quoted = /^\s*(['"])(.*?)\1/.exec(raw);
     return quoted !== null ? quoted[2] : raw.replace(/(^|\s)#.*$/, '').trim();
