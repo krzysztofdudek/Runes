@@ -272,6 +272,8 @@ describe('MATRIX — C# using aliases to a type, with and without use (issue 185
   it('csharp-using-alias-use-in-namespace-edge', () => runCase('csharp-using-alias-use-in-namespace-edge'));
   it('csharp-alias-colon-colon-in-namespace-edge', () => runCase('csharp-alias-colon-colon-in-namespace-edge'));
   it('csharp-alias-same-body-member-edge', () => runCase('csharp-alias-same-body-member-edge'));
+  it('csharp-alias-two-blocks-edge', () => runCase('csharp-alias-two-blocks-edge'));
+  it('csharp-alias-two-blocks-global-type-edge', () => runCase('csharp-alias-two-blocks-global-type-edge'));
   it('csharp-global-alias-program-unused-edge', () => runCase('csharp-global-alias-program-unused-edge'));
   it('csharp-using-alias-global-dotted-edge', () => runCase('csharp-using-alias-global-dotted-edge'));
   it('csharp-using-alias-generic-target-edge', () => runCase('csharp-using-alias-generic-target-edge'));
