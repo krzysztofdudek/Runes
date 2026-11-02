@@ -119,6 +119,7 @@ export interface PackageManifest {
   module?: unknown;
   types?: unknown;
   typings?: unknown;
+  tsconfig?: unknown;
   workspaces?: unknown;
   dependencies?: unknown;
   devDependencies?: unknown;
@@ -767,9 +768,19 @@ export function makeTsResolveDeps(
           if (exported !== undefined) return exported;
           continue;
         }
-        const target = sub === '.' ? joinUnder(root, 'tsconfig.json') : joinUnder(root, sub);
-        if (target === undefined) continue;
-        for (const cand of [target, `${target}.json`]) if (isFile(cand)) return cand;
+        const cands: string[] = [];
+        if (sub === '.') {
+          // The package's `tsconfig` field names the base config; without it (or when it names no file) the package's own tsconfig.json is read.
+          const field = pkg?.manifest.tsconfig;
+          const named = typeof field === 'string' ? joinUnder(root, field) : undefined;
+          if (named !== undefined) cands.push(named, `${named}.json`, `${named}/tsconfig.json`);
+          const own = joinUnder(root, 'tsconfig.json');
+          if (own !== undefined) cands.push(own);
+        } else {
+          const target = joinUnder(root, sub);
+          if (target !== undefined) cands.push(target, `${target}.json`, `${target}/tsconfig.json`);
+        }
+        for (const cand of cands) if (isFile(cand)) return cand;
       }
     }
     // Not installed: a published preset (the only kind a repository extends without
