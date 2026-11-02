@@ -3,7 +3,7 @@ id: csharp-global-using-static-target-edge
 language: csharp
 category: import
 expectation: edge
-cites: "C# 10 — global using static (§13.4, project-wide scope); MS Learn — global using directives"
+cites: "C# 10 — global using static (§14.5, project-wide scope); MS Learn — global using directives"
 ---
 
 ## Rule

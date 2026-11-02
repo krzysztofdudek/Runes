@@ -3,7 +3,7 @@ id: csharp-global-alias-cross-project-collision-edge
 language: csharp
 category: trap
 expectation: edge
-cites: "C# spec §13.4 (global using alias directives are project-wide); CS1537 (duplicate alias within one compilation)"
+cites: "C# spec §14.5 (global using alias directives are project-wide); CS1537 (duplicate alias within one compilation)"
 ---
 
 ## Rule

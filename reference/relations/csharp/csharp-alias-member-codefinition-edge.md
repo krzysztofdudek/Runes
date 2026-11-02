@@ -3,18 +3,17 @@ id: csharp-alias-member-codefinition-edge
 language: csharp
 category: trap
 expectation: edge
-cites: "C# CS0104-class co-definition (using-alias name competes with an enclosing member of the same name); MS Learn — using-alias directive"
+cites: "C# spec §7.8 (namespace and type names — a name is looked up in each enclosing namespace, innermost first, and in a namespace the members come before the usings of its body); §14.5.2 (using alias directives)"
 ---
 
 ## Rule
 
 The directive `using I = N.Thing;` names a real type, so it gives the edge to that
-type on its own line whether or not any use of `I` is ambiguous (D3 b, 185). When a
-using-alias `I` is in scope AND the enclosing namespace also declares a member named
-`I`, the simple name `I` at a use site is ambiguous (a co-definition between the alias
-and the enclosing member). The resolver must SILENCE that use rather than bind the
-alias target unconditionally, because both meanings exist and committing to either
-would be a false positive: `class C : I` gives no edge.
+type on its own line whether or not any use of `I` is hidden. The alias sits in the
+compilation unit, and the use sits in `namespace App;`, which declares a member named
+`I`. Lookup reads the namespace `App` before the compilation unit, so the member
+`App.I` wins and `class C : I` gives the edge to `App.I`, not to `N.Thing`. Only an
+alias and a member of the same body conflict (CS0576, the case csharp-alias-same-body-member-edge).
 
 ## Files
 
@@ -36,10 +35,10 @@ public class I {}
 
 ## Expect
 
-- src/c/Use.cs:1 -> node:n     # the directive binds N.Thing; the use `class C : I` on line 3 is silent
+- src/c/Use.cs:1 -> node:n     # the directive binds N.Thing
+- src/c/Use.cs:3 -> node:app   # the use `class C : I` binds the nearer member App.I, not the alias target
 
 ## Why
 
-An alias name colliding with a same-named enclosing member is ambiguous at the use
-site; binding the alias target there alone would ignore the competing member and risk
-the wrong edge. The directive itself is a dependency the compiler checks, so its edge stays.
+Binding the alias target at the use site would ignore the nearer member the compiler
+binds first and add an edge to a type the use does not name.
