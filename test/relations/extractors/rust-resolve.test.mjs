@@ -229,7 +229,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
   });
 
   it('with bin discovery turned off, roots src/bin/ files at the declared bins alone, and every other file in the tree of src/main.rs (autobins = false)', () => {
-    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n[[bin]]\nname = "multi"\n');
+    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[[bin]]\nname = "app"\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n[[bin]]\nname = "multi"\n');
     put('src/main.rs', 'mod util;\npub struct Main;\n');
     put('src/util.rs', '');
     put('src/bin/tool/app.rs', 'mod opts;\npub struct Tool;\n');
@@ -247,6 +247,35 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // With discovery on (the default) the same file roots its own crate.
     put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "tool"\npath = "src/bin/tool/app.rs"\n');
     expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/other.rs', 'rust')).toBeUndefined();
+  });
+
+  it('with bin discovery turned off, takes src/main.rs for a crate root only when a [[bin]] declares it, by its path or by the package name', () => {
+    put('src/lib.rs', 'pub mod util;\n');
+    put('src/util.rs', '');
+    put('src/main.rs', 'mod cli;\npub struct Main;\n');
+    put('src/cli.rs', '');
+    put('src/bin/tool.rs', '');
+    const resolve = (manifest, spec, from) => {
+      put('Cargo.toml', `[package]\nname = "app"\nautobins = false\n${manifest}`);
+      return makeResolvePathToFile(ws)(spec, from, 'rust');
+    };
+    // Undeclared: no crate root, so its `self::` reaches no module file beside it (the file is only its own module).
+    expect(resolve('', 'self::cli::Args', 'src/main.rs')).toBe('src/main.rs');
+    expect(resolve('[[bin]]\nname = "tool"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/main.rs');
+    // A file of src/bin/ that is no declared bin is a module of the library then, and src/main.rs is not tried for its crate-root items.
+    expect(resolve('', 'crate::util::Thing', 'src/bin/tool.rs')).toBe('src/util.rs');
+    expect(resolve('', 'crate::Main', 'src/bin/tool.rs')).toBeUndefined();
+    // Declared by its path, or by a bin named like the package, it is the root again.
+    expect(resolve('[[bin]]\nname = "x"\npath = "src/main.rs"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
+    expect(resolve('[[bin]]\nname = "app"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
+    expect(resolve('[[bin]]\nname = "app"\n', 'crate::Main', 'src/bin/tool.rs')).toBe('src/main.rs');
+    // With discovery on it is a root with nothing declared.
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    expect(makeResolvePathToFile(ws)('self::cli::Args', 'src/main.rs', 'rust')).toBe('src/cli.rs');
+    // A library outside src/ and no root in src/ leave a src/bin file the src/ tree with no root file to bind items to.
+    put('Cargo.toml', '[package]\nname = "app"\nautobins = false\n[lib]\npath = "lib/lib.rs"\n');
+    expect(makeResolvePathToFile(ws)('crate::util::Thing', 'src/bin/tool.rs', 'rust')).toBe('src/util.rs');
+    expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
   it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', () => {
@@ -281,6 +310,65 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('tests/common/mod.rs', '');
     expect(resolve()('shapes::Circle', 'tests/common/mod.rs', 'rust')).toBeUndefined();
+  });
+
+  it('in edition 2015 binds the crate root for a use path that names an item the root defines or imports, and not for an extern crate or an undefined name', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    put('src/lib.rs', 'extern crate serde;\npub use shapes::Circle;\npub enum Error { NotFound }\nmod shapes;\n');
+    put('src/shapes.rs', '');
+    put('src/api/client.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('Error', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('Error::NotFound', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('Circle', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('shapes', 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
+    expect(resolve('serde', 'src/api/client.rs', 'rust')).toBeUndefined();
+    expect(resolve('Missing', 'src/api/client.rs', 'rust')).toBeUndefined();
+    // The same root item is no `use` path from edition 2018 on.
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2018"\n');
+    expect(makeResolvePathToFile(ws)('Error', 'src/api/client.rs', 'rust')).toBeUndefined();
+  });
+
+  it('lets a target that writes an edition of its own decide how its files read use paths, by its path or its name', () => {
+    const lib = 'mod shapes;\n';
+    put('src/lib.rs', lib);
+    put('src/shapes.rs', '');
+    put('src/api/client.rs', '');
+    put('src/bin/tool.rs', 'mod local;\n');
+    put('src/bin/local.rs', '');
+    put('src/bin/multi/main.rs', 'mod ui;\n');
+    put('src/bin/multi/ui.rs', '');
+    put('tests/it.rs', 'mod helper;\n');
+    put('tests/helper.rs', '');
+    const resolve = (manifest, spec, from) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)(spec, from, 'rust');
+    };
+    const pkg = (edition, rest = '') => `[package]\nname = "app"\nedition = "${edition}"\n${rest}`;
+    // [lib].edition decides the library's files; the package's edition holds for the rest.
+    expect(resolve(pkg('2018', '[lib]\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    expect(resolve(pkg('2015', '[lib]\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[lib]\nedition = "2015"\npath = "src/lib.rs"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    // A bin given a name alone is rooted in src/bin/, and its edition is its own; so is the root of a bin directory, and a test target.
+    expect(resolve(pkg('2018', '[[bin]]\nname = "tool"\nedition = "2015"\n'), 'local::Thing', 'src/bin/tool.rs')).toBe('src/bin/local.rs');
+    expect(resolve(pkg('2015', '[[bin]]\nname = "tool"\nedition = "2018"\n'), 'local::Thing', 'src/bin/tool.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[[bin]]\nname = "multi"\nedition = "2015"\n'), 'ui::Widget', 'src/bin/multi/main.rs')).toBe('src/bin/multi/ui.rs');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "tool"\nedition = "2015"\n'), 'ui::Widget', 'src/bin/multi/main.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[[test]]\nname = "it"\nedition = "2015"\n'), 'helper::Util', 'tests/it.rs')).toBe('tests/helper.rs');
+    // The edition of one target does not leak to another: the library keeps the package's.
+    expect(resolve(pkg('2018', '[[bin]]\nname = "tool"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    // A bin named like the package and given no path is rooted at src/main.rs.
+    put('src/main.rs', 'mod shapes;\n');
+    put('src/lib.rs', '');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBe('src/shapes.rs');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "other"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
+    // A module of both the library and the binary is read in two editions when they differ, so it is not told; it is when they agree.
+    put('src/lib.rs', 'mod shapes;\n');
+    expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve(pkg('2015', '[[bin]]\nname = "app"\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve(pkg('2018', '[lib]\nedition = "2015"\n[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    // An edition written other than as a string, or a table with no name and no path, is no edition of any target.
+    expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = 2015\n[[bin]]\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
   });
 
   it('takes the edition from the workspace for `edition.workspace = true`, and treats a workspace that gives none as unknown', () => {
@@ -591,6 +679,17 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     expect(read('[package]\nname = "p"\nedition.workspace = true\n')).toEqual({ hasPackage: true, edition: undefined, editionInherited: true, workspaceEdition: undefined });
     expect(read('[package]\nname = "p"\n')).toEqual({ hasPackage: true, edition: undefined, editionInherited: false, workspaceEdition: undefined });
     expect(read('[workspace]\n[workspace.package]\nedition = "2024"\n')).toEqual({ hasPackage: false, edition: undefined, editionInherited: false, workspaceEdition: '2024' });
+    // A target's own edition, written as a table, inline in the array or under `[lib]`, is read apart from the package's.
+    const targets = (text) => {
+      const m = parseCargoManifest(text);
+      return { libEdition: m.libEdition, targetEditions: m.targetEditions };
+    };
+    expect(targets('[package]\nname = "p"\nedition = "2021"\n[lib]\nedition = "2015"\n[[bin]]\nname = "a"\nedition = "2018"\n[[test]]\npath = "t.rs"\nedition = "2015"\n')).toEqual({
+      libEdition: '2015',
+      targetEditions: [{ kind: 'bin', name: 'a', path: undefined, edition: '2018' }, { kind: 'test', name: undefined, path: 't.rs', edition: '2015' }],
+    });
+    expect(targets('bin = [{ name = "b", edition = "2015" }, { name = "c", edition.workspace = true }]\nlib = { edition = \'2018\' }\n')).toEqual({ libEdition: '2018', targetEditions: [{ kind: 'bin', name: 'b', path: undefined, edition: '2015' }] });
+    expect(targets('[package]\nname = "p"\nedition = "2018"\n')).toEqual({ libEdition: undefined, targetEditions: [] });
     // Another table's `edition` is no package edition.
     expect(read('[dependencies]\nedition = "2018"\n[metadata]\nedition = "2018"\n[package.metadata]\nedition = "2018"\n[package]\nname = "p"\n').edition).toBeUndefined();
   });
@@ -836,6 +935,18 @@ path = "..\u002fmore"
     expect(rustFileDeclares('extern crate r#async as r#await ;', 'await')).toBe(true);
     expect(rustFileDeclares('extern crate self as facade;', 'facade')).toBe(true);
     expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
+  });
+
+  it('as an item of the root, takes a defined or imported name and never an `extern crate` or a name that only leads a longer path', () => {
+    expect(rustFileDeclares('pub enum Error {}', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('mod shapes;', 'shapes', true)).toBe(true);
+    expect(rustFileDeclares('macro_rules! m { () => {} }', 'm', true)).toBe(true);
+    expect(rustFileDeclares('pub use a::{b::Error, c};', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('use a::b as Error;', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('extern crate serde;', 'serde', true)).toBe(false);
+    expect(rustFileDeclares('use serde::Deserialize;', 'serde', true)).toBe(false);
+    expect(rustFileDeclares('use a::Error as Other;', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('use a::Error as Other;', 'Other', true)).toBe(true);
   });
 });
 
