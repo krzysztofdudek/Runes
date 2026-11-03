@@ -466,7 +466,7 @@ function buildUsingScope(file) {
                 const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
                 const decls = aliasDecls.get(aliasName.text) ?? [];
                 const block = directiveBlock(file, node);
-                decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true, start: block.start, end: block.end });
+                decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true, outer: outerUsings(file, node), start: block.start, end: block.end });
                 aliasDecls.set(aliasName.text, decls);
                 if (hasTokenChild(node, 'global'))
                     globalAliases.set(aliasName.text, fqn);
@@ -500,10 +500,43 @@ function directiveBlock(file, directive) {
         return { start: scoped.startIndex, end: root.endIndex };
     return { start: 0, end: root.endIndex };
 }
-function directiveBodyChain(file, directive) {
+/** The using directives of every namespace declaration around the body that holds `directive`, innermost first, the declarations without any left out: in C# they take part in the lookup of the directive's target at their own namespace (spec §7.8.1), while those of the body that holds the directive do not (§14.5.2). The compilation unit's own usings are not listed (a deliberate silence: C# reads them only after the global namespace). */
+function outerUsings(file, directive) {
+    const out = [];
+    let ownBlockSeen = false;
+    for (let cur = directive.parent; cur !== null; cur = cur.parent) {
+        if (cur.type !== 'namespace_declaration')
+            continue;
+        if (!ownBlockSeen) {
+            ownBlockSeen = true;
+            continue;
+        }
+        const prefixes = [];
+        const aliases = [];
+        for (const d of cur.childForFieldName('body').namedChildren) {
+            if (d.type !== 'using_directive' || hasTokenChild(d, 'static'))
+                continue;
+            const aliasName = d.childForFieldName('name');
+            if (aliasName !== null)
+                aliases.push(aliasName.text);
+            else {
+                const ns = directiveNamespaceText(d);
+                if (ns !== undefined && ns !== '')
+                    prefixes.push(ns);
+            }
+        }
+        // The namespace the declaration stands for, spelled as the levels of the lookup are (`directiveBodyChain`): the chain of a node directly in its body, innermost first.
+        if (prefixes.length === 0 && aliases.length === 0)
+            continue;
+        for (const ns of directiveBodyChain(file, cur.childForFieldName('body')).slice(0, 1))
+            out.push({ ns, prefixes, aliases });
+    }
+    return out;
+}
+function directiveBodyChain(file, node) {
     const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
-    const below = scoped !== undefined && scoped !== null && directive.startIndex > scoped.startIndex;
-    return enclosingNamespaceChain(below ? fileScopedNamespace(file.tree.rootNode) : '', directive);
+    const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
+    return enclosingNamespaceChain(below ? fileScopedNamespace(file.tree.rootNode) : '', node);
 }
 /**
  * Collect the `global using Foo.Bar;` namespace prefixes a C# file declares (project-wide
@@ -839,12 +872,13 @@ export function extractCsharpRefs(file) {
             emitTypeArguments(g);
     }
     /**
-     * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does a chain through a using alias (`S::A.B`: a member access cannot spell one, and the qualified-name form rewrites it on assembly) or any other shape.
+     * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain led by a using alias (`S::Core.Customer`, which the grammar reads as a member access over `S::Core`) is the alias-qualified type it spells: its tail is rewritten on assembly onto the namespace the alias names, as a qualified name's is, and an alias the map does not bind (an extern alias) gives nothing. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does any other shape.
      */
     function emitMemberAccessType(access) {
         const segs = [];
         const generics = [];
         let rooted = false;
+        let alias;
         const collect = (n) => {
             switch (n.type) {
                 case 'identifier':
@@ -856,16 +890,26 @@ export function extractCsharpRefs(file) {
                     return true;
                 case 'member_access_expression':
                     return collect(n.childForFieldName('expression')) && collect(n.childForFieldName('name'));
-                case 'alias_qualified_name':
-                    rooted = n.childForFieldName('alias').text === 'global';
-                    return rooted && collect(n.childForFieldName('name'));
+                case 'alias_qualified_name': {
+                    // The leftmost part of the chain: `global::` roots it, any other alias leads the tail it is rewritten onto.
+                    const aliasText = n.childForFieldName('alias').text;
+                    if (aliasText === 'global')
+                        rooted = true;
+                    else
+                        alias = aliasText;
+                    return collect(n.childForFieldName('name'));
+                }
                 default:
                     return false;
             }
         };
-        if (!collect(access) || (!rooted && isTypeParameterInScope(segs[0], access)))
+        if (!collect(access) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], access)))
             return;
-        pushRef(segs.join('.'), access, access.startPosition.row + 1, rooted);
+        const line = access.startPosition.row + 1;
+        if (alias !== undefined)
+            refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: enclosingNamespaceChain(fileNs, access), at: access.startIndex });
+        else
+            pushRef(segs.join('.'), access, line, rooted);
         for (const g of generics)
             emitTypeArguments(g);
     }
@@ -906,77 +950,90 @@ export function extractCsharpRefs(file) {
         }
         return null;
     }
-    // ── `using static N.C;` / `global using static N.C;` TARGET edge (A8/A11) ────────────────
-    // The directive imports the static MEMBERS of the concrete type `N.C` — the target type
-    // itself is a real, fully-qualified type dependency of this file (never a namespace prefix:
-    // a sibling `N.Baz` is never imported). It resolves FROM THE ROOT as its sole candidate (like
-    // an alias RHS): no enclosing-ns / using-prefix expansion. Emitted FIRST (matching the
-    // original walk's leading static-target loop) so the descriptor order — and thus the final
-    // edge order — is preserved.
-    for (const target of scope.staticTargets) {
-        refs.push({ kind: 'static', fqn: target.fqn, line: target.line });
+    /** Emit one named type written in a using directive's target as the directive reads it (a `target` descriptor): in the namespace body that holds the directive, nearest namespace first, no using directive or alias of that body taking part. A bare `Program` in a file of top-level statements names that file's own class and is not emitted, as in `pushRef`. */
+    const pushTarget = (name, directive, line, nearest = false) => {
+        if (namesOwnProgram(name))
+            return;
+        const outer = outerUsings(file, directive);
+        refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(file, directive), ...(nearest ? { nearest } : {}), ...(outer.length > 0 ? { outer } : {}) });
+    };
+    /**
+     * Emit every named type of a type written in a using directive's target, each read where the directive reads its target (C# spec §14.5.2): a bare, qualified or generic name is one `target` reference, a generic's type arguments are references of their own read the same way, and an array, pointer or nullable type and each tuple element are descended to their named types (C# 12 lets an alias name any type; the tuple element labels are not types). A name written after `global::` is rooted. A name written after a using alias (`S::A.B`) gives nothing: an alias of the same body never applies to a directive, and an alias of an outer body or an extern alias is not read (a silence); its type arguments still give theirs.
+     */
+    function emitDirectiveType(typeNode, directive) {
+        const line = typeNode.startPosition.row + 1;
+        switch (typeNode.type) {
+            case 'identifier':
+                pushTarget(typeNode.text, directive, line);
+                return;
+            case 'generic_name':
+                pushTarget(findChild(typeNode, 'identifier').text, directive, line);
+                emitDirectiveArguments(typeNode, directive);
+                return;
+            case 'qualified_name':
+            case 'alias_qualified_name': {
+                const parts = qualifiedNameParts(typeNode);
+                if (parts.alias === undefined) {
+                    if (typeNode.text.startsWith('global::'))
+                        pushRef(parts.name, typeNode, line, true);
+                    else
+                        pushTarget(parts.name, directive, line);
+                }
+                for (const g of parts.generics)
+                    emitDirectiveArguments(g, directive);
+                return;
+            }
+            case 'array_type':
+            case 'nullable_type':
+            case 'pointer_type':
+                emitDirectiveType(typeNode.childForFieldName('type'), directive);
+                return;
+            case 'tuple_type':
+                for (const el of typeNode.namedChildren) {
+                    if (el.type === 'tuple_element')
+                        emitDirectiveType(el.childForFieldName('type'), directive);
+                }
+                return;
+            default:
+                // predefined_type / function_pointer_type / unrecognized → no named type.
+                return;
+        }
     }
-    // ── C#12 alias-RHS embedded named types (R7 + A6) ───────────────────────────────────────
-    // `using L = System.Collections.Generic.List<MyApp.Models.Customer>;` — the alias NAME `L`
-    // resolves to the closed generic on use (the container `List` is external), but the EMBEDDED
-    // named type arguments (`MyApp.Models.Customer`) are real dependencies the alias-on-use cannot
-    // surface as their own edge. The directive header is skipped by the main walk, so harvest the
-    // RHS's embedded named types here.
-    //
-    // C#12 lets the alias RHS be ANY type — a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`,
-    // a pointer `Mod.Header*`, a nullable value `Mod.Money?` — and each NAMED type embedded in the
-    // structural RHS is a real reference. So descend the RHS structural WRAPPERS (generic args,
-    // tuple elements, array/pointer/nullable element types) for their embedded named types. What is
-    // NEVER emitted: a plain top-level bare named RHS (`using X = N.Type;`) — that is the alias
-    // TARGET, surfaced via the alias map on USE (emitting it here would double-count the A3 edge),
-    // and the tuple element LABELS (they are not types).
+    /** The type arguments of one `generic_name` in a directive's target, each read as the directive reads its target. */
+    function emitDirectiveArguments(generic, directive) {
+        for (const arg of findChild(generic, 'type_argument_list').namedChildren)
+            emitDirectiveType(arg, directive);
+    }
+    // ── `using static N.C;` / `global using static N.C;` TARGET edge (A8/A11) ────────────────
+    // The directive imports the static MEMBERS of the concrete type `N.C`; the type itself is a real dependency of this file (never a namespace prefix: a sibling `N.Baz` is never imported). C# resolves it as a using alias target (spec §14.5.4, §14.5.2), so it is read where the directive stands: a directive below `namespace App;` or inside a namespace block reads `App.N.C` before `N.C`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part. A generic type (`using static Repo<Order>;`) gives the edge to `Repo` and to each type argument. Emitted FIRST so the descriptor order, and thus the final edge order, is kept.
+    walk(file.tree.rootNode, (node) => {
+        if (node.type !== 'using_directive')
+            return undefined;
+        if (!hasTokenChild(node, 'static'))
+            return false;
+        const target = node.namedChildren.find((c) => c !== null && NAMESPACE_NODE_TYPES.has(c.type));
+        if (target !== undefined && target !== null)
+            emitDirectiveType(target, node);
+        return false;
+    });
+    // ── The using alias target and the named types embedded in it (R7 + A6) ─────────────────
+    // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.Repo` before `Repo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part; a plain target is read more narrowly, below.
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'using_directive')
             return undefined;
         const aliasName = node.childForFieldName('name');
         if (aliasName === null)
             return false; // not an alias directive
-        // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.5.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target (`global::A.B.Foo`, `global::Program`) is rooted, its qualifier stripped as `using static` strips it. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and leaves the type arguments to the walk below.
         const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
-        const targetLine = node.startPosition.row + 1;
-        if (target !== undefined && target !== null && (target.type === 'identifier' || target.type === 'qualified_name' || target.type === 'alias_qualified_name' || target.type === 'generic_name')) {
-            const parts = qualifiedNameParts(target);
-            if (parts.alias === undefined) {
-                if (target.text.startsWith('global::')) {
-                    pushRef(parts.name, node, targetLine, true);
-                }
-                else if (!namesOwnProgram(parts.name)) {
-                    refs.push({ kind: 'target', fqn: parts.name, line: targetLine, enclosingNs: directiveBodyChain(file, node) });
-                }
-            }
+        if (target === undefined || target === null)
+            return false;
+        // A plain name (`using M = Models;`, `using F = A.B.Foo;`) may name a namespace as much as a type, and a nearer namespace of that name, which no type key shows, decides before any farther type (`namespace App; using M = Models;` with a namespace `App.Models` and a global type `Models` names the namespace): inside a namespace body its directive reads only the nearest reading (`nearest`), a deliberate silence for an unused alias to a farther type. A generic name is always a type and is read in full.
+        if (target.type === 'identifier' || (target.type === 'qualified_name' && !target.text.includes('<') && !target.text.includes('::'))) {
+            pushTarget(qualifiedNameParts(target).name, node, target.startPosition.row + 1, true);
         }
-        // Find every type_argument_list anywhere in the RHS and emit each argument's named types
-        // (covers `List<Customer>`, and a generic nested inside a tuple/array element).
-        walk(node, (n) => {
-            if (n.type === 'type_argument_list') {
-                for (let i = 0; i < n.namedChildCount; i++)
-                    emitTypeNode(n.namedChild(i));
-                return false; // args handled; do not descend further into this list
-            }
-            // Tuple / array / pointer / nullable RHS — the element type(s) are embedded NAMED types.
-            // Emit a non-generic element directly (a generic element is covered by the
-            // type_argument_list walk above; `emitted` dedups, and a `<…>`-bearing element is skipped
-            // here so we never emit a full `Container<…>` verbatim key). The top-level alias TARGET is
-            // a bare named RHS with no wrapper, so it is never reached here.
-            if (n.type === 'tuple_element') {
-                const t = n.childForFieldName('type');
-                if (t !== null && !t.text.includes('<'))
-                    emitTypeNode(t);
-                return undefined;
-            }
-            if (n.type === 'array_type' || n.type === 'pointer_type' || n.type === 'nullable_type') {
-                const el = n.childForFieldName('type');
-                if (el !== null && !el.text.includes('<'))
-                    emitTypeNode(el);
-                return undefined;
-            }
-            return undefined;
-        });
+        else {
+            emitDirectiveType(target, node);
+        }
         return false;
     });
     walk(file.tree.rootNode, (node) => {
@@ -1066,26 +1123,23 @@ export function extractCsharpRefs(file) {
             if (nameField === null || emitted.has(nameField.id))
                 return undefined;
             emitted.add(nameField.id);
-            // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name. After a using alias (`[S::Foo]`, `[S::Gen<T>]`, `using S = N;`) the right side is the attribute's name in the aliased namespace, rewritten on assembly as a type's `S::Tail` is (B5).
+            // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name. After a using alias (`[S::Foo]`, `[S::Gen<T>]`, `[S::Core.Mark]`, `using S = N;`) the rest is the attribute's name in the aliased namespace, rewritten on assembly as a type's `S::Tail` is (B5).
             const rooted = nameField.text.startsWith('global::');
             const aliasField = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('alias') : null;
             const alias = aliasField !== null && aliasField.text !== 'global' ? aliasField.text : undefined;
             const named = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('name') : nameField;
             // The C# attribute-naming convention: `[Foo]` may name `Foo` OR `FooAttribute`. Emit both readings as ONE group (the verbatim and the `Attribute`-suffixed form), so the dependency resolves whichever the declaring type is named.
-            const emitAttribute = (written, at) => {
+            const emitAttribute = (written, at, via = alias) => {
                 const last = written.split('.').pop() ?? written;
                 const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
-                pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, alias);
+                pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, via);
             };
             if (named !== null && named.type === 'identifier')
                 emitAttribute(named.text, nameField);
-            else if (named !== null && named.type === 'qualified_name' && !named.text.includes('<'))
-                emitAttribute(stripGlobalQualifier(named.text), nameField);
             else if (named !== null && named.type === 'qualified_name') {
-                // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) is rewritten onto the aliased namespace on assembly, as in a type position (the alias is read from the outer `S::` qualifier above, so `parts.alias` is empty here).
+                // An attribute behind a qualifier (`[A.Mark]`, `[global::A.Mark]`, `[A.Gen<Order>]`): the attribute is named by its plain dotted name, the `global::` qualifier and the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. The grammar nests a using alias at the deepest qualifier (`[S::Core.Mark]` is `(S::Core).Mark`), so `parts.alias` is that alias and `parts.name` the dotted name after it (`Core.Mark`), rewritten on assembly onto the aliased namespace, as `S::Core.Order` is in a type position.
                 const parts = qualifiedNameParts(named);
-                if (parts.alias === undefined)
-                    emitAttribute(parts.name, nameField);
+                emitAttribute(parts.name, nameField, parts.alias);
                 for (const g of parts.generics)
                     emitTypeArguments(g);
             }
@@ -1333,20 +1387,6 @@ export function assembleCsharpCandidates(extract, options = {}) {
             ...(options.projectGlobalUsings ?? []),
         ]),
     ].sort();
-    /** Drop undefined/empty/duplicate keys preserving first-seen order. */
-    const dedupKeys = (keys) => {
-        const seen = new Set();
-        const out2 = [];
-        for (const k of keys) {
-            if (k === undefined || k === '')
-                continue;
-            if (seen.has(k))
-                continue;
-            seen.add(k);
-            out2.push(k);
-        }
-        return out2;
-    };
     /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
     const viewAlias = (name, enclosingNs, at) => {
         // A name this file declares as an alias is read from its own directives: the one whose block is the innermost around the use. A block-only alias does not hide a project-wide `global using` alias of the same name, which sits in the compilation unit.
@@ -1359,19 +1399,47 @@ export function assembleCsharpCandidates(extract, options = {}) {
             const index = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
             if (index < 0)
                 continue;
-            best = { target: d.fqn, chain: d.rooted ? [] : d.body, nearer: enclosingNs.slice(0, index), bodyNs };
+            best = { target: d.fqn, chain: d.rooted ? [] : d.body, outer: d.rooted ? [] : d.outer, nearer: enclosingNs.slice(0, index), bodyNs };
             bestStart = d.start;
         }
         if (best !== undefined)
             return best;
         const projectTarget = projectAliases.get(name);
-        return projectTarget === undefined ? undefined : { target: projectTarget, chain: [], nearer: enclosingNs, bodyNs: undefined };
+        return projectTarget === undefined ? undefined : { target: projectTarget, chain: [], outer: [], nearer: enclosingNs, bodyNs: undefined };
     };
-    /** The keys an alias target (plus a dotted `tail`) reads as: the namespaces of the directive's body nearest first, then the global namespace. */
-    const aliasTargetKeys = (view, tail) => dedupKeys([...view.chain.map((ns) => `${ns}.${view.target}${tail}`), `${view.target}${tail}`]);
-    /** Push ONE group of verbatim keys, read in order (an alias rewrite, `S::Tail`): the first that binds wins. */
-    const pushKeys = (keys, line) => {
-        out.push({ candidates: keys.map((symbolKey) => ({ kind: 'symbol', symbolKey })), kind: 'import', line });
+    /**
+     * The readings of a name written in a using directive's target (`target`, plus a dotted `tail` when an alias of it leads a longer name), in C# lookup order (spec §7.8.1, §14.5.2): at each namespace of the directive's body, nearest first, the member of that namespace; then, where a namespace declaration around that body holds using directives (`outer`), an alias of the target's first name ends the readings there (that alias is not read, a silence), or else the types of the namespaces its usings import form one CS0104 set (a dotted name binds only a nested type under them, R4); and the global namespace last. The using directives of the body that holds the directive take no part, and neither do those of the compilation unit (a silence: C# reads them only after the global namespace).
+     */
+    const directiveReadings = (chain, outer, target, tail) => {
+        const name = `${target}${tail}`;
+        const lead = target.split('.')[0];
+        const hints = [];
+        const seen = new Set();
+        const add = (hint) => {
+            if (seen.has(hint.symbolKey))
+                return;
+            seen.add(hint.symbolKey);
+            hints.push(hint);
+        };
+        for (const ns of chain) {
+            add({ kind: 'symbol', symbolKey: `${ns}.${name}` });
+            const level = outer.find((o) => o.ns === ns);
+            if (level === undefined)
+                continue;
+            if (level.aliases.includes(lead))
+                return hints;
+            const set = level.prefixes.map((p) => ({ symbolKey: `${p}.${name}`, nestedOnly: name.includes('.') }));
+            for (const m of set)
+                add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set });
+        }
+        add({ kind: 'symbol', symbolKey: name });
+        return hints;
+    };
+    /** The readings of an alias target (plus a dotted `tail`): where its directive reads it (`directiveReadings`). */
+    const aliasTargetHints = (view, tail) => directiveReadings(view.chain, view.outer, view.target, tail);
+    /** Push ONE group of readings in order (an alias rewrite, `S::Tail`): the first that binds wins. */
+    const pushHints = (candidates, line) => {
+        out.push({ candidates, kind: 'import', line });
     };
     /**
      * Build and push ONE ordered candidate group for a reference whose written text is `ref` (a
@@ -1432,11 +1500,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
             // Co-definition set (R8): a member named like the alias in the SAME body (CS0576) competes with
             // it — 2+ of these resolving = ambiguous → silence. A member of an outer namespace loses to the alias.
             const sameBody = aliasView.bodyNs === undefined ? ref : `${aliasView.bodyNs}.${ref}`;
-            for (const aliasKey of aliasTargetKeys(aliasView, tail)) {
-                const coDef = dedupKeys([aliasKey, sameBody]).map((k) => ({
-                    symbolKey: k,
-                }));
-                add({ kind: 'symbol', symbolKey: aliasKey, set: coDef });
+            for (const hint of aliasTargetHints(aliasView, tail)) {
+                // A reading through an outer using is already a CS0104 set; the same-body member joins it.
+                const own = hint.set ?? [{ symbolKey: hint.symbolKey }];
+                const coDef = own.some((m) => m.symbolKey === sameBody) ? own : [...own, { symbolKey: sameBody }];
+                add({ ...hint, set: coDef });
             }
         }
         for (const k of enclosing)
@@ -1505,14 +1573,14 @@ export function assembleCsharpCandidates(extract, options = {}) {
     // types, then the main walk) — the order is load-bearing for the downstream reason order.
     for (const r of refs) {
         switch (r.kind) {
-            case 'static':
-                // `using static N.C;` TARGET edge (A8/A11): resolve verbatim from root, sole candidate.
-                out.push({ candidates: [{ kind: 'symbol', symbolKey: r.fqn }], kind: 'import', line: r.line });
-                break;
             case 'target': {
-                // A using alias target (185): the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
-                const keys = dedupKeys([...r.enclosingNs.map((ns) => `${ns}.${r.fqn}`), r.fqn]);
-                const candidates = keys.map((symbolKey) => ({ kind: 'symbol', symbolKey }));
+                // A named type of a using alias or `using static` target, read where the directive reads it (`directiveReadings`). A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+                // An alias's own plain target inside a namespace body (`nearest`) reads its nearest reading only: a nearer namespace of that name would hide every farther one.
+                if (r.nearest === true && r.enclosingNs.length > 0) {
+                    pushHints([{ kind: 'symbol', symbolKey: `${r.enclosingNs[0]}.${r.fqn}` }], r.line);
+                    break;
+                }
+                const candidates = directiveReadings(r.enclosingNs, r.outer ?? [], r.fqn, '');
                 if (r.fqn === 'Program')
                     candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
                 out.push({ candidates, kind: 'import', line: r.line });
@@ -1528,7 +1596,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // dot-only key → R13 silence-by-luck).
                 const view = viewAlias(r.aliasName, r.enclosingNs, r.at);
                 if (view !== undefined)
-                    pushKeys(aliasTargetKeys(view, `.${r.tail}`), r.line);
+                    pushHints(aliasTargetHints(view, `.${r.tail}`), r.line);
                 break;
             }
             case 'attr': {
@@ -1540,9 +1608,9 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 const view = viewAlias(r.alias, r.enclosingNs, r.at);
                 if (view !== undefined) {
                     const before = out.length;
-                    pushKeys(aliasTargetKeys(view, `.${r.written}`), r.line);
+                    pushHints(aliasTargetHints(view, `.${r.written}`), r.line);
                     if (r.suffixed !== undefined)
-                        pushKeys(aliasTargetKeys(view, `.${r.suffixed}`), r.line);
+                        pushHints(aliasTargetHints(view, `.${r.suffixed}`), r.line);
                     mergeGroupsFrom(before, r.line);
                 }
                 break;
@@ -1579,7 +1647,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 7,
+    rev: 8,
     declarations,
     uses,
 };

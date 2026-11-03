@@ -282,6 +282,15 @@ describe('MATRIX — C# using aliases to a type, with and without use (issue 185
   it('csharp-using-alias-generic-target-edge', () => runCase('csharp-using-alias-generic-target-edge'));
 });
 
+describe('MATRIX — C# using directive targets, read where the directive reads them', () => {
+  it('csharp-alias-target-type-argument-directive-scope-edge', () => runCase('csharp-alias-target-type-argument-directive-scope-edge'));
+  it('csharp-using-static-namespace-body-generic-edge', () => runCase('csharp-using-static-namespace-body-generic-edge'));
+  it('csharp-alias-namespace-beside-global-type-edge', () => runCase('csharp-alias-namespace-beside-global-type-edge'));
+  it('csharp-alias-target-outer-block-using-edge', () => runCase('csharp-alias-target-outer-block-using-edge'));
+  it('csharp-alias-qualified-dotted-attribute-edge', () => runCase('csharp-alias-qualified-dotted-attribute-edge'));
+  it('csharp-tuple-unnamed-alias-qualified-element-edge', () => runCase('csharp-tuple-unnamed-alias-qualified-element-edge'));
+});
+
 describe('MATRIX — C# alias-qualified type names (issue 188)', () => {
   it('csharp-alias-colon-colon-generic-edge', () => runCase('csharp-alias-colon-colon-generic-edge'));
   it('csharp-alias-colon-colon-qualified-tail-edge', () => runCase('csharp-alias-colon-colon-qualified-tail-edge'));
