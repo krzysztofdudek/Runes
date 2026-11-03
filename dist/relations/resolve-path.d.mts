@@ -85,6 +85,8 @@ interface CargoManifest {
     workspaceEdition: string | undefined;
     /** `[lib].edition` as written, undefined when absent: the edition of the library target alone. */
     libEdition: string | undefined;
+    /** Whether a `[lib]` table is written, in any spelling: Cargo then has a library even where `src/lib.rs` is missing, at `src/<name>.rs` in edition 2015. */
+    libDeclared: boolean;
     /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
     packageName: string | undefined;
     /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */

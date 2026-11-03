@@ -215,8 +215,16 @@ function makeRustResolveDeps(plain, exists) {
     }
     /** The library tree of the package at `pkgDir`. */
     function libTreeOf(pkgDir, manifest) {
-        const rootFile = under(pkgDir, manifest?.libPath ?? 'src/lib.rs') ?? under(pkgDir, 'src/lib.rs');
+        const rootFile = under(pkgDir, libPathOf(pkgDir, manifest) ?? 'src/lib.rs') ?? under(pkgDir, 'src/lib.rs');
         return { srcDir: dirOf(rootFile), rootFiles: [rootFile] };
+    }
+    /** The library's path, package-relative as written: `[lib].path`, or (Cargo's `normalize_lib`, edition 2015 only) `src/<name>.rs` for a `[lib]` table that gives no `path` when `src/lib.rs` is missing and that file exists. Undefined for the default, `src/lib.rs`. */
+    function libPathOf(pkgDir, manifest) {
+        if (manifest === undefined || manifest.libPath !== undefined || !manifest.libDeclared || manifest.crateName === undefined)
+            return manifest?.libPath;
+        const at = (sub) => (pkgDir === '' ? sub : `${pkgDir}/${sub}`);
+        const legacy = `src/${manifest.crateName}.rs`;
+        return !exists(at('src/lib.rs')) && exists(at(legacy)) && isEdition2015(pkgDir, manifest) ? legacy : undefined;
     }
     function crateRootFor(fromFile) {
         const file = toPosix(fromFile);
@@ -233,7 +241,7 @@ function makeRustResolveDeps(plain, exists) {
         const legacyBinPaths = [];
         const sharedNameBins = new Set();
         if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
-            const hasLib = exists(at(path.posix.normalize(manifest.libPath ?? 'src/lib.rs')));
+            const hasLib = exists(at(path.posix.normalize(libPathOf(pkgDir, manifest) ?? 'src/lib.rs')));
             for (const named of manifest.namedTargets) {
                 if (!named.startsWith('src/bin/'))
                     continue;
@@ -253,7 +261,7 @@ function makeRustResolveDeps(plain, exists) {
         const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? manifest.declaredDirs.filter((d) => !manifest.undiscoveredDirs.includes(d) && !manifest.discoveredDirs.includes(d)) : [])];
         const namedTargets = manifest?.namedTargets.filter((n) => !sharedNameBins.has(n));
         const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
-        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin);
+        const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin);
         return {
             srcDir: at(target.srcDir),
             crateName,
@@ -268,7 +276,7 @@ function makeRustResolveDeps(plain, exists) {
         const packageIs2015 = isEdition2015(pkgDir, manifest);
         if (manifest === undefined || roots.length === 0)
             return packageIs2015;
-        const libRoot = path.posix.normalize(manifest.libPath ?? 'src/lib.rs');
+        const libRoot = path.posix.normalize(libPathOf(pkgDir, manifest) ?? 'src/lib.rs');
         const editionOf = (root) => {
             const own = root === libRoot ? manifest.libEdition : manifest.targetEditions.find((t) => targetRootsAt(t, root, manifest.packageName))?.edition;
             return own === undefined ? packageIs2015 : own === '2015';
@@ -640,6 +648,7 @@ export function parseCargoManifest(text) {
     let editionInherited = false;
     let workspaceEdition;
     let libEdition;
+    let libDeclared = false;
     // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
     let inTarget;
     const dependencies = new Map();
@@ -677,6 +686,8 @@ export function parseCargoManifest(text) {
     // One `key = value` at its full key path (the table header's segments, then the key's).
     const assign = (keyPath, value) => {
         const top = keyPath[0];
+        if (top === 'lib')
+            libDeclared = true;
         if (top === 'package')
             hasPackage = true;
         if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'name')
@@ -757,6 +768,8 @@ export function parseCargoManifest(text) {
             sectionPath = keySegments(header[1]);
             if (sectionPath[0] === 'package')
                 hasPackage = true;
+            if (sectionPath[0] === 'lib')
+                libDeclared = true;
             inTarget = line.startsWith('[[') && sectionPath.length === 1 && TARGET_TABLES.has(sectionPath[0]) ? { kind: sectionPath[0] } : undefined;
             if (inTarget !== undefined)
                 targets.push(inTarget);
@@ -792,6 +805,7 @@ export function parseCargoManifest(text) {
         editionInherited,
         workspaceEdition,
         libEdition,
+        libDeclared,
         packageName,
         targetEditions: targets.flatMap((t) => (typeof t.edition === 'string' ? [{ kind: t.kind, name: typeof t.name === 'string' ? t.name : undefined, path: typeof t.path === 'string' ? t.path : undefined, edition: t.edition }] : [])),
         declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),
