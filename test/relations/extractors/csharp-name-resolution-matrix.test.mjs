@@ -338,3 +338,8 @@ describe('MATRIX — C# using directives scoped to their namespace block', () =>
 describe('MATRIX — C# alias target on its directive line, behind the nearer names', () => {
   it('csharp-alias-qualified-target-directive-edge', () => runCase('csharp-alias-qualified-target-directive-edge'));
 });
+
+describe('MATRIX — C# rooted using directives inside a namespace block', () => {
+  it('csharp-using-rooted-block-global-edge', () => runCase('csharp-using-rooted-block-global-edge'));
+  it('csharp-using-rooted-block-beside-namespace-edge', () => runCase('csharp-using-rooted-block-beside-namespace-edge'));
+});

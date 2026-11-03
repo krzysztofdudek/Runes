@@ -458,8 +458,8 @@ interface UsingScope {
   globalAliases: Map<string, string>;
   /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target, `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only; `outer` are the using directives of the namespace declarations around that body (`outerUsings`), which take part in the lookup at their own namespace. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
   aliasDecls: Map<string, Array<{ fqn: string; body: string[]; rooted: boolean; outer: OuterUsings[]; start: number; end: number }>>;
-  /** Every plain `using N;` directive of the file that is not a `global using`, in file order: `ns` the namespace as written (its `global::` qualifier stripped), `body` the enclosing-namespace chain of the body that holds it (innermost first, empty in the compilation unit), `start`/`end` the text range of that body's block (`directiveBlock`). The directive imports its namespace for the references inside that range only, at the level of `body[0]`; inside a namespace body the namespace it names is read where it stands, nearest namespace first (C# spec §14.5.3). `prefixes` lists the same directives' namespaces without their place. */
-  prefixDecls: Array<{ ns: string; body: string[]; start: number; end: number }>;
+  /** Every plain `using N;` directive of the file that is not a `global using`, in file order: `ns` the namespace as written (its `global::` qualifier stripped, and then `rooted`: such a namespace is read from the global namespace only), `body` the enclosing-namespace chain of the body that holds it (innermost first, empty in the compilation unit), `start`/`end` the text range of that body's block (`directiveBlock`). The directive imports its namespace for the references inside that range only, at the level of `body[0]`; inside a namespace body the namespace it names is read where it stands, nearest namespace first (C# spec §14.5.3). `prefixes` lists the same directives' namespaces without their place. */
+  prefixDecls: Array<{ ns: string; rooted: boolean; body: string[]; start: number; end: number }>;
   /** The written TARGET type (its `global::` qualifier stripped, with the directive's line) of each `using static N.C;` /
    *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
    *  type whose static members are imported — that target is a real type dependency of this file,
@@ -500,6 +500,11 @@ function declaresVariable(decl: Node, scope: CsScope): boolean {
   if (tuple.type !== 'tuple_expression') return false;
   const target = tuple.parent!;
   return (target.type === 'assignment_expression' || target.type === 'foreach_statement') && target.childForFieldName('left')?.id === tuple.id;
+}
+
+/** True when a using directive's namespace is written after `global::` (`using global::Core;`): it names that namespace from the global namespace. */
+function isRootedDirective(directive: Node): boolean {
+  return directive.namedChildren.some((c) => c !== null && NAMESPACE_NODE_TYPES.has(c.type) && c.text.startsWith('global::'));
 }
 
 /** True when the directive has an anonymous token child of the given keyword type. */
@@ -598,7 +603,7 @@ function buildUsingScope(file: ParsedFile): UsingScope {
       else {
         prefixes.push(ns);
         const block = directiveBlock(file, node, scope, info);
-        prefixDecls.push({ ns, body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
+        prefixDecls.push({ ns, rooted: isRootedDirective(node), body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
       }
     }
     return undefined;
@@ -616,7 +621,7 @@ function directiveBlock(file: ParsedFile, directive: Node, scope: CsScope, info:
   return { start: 0, end: root.endIndex };
 }
 
-/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings name (as written: each is read where the declaration stands), `aliases` the names its using aliases declare, `statics` the types its `using static` directives name (as written, type arguments stripped), whose nested types they import (C# spec §14.5.4). */
+/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings name (as written, a `global::` qualifier kept: each is read where the declaration stands, a rooted one from the global namespace), `aliases` the names its using aliases declare, `statics` the types its `using static` directives name (as written, type arguments stripped), whose nested types they import (C# spec §14.5.4). */
 interface OuterUsings { ns: string; prefixes: string[]; aliases: string[]; statics: string[] }
 
 /** A symbol hint, the only kind the C# extractor emits. */
@@ -649,7 +654,7 @@ function nsEntry(frame: NsFrame, info: FileNsInfo): OuterUsings | null {
     if (aliasName !== null) aliases.push(aliasName.text);
     else {
       const ns = directiveNamespaceText(d!);
-      if (ns !== undefined && ns !== '') prefixes.push(ns);
+      if (ns !== undefined && ns !== '') prefixes.push(isRootedDirective(d!) ? `global::${ns}` : ns);
     }
   }
   let entry: OuterUsings | null = null;
@@ -1597,7 +1602,7 @@ export function assembleCsharpCandidates(
       }
       return l;
     };
-    for (const d of blockPrefixes) if (at >= d.start && at < d.end) level(d.body[0]).prefixes.push(d.ns);
+    for (const d of blockPrefixes) if (at >= d.start && at < d.end) level(d.body[0]).prefixes.push(d.rooted ? `global::${d.ns}` : d.ns);
     for (const { name, d } of blockAliases) if (at >= d.start && at < d.end) level(d.body[0]).aliases.push(name);
     return enclosingNs.filter((ns) => byNs.has(ns)).map((ns) => byNs.get(ns)!);
   };
@@ -1607,9 +1612,11 @@ export function assembleCsharpCandidates(
     (scope.aliasDecls.get(name) ?? []).find((d) => d.body[0] === ns && at >= d.start && at < d.end);
 
   /**
-   * The namespaces a namespace name written in a using directive may stand for (`name`, read in a body whose enclosing namespaces are `chain`, innermost first, with the using directives of the declarations around that body in `levels`), in C# lookup order (spec §14.5.3, §7.8.1): at each namespace of the chain, nearest first, its member namespace of that name; where a declaration of that namespace holds an alias of the name's first segment, that alias decides, read where its own directive reads its target; the global namespace last. Each reading but the first carries the nearer names of the first segment the lookup would stop at (`shadow`), so a nearer namespace the repository declares voids it.
+   * The namespaces a namespace name written in a using directive may stand for (`name`, read in a body whose enclosing namespaces are `chain`, innermost first, with the using directives of the declarations around that body in `levels`), in C# lookup order (spec §14.5.3, §7.8.1): at each namespace of the chain, nearest first, its member namespace of that name; where a declaration of that namespace holds an alias of the name's first segment, that alias decides, read where its own directive reads its target; the global namespace last. A name written after `global::` is read from the global namespace only. Each reading but the first carries the nearer names of the first segment the lookup would stop at (`shadow`), so a nearer namespace the repository declares voids it.
    */
   const namespaceReadings = (chain: string[], levels: OuterUsings[], at: number, name: string): Array<{ key: string; shadow: string[] }> => {
+    // A namespace written after `global::` is read from the global namespace only, whatever is nearer (C# spec §14.8.1).
+    if (name.startsWith('global::')) return [{ key: name.slice('global::'.length), shadow: [] }];
     const lead = name.split('.')[0];
     const out: Array<{ key: string; shadow: string[] }> = [];
     const shadow: string[] = [];
@@ -1950,7 +1957,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 10,
+  rev: 11,
   declarations,
   uses,
 };
