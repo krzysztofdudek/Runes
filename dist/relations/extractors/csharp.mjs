@@ -906,16 +906,6 @@ export function extractCsharpRefs(file) {
         }
         return null;
     }
-    // ── `using static N.C;` / `global using static N.C;` TARGET edge (A8/A11) ────────────────
-    // The directive imports the static MEMBERS of the concrete type `N.C` — the target type
-    // itself is a real, fully-qualified type dependency of this file (never a namespace prefix:
-    // a sibling `N.Baz` is never imported). It resolves FROM THE ROOT as its sole candidate (like
-    // an alias RHS): no enclosing-ns / using-prefix expansion. Emitted FIRST (matching the
-    // original walk's leading static-target loop) so the descriptor order — and thus the final
-    // edge order — is preserved.
-    for (const target of scope.staticTargets) {
-        refs.push({ kind: 'static', fqn: target.fqn, line: target.line });
-    }
     /** Emit one named type written in a using directive's target as the directive reads it (a `target` descriptor): in the namespace body that holds the directive, nearest namespace first, no using directive or alias of that body taking part. A bare `Program` in a file of top-level statements names that file's own class and is not emitted, as in `pushRef`. */
     const pushTarget = (name, directive, line) => {
         if (namesOwnProgram(name))
@@ -969,6 +959,18 @@ export function extractCsharpRefs(file) {
         for (const arg of findChild(generic, 'type_argument_list').namedChildren)
             emitDirectiveType(arg, directive);
     }
+    // ── `using static N.C;` / `global using static N.C;` TARGET edge (A8/A11) ────────────────
+    // The directive imports the static MEMBERS of the concrete type `N.C`; the type itself is a real dependency of this file (never a namespace prefix: a sibling `N.Baz` is never imported). C# resolves it as a using alias target (spec §14.5.4, §14.5.2), so it is read where the directive stands: a directive below `namespace App;` or inside a namespace block reads `App.N.C` before `N.C`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part. A generic type (`using static Repo<Order>;`) gives the edge to `Repo` and to each type argument. Emitted FIRST so the descriptor order, and thus the final edge order, is kept.
+    walk(file.tree.rootNode, (node) => {
+        if (node.type !== 'using_directive')
+            return undefined;
+        if (!hasTokenChild(node, 'static'))
+            return false;
+        const target = node.namedChildren.find((c) => c !== null && NAMESPACE_NODE_TYPES.has(c.type));
+        if (target !== undefined && target !== null)
+            emitDirectiveType(target, node);
+        return false;
+    });
     // ── The using alias target and the named types embedded in it (R7 + A6) ─────────────────
     // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part.
     walk(file.tree.rootNode, (node) => {
@@ -1508,12 +1510,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
     // types, then the main walk) — the order is load-bearing for the downstream reason order.
     for (const r of refs) {
         switch (r.kind) {
-            case 'static':
-                // `using static N.C;` TARGET edge (A8/A11): resolve verbatim from root, sole candidate.
-                out.push({ candidates: [{ kind: 'symbol', symbolKey: r.fqn }], kind: 'import', line: r.line });
-                break;
             case 'target': {
-                // A using alias target (185): the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+                // A named type of a using alias or `using static` target: the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
                 const keys = dedupKeys([...r.enclosingNs.map((ns) => `${ns}.${r.fqn}`), r.fqn]);
                 const candidates = keys.map((symbolKey) => ({ kind: 'symbol', symbolKey }));
                 if (r.fqn === 'Program')

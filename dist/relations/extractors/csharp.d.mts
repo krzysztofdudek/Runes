@@ -26,11 +26,11 @@ interface UsingScope {
         start: number;
         end: number;
     }>>;
-    /** Fully-resolved TARGET type FQN (with the directive's line) of each `using static N.C;` /
+    /** The written TARGET type (its `global::` qualifier stripped, with the directive's line) of each `using static N.C;` /
      *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
      *  type whose static members are imported — that target is a real type dependency of this file,
-     *  resolved like an alias RHS (already fully-qualified). NOT a namespace prefix (a sibling
-     *  `N.Baz` is never imported). */
+     *  NOT a namespace prefix (a sibling `N.Baz` is never imported). The edge itself comes from the
+     *  `target` descriptors the extract emits for the directive, which read the type where the directive stands. */
     staticTargets: Array<{
         fqn: string;
         line: number;
@@ -102,14 +102,7 @@ export type CsharpRefDescriptor =
     enclosingNs: string[];
     at: number;
 }
-/** A `using static N.C;` / `global using static N.C;` TARGET edge — the concrete type whose
- *  static members are imported. Resolves verbatim-from-root as its sole candidate (A8/A11). */
- | {
-    kind: 'static';
-    fqn: string;
-    line: number;
-}
-/** The TARGET of a using alias directive (`using F = A.B.Foo;`), a dependency on that type whether or not the alias is used (185). C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
+/** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
  | {
     kind: 'target';
     fqn: string;
