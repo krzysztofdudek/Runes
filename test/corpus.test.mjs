@@ -128,6 +128,52 @@ describe('the corpus gate', () => {
     writeFileSync(join(work, 'explained.md'), '');
   });
 
+  test('a kind no comparison reports is refused with its line, so a misspelt oracle kind cannot explain nothing', () => {
+    writeFileSync(join(work, 'explained.md'), ['# Explained', '', '- `fixture` `typescript:false-edges` `app/main.js:2` `../lib/other` `lib/other.js` `unresolved in the repository`: a misspelt kind', ''].join('\n'));
+    const r = corpus('verify');
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /corpus: explained\.md:3: no comparison reports the kind 'typescript:false-edges'; it must be \+, - or one of typescript:false-edge, /);
+    writeFileSync(join(work, 'explained.md'), '');
+  });
+
+  test('an oracle explanation names both answers and stops matching when either of them changes', () => {
+    // A `file:` dependency: npm links tools/plug into node_modules and Runes binds it; TypeScript reads no package manager manifest and finds nothing.
+    const plugRepo = join(tmp, 'plug');
+    mkdirSync(plugRepo);
+    git(plugRepo, 'init', '-q');
+    put(plugRepo, 'package.json', JSON.stringify({ name: 'app', devDependencies: { plug: 'file:./tools/plug' } }));
+    put(plugRepo, 'tools/plug/package.json', JSON.stringify({ name: 'plug', main: 'index.js' }));
+    put(plugRepo, 'tools/plug/index.js', 'module.exports = 1;\n');
+    put(plugRepo, 'app.js', "const plug = require('plug');\nmodule.exports = plug;\n");
+    git(plugRepo, 'add', '.');
+    git(plugRepo, 'commit', '-q', '-m', 'plug');
+    manifest([{ id: 'plug', url: pathToFileURL(plugRepo).href, commit: git(plugRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+    const entry = '- `plug` `typescript:false-edge` `app.js:1` `plug` `tools/plug/index.js` `unresolved in the repository`';
+    writeFileSync(join(work, 'explained.md'), '');
+    const bare = corpus('oracles');
+    assert.equal(bare.code, 1, bare.out);
+    // The unexplained disagreement is printed as the entry that would explain it.
+    assert.ok(bare.out.includes(`UNEXPLAINED ${entry}\n`), bare.out);
+    writeFileSync(join(work, 'explained.md'), `${entry}: a file: dependency npm links and TypeScript does not read\n`);
+    const exact = corpus('oracles');
+    assert.equal(exact.code, 0, exact.out);
+    assert.match(exact.out, /ok {3}plug .*1 disagreements, 1 explained/);
+    for (const [changed, moved] of [['`tools/plug/index.js`', '`tools/plug/other.js`'], ['`unresolved in the repository`', '`tools/plug/index.js`']]) {
+      writeFileSync(join(work, 'explained.md'), `${entry.replace(changed, moved)}: written for another answer\n`);
+      const r = corpus('oracles');
+      assert.equal(r.code, 1, `${moved}\n${r.out}`);
+      assert.match(r.out, /FAIL plug .*1 disagreements, 0 explained/);
+      assert.match(r.out, /1 explanations of plug match no disagreement of this run:\n {4}UNUSED explained\.md:1: /);
+    }
+    // An oracle entry without its answers is refused, not read as explaining every answer.
+    writeFileSync(join(work, 'explained.md'), '- `plug` `typescript:false-edge` `app.js:1` `plug`: no answers\n');
+    const short = corpus('oracles');
+    assert.equal(short.code, 1, short.out);
+    assert.match(short.out, /corpus: explained\.md:1: an oracle entry names both answers it explains after the subject/);
+    writeFileSync(join(work, 'explained.md'), '');
+    manifest([fixture()]);
+  });
+
   test('a golden made at another commit than the pin fails verify and is replaced by update', () => {
     writeFileSync(goldenFile(), `# runes corpus golden: fixture at ${'0'.repeat(40)}\n`);
     const v = corpus('verify');
