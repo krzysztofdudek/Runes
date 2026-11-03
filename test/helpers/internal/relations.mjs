@@ -12,6 +12,7 @@ export * from '../../../dist/relations/extractors/python-resolve.mjs';
 export * from '../../../dist/relations/extractors/ruby-resolve.mjs';
 export * from '../../../dist/relations/extractors/rust-resolve.mjs';
 export * from '../../../dist/relations/extractors/typescript-resolve.mjs';
+export * from '../../../dist/relations/extractors/semver-range.mjs';
 export * from '../../../dist/relations/resolver.mjs';
 export * from '../../../dist/relations/resolve-path.mjs';
 export * from '../../../dist/relations/exact-case.mjs';

@@ -16,8 +16,8 @@ import {
   csharpUses, collectGlobalUsings, collectGlobalUsingAliases,
 } from '../helpers/internal/relations.mjs';
 
-/** Support-file basenames the path resolvers read but never parse as source. A `## Files` block whose extension has no grammar language is accepted only when its basename is one of these (anything else is a typo and throws). Go reads go.mod (and go.work), PHP reads composer.json, C/C++ reads compile_commands.json, Rust reads Cargo.toml, C# reads Directory.Build.*; the lock and sum files are harmless to materialize. */
-const CONFIG_BASENAMES = new Set(['compile_commands.json', 'go.mod', 'go.work', 'go.sum', 'composer.json', 'Cargo.toml', 'Cargo.lock', 'Directory.Build.props', 'Directory.Build.targets']);
+/** Support-file basenames the path resolvers read but never parse as source. A `## Files` block whose extension has no grammar language is accepted only when its basename is one of these (anything else is a typo and throws). Go reads go.mod (and go.work), PHP reads composer.json, C/C++ reads compile_commands.json, Rust reads Cargo.toml, C# reads Directory.Build.*, and the TS resolver reads .npmrc and the lockfiles to know the package manager; the lock and sum files are harmless to materialize. */
+const CONFIG_BASENAMES = new Set(['.npmrc', 'yarn.lock', 'compile_commands.json', 'go.mod', 'go.work', 'go.sum', 'composer.json', 'Cargo.toml', 'Cargo.lock', 'Directory.Build.props', 'Directory.Build.targets']);
 
 /** Support-file extensions accepted the same way: a C# project file scopes global usings to its project and carries `<Using>` items. */
 const CONFIG_EXTENSIONS = new Set(['.csproj']);
