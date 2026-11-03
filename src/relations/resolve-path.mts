@@ -257,10 +257,12 @@ function makeRustResolveDeps(
     // Target sub-paths are package-relative and never climb, so a plain join is exact.
     const at = (sub: string): string => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
     // Cargo (edition 2015 only, `target_path` and `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found as neither or as more than one of `src/bin/<name>.rs`, `src/bin/<name>/main.rs` and (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`. A bin found twice that takes such a path is rooted there alone.
+    // Cargo (`normalize_lib`, `autolib`): with `autolib = false` and no `[lib]` table the package has no library, and `src/lib.rs` is no root. `has_lib` is whether a library is configured (a `[lib]` table) or inferred, not whether a file stands at its path.
+    const inferLib = manifest === undefined || !manifest.autolibOff || manifest.libDeclared;
     const legacyBinPaths: string[] = [];
     const sharedNameBins = new Set<string>();
     if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
-      const hasLib = exists(at(path.posix.normalize(libPathOf(pkgDir, manifest) ?? 'src/lib.rs')));
+      const hasLib = manifest.libDeclared || (inferLib && exists(at('src/lib.rs')));
       for (const named of manifest.namedTargets) {
         if (!named.startsWith('src/bin/')) continue;
         const name = named.slice('src/bin/'.length);
@@ -278,7 +280,7 @@ function makeRustResolveDeps(
     const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
     // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
     const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib);
     return {
       srcDir: at(target.srcDir),
       crateName,
@@ -402,6 +404,7 @@ export function rustTargetFor(
   namedTargets: readonly string[] = [],
   inferMain = true,
   droppedInferred: readonly string[] = [],
+  inferLib = true,
 ): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } {
   const targets = [...new Set(targetPaths.map((p) => path.posix.normalize(p)))];
   // `src/main.rs` is a crate root when Cargo infers it (`inferMain`, false under `autobins = false` unless a `[[bin]]` is named like the package, and when a declared bin of the package's name left it out) or a `[[bin]]` names it by `path`; otherwise it belongs to no crate.
@@ -413,6 +416,7 @@ export function rustTargetFor(
   const dirOfRoot = (root: string): string => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
   if (targets.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
   const libRoot = path.posix.normalize(libPath ?? 'src/lib.rs');
+  const libRoots = inferLib ? [libRoot] : [];
   // The tree of the deepest directory that holds `rel` and one of `roots` (below `floor` when given), or undefined.
   const deepestTree = (roots: string[], floor?: string): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } | undefined => {
     let dir: string | undefined;
@@ -431,7 +435,7 @@ export function rustTargetFor(
     const named = namedTargets.filter((n) => n.startsWith('src/bin/') && !n.slice('src/bin/'.length).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
     if (named.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
     // A root in `src/` holds `rel` in its directory; with no `src/main.rs` and a library elsewhere, none does.
-    return deepestTree([...mainRoots, libRoot, ...named, ...targets]) ?? { srcDir: 'src', rootFiles: [], fileIsRoot: false };
+    return deepestTree([...mainRoots, ...libRoots, ...named, ...targets]) ?? { srcDir: 'src', rootFiles: [], fileIsRoot: false };
   } else if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3) {
     if (segs.length === 3) return { srcDir: 'src/bin', rootFiles: [rel], fileIsRoot: true };
     const dir = `src/bin/${segs[2]}`;
@@ -441,22 +445,22 @@ export function rustTargetFor(
   if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2 && (undiscoveredDirs.includes(segs[0]) || !inferredLive(segs.length === 2 ? rel : `${segs[0]}/${segs[1]}/main.rs`, segs[0]))) {
     const named = namedTargets.filter((n) => n.startsWith(`${segs[0]}/`) && !n.slice(segs[0].length + 1).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
     if (named.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
-    return deepestTree([libRoot, ...named, ...targets]) ?? { srcDir: segs[0], rootFiles: [], fileIsRoot: false };
+    return deepestTree([...libRoots, ...named, ...targets]) ?? { srcDir: segs[0], rootFiles: [], fileIsRoot: false };
   }
   if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2) {
     if (segs.length === 2) return { srcDir: segs[0], rootFiles: [rel], fileIsRoot: true };
     const main = `${segs[0]}/${segs[1]}/main.rs`;
     if (rel === main) return { srcDir: dirOfRoot(main), rootFiles: [main], fileIsRoot: true };
-    return deepestTree([libRoot, ...(existsInPackage(main) ? [main] : []), ...targets], segs[0]) ?? { srcDir: segs[0], rootFiles: [], fileIsRoot: false };
+    return deepestTree([...libRoots, ...(existsInPackage(main) ? [main] : []), ...targets], segs[0]) ?? { srcDir: segs[0], rootFiles: [], fileIsRoot: false };
   }
   if (rel === 'build.rs') return { srcDir: '', rootFiles: [rel], fileIsRoot: true };
   const mainRoot = 'src/main.rs';
-  if (rel === libRoot || (rel === mainRoot && mainIsRoot)) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
+  if ((inferLib && rel === libRoot) || (rel === mainRoot && mainIsRoot)) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
   if (segs[0] !== 'src') {
-    const tree = deepestTree([libRoot, ...targets]);
+    const tree = deepestTree([...libRoots, ...targets]);
     if (tree !== undefined) return tree;
   }
-  return { srcDir: 'src', rootFiles: [...(libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots], fileIsRoot: false };
+  return { srcDir: 'src', rootFiles: [...(inferLib && libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots], fileIsRoot: false };
 }
 
 /** The parts of a Cargo.toml the Rust resolver needs. */
@@ -492,6 +496,8 @@ interface CargoManifest {
   libEdition: string | undefined;
   /** Whether a `[lib]` table is written, in any spelling: Cargo then has a library even where `src/lib.rs` is missing, at `src/<name>.rs` in edition 2015. */
   libDeclared: boolean;
+  /** `[package].autolib` written as `false`: with no `[lib]` table Cargo then infers no library from `src/lib.rs`. */
+  autolibOff: boolean;
   /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
   packageName: string | undefined;
   /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
@@ -700,6 +706,7 @@ export function parseCargoManifest(text: string): CargoManifest {
   let workspaceEdition: string | undefined;
   let libEdition: string | undefined;
   let libDeclared = false;
+  let autolibOff = false;
   // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
   let inTarget: CargoTarget | undefined;
   const dependencies = new Map<string, CargoDependencySpec>();
@@ -746,6 +753,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'name') libName = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'path') libPath = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'edition') libEdition = tomlString(value);
+    else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'autolib') autolibOff = value === 'false';
     else if (keyPath.length === 2 && top === 'package' && Object.values(DISCOVERED_DIRS).some((d) => d.flag === keyPath[1])) {
       const { dir } = Object.values(DISCOVERED_DIRS).find((d) => d.flag === keyPath[1])!;
       if (value === 'false' && !undiscoveredDirs.includes(dir)) undiscoveredDirs.push(dir);
@@ -825,6 +833,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     workspaceEdition,
     libEdition,
     libDeclared,
+    autolibOff,
     packageName,
     targetEditions: targets.flatMap((t) => (typeof t.edition === 'string' ? [{ kind: t.kind, name: typeof t.name === 'string' ? t.name : undefined, path: typeof t.path === 'string' ? t.path : undefined, edition: t.edition }] : [])),
     declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),
