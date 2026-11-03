@@ -956,6 +956,17 @@ path = "..\u002fmore"
     expect(rustFileDeclares('mod m { struct Error;', 'Error', true)).toBe(false);
     expect(rustFileDeclares('} struct Error;', 'Error', true)).toBe(true);
     expect(rustFileDeclares('use a::b', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('extern "C" { fn foo(); }', 'foo', true)).toBe(true);
+    expect(rustFileDeclares('thread_local! { static COUNTER: Cell<u8> = Cell::new(0); }', 'COUNTER', true)).toBe(true);
+    expect(rustFileDeclares('bitflags! { pub struct Flags: u32 { const A = 1; } }', 'Flags', true)).toBe(true);
+    expect(rustFileDeclares('cfg_if! { if #[cfg(unix)] { mod imp; } else { mod imp; } }', 'imp', true)).toBe(true);
+    expect(rustFileDeclares('extern "C" { fn foo(); }\nfn g() { struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('impl<T> S<T> where T: Copy { fn Error() {} }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('pub trait T { type Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('unsafe impl Send for S { const Error: u8 = 0; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { let s = br#"} " }"#; struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { let s = b"}"; struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { let bar = 1; struct Error; }', 'Error', true)).toBe(false);
     expect(rustFileDeclares('fn f() { let s = "}"; struct Error; }', 'Error', true)).toBe(false);
     expect(rustFileDeclares('fn f() { let c = \'}\'; let d = \'\\\\\'\'; struct Error; }', 'Error', true)).toBe(false);
     expect(rustFileDeclares('fn f() { let s = r#"} " }"#; struct Error; }', 'Error', true)).toBe(false);
