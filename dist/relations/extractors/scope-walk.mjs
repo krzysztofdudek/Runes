@@ -1,0 +1,44 @@
+/**
+ * Visit `root` and every node below it, depth-first in document order, handing each node the scope its ancestors made. The visitor returns `false` to skip the node's children, `undefined` to let them inherit the scope it was given, or a new scope for them. The walk moves a tree cursor (first child, next sibling, parent), each step constant time, and keeps one scope per depth, so a context an extractor needs from the ancestors (the enclosing namespaces, the type parameters in scope) is carried down once instead of being read by climbing `.parent` from every node, which costs the square of the depth.
+ */
+export function walkScoped(root, initial, visitor) {
+    const cursor = root.walk();
+    try {
+        // scopes[d] is the scope the nodes at depth d inherit (depth 0 is `root`, which inherits `initial`).
+        const scopes = [initial];
+        let depth = 0;
+        for (;;) {
+            const result = visitor(cursor.currentNode, scopes[depth]);
+            if (result !== false && cursor.gotoFirstChild()) {
+                scopes[depth + 1] = result === undefined ? scopes[depth] : result;
+                depth++;
+                continue;
+            }
+            while (depth > 0 && !cursor.gotoNextSibling()) {
+                cursor.gotoParent();
+                depth--;
+            }
+            if (depth === 0)
+                return;
+        }
+    }
+    finally {
+        cursor.delete();
+    }
+}
+/**
+ * The scope every node of `roots` sees, by node id: `seen(node, inherited)` is the scope the node itself is read in (the identity when absent; a scope that depends on which child of its parent a node is resolves here), and `below(node, seen)` the scope its children inherit (the same one when it returns `undefined`). `skip` names the nodes whose children are left out. A lookup is a constant-time read, however deep the node lies, which is what lets a helper that is handed a node a few levels under the one the walk is at read the same scope a climb from it would have found.
+ */
+export function indexScopes(roots, initial, below, seen, skip) {
+    const index = new Map();
+    for (const root of roots) {
+        walkScoped(root, initial, (node, inherited) => {
+            const own = seen === undefined ? inherited : seen(node, inherited);
+            index.set(node.id, own);
+            if (skip?.(node) === true)
+                return false;
+            return below(node, own) ?? (own === inherited ? undefined : own);
+        });
+    }
+    return index;
+}

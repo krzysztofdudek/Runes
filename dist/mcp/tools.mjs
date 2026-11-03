@@ -2,7 +2,7 @@
  * MCP tools generated from the command table: one tool per public command, `<prefix><command>` (a subcommand or a dash joins with `_`: `grain_decide_steer`), one field per argument and per flag under the flag's own name, and the annotations from the table. A call is turned back into the argv the CLI would get, so the CLI's own parser reads it exactly as it reads a command line.
  */
 import { isAbsolute } from 'node:path';
-import { argSpec, commandFlags, pathFields, publicCommands } from '../cli/table.mjs';
+import { argSpec, commandFlags, pathFields, publicCommands, toolWord } from '../cli/table.mjs';
 /** A JSON-RPC "invalid params" refusal (-32602): the call's input does not fit the tool. */
 export class InvalidParams extends Error {
     rpcCode = -32602;
@@ -18,7 +18,7 @@ const ABS = 'An absolute path.';
 const DEFAULT_OMIT = ['help'];
 /** A tool's name for a command. */
 export function toolName(prefix, command) {
-    return prefix + command.replace(/[ -]/g, '_');
+    return prefix + toolWord(command);
 }
 export const prefixOf = (table, options = {}) => options.prefix ?? `${table.tool}_`;
 /** The fields a command's tool takes, by kind: its arguments, then its flags and the global flags not omitted. */
@@ -55,6 +55,20 @@ export function buildTools(table, options = {}) {
     const prefix = prefixOf(table, options);
     const describe = options.describe ?? defaultDescription;
     const tools = [];
+    const seen = new Map();
+    for (const command of publicCommands(table)) {
+        const name = toolName(prefix, command);
+        const first = seen.get(name);
+        if (first !== undefined)
+            throw new Error(`commands "${first}" and "${command}" both give the MCP tool name "${name}"`);
+        seen.set(name, command);
+    }
+    if (options.help !== undefined) {
+        const name = toolName(prefix, 'help');
+        const first = seen.get(name);
+        if (first !== undefined)
+            throw new Error(`the help tool and command "${first}" both give the MCP tool name "${name}"`);
+    }
     for (const command of publicCommands(table)) {
         const spec = table.commands[command];
         const paths = pathFields(table, command);
