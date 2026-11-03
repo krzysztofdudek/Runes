@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
+import { indexScopes, walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
 import { isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
@@ -285,17 +286,43 @@ function typeParameterNames(node: Node): Set<string> {
 /**
  * The ordered candidates for one simple type name written without an import, in the file's package (JLS §6.4.1, §6.3, §7.6), see samePackageGroup: nothing when the name is a type parameter in scope; the member types a supertype of an enclosing declaration may inherit (collected here from the declarations whose body holds the use), then the package's own type.
  */
-function samePackageCandidates(scope: FileScope, name: string, node: Node): TargetHint[] | undefined {
+function samePackageCandidates(scope: FileScope, name: string, around: AroundScope): TargetHint[] | undefined {
   const supertypeLists: string[][] = [];
-  let child: Node = node;
-  for (let a = node.parent; a !== null; child = a, a = a.parent) {
-    const typeParameters = a.childForFieldName('type_parameters');
-    if (typeParameters !== null && typeParameterNames(typeParameters).has(name)) return undefined;
-    if (!TYPE_BODIES.has(child.type)) continue;
-    if (!NAMED_TYPE_DECLARATIONS.has(a.type) && a.type !== 'object_creation_expression') continue;
-    supertypeLists.push(superTypeNames(a));
-  }
+  for (let t = around.typeParameters; t !== null; t = t.outer) if (t.names.has(name)) return undefined;
+  for (let s = around.supertypes; s !== null; s = s.outer) supertypeLists.push(s.names);
   return samePackageGroup(scope, name, supertypeLists);
+}
+
+/**
+ * What the declarations around a node say about the simple names written in it, carried down the walk instead of read by climbing from each node: `typeParameters` links the type parameters of every ancestor that declares some, `supertypes` the supertype names of every enclosing type body (innermost first), and `entering` the declaration (or anonymous class creation) whose children are being entered, so that its supertypes count for the child that is a body and for no other.
+ */
+interface AroundScope {
+  readonly typeParameters: { readonly names: Set<string>; readonly outer: AroundScope['typeParameters'] } | null;
+  readonly supertypes: { readonly names: string[]; readonly outer: AroundScope['supertypes'] } | null;
+  readonly entering: Node | null;
+}
+
+const OUTSIDE: AroundScope = { typeParameters: null, supertypes: null, entering: null };
+
+/** The scope around every node of a compilation unit, by node id. */
+function aroundScopes(root: Node): Map<number, AroundScope> {
+  return indexScopes<AroundScope>(
+    [root],
+    OUTSIDE,
+    (node, seen) => {
+      const typeParameters = node.childForFieldName('type_parameters');
+      const declares = typeParameters !== null;
+      const entering = NAMED_TYPE_DECLARATIONS.has(node.type) || node.type === 'object_creation_expression' ? node : null;
+      if (!declares && entering === null) return undefined;
+      return { typeParameters: declares ? { names: typeParameterNames(typeParameters), outer: seen.typeParameters } : seen.typeParameters, supertypes: seen.supertypes, entering };
+    },
+    (node, inherited) => {
+      if (inherited.entering === null) return inherited;
+      // The declaration's supertypes reach only what is inside its body.
+      const supertypes = TYPE_BODIES.has(node.type) ? { names: superTypeNames(inherited.entering), outer: inherited.supertypes } : inherited.supertypes;
+      return { typeParameters: inherited.typeParameters, supertypes, entering: null };
+    },
+  );
 }
 
 /** True when `n` is the receiver of a member access or method reference: `Owner` of `Owner.m()`, `Owner.X`, `Owner::m`. */
@@ -311,12 +338,13 @@ function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
   const scope = fileScope(file);
+  const scopes = scope === undefined ? new Map<number, AroundScope>() : aroundScopes(file.tree.rootNode);
 
   // Same-package references (no import): one ordered candidate group per simple name, see samePackageCandidates.
   const seenGroups = new Set<string>();
   const emitSamePackage = (name: string, node: Node): void => {
     if (scope === undefined || name === '' || name === 'var') return;
-    const candidates = samePackageCandidates(scope, name, node);
+    const candidates = samePackageCandidates(scope, name, scopes.get(node.id)!);
     if (candidates === undefined) return;
     const line = node.startPosition.row + 1;
     const dedupKey = `${candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : '')).join('|')} ${line}`;
@@ -453,26 +481,6 @@ function packageFqn(file: ParsedFile): string {
   return pkg;
 }
 
-/** The enclosing-TYPE chain of `node`, outermost-first: the `name` of every ancestor
- *  `class`/`interface`/`enum`/`record` declaration. A nested `class Inner` inside
- *  `class Outer` yields `["Outer"]`; deeper nesting yields `["Outer", "Mid"]`; empty for a
- *  top-level declaration. Joined to the declaration's own simple name by the reflection
- *  separator `+` (Java's JVM binary name is `Outer$Inner`; the analyzer's canonical key is
- *  `Outer+Inner` — same boundary), DISJOINT from the package `.` so a nested key lives in a
- *  string space no dot-only candidate can collide with (separator isolation). */
-function enclosingTypeChain(node: Node): string[] {
-  const parts: string[] = [];
-  let cur: Node | null = node.parent;
-  while (cur !== null) {
-    if (DECLARATION_TYPES.has(cur.type)) {
-      const name = cur.childForFieldName('name')?.text;
-      if (name !== undefined && name !== '') parts.unshift(name);
-    }
-    cur = cur.parent;
-  }
-  return parts;
-}
-
 /**
  * The FULLY-QUALIFIED symbol keys this file DEFINES. Java IMPORTS resolve by PATH first (the
  * package = directory convention under the importing file's ancestors), and fall back to this
@@ -501,14 +509,15 @@ function enclosingTypeChain(node: Node): string[] {
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
   const pkg = packageFqn(file);
-  walk(file.tree.rootNode, (node) => {
+  // The scope is the enclosing-TYPE chain, outermost first, joined by the reflection separator `+` (Java's JVM binary name is `Outer$Inner`; the analyzer's canonical key is `Outer+Inner` — same boundary), DISJOINT from the package `.` so a nested key lives in a string space no dot-only candidate can collide with (separator isolation). It is empty for a top-level declaration, and carried down the walk: the `name` of every ancestor `class`/`interface`/`enum`/`record` declaration.
+  walkScoped<string>(file.tree.rootNode, '', (node, enclosing) => {
     if (!DECLARATION_TYPES.has(node.type)) return undefined;
     const nameNode = node.childForFieldName('name');
     if (nameNode === null || nameNode.text === '') return undefined;
-    const typeKey = [...enclosingTypeChain(node), nameNode.text].join('+');
+    const typeKey = enclosing === '' ? nameNode.text : `${enclosing}+${nameNode.text}`;
     const symbolKey = pkg === '' ? typeKey : `${pkg}.${typeKey}`;
     out.push({ symbolKey, line: node.startPosition.row + 1 });
-    return undefined;
+    return typeKey;
   });
   return out;
 }
