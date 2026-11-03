@@ -38,6 +38,12 @@ function randomTable(r) {
   }
   // Drop a command key that is a prefix group of another (`a` and `a b`), which resolveCommand reads as the longer one.
   for (const k of Object.keys(commands)) if (Object.keys(commands).some((o) => o !== k && o.startsWith(`${k} `))) delete commands[k];
+  // Drop a command whose MCP tool name an earlier command already has (`a a` and `a-a` both give `prop_a_a`): the table would be refused.
+  const taken = new Set();
+  for (const k of Object.keys(commands)) {
+    const joined = k.replace(/[ -]/g, '_');
+    if (taken.has(joined)) delete commands[k]; else taken.add(joined);
+  }
   return defineTable({ tool: 'prop', globalFlags, commands });
 }
 
@@ -155,6 +161,29 @@ describe('properties of the command line', () => {
       }
     }
   }));
+});
+
+describe('commands whose names give one MCP tool name', () => {
+  const colliding = { tool: 'prop', commands: { 'a a': { args: [], flags: {}, paths: [] }, 'a-a': { args: [], flags: {}, paths: [] } } };
+
+  test('defineTable refuses the table and names both commands', () => {
+    assert.throws(() => defineTable(colliding), /commands "a a" and "a-a": both give the MCP tool name "<prefix>a_a"/);
+  });
+
+  test('buildTools refuses a table that skipped defineTable, naming both commands and the tool', () => {
+    assert.throws(() => buildTools(colliding), /commands "a a" and "a-a" both give the MCP tool name "prop_a_a"/);
+  });
+
+  test('buildTools refuses a public command named help when the help tool is on, and accepts it when it is off', () => {
+    const table = defineTable({ tool: 'prop', commands: { help: { args: [], flags: {}, paths: [] } } });
+    assert.throws(() => buildTools(table, { help: 'usage' }), /the help tool and command "help" both give the MCP tool name "prop_help"/);
+    assert.deepEqual(buildTools(table).map((t) => t.name), ['prop_help']);
+  });
+
+  test('an internal command takes no tool name, so it does not collide', () => {
+    const table = defineTable({ tool: 'prop', commands: { 'a a': { args: [], flags: {}, paths: [] }, 'a-a': { args: [], flags: {}, paths: [], internal: true } } });
+    assert.deepEqual(buildTools(table).map((t) => t.name), ['prop_a_a']);
+  });
 });
 
 describe('properties of the lock', () => {
