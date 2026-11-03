@@ -539,3 +539,38 @@ describe('resolver — same-package hints and source sets', () => {
     expect(r.classify({ kind: 'symbol', symbolKey: 'a.Owner' }, fromMain, 'java').kind).toBe('ambiguous');
   });
 });
+
+// C#: a reading behind a nearer namespace or type the lookup stops at (`shadow`) binds nothing.
+describe('resolver — C# shadowed readings', () => {
+  const owners = { ownerOf: (f) => f.split('/')[1] };
+  const mk = (st, reach) => makeResolver({ ownerIndex: owners, symbolTable: st, resolvePathToFile: () => undefined, reach });
+  const table = () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'Models', 'src/global/Models.cs');
+    st.declare('csharp', 'App.Models.Order', 'src/models/Order.cs');
+    st.declare('csharp', 'App.Thing', 'src/thing/Thing.cs');
+    st.declare('csharp', 'Program', 'src/lib/Program.cs');
+    return st;
+  };
+
+  it('a hint is void when a shadow name is a namespace or a type of the repository, and binds when none is', () => {
+    const r = mk(table());
+    expect(r.classify({ kind: 'symbol', symbolKey: 'Models', shadow: ['App.Models'] }, 'src/c/C.cs', 'csharp')).toEqual({ kind: 'absent' });
+    expect(r.classify({ kind: 'symbol', symbolKey: 'Models', shadow: ['App.Thing'] }, 'src/c/C.cs', 'csharp')).toEqual({ kind: 'absent' });
+    expect(r.classify({ kind: 'symbol', symbolKey: 'Models', shadow: ['Web.Models'] }, 'src/c/C.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'global' });
+    expect(r.resolve({ kind: 'symbol', symbolKey: 'Models', shadow: ['App.Models'] }, 'src/c/C.cs', 'csharp')).toBeUndefined();
+    expect(r.resolveFile({ kind: 'symbol', symbolKey: 'Models', shadow: ['App.Models'] }, 'src/c/C.cs', 'csharp')).toBeUndefined();
+  });
+
+  it('a set member is void on its own shadow, the other members still count', () => {
+    const r = mk(table());
+    const set = [{ symbolKey: 'Models', shadow: ['App.Models'] }, { symbolKey: 'App.Thing' }];
+    expect(r.classify({ kind: 'symbol', symbolKey: 'Models', set }, 'src/c/C.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'thing' });
+  });
+
+  it('a shadowed global Program is void under a reference graph too', () => {
+    const reach = () => 'reachable';
+    expect(mk(table(), reach).classify({ kind: 'symbol', symbolKey: 'Program', shadow: ['App.Thing'] }, 'src/c/C.cs', 'csharp')).toEqual({ kind: 'absent' });
+    expect(mk(table(), reach).classify({ kind: 'symbol', symbolKey: 'Program', shadow: ['Web.Program'] }, 'src/c/C.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+  });
+});
