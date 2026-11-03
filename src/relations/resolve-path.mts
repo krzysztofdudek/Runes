@@ -454,7 +454,7 @@ interface CargoManifest {
   undiscoveredDirs: string[];
   /** The directories whose auto-discovery `[package]` turns on by writing the flag `true` (`autobins = true`): the one thing that keeps discovery on in an edition 2015 package that declares a target of that kind. */
   discoveredDirs: string[];
-  /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) of which the manifest declares at least one target, by `path` or by `name`. */
+  /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) whose target array the manifest writes: a `[[bin]]` table, or an inline array, an empty `bin = []` included. */
   declaredDirs: string[];
   /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name` and no `path`: Cargo roots it at `<dir>/<name>.rs` or `<dir>/<name>/main.rs`, whether or not auto-discovery is on. */
   namedTargets: string[];
@@ -666,6 +666,8 @@ export function parseCargoManifest(text: string): CargoManifest {
   let libPath: string | undefined;
   // Each element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array, with the `name` and `path` it gives (`null` for one written but not readable as a string).
   const targets: CargoTarget[] = [];
+  // The kinds whose target array is written at all, an empty `bin = []` included: Cargo's edition 2015 default turns that kind's discovery off.
+  const writtenKinds = new Set<string>();
   const undiscoveredDirs: string[] = [];
   const discoveredDirs: string[] = [];
   let hasPackage = false;
@@ -723,8 +725,10 @@ export function parseCargoManifest(text: string): CargoManifest {
       if (value === 'false' && !undiscoveredDirs.includes(dir)) undiscoveredDirs.push(dir);
       else if (value === 'true' && !discoveredDirs.includes(dir)) discoveredDirs.push(dir);
     } else if (keyPath.length === 1 && TARGET_TABLES.has(top)) {
-      // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
-      for (const item of inlineArrayItems(value) ?? []) {
+      // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table. An empty array declares the kind all the same, as Cargo reads it.
+      const items = inlineArrayItems(value);
+      if (items !== undefined) writtenKinds.add(top);
+      for (const item of items ?? []) {
         const target: CargoTarget = { kind: top };
         for (const [key, member] of membersOf(item)) if (key[0] === 'name' || key[0] === 'path' || key[0] === 'edition') target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
         if (inlineTableMembers(item) !== undefined) targets.push(target);
@@ -785,7 +789,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     targetPaths: targets.flatMap((t) => (typeof t.path === 'string' ? [t.path] : [])),
     undiscoveredDirs,
     discoveredDirs,
-    declaredDirs: [...new Set(targets.filter((t) => Object.hasOwn(DISCOVERED_DIRS, t.kind)).map((t) => DISCOVERED_DIRS[t.kind].dir))],
+    declaredDirs: [...new Set([...targets.map((t) => t.kind), ...writtenKinds])].map((kind) => DISCOVERED_DIRS[kind].dir),
     namedTargets: targets.flatMap((t) => (t.path === undefined && typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
     hasPackage,
     edition,
