@@ -128,6 +128,98 @@ describe('the corpus gate', () => {
     writeFileSync(join(work, 'explained.md'), '');
   });
 
+  test('a kind no comparison reports is refused with its line, so a misspelt oracle kind cannot explain nothing', () => {
+    writeFileSync(join(work, 'explained.md'), ['# Explained', '', '- `fixture` `typescript:false-edges` `app/main.js:2` `../lib/other` `lib/other.js` `unresolved in the repository`: a misspelt kind', ''].join('\n'));
+    const r = corpus('verify');
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /corpus: explained\.md:3: no comparison reports the kind 'typescript:false-edges'; it must be \+, - or one of typescript:false-edge, /);
+    writeFileSync(join(work, 'explained.md'), '');
+  });
+
+  test('an oracle explanation names both answers and stops matching when either of them changes', () => {
+    // A `file:` dependency: npm links tools/plug into node_modules and Runes binds it; TypeScript reads no package manager manifest and finds nothing.
+    const plugRepo = join(tmp, 'plug');
+    mkdirSync(plugRepo);
+    git(plugRepo, 'init', '-q');
+    put(plugRepo, 'package.json', JSON.stringify({ name: 'app', devDependencies: { plug: 'file:./tools/plug' } }));
+    put(plugRepo, 'tools/plug/package.json', JSON.stringify({ name: 'plug', main: 'index.js' }));
+    put(plugRepo, 'tools/plug/index.js', 'module.exports = 1;\n');
+    put(plugRepo, 'app.js', "const plug = require('plug');\nmodule.exports = plug;\n");
+    git(plugRepo, 'add', '.');
+    git(plugRepo, 'commit', '-q', '-m', 'plug');
+    manifest([{ id: 'plug', url: pathToFileURL(plugRepo).href, commit: git(plugRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+    const entry = '- `plug` `typescript:false-edge` `app.js:1` `plug` `tools/plug/index.js` `unresolved in the repository`';
+    writeFileSync(join(work, 'explained.md'), '');
+    const bare = corpus('oracles');
+    assert.equal(bare.code, 1, bare.out);
+    // The unexplained disagreement is printed as the entry that would explain it.
+    assert.ok(bare.out.includes(`UNEXPLAINED ${entry}\n`), bare.out);
+    writeFileSync(join(work, 'explained.md'), `${entry}: a file: dependency npm links and TypeScript does not read\n`);
+    const exact = corpus('oracles');
+    assert.equal(exact.code, 0, exact.out);
+    assert.match(exact.out, /ok {3}plug .*1 disagreements, 1 explained/);
+    for (const [changed, moved] of [['`tools/plug/index.js`', '`tools/plug/other.js`'], ['`unresolved in the repository`', '`tools/plug/index.js`']]) {
+      writeFileSync(join(work, 'explained.md'), `${entry.replace(changed, moved)}: written for another answer\n`);
+      const r = corpus('oracles');
+      assert.equal(r.code, 1, `${moved}\n${r.out}`);
+      assert.match(r.out, /FAIL plug .*1 disagreements, 0 explained/);
+      assert.match(r.out, /1 explanations of plug match no disagreement of this run:\n {4}UNUSED explained\.md:1: /);
+    }
+    // An oracle entry without its answers is refused, not read as explaining every answer.
+    writeFileSync(join(work, 'explained.md'), '- `plug` `typescript:false-edge` `app.js:1` `plug`: no answers\n');
+    const short = corpus('oracles');
+    assert.equal(short.code, 1, short.out);
+    assert.match(short.out, /corpus: explained\.md:1: an oracle entry names both answers it explains after the subject/);
+    writeFileSync(join(work, 'explained.md'), '');
+    manifest([fixture()]);
+  });
+
+  // The go command lists no package under testdata for `./...`, yet imports one by its import path; the stub does the same, so the oracle runs where go is not installed. Where it is, the real one answers too.
+  const GO_STUB = [
+    '#!/usr/bin/env node',
+    "const fs = require('fs'); const path = require('path');",
+    'const args = process.argv.slice(2);',
+    "if (args[0] === 'version') { console.log('go version stub'); process.exit(0); }",
+    "if (args[0] !== 'list') process.exit(2);",
+    "const mod = /^module\\s+(\\S+)/m.exec(fs.readFileSync('go.mod', 'utf8'))[1];",
+    "const hasGo = (d) => fs.existsSync(d) && fs.readdirSync(d).some((f) => f.endsWith('.go'));",
+    'const out = [];',
+    "const walk = (d, rel) => { if (hasGo(d)) out.push({ ImportPath: rel ? `${mod}/${rel}` : mod, Dir: d }); for (const e of fs.readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !['testdata', 'vendor'].includes(e.name) && !/^[._]/.test(e.name)) walk(path.join(d, e.name), rel ? `${rel}/${e.name}` : e.name); };",
+    "for (const p of args.slice(1).filter((a) => !a.startsWith('-'))) {",
+    "  if (p === './...') walk(process.cwd(), '');",
+    "  else if (p.startsWith(`${mod}/`) && hasGo(path.join(process.cwd(), p.slice(mod.length + 1)))) out.push({ ImportPath: p, Dir: path.join(process.cwd(), p.slice(mod.length + 1)) });",
+    "  else out.push({ ImportPath: p, Error: { Err: 'no package' } });",
+    '}',
+    "process.stdout.write(out.map((o) => JSON.stringify(o, null, '\\t')).join('\\n') + '\\n');",
+    '',
+  ].join('\n');
+  const realGo = spawnSync('go', ['version'], { encoding: 'utf8' }).status === 0;
+
+  for (const which of ['stub', 'real']) {
+    test(`the Go oracle asks go list for an import path that ./... leaves out, a package under testdata (${which} go)`, { skip: which === 'stub' ? process.platform === 'win32' && 'the stub is a script with a shebang' : !realGo && 'go is not installed' }, () => {
+      const goRepo = join(tmp, `go-${which}`);
+      mkdirSync(goRepo);
+      git(goRepo, 'init', '-q');
+      put(goRepo, 'go.mod', 'module example.com/m\n\ngo 1.21\n');
+      put(goRepo, 'a/a.go', 'package a\n\nimport "example.com/m/testdata/proto"\n\nvar X = proto.Y\n');
+      put(goRepo, 'testdata/proto/p.go', 'package proto\n\nvar Y = 1\n');
+      git(goRepo, 'add', '.');
+      git(goRepo, 'commit', '-q', '-m', 'go');
+      manifest([{ id: 'gomod', url: pathToFileURL(goRepo).href, commit: git(goRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+      const env = { ...ENV };
+      if (which === 'stub') {
+        const bin = join(tmp, 'go-stub-bin');
+        mkdirSync(bin, { recursive: true });
+        writeFileSync(join(bin, 'go'), GO_STUB, { mode: 0o755 });
+        env.PATH = `${bin}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH}`;
+      }
+      const r = spawnSync(process.execPath, [SCRIPT, 'oracles', '--manifest', join(work, 'manifest.json'), '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache')], { env, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /ok {3}gomod .*checked: go 1; 0 disagreements/);
+      manifest([fixture()]);
+    });
+  }
+
   test('a golden made at another commit than the pin fails verify and is replaced by update', () => {
     writeFileSync(goldenFile(), `# runes corpus golden: fixture at ${'0'.repeat(40)}\n`);
     const v = corpus('verify');
@@ -167,6 +259,26 @@ describe('the corpus gate', () => {
     assert.equal(heavy.code, 1, heavy.out);
     assert.match(heavy.out, /FAIL heavy-one .*no golden yet/);
     manifest([fixture()]);
+  });
+
+  test('gate, the default command, runs the edges and the oracles over one resolution, and an edge change fails it with the oracles still reported', () => {
+    const golden = readFileSync(goldenFile(), 'utf8');
+    for (const r of [corpus('gate'), spawnSync(process.execPath, [SCRIPT, '--manifest', join(work, 'manifest.json'), '--goldens', join(work, 'goldens'), '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache')], { env: ENV, encoding: 'utf8' })]) {
+      const out = r.out ?? `${r.stdout}${r.stderr}`;
+      assert.equal(r.code ?? r.status, 0, out);
+      assert.match(out, /^corpus gate: 1 repositories/m);
+      assert.match(out, /ok {3}fixture .*0 added, 0 removed/);
+      assert.match(out, /ok {3}fixture .*checked: typescript 2; 0 disagreements/);
+      assert.match(out, /corpus gate: passed/);
+    }
+    writeFileSync(goldenFile(), `${golden}app/main.js:3\tlib/util.js\n`);
+    const edges = corpus('gate');
+    assert.equal(edges.code, 1, edges.out);
+    assert.match(edges.out, /UNEXPLAINED - app\/main\.js:3 -> lib\/util\.js/);
+    // The oracles still run when the edges fail, so one run shows both.
+    assert.match(edges.out, /ok {3}fixture .*checked: typescript 2/);
+    assert.match(edges.out, /corpus gate: FAILED \(1\)/);
+    writeFileSync(goldenFile(), golden);
   });
 
   test('oracles through a cache reached by a symbolic link (as the temporary directory of macOS is) agree on the fixture as through its real path', () => {
