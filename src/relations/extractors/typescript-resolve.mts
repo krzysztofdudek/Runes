@@ -916,17 +916,20 @@ export function makeTsResolveDeps(
     const references = referencesOf(file);
     if (references.length === 0 || holds(own, dirOf(file), fromFile)) return view(own);
     const seen = new Set([file]);
-    // The first referenced project, in the order of `references` and depth first, that holds the file serves it, as tsserver picks the project of a file several projects include; an unreadable config that may hold the file, met before any that does, leaves the answer unknown.
-    const search = (configs: string[]): TsPathConfig | 'unknown' | undefined => {
-      for (const ref of configs) {
-        if (seen.has(ref)) continue;
-        seen.add(ref);
-        const loaded = loadConfig(ref, dirOf(ref));
-        if (loaded === 'unknown') {
-          if (mayHold(ref, fromFile)) return 'unknown';
-        } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
-        const deeper = search(referencesOf(ref));
-        if (deeper !== undefined) return deeper;
+    // The first referenced project, in the order of `references`, every direct reference before any nested one, that holds the file serves it, as tsserver picks the project of a file several projects include; an unreadable config that may hold the file, met before any that does, leaves the answer unknown.
+    const search = (first: string[]): TsPathConfig | 'unknown' | undefined => {
+      for (let level = first; level.length > 0; ) {
+        const next: string[] = [];
+        for (const ref of level) {
+          if (seen.has(ref)) continue;
+          seen.add(ref);
+          const loaded = loadConfig(ref, dirOf(ref));
+          if (loaded === 'unknown') {
+            if (mayHold(ref, fromFile)) return 'unknown';
+          } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
+          next.push(...referencesOf(ref));
+        }
+        level = next;
       }
       return undefined;
     };
