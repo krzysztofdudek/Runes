@@ -234,8 +234,16 @@ function makeRustResolveDeps(
 
   /** The library tree of the package at `pkgDir`. */
   function libTreeOf(pkgDir: string, manifest: CargoManifest | undefined): { srcDir: string; rootFiles: string[] } {
-    const rootFile = under(pkgDir, manifest?.libPath ?? 'src/lib.rs') ?? under(pkgDir, 'src/lib.rs')!;
+    const rootFile = under(pkgDir, libPathOf(pkgDir, manifest) ?? 'src/lib.rs') ?? under(pkgDir, 'src/lib.rs')!;
     return { srcDir: dirOf(rootFile), rootFiles: [rootFile] };
+  }
+
+  /** The library's path, package-relative as written: `[lib].path`, or (Cargo's `normalize_lib`, edition 2015 only) `src/<name>.rs` for a `[lib]` table that gives no `path` when `src/lib.rs` is missing and that file exists. Undefined for the default, `src/lib.rs`. */
+  function libPathOf(pkgDir: string, manifest: CargoManifest | undefined): string | undefined {
+    if (manifest === undefined || manifest.libPath !== undefined || !manifest.libDeclared || manifest.crateName === undefined) return manifest?.libPath;
+    const at = (sub: string): string => (pkgDir === '' ? sub : `${pkgDir}/${sub}`);
+    const legacy = `src/${manifest.crateName}.rs`;
+    return !exists(at('src/lib.rs')) && exists(at(legacy)) && isEdition2015(pkgDir, manifest) ? legacy : undefined;
   }
 
   function crateRootFor(fromFile: string): RustCrateRoot | undefined {
@@ -248,21 +256,27 @@ function makeRustResolveDeps(
     const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
     // Target sub-paths are package-relative and never climb, so a plain join is exact.
     const at = (sub: string): string => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-    // Cargo (edition 2015 only, `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found neither as `src/bin/<name>.rs`, `src/bin/<name>/main.rs` nor (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`.
+    // Cargo (edition 2015 only, `target_path` and `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found as neither or as more than one of `src/bin/<name>.rs`, `src/bin/<name>/main.rs` and (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`. A bin found twice that takes such a path is rooted there alone.
     const legacyBinPaths: string[] = [];
+    const sharedNameBins = new Set<string>();
     if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
-      const hasLib = exists(at(path.posix.normalize(manifest.libPath ?? 'src/lib.rs')));
+      const hasLib = exists(at(path.posix.normalize(libPathOf(pkgDir, manifest) ?? 'src/lib.rs')));
       for (const named of manifest.namedTargets) {
         if (!named.startsWith('src/bin/')) continue;
         const name = named.slice('src/bin/'.length);
-        if (exists(at(`${named}.rs`)) || exists(at(`${named}/main.rs`)) || (name === manifest.packageName && exists(at('src/main.rs')))) continue;
+        const inferred = [`${named}.rs`, `${named}/main.rs`, ...(name === manifest.packageName ? ['src/main.rs'] : [])].filter((p) => exists(at(p)));
+        if (inferred.length === 1) continue;
         const legacy = [...(hasLib ? [] : [`src/${name}.rs`]), 'src/main.rs', 'src/bin/main.rs'].find((p) => exists(at(p)));
-        if (legacy !== undefined) legacyBinPaths.push(legacy);
+        if (legacy === undefined) continue;
+        legacyBinPaths.push(legacy);
+        if (inferred.length > 1) sharedNameBins.add(named);
       }
     }
-    // Cargo (edition 2015): a package that declares a bin turns bin auto-discovery off unless `autobins = true`; from 2018 on discovery is always on. The same rule holds for tests, examples and benches, which are not yet read this way.
-    const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? (manifest.declaredDirs.includes('src/bin') && !manifest.undiscoveredDirs.includes('src/bin') && !manifest.discoveredDirs.includes('src/bin') ? ['src/bin'] : []) : [])];
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, manifest?.namedTargets, !undiscovered.includes('src/bin') || (manifest?.declaresMainBin ?? false));
+    // Cargo (edition 2015, `toml_targets_and_inferred`): a package that declares a target of a kind (bin, test, example, bench) turns that kind's auto-discovery off unless its flag (`autobins = true`, …) keeps it on; from 2018 on discovery is always on.
+    const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? manifest.declaredDirs.filter((d) => !manifest.undiscoveredDirs.includes(d) && !manifest.discoveredDirs.includes(d)) : [])];
+    const namedTargets = manifest?.namedTargets.filter((n) => !sharedNameBins.has(n));
+    const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin);
     return {
       srcDir: at(target.srcDir),
       crateName,
@@ -277,7 +291,7 @@ function makeRustResolveDeps(
   function targetIsEdition2015(pkgDir: string, manifest: CargoManifest | undefined, roots: string[]): boolean {
     const packageIs2015 = isEdition2015(pkgDir, manifest);
     if (manifest === undefined || roots.length === 0) return packageIs2015;
-    const libRoot = path.posix.normalize(manifest.libPath ?? 'src/lib.rs');
+    const libRoot = path.posix.normalize(libPathOf(pkgDir, manifest) ?? 'src/lib.rs');
     const editionOf = (root: string): boolean => {
       const own = root === libRoot ? manifest.libEdition : manifest.targetEditions.find((t) => targetRootsAt(t, root, manifest.packageName))?.edition;
       return own === undefined ? packageIs2015 : own === '2015';
@@ -454,7 +468,7 @@ interface CargoManifest {
   undiscoveredDirs: string[];
   /** The directories whose auto-discovery `[package]` turns on by writing the flag `true` (`autobins = true`): the one thing that keeps discovery on in an edition 2015 package that declares a target of that kind. */
   discoveredDirs: string[];
-  /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) of which the manifest declares at least one target, by `path` or by `name`. */
+  /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) whose target array the manifest writes: a `[[bin]]` table, or an inline array, an empty `bin = []` included. */
   declaredDirs: string[];
   /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name` and no `path`: Cargo roots it at `<dir>/<name>.rs` or `<dir>/<name>/main.rs`, whether or not auto-discovery is on. */
   namedTargets: string[];
@@ -468,6 +482,8 @@ interface CargoManifest {
   workspaceEdition: string | undefined;
   /** `[lib].edition` as written, undefined when absent: the edition of the library target alone. */
   libEdition: string | undefined;
+  /** Whether a `[lib]` table is written, in any spelling: Cargo then has a library even where `src/lib.rs` is missing, at `src/<name>.rs` in edition 2015. */
+  libDeclared: boolean;
   /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
   packageName: string | undefined;
   /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
@@ -666,6 +682,8 @@ export function parseCargoManifest(text: string): CargoManifest {
   let libPath: string | undefined;
   // Each element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array, with the `name` and `path` it gives (`null` for one written but not readable as a string).
   const targets: CargoTarget[] = [];
+  // The kinds whose target array is written at all, an empty `bin = []` included: Cargo's edition 2015 default turns that kind's discovery off.
+  const writtenKinds = new Set<string>();
   const undiscoveredDirs: string[] = [];
   const discoveredDirs: string[] = [];
   let hasPackage = false;
@@ -673,6 +691,7 @@ export function parseCargoManifest(text: string): CargoManifest {
   let editionInherited = false;
   let workspaceEdition: string | undefined;
   let libEdition: string | undefined;
+  let libDeclared = false;
   // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
   let inTarget: CargoTarget | undefined;
   const dependencies = new Map<string, CargoDependencySpec>();
@@ -710,6 +729,7 @@ export function parseCargoManifest(text: string): CargoManifest {
   // One `key = value` at its full key path (the table header's segments, then the key's).
   const assign = (keyPath: string[], value: string): void => {
     const top = keyPath[0];
+    if (top === 'lib') libDeclared = true;
     if (top === 'package') hasPackage = true;
     if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'name') packageName = tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'edition') edition = tomlString(value);
@@ -723,8 +743,10 @@ export function parseCargoManifest(text: string): CargoManifest {
       if (value === 'false' && !undiscoveredDirs.includes(dir)) undiscoveredDirs.push(dir);
       else if (value === 'true' && !discoveredDirs.includes(dir)) discoveredDirs.push(dir);
     } else if (keyPath.length === 1 && TARGET_TABLES.has(top)) {
-      // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
-      for (const item of inlineArrayItems(value) ?? []) {
+      // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table. An empty array declares the kind all the same, as Cargo reads it.
+      const items = inlineArrayItems(value);
+      if (items !== undefined) writtenKinds.add(top);
+      for (const item of items ?? []) {
         const target: CargoTarget = { kind: top };
         for (const [key, member] of membersOf(item)) if (key[0] === 'name' || key[0] === 'path' || key[0] === 'edition') target[key[0]] = key.length === 1 ? (tomlString(member) ?? null) : null;
         if (inlineTableMembers(item) !== undefined) targets.push(target);
@@ -762,6 +784,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (header) {
       sectionPath = keySegments(header[1]);
       if (sectionPath[0] === 'package') hasPackage = true;
+      if (sectionPath[0] === 'lib') libDeclared = true;
       inTarget = line.startsWith('[[') && sectionPath.length === 1 && TARGET_TABLES.has(sectionPath[0]) ? { kind: sectionPath[0] } : undefined;
       if (inTarget !== undefined) targets.push(inTarget);
       declaredHere = new Set<string>();
@@ -785,13 +808,14 @@ export function parseCargoManifest(text: string): CargoManifest {
     targetPaths: targets.flatMap((t) => (typeof t.path === 'string' ? [t.path] : [])),
     undiscoveredDirs,
     discoveredDirs,
-    declaredDirs: [...new Set(targets.filter((t) => Object.hasOwn(DISCOVERED_DIRS, t.kind)).map((t) => DISCOVERED_DIRS[t.kind].dir))],
+    declaredDirs: [...new Set([...targets.map((t) => t.kind), ...writtenKinds])].map((kind) => DISCOVERED_DIRS[kind].dir),
     namedTargets: targets.flatMap((t) => (t.path === undefined && typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
     hasPackage,
     edition,
     editionInherited,
     workspaceEdition,
     libEdition,
+    libDeclared,
     packageName,
     targetEditions: targets.flatMap((t) => (typeof t.edition === 'string' ? [{ kind: t.kind, name: typeof t.name === 'string' ? t.name : undefined, path: typeof t.path === 'string' ? t.path : undefined, edition: t.edition }] : [])),
     declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),

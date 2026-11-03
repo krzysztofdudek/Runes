@@ -279,6 +279,62 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
+  it('in edition 2015 roots a bin whose name two inferred targets share at its legacy path alone', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "app"\n');
+    put('src/main.rs', 'mod cli;\npub struct Main;\n');
+    put('src/cli.rs', '');
+    put('src/bin/app.rs', 'pub struct Other;\n');
+    const resolve = makeResolvePathToFile(ws);
+    // src/main.rs and src/bin/app.rs both carry the package's name: with no src/app.rs the legacy path is src/main.rs, and src/bin/app.rs is a module of it.
+    expect(resolve('self::cli::Args', 'src/main.rs', 'rust')).toBe('src/cli.rs');
+    expect(resolve('crate::Main', 'src/bin/app.rs', 'rust')).toBe('src/main.rs');
+  });
+
+  it('in edition 2015 keeps both inferred roots of a bin whose name they share when no legacy path exists, where Cargo refuses the manifest', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "tool"\n');
+    put('src/lib.rs', '');
+    put('src/bin/tool.rs', 'pub struct Tool;\n');
+    put('src/bin/tool/main.rs', 'mod ui;\n');
+    put('src/bin/tool/ui.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::ui', 'src/bin/tool/main.rs', 'rust')).toBe('src/bin/tool/ui.rs');
+    expect(resolve('crate::Tool', 'src/bin/tool.rs', 'rust')).toBe('src/bin/tool.rs');
+  });
+
+  it('in edition 2015 finds a written [lib] with no path at src/<name>.rs when src/lib.rs is missing, and nowhere else', () => {
+    put('src/my_kit.rs', 'mod tools;\npub struct Kit;\n');
+    put('src/tools.rs', '');
+    const resolve = (manifest) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)('crate::Kit', 'src/tools.rs', 'rust');
+    };
+    // The [lib] table in any spelling, and the crate name with its dash made an underscore.
+    expect(resolve('[package]\nname = "my-kit"\n[lib]\n')).toBe('src/my_kit.rs');
+    expect(resolve('lib.doctest = false\n[package]\nname = "my-kit"\n')).toBe('src/my_kit.rs');
+    expect(resolve('lib = {}\n[package]\nname = "my-kit"\n')).toBe('src/my_kit.rs');
+    // No [lib] table, edition 2018, or a [lib] path: no library at src/<name>.rs.
+    expect(resolve('[package]\nname = "my-kit"\n')).toBeUndefined();
+    expect(resolve('[package]\nname = "my-kit"\nedition = "2018"\n[lib]\n')).toBeUndefined();
+    expect(resolve('[package]\nname = "my-kit"\n[lib]\npath = "lib/lib.rs"\n')).toBeUndefined();
+    // src/lib.rs, when it exists, is the library.
+    put('src/lib.rs', 'pub struct Kit;\n');
+    expect(resolve('[package]\nname = "my-kit"\n[lib]\n')).toBe('src/lib.rs');
+  });
+
+  it('reads an empty bin array as declaring bins: in edition 2015 bin discovery is off, from 2018 on it stays on', () => {
+    put('src/main.rs', 'mod cli;\n');
+    put('src/cli.rs', '');
+    const resolve = (manifest) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)('self::cli::Args', 'src/main.rs', 'rust');
+    };
+    expect(resolve('bin = []\n[package]\nname = "app"\n')).toBe('src/main.rs');
+    expect(resolve('bin = [\n]\n[package]\nname = "app"\nautobins = true\n')).toBe('src/cli.rs');
+    expect(resolve('bin = []\n[package]\nname = "app"\nedition = "2018"\n')).toBe('src/cli.rs');
+    // A value that is no array declares nothing.
+    expect(resolve('bin = "x"\n[package]\nname = "app"\n')).toBe('src/cli.rs');
+  });
+
   // The pass's symbol table over every Rust file of the workspace as it stands now, built from the extractor's declarations as a consumer builds it: it is what tells which names a crate root binds at its top level, which an edition 2015 `use` path needs.
   const tableNow = async () => {
     const table = new SymbolTable();
@@ -589,9 +645,9 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('self::sub', 'tools/tool.rs', 'rust')).toBe('tools/sub.rs');
   });
 
-  it('leaves a shared helper under tests/ rootless beside a [[test]] path in tests/ itself, and gives no root to the modules of two test paths sharing a directory', () => {
-    // ripgrep's `[[test]] path = "tests/tests.rs"`: with test auto-discovery other test crates in tests/ may declare tests/common/ too.
-    put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[test]]\nname = "a"\npath = "suites/a.rs"\n[[test]]\nname = "b"\npath = "suites/b.rs"\n[[bench]]\nname = "c"\npath = "suites/c/main.rs"\n');
+  it('leaves a shared helper under tests/ rootless beside a [[test]] path in tests/ itself in an edition 2018 package, and gives no root to the modules of two test paths sharing a directory', () => {
+    // ripgrep's `[[test]] path = "tests/tests.rs"` in an edition 2018 package: test auto-discovery stays on, so other test crates in tests/ may declare tests/common/ too (in edition 2015 the declared [[test]] turns it off).
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2018"\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[test]]\nname = "a"\npath = "suites/a.rs"\n[[test]]\nname = "b"\npath = "suites/b.rs"\n[[bench]]\nname = "c"\npath = "suites/c/main.rs"\n');
     put('src/lib.rs', 'pub struct Dir;\npub struct Env;\n');
     put('tests/tests.rs', 'mod common;\npub struct Dir;\n');
     put('tests/common/mod.rs', '');
