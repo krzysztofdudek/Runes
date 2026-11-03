@@ -111,6 +111,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-tsconfig-paths-multi-target-silence', () => runCase('typescript-tsconfig-paths-multi-target-silence'));
   it('typescript-tsconfig-alias-silence', () => runCase('typescript-tsconfig-alias-silence'));
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
+  it('typescript-workspace-semver-range-linked-edge', () => runCase('typescript-workspace-semver-range-linked-edge'));
   it('typescript-workspace-subpath-exports-edge', () => runCase('typescript-workspace-subpath-exports-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
