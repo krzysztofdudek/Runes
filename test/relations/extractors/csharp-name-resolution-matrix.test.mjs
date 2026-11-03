@@ -288,6 +288,7 @@ describe('MATRIX — C# using directive targets, read where the directive reads 
   it('csharp-alias-namespace-beside-global-type-edge', () => runCase('csharp-alias-namespace-beside-global-type-edge'));
   it('csharp-alias-target-outer-block-using-edge', () => runCase('csharp-alias-target-outer-block-using-edge'));
   it('csharp-alias-qualified-dotted-attribute-edge', () => runCase('csharp-alias-qualified-dotted-attribute-edge'));
+  it('csharp-tuple-unnamed-alias-qualified-element-edge', () => runCase('csharp-tuple-unnamed-alias-qualified-element-edge'));
 });
 
 describe('MATRIX — C# alias-qualified type names (issue 188)', () => {
