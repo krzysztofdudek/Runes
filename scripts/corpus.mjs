@@ -1,8 +1,8 @@
-// The corpus gate: public repositories pinned at full commits (corpus/manifest.json), resolved through the public relation API exactly as the catalogue runner resolves a case, and held to two things. `verify` (npm run corpus) compares every resolved reference with the committed golden (corpus/goldens/<id>.edges) and fails on any change that corpus/explained.md does not explain. `update` (npm run corpus:update) rewrites the goldens, and refuses while a change is unexplained. `oracles` (npm run corpus:oracles) compares the references with the language's own resolver where one can be run: TypeScript's module resolution, Python's PathFinder, a TOML parser against the Cargo manifest reader, `go list`, `dotnet msbuild` and the C preprocessor. Nothing here ships and nothing here runs inside npm test.
+// The corpus gate: public repositories pinned at full commits (corpus/manifest.json), resolved through the public relation API exactly as the catalogue runner resolves a case, and held to two things. `verify` (npm run corpus:edges) compares every resolved reference with the committed golden (corpus/goldens/<id>.edges) and fails on any change that corpus/explained.md does not explain. `oracles` (npm run corpus:oracles) compares the references with the language's own resolver where one can be run: TypeScript's module resolution, Python's PathFinder, a TOML parser against the Cargo manifest reader, `go list`, `dotnet msbuild` and the C preprocessor. `gate` (npm run corpus, and the default) is the whole gate: both, over one resolution of each repository, as CI runs it. `update` (npm run corpus:update) rewrites the goldens, and refuses while a change is unexplained. Nothing here ships and nothing here runs inside npm test.
 //
 // Each repository is fetched by its commit alone into `${RUNES_CORPUS_DIR:-~/.cache/runes/corpus}/<id>@<commit>`, never into a checkout. The files resolution sees are the files git tracks at that commit, through a listed file view, so a stray file on disk cannot move an edge. A golden line is `<from>:<line>\t<resolved file>`, one per resolved reference (a reference that resolves to its own file is no edge), sorted by code unit. Every file is its directory's: the owner the resolver counts ambiguity by is the file's directory, as a consumer that maps one component per directory sees it.
 //
-// Usage: node scripts/corpus.mjs [verify|update|oracles] [--only <id>[,<id>]] [--tier routine|heavy|all] [--strict] [--runes <dir>] [--manifest <file>] [--goldens <dir>] [--explained <file>] [--cache <dir>]
+// Usage: node scripts/corpus.mjs [gate|verify|update|oracles] [--only <id>[,<id>]] [--tier routine|heavy|all] [--strict] [--runes <dir>] [--manifest <file>] [--goldens <dir>] [--explained <file>] [--cache <dir>]
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 // The Python the Python and Cargo oracles run; RUNES_CORPUS_PYTHON names another one.
 const PYTHON = process.env.RUNES_CORPUS_PYTHON ?? 'python3';
 
-const USAGE = 'usage: node scripts/corpus.mjs [verify|update|oracles] [--only <id>[,<id>]] [--tier routine|heavy|all] [--strict] [--runes <dir>] [--manifest <file>] [--goldens <dir>] [--explained <file>] [--cache <dir>]';
+const USAGE = 'usage: node scripts/corpus.mjs [gate|verify|update|oracles] [--only <id>[,<id>]] [--tier routine|heavy|all] [--strict] [--runes <dir>] [--manifest <file>] [--goldens <dir>] [--explained <file>] [--cache <dir>]';
 
 /** A reported failure that ends the run with exit code 1 and a message, never a stack. */
 class CorpusError extends Error {}
@@ -36,8 +36,8 @@ function parseCommandLine(argv) {
       cache: { type: 'string' },
     },
   });
-  const command = positionals[0] ?? 'verify';
-  if (!['verify', 'update', 'oracles'].includes(command) || positionals.length > 1) throw new CorpusError(USAGE);
+  const command = positionals[0] ?? 'gate';
+  if (!['gate', 'verify', 'update', 'oracles'].includes(command) || positionals.length > 1) throw new CorpusError(USAGE);
   const tier = values.tier ?? 'routine';
   if (!['routine', 'heavy', 'all'].includes(tier)) throw new CorpusError(`--tier must be routine, heavy or all, not '${tier}'`);
   return {
@@ -90,37 +90,75 @@ function selectRepositories(repos, opts) {
   return repos.filter((r) => opts.tier === 'all' || r.tier === opts.tier);
 }
 
+/** Every disagreement an oracle can report, as `<oracle>:<disagreement>`. An explanation of any other kind is refused, so a misspelt kind cannot explain nothing in silence. */
+const ORACLE_KINDS = new Set([
+  'typescript:false-edge', 'typescript:recall-loss', 'typescript:mismatch',
+  'python:false-edge',
+  'cargo:mismatch', 'cargo:crlf',
+  'go:false-edge', 'go:recall-loss', 'go:mismatch',
+  'csharp:recall-loss', 'csharp:false-reach',
+  'c:false-edge', 'c:unreadable',
+]);
+
+const EDGE_FORM = '- `<repository>` `<+|->` `<from>:<line>` `<target>`: <reason>';
+const ORACLE_FORM = "- `<repository>` `<oracle>:<disagreement>` `<from>:<line>` `<subject>` `<Runes' answer>` `<the oracle's answer>`: <reason>";
+
+/** The backticked fields of a list item and the reason after the colon that closes them, or undefined when the item does not read that way. */
+function entryFields(raw) {
+  let rest = raw.slice(2);
+  const fields = [];
+  for (;;) {
+    const m = /^`([^`]*)`/.exec(rest);
+    if (!m) return undefined;
+    fields.push(m[1]);
+    rest = rest.slice(m[0].length);
+    if (rest.startsWith(' `')) rest = rest.slice(1);
+    else if (rest.startsWith(':')) return { fields, reason: rest.slice(1).trim() };
+    else return undefined;
+  }
+}
+
 /**
  * corpus/explained.md: every list item of the form
- *   - `<repository>` `<kind>` `<from>:<line>` `<target>`: <reason>
- * explains one change. `<kind>` is `+` (an edge the golden lacks) or `-` (an edge of the golden that is gone) for the edge comparison, and `<oracle>:<disagreement>` for the oracles. `<line>` may be `*`, every line of that file to that target. A list item that opens with a backtick and does not parse, names a repository the manifest does not hold, or gives no reason fails the run: a typo must not explain nothing silently. Fenced code blocks are skipped.
+ *   - `<repository>` `<+|->` `<from>:<line>` `<target>`: <reason>
+ * explains one change of the edge comparison: `+` an edge the golden lacks, `-` an edge of the golden that is gone. An oracle disagreement is explained by
+ *   - `<repository>` `<oracle>:<disagreement>` `<from>:<line>` `<subject>` `<Runes' answer>` `<the oracle's answer>`: <reason>
+ * which names both answers, so it stops matching the moment either side answers otherwise: an explanation cannot outlive the answers it was written for. `<line>` may be `*`, every line of that file. A list item that opens with a backtick and does not parse, names a repository the manifest does not hold, names a kind no comparison reports, has the wrong fields for its kind, or gives no reason fails the run with its line: a typo must not explain nothing silently. Fenced code blocks are skipped. Returns each entry by its key, with where it stands.
  */
 function loadExplained(file, repoIds) {
-  const entries = new Set();
+  const entries = new Map();
   if (!existsSync(file)) return entries;
   const lines = readFileSync(file, 'utf8').split(/\r?\n/);
   let fenced = false;
-  const ENTRY = /^- `([^`]+)` `([^`]+)` `([^`]+):(\d+|\*)` `([^`]+)`:\s*(.*)$/;
   lines.forEach((raw, i) => {
     if (/^\s*```/.test(raw)) fenced = !fenced;
     if (fenced || !raw.startsWith('- `')) return;
     const where = `${path.basename(file)}:${i + 1}`;
-    const m = ENTRY.exec(raw);
-    if (!m) throw new CorpusError(`${where}: an entry must read - \`<repository>\` \`<kind>\` \`<from>:<line>\` \`<target>\`: <reason>`);
-    const [, repo, kind, from, line, target, reason] = m;
+    const parsed = entryFields(raw);
+    const site = parsed === undefined ? null : /^(.+):(\d+|\*)$/.exec(parsed.fields[2] ?? '');
+    if (parsed === undefined || parsed.fields.length < 4 || site === null) throw new CorpusError(`${where}: an entry must read ${EDGE_FORM}, or for an oracle ${ORACLE_FORM}`);
+    const { fields, reason } = parsed;
+    const [repo, kind, , target, ...answers] = fields;
     if (!repoIds.has(repo)) throw new CorpusError(`${where}: no repository '${repo}' in the manifest`);
-    if (!(kind === '+' || kind === '-' || /^[a-z]+:[a-z-]+$/.test(kind))) throw new CorpusError(`${where}: the kind must be +, - or <oracle>:<disagreement>, not '${kind}'`);
-    if (reason.trim() === '') throw new CorpusError(`${where}: the entry gives no reason`);
-    entries.add(explainKey(repo, kind, from, line, target));
+    const isEdge = kind === '+' || kind === '-';
+    if (!isEdge && !ORACLE_KINDS.has(kind)) throw new CorpusError(`${where}: no comparison reports the kind '${kind}'; it must be +, - or one of ${[...ORACLE_KINDS].join(', ')}`);
+    if (isEdge && answers.length !== 0) throw new CorpusError(`${where}: an edge entry ends at its target: ${EDGE_FORM}`);
+    if (!isEdge && answers.length !== 2) throw new CorpusError(`${where}: an oracle entry names both answers it explains after the subject: ${ORACLE_FORM}`);
+    if (reason === '') throw new CorpusError(`${where}: the entry gives no reason`);
+    entries.set(explainKey(repo, kind, site[1], site[2], target, answers), { where, repo, kind, text: raw });
   });
   return entries;
 }
 
-const explainKey = (repo, kind, from, line, target) => `${repo}\t${kind}\t${from}:${line}\t${target}`;
+const explainKey = (repo, kind, from, line, target, answers = []) => [repo, kind, `${from}:${line}`, target, ...answers].join('\t');
 
-function isExplained(entries, repo, kind, from, line, target) {
-  return entries.has(explainKey(repo, kind, from, String(line), target)) || entries.has(explainKey(repo, kind, from, '*', target));
+/** The key of the entry that explains this change or disagreement (its own line first, then `*`), or undefined. */
+function explainedBy(entries, repo, kind, from, line, target, answers = []) {
+  return [explainKey(repo, kind, from, String(line), target, answers), explainKey(repo, kind, from, '*', target, answers)].find((k) => entries.has(k));
 }
+
+/** An oracle disagreement in the form of the entry that would explain it, without the reason. */
+const oracleEntry = (repo, f) => `- \`${repo}\` \`${f.oracle}:${f.kind}\` \`${f.from}:${f.line}\` \`${f.subject}\` \`${f.runes}\` \`${f.answer}\``;
 
 // ---------------------------------------------------------------------------
 // Fetching a pinned commit
@@ -340,7 +378,7 @@ function diffAgainstGolden(repo, golden, current, explained) {
   const changes = [];
   for (const l of current) if (!before.has(l)) changes.push({ sign: '+', ...splitLine(l) });
   for (const l of golden.lines) if (!after.has(l)) changes.push({ sign: '-', ...splitLine(l) });
-  for (const c of changes) c.explained = isExplained(explained, repo.id, c.sign, c.from, c.line, c.target);
+  for (const c of changes) c.explained = explainedBy(explained, repo.id, c.sign, c.from, c.line, c.target) !== undefined;
   return changes;
 }
 
@@ -567,7 +605,7 @@ async function typescriptOracle(repoDir, result, findings) {
     if (runesTarget === tsTarget) continue;
     if (runesTarget !== undefined && tsTarget !== undefined && /\.d\.[mc]?ts$/.test(tsTarget) && sameStem(runesTarget, tsTarget)) continue;
     const kind = runesTarget === undefined ? 'recall-loss' : tsTarget === undefined ? 'false-edge' : 'mismatch';
-    findings.push({ oracle: 'typescript', kind, from: r.from, line: r.line, subject: specifier, detail: `Runes ${runesTarget ?? 'silent'}, TypeScript ${tsTarget ?? 'unresolved in the repository'}` });
+    findings.push({ oracle: 'typescript', kind, from: r.from, line: r.line, subject: specifier, runes: runesTarget ?? 'silent', answer: tsTarget ?? 'unresolved in the repository' });
   }
   return { checked };
 }
@@ -657,7 +695,7 @@ function pythonOracle(repoDir, result, findings) {
   const answers = JSON.parse(run.stdout);
   deps.forEach((r, i) => {
     const hits = answers[i].map((h) => path.relative(repoDir, h).split(path.sep).join('/')).filter((h) => listed.has(h));
-    if (!hits.includes(r.resolved)) findings.push({ oracle: 'python', kind: 'false-edge', from: r.from, line: r.line, subject: r.candidates.map((c) => c.specifier).join(' | '), detail: `Runes ${r.resolved}, PathFinder ${hits.length === 0 ? 'finds no file' : hits.join(', ')}` });
+    if (!hits.includes(r.resolved)) findings.push({ oracle: 'python', kind: 'false-edge', from: r.from, line: r.line, subject: r.candidates.map((c) => c.specifier).join(' | '), runes: r.resolved, answer: hits.length === 0 ? 'no file' : hits.join(', ') });
   });
   return { checked: deps.length };
 }
@@ -766,9 +804,9 @@ async function cargoOracle(result, runes, findings) {
     for (const field of Object.keys(want)) {
       const a = JSON.stringify(sortDeep(lf[field]));
       const b = JSON.stringify(sortDeep(want[field]));
-      if (a !== b) findings.push({ oracle: 'cargo', kind: 'mismatch', from: p, line: 0, subject: field, detail: `Runes ${a}, tomllib ${b}` });
+      if (a !== b) findings.push({ oracle: 'cargo', kind: 'mismatch', from: p, line: 0, subject: field, runes: a, answer: b });
       const c = JSON.stringify(sortDeep(crlf[field]));
-      if (c !== a) findings.push({ oracle: 'cargo', kind: 'crlf', from: p, line: 0, subject: field, detail: `LF ${a}, CRLF ${c}` });
+      if (c !== a) findings.push({ oracle: 'cargo', kind: 'crlf', from: p, line: 0, subject: field, runes: a, answer: c });
     }
   }
   return { checked };
@@ -780,7 +818,9 @@ function sortDeep(v) {
   return v;
 }
 
-/** `go list` of every in-repository package (the module graph comes from the module proxy, checked against go.sum, so the answer is the same on every machine), and each Go import Runes resolves held to the package directory the go command gives, both ways: an import of an in-repository package Runes leaves silent is a recall loss, a binding outside every listed package a false edge. Only files of listed packages are compared (testdata and vendor are not packages). */
+/**
+ * `go list` of every in-repository package (the module graph comes from the module proxy, checked against go.sum, so the answer is the same on every machine), and each Go import Runes resolves held to the package directory the go command gives, both ways: an import of an in-repository package Runes leaves silent is a recall loss, a binding outside every in-repository package a false edge. Only files of the packages `./...` lists are compared (testdata and vendor are not packages of the build). An import of an in-repository module's path that `./...` leaves out is asked of go list by its import path, from the importing file's module, because the go command imports such a package by its path even where the pattern skips it (a test that imports a package under testdata).
+ */
 function goOracle(repoDir, result, findings) {
   const deps = result.references.filter((r) => r.language === 'go' && r.candidates.every((c) => c.kind === 'path'));
   if (deps.length === 0) return { checked: 0 };
@@ -788,21 +828,50 @@ function goOracle(repoDir, result, findings) {
   if (probe.error || probe.status !== 0) return { skipped: `go is not installed (${probe.error?.message ?? probe.stderr})` };
   const listed = result.tracked.map((f) => f.path);
   const hasWork = listed.includes('go.work');
-  const moduleDirs = hasWork ? [''] : listed.filter((p) => path.posix.basename(p) === 'go.mod' && !/(^|\/)(testdata|vendor)\//.test(p)).map(dirOf);
+  const goMods = listed.filter((p) => path.posix.basename(p) === 'go.mod' && !/(^|\/)(testdata|vendor)\//.test(p));
+  const moduleDirs = hasWork ? [''] : goMods.map(dirOf);
+  const modulePaths = goMods.map((p) => /^\s*module\s+"?([^\s"]+)"?/m.exec(result.read(p))?.[1]).filter((m) => m !== undefined);
+  const ofModule = (spec) => modulePaths.some((m) => spec === m || spec.startsWith(`${m}/`));
+  const goDirs = new Set(listed.filter((p) => p.endsWith('.go')).map(dirOf));
   const env = { ...process.env, GOFLAGS: '-mod=readonly', GOWORK: hasWork ? path.join(repoDir, 'go.work') : 'off', GOCACHE: process.env.GOCACHE ?? path.join(os.tmpdir(), 'runes-corpus-gocache') };
-  const packageDir = new Map();
-  for (const m of moduleDirs) {
-    const run = spawnSync('go', ['list', '-e', '-json=ImportPath,Dir', './...'], { cwd: m === '' ? repoDir : path.join(repoDir, m), env, encoding: 'utf8', maxBuffer: 1 << 30 });
-    if (run.error || run.status !== 0) return { skipped: `go list failed in ${m || '.'}: ${run.error?.message ?? run.stderr.trim().split('\n')[0]}` };
+  const cwdOf = (m) => (m === '' ? repoDir : path.join(repoDir, m));
+  /** Runs go list in one module and keeps each in-repository package it gives; an error message when go list itself fails. */
+  const list = (m, args, into, keep) => {
+    const run = spawnSync('go', ['list', '-e', '-json=ImportPath,Dir', ...args], { cwd: cwdOf(m), env, encoding: 'utf8', maxBuffer: 1 << 30 });
+    if (run.error || run.status !== 0) return `go list failed in ${m || '.'}: ${run.error?.message ?? run.stderr.trim().split('\n')[0]}`;
     for (const chunk of run.stdout.split(/\n(?=\{)/)) {
       if (chunk.trim() === '') continue;
       const pkg = JSON.parse(chunk);
       if (typeof pkg.Dir !== 'string') continue;
       const rel = path.relative(repoDir, pkg.Dir).split(path.sep).join('/');
-      if (!rel.startsWith('..')) packageDir.set(pkg.ImportPath, rel);
+      if (!rel.startsWith('..') && keep(rel)) into.set(pkg.ImportPath, rel);
     }
+    return undefined;
+  };
+  const packageDir = new Map();
+  for (const m of moduleDirs) {
+    const failed = list(m, ['./...'], packageDir, () => true);
+    if (failed !== undefined) return { skipped: failed };
   }
   const packageDirs = new Set(packageDir.values());
+  // The module of a file is its nearest module directory; under go.work every module is the workspace's.
+  const moduleOf = (file) => moduleDirs.filter((m) => m === '' || file.startsWith(`${m}/`)).sort((a, b) => b.length - a.length)[0];
+  const asked = new Map();
+  for (const r of deps) {
+    const spec = r.candidates[0].specifier;
+    const m = moduleOf(r.from);
+    if (m === undefined || !packageDirs.has(dirOf(r.from)) || packageDir.has(spec) || !ofModule(spec)) continue;
+    if (!asked.has(m)) asked.set(m, new Set());
+    asked.get(m).add(spec);
+  }
+  for (const [m, specs] of asked) {
+    const all = [...specs].sort();
+    for (let i = 0; i < all.length; i += 100) {
+      // A directory with no tracked Go file is no package, whatever go list says of the path.
+      const failed = list(m, all.slice(i, i + 100), packageDir, (rel) => goDirs.has(rel));
+      if (failed !== undefined) return { skipped: failed };
+    }
+  }
   let checked = 0;
   for (const r of deps) {
     if (!packageDirs.has(dirOf(r.from))) continue;
@@ -812,7 +881,7 @@ function goOracle(repoDir, result, findings) {
     checked++;
     if (want === got) continue;
     const kind = got === undefined ? 'recall-loss' : want === undefined ? 'false-edge' : 'mismatch';
-    findings.push({ oracle: 'go', kind, from: r.from, line: r.line, subject: spec, detail: `Runes ${got ?? 'silent'}, go list ${want ?? 'no package in the repository'}` });
+    findings.push({ oracle: 'go', kind, from: r.from, line: r.line, subject: spec, runes: got ?? 'silent', answer: want ?? 'no package in the repository' });
   }
   return { checked };
 }
@@ -865,8 +934,8 @@ function csharpOracle(repoDir, result, findings) {
       checked++;
       if (answer === 'unknown') continue;
       const built = reached.has(b);
-      if (answer === 'unreachable' && built) findings.push({ oracle: 'csharp', kind: 'recall-loss', from: a, line: 0, subject: b, detail: 'Runes unreachable, msbuild references it' });
-      if (answer === 'reachable' && !built) findings.push({ oracle: 'csharp', kind: 'false-reach', from: a, line: 0, subject: b, detail: 'Runes reachable, msbuild does not reference it' });
+      if (answer === 'unreachable' && built) findings.push({ oracle: 'csharp', kind: 'recall-loss', from: a, line: 0, subject: b, runes: 'unreachable', answer: 'referenced' });
+      if (answer === 'reachable' && !built) findings.push({ oracle: 'csharp', kind: 'false-reach', from: a, line: 0, subject: b, runes: 'reachable', answer: 'not referenced' });
     }
   }
   return { checked };
@@ -890,7 +959,9 @@ function cOracle(repoDir, repo, result, findings) {
     const lang = /\.c$/.test(file) ? 'c' : 'c++';
     const run = spawnSync('cc', ['-MM', '-MG', '-x', lang, ...(lang === 'c++' ? ['-std=c++17'] : []), ...flags, path.join(repoDir, file)], { encoding: 'utf8', cwd: path.join(repoDir, dirOf(file)), maxBuffer: 1 << 26 });
     if (run.error || run.status !== 0) {
-      findings.push({ oracle: 'c', kind: 'unreadable', from: file, line: 0, subject: file, detail: `cc -MM failed: ${(run.error?.message ?? run.stderr).trim().split('\n')[0]}` });
+      // The preprocessor's first message, with the clone's own directory taken out so that it reads the same on every machine.
+      const message = (run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join('');
+      findings.push({ oracle: 'c', kind: 'unreadable', from: file, line: 0, subject: file, runes: 'not compared', answer: `cc -MM failed: ${message}` });
       continue;
     }
     const closure = new Set();
@@ -901,7 +972,7 @@ function cOracle(repoDir, repo, result, findings) {
     }
     for (const r of refs) {
       checked++;
-      if (!closure.has(r.resolved)) findings.push({ oracle: 'c', kind: 'false-edge', from: r.from, line: r.line, subject: r.resolved, detail: `Runes ${r.resolved}, the preprocessor does not include it` });
+      if (!closure.has(r.resolved)) findings.push({ oracle: 'c', kind: 'false-edge', from: r.from, line: r.line, subject: r.resolved, runes: r.resolved, answer: 'not included' });
     }
   }
   return { checked };
@@ -909,6 +980,79 @@ function cOracle(repoDir, repo, result, findings) {
 
 // ---------------------------------------------------------------------------
 // Commands
+
+/** The edges of one resolved repository against its golden (verify, gate), or the golden rewritten from them (update). Prints one line and returns whether it passed. */
+function compareEdges(opts, repo, result, head, explained) {
+  const goldenFile = path.join(opts.goldens, `${repo.id}.edges`);
+  const golden = readGolden(goldenFile);
+  if (golden === undefined || golden.commit !== repo.commit) {
+    const why = golden === undefined ? 'no golden yet' : `the golden was made at ${golden.commit}, the manifest pins ${repo.commit}`;
+    if (opts.command === 'update') {
+      writeGolden(goldenFile, repo, result.lines);
+      process.stdout.write(`new  ${head}: ${why}; wrote ${path.relative(ROOT, goldenFile)} as a new baseline\n`);
+      return true;
+    }
+    process.stdout.write(`FAIL ${head}: ${why}; run npm run corpus:update -- --only ${repo.id}\n`);
+    return false;
+  }
+  const changes = diffAgainstGolden(repo, golden, result.lines, explained);
+  const unexplained = changes.filter((c) => !c.explained);
+  const added = changes.filter((c) => c.sign === '+').length;
+  const summary = `${head}; ${added} added, ${changes.length - added} removed, ${changes.length - unexplained.length} explained`;
+  if (unexplained.length > 0) {
+    process.stdout.write(`FAIL ${summary}${opts.command === 'update' ? '; the golden is not rewritten while a change is unexplained' : ''}\n`);
+    reportUnexplained(opts.cache, repo, opts.command === 'gate' ? 'verify' : opts.command, unexplained.map(formatChange));
+    return false;
+  }
+  if (opts.command === 'update' && changes.length > 0) {
+    writeGolden(goldenFile, repo, result.lines);
+    process.stdout.write(`upd  ${summary}; rewrote ${path.relative(ROOT, goldenFile)}\n`);
+  } else process.stdout.write(`ok   ${summary}\n`);
+  return true;
+}
+
+/** Every oracle over one resolved repository, each disagreement held to the explanations. Prints one line, adds what was skipped to `skips`, and returns whether every disagreement is explained. */
+async function compareOracles(opts, repo, dir, result, runes, head, explained, skips) {
+  const findings = [];
+  const outcomes = {
+    typescript: await typescriptOracle(dir, result, findings),
+    python: pythonOracle(dir, result, findings),
+    cargo: await cargoOracle(result, runes, findings),
+    go: goOracle(dir, result, findings),
+    csharp: csharpOracle(dir, result, findings),
+    c: cOracle(dir, repo, result, findings),
+  };
+  const parts = [];
+  for (const [name, o] of Object.entries(outcomes)) {
+    if (o.skipped !== undefined) {
+      skips.push(`${repo.id} ${name}: ${o.skipped}`);
+      parts.push(`${name} SKIPPED`);
+    } else if (o.checked > 0) parts.push(`${name} ${o.checked}`);
+  }
+  const used = new Set();
+  const unexplained = [];
+  for (const f of findings) {
+    const kind = `${f.oracle}:${f.kind}`;
+    if (!ORACLE_KINDS.has(kind)) throw new Error(`the ${f.oracle} oracle reported the kind ${kind}, which ORACLE_KINDS does not list`);
+    // An entry is backticked text, so an answer holding a backtick is matched with a quote in its place.
+    for (const k of ['subject', 'runes', 'answer']) f[k] = String(f[k]).replace(/`/g, "'");
+    const key = explainedBy(explained, repo.id, kind, f.from, f.line, f.subject, [f.runes, f.answer]);
+    if (key === undefined) unexplained.push(f);
+    else used.add(key);
+  }
+  const status = unexplained.length > 0 ? 'FAIL' : 'ok  ';
+  process.stdout.write(`${status} ${head}; checked: ${parts.join(', ') || 'no oracle applies'}; ${findings.length} disagreements, ${findings.length - unexplained.length} explained\n`);
+  reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => oracleEntry(repo.id, f)));
+  // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. It is named, not failed, because a toolchain of another machine can see a disagreement this one does not.
+  const ran = new Set(Object.entries(outcomes).filter(([, o]) => o.skipped === undefined).map(([name]) => name));
+  const unused = [...explained].filter(([key, e]) => e.repo === repo.id && ran.has(e.kind.split(':')[0]) && !used.has(key)).map(([, e]) => `${e.where}: ${e.text.slice(0, 200)}`);
+  if (unused.length > 0) {
+    process.stdout.write(`    ${unused.length} explanations of ${repo.id} match no disagreement of this run:\n`);
+    for (const u of unused.slice(0, 20)) process.stdout.write(`    UNUSED ${u}\n`);
+    if (unused.length > 20) process.stdout.write(`    ... and ${unused.length - 20} more\n`);
+  }
+  return unexplained.length === 0;
+}
 
 async function main() {
   const opts = parseCommandLine(process.argv.slice(2));
@@ -931,57 +1075,9 @@ async function main() {
       reportUnexplained(opts.cache, repo, 'failures', result.failures);
       continue;
     }
-    if (opts.command === 'oracles') {
-      const findings = [];
-      const outcomes = {
-        typescript: await typescriptOracle(dir, result, findings),
-        python: pythonOracle(dir, result, findings),
-        cargo: await cargoOracle(result, runes, findings),
-        go: goOracle(dir, result, findings),
-        csharp: csharpOracle(dir, result, findings),
-        c: cOracle(dir, repo, result, findings),
-      };
-      const parts = [];
-      for (const [name, o] of Object.entries(outcomes)) {
-        if (o.skipped !== undefined) {
-          skips.push(`${repo.id} ${name}: ${o.skipped}`);
-          parts.push(`${name} SKIPPED`);
-        } else if (o.checked > 0) parts.push(`${name} ${o.checked}`);
-      }
-      const unexplained = findings.filter((f) => !isExplained(explained, repo.id, `${f.oracle}:${f.kind}`, f.from, f.line, f.subject));
-      const status = unexplained.length > 0 ? 'FAIL' : 'ok  ';
-      if (unexplained.length > 0) failed++;
-      process.stdout.write(`${status} ${head}; checked: ${parts.join(', ') || 'no oracle applies'}; ${findings.length} disagreements, ${findings.length - unexplained.length} explained\n`);
-      reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => `${f.oracle}:${f.kind} ${f.from}:${f.line} ${f.subject} (${f.detail})`));
-      continue;
-    }
-    const goldenFile = path.join(opts.goldens, `${repo.id}.edges`);
-    const golden = readGolden(goldenFile);
-    if (golden === undefined || golden.commit !== repo.commit) {
-      const why = golden === undefined ? 'no golden yet' : `the golden was made at ${golden.commit}, the manifest pins ${repo.commit}`;
-      if (opts.command === 'update') {
-        writeGolden(goldenFile, repo, result.lines);
-        process.stdout.write(`new  ${head}: ${why}; wrote ${path.relative(ROOT, goldenFile)} as a new baseline\n`);
-      } else {
-        failed++;
-        process.stdout.write(`FAIL ${head}: ${why}; run npm run corpus:update -- --only ${repo.id}\n`);
-      }
-      continue;
-    }
-    const changes = diffAgainstGolden(repo, golden, result.lines, explained);
-    const unexplained = changes.filter((c) => !c.explained);
-    const added = changes.filter((c) => c.sign === '+').length;
-    const summary = `${head}; ${added} added, ${changes.length - added} removed, ${changes.length - unexplained.length} explained`;
-    if (unexplained.length > 0) {
-      failed++;
-      process.stdout.write(`FAIL ${summary}${opts.command === 'update' ? '; the golden is not rewritten while a change is unexplained' : ''}\n`);
-      reportUnexplained(opts.cache, repo, opts.command, unexplained.map(formatChange));
-      continue;
-    }
-    if (opts.command === 'update' && changes.length > 0) {
-      writeGolden(goldenFile, repo, result.lines);
-      process.stdout.write(`upd  ${summary}; rewrote ${path.relative(ROOT, goldenFile)}\n`);
-    } else process.stdout.write(`ok   ${summary}\n`);
+    // gate: the edges and the oracles over one resolution of the repository.
+    if (opts.command !== 'oracles' && !compareEdges(opts, repo, result, head, explained)) failed++;
+    if ((opts.command === 'oracles' || opts.command === 'gate') && !(await compareOracles(opts, repo, dir, result, runes, head, explained, skips))) failed++;
   }
   if (skips.length > 0) {
     process.stdout.write(`\nSKIPPED, not passed (${skips.length}):\n${skips.map((s) => `  ${s}\n`).join('')}`);
