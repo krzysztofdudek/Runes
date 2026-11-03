@@ -29,40 +29,75 @@ async function countAncestorSteps(fn) {
 const TREE_GETTERS = ['parent', 'children', 'namedChildren', 'firstChild', 'lastChild', 'firstNamedChild', 'lastNamedChild', 'nextSibling', 'previousSibling', 'nextNamedSibling', 'previousNamedSibling'];
 const TREE_METHODS = ['child', 'namedChild', 'childForFieldName', 'childWithDescendant', 'descendantsOfType', 'descendantForIndex', 'namedDescendantForIndex', 'descendantForPosition', 'namedDescendantForPosition', 'walk'];
 
-/** Runs `fn` with every tree accessor counting its calls, and returns the count. */
+// The tree cursor's moves: every extractor walks with a cursor, so a rescan of the tree per node shows here and nowhere in the node accessors.
+const CURSOR_MEMBERS = ['currentNode', 'gotoFirstChild', 'gotoLastChild', 'gotoParent', 'gotoNextSibling', 'gotoPreviousSibling', 'gotoDescendant', 'gotoFirstChildForIndex', 'gotoFirstChildForPosition', 'reset', 'resetTo'];
+
+/** Runs `fn` with every tree accessor and every cursor move counting its calls, and returns the count. */
 async function countTreeAccesses(fn) {
-  const proto = TreeSitter.Node.prototype;
-  const originals = new Map();
+  const originals = [];
   let calls = 0;
-  for (const key of [...TREE_GETTERS, ...TREE_METHODS]) {
-    const original = Object.getOwnPropertyDescriptor(proto, key);
-    if (original === undefined) continue;
-    originals.set(key, original);
-    if (original.get !== undefined) {
-      Object.defineProperty(proto, key, {
-        ...original,
-        get() {
-          calls++;
-          return original.get.call(this);
-        },
-      });
-    } else {
-      Object.defineProperty(proto, key, {
-        ...original,
-        value(...args) {
-          calls++;
-          return original.value.apply(this, args);
-        },
-      });
+  for (const [proto, keys] of [[TreeSitter.Node.prototype, [...TREE_GETTERS, ...TREE_METHODS]], [TreeSitter.TreeCursor.prototype, CURSOR_MEMBERS]]) {
+    for (const key of keys) {
+      const original = Object.getOwnPropertyDescriptor(proto, key);
+      if (original === undefined) continue;
+      originals.push([proto, key, original]);
+      if (original.get !== undefined) {
+        Object.defineProperty(proto, key, {
+          ...original,
+          get() {
+            calls++;
+            return original.get.call(this);
+          },
+        });
+      } else {
+        Object.defineProperty(proto, key, {
+          ...original,
+          value(...args) {
+            calls++;
+            return original.value.apply(this, args);
+          },
+        });
+      }
     }
   }
   try {
     await fn();
   } finally {
-    for (const [key, original] of originals) Object.defineProperty(proto, key, original);
+    for (const [proto, key, original] of originals) Object.defineProperty(proto, key, original);
   }
   return calls;
 }
+
+/** Visits `root` and every node below it with a tree cursor. */
+function visitAll(root, visit) {
+  const cursor = root.walk();
+  try {
+    let depth = 0;
+    for (;;) {
+      visit(cursor.currentNode);
+      if (cursor.gotoFirstChild()) {
+        depth++;
+        continue;
+      }
+      while (depth > 0 && !cursor.gotoNextSibling()) {
+        cursor.gotoParent();
+        depth--;
+      }
+      if (depth === 0) return;
+    }
+  } finally {
+    cursor.delete();
+  }
+}
+
+/** Whether a count at the large depth is a linear growth of the count at the small one (doubling the depth gives 2.0; a rescan per node gives about 4.0). */
+const growsLinearly = (small, large) => large <= 2.5 * small + 20;
+
+/** A deliberately quadratic walk: the whole tree is rescanned with a cursor at every node. */
+const quadraticExtractor = {
+  declarations: (file) => visitAll(file.tree.rootNode, () => visitAll(file.tree.rootNode, () => {})),
+  uses: () => [],
+};
 
 const range = (n) => Array.from({ length: n }, (_, i) => i);
 
@@ -130,7 +165,15 @@ describe('extractors carry the context down the walk (ancestor steps grow linear
       assert.ok(small > 0, `${name}: no tree access counted at depth ${SMALL}`);
       assert.ok(large >= 1.5 * small, `${name}: ${small} tree accesses at depth ${SMALL}, ${large} at depth ${LARGE}: the count does not grow with depth`);
       // Linear growth doubles the count (2.0); work per node that itself grows with depth quadruples it (about 4.0).
-      assert.ok(large <= 2.5 * small + 20, `${name}: ${small} tree accesses at depth ${SMALL}, ${large} at depth ${LARGE}`);
+      assert.ok(growsLinearly(small, large), `${name}: ${small} tree accesses at depth ${SMALL}, ${large} at depth ${LARGE}`);
     });
   }
+
+  it('the bound rejects a walk that rescans the tree with a cursor at every node', async () => {
+    const { language, ext, source } = SOURCES.rust;
+    const small = await countTreeAccesses(() => runExtractor(quadraticExtractor, language, ext, source(SMALL)));
+    const large = await countTreeAccesses(() => runExtractor(quadraticExtractor, language, ext, source(LARGE)));
+    assert.ok(small > 0 && large > 0);
+    assert.equal(growsLinearly(small, large), false, `the quadratic walk counted ${small} at depth ${SMALL} and ${large} at depth ${LARGE}, and the bound let it through`);
+  });
 });
