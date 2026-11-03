@@ -234,9 +234,21 @@ function makeRustResolveDeps(
     const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
     // Target sub-paths are package-relative and never climb, so a plain join is exact.
     const at = (sub: string): string => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
+    // Cargo (edition 2015 only, `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found neither as `src/bin/<name>.rs`, `src/bin/<name>/main.rs` nor (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`.
+    const legacyBinPaths: string[] = [];
+    if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
+      const hasLib = exists(at(path.posix.normalize(manifest.libPath ?? 'src/lib.rs')));
+      for (const named of manifest.namedTargets) {
+        if (!named.startsWith('src/bin/')) continue;
+        const name = named.slice('src/bin/'.length);
+        if (exists(at(`${named}.rs`)) || exists(at(`${named}/main.rs`)) || (name === manifest.packageName && exists(at('src/main.rs')))) continue;
+        const legacy = [...(hasLib ? [] : [`src/${name}.rs`]), 'src/main.rs', 'src/bin/main.rs'].find((p) => exists(at(p)));
+        if (legacy !== undefined) legacyBinPaths.push(legacy);
+      }
+    }
     // Cargo (edition 2015): a package that declares a bin turns bin auto-discovery off unless `autobins = true`; from 2018 on discovery is always on. The same rule holds for tests, examples and benches, which are not yet read this way.
     const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? (manifest.declaredDirs.includes('src/bin') && !manifest.undiscoveredDirs.includes('src/bin') && !manifest.discoveredDirs.includes('src/bin') ? ['src/bin'] : []) : [])];
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.targetPaths, undiscovered, manifest?.namedTargets, !undiscovered.includes('src/bin') || (manifest?.declaresMainBin ?? false));
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, manifest?.namedTargets, !undiscovered.includes('src/bin') || (manifest?.declaresMainBin ?? false));
     return {
       srcDir: at(target.srcDir),
       crateName,
@@ -780,12 +792,46 @@ function stripRustComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
-/** `text` with everything between a pair of braces blanked, except the braces of a `use` statement, which are copied whole to its `;`: what is left is the items a file itself puts in scope, and no name that exists only inside an inline `mod`, a function body or an `impl`. Braces inside a string literal are not told from code, so a file with an unbalanced one can only lose a name, never invent one. */
+/** The index just past the string or character literal that starts at `i` in Rust source `text` (a `"…"` string with its escapes, a raw string `r#"…"#` with any number of hashes, a character literal such as `'{'` or `'\n'`), or `i` itself when none starts there. A lifetime (`'a`) is no literal; an unterminated one runs to the end of the text. */
+function rustLiteralEnd(text: string, i: number): number {
+  const c = text[i];
+  const before = text[i - 1] ?? ' ';
+  if (c === 'r' && !/[A-Za-z0-9_]/.test(before)) {
+    const raw = /^r(#*)"/.exec(text.slice(i, i + 40));
+    if (raw !== null) {
+      const close = text.indexOf(`"${raw[1]}`, i + raw[0].length);
+      return close === -1 ? text.length : close + 1 + raw[1].length;
+    }
+  }
+  if (c === '"') {
+    for (let j = i + 1; j < text.length; j++) {
+      if (text[j] === '\\') j++;
+      else if (text[j] === '"') return j + 1;
+    }
+    return text.length;
+  }
+  if (c === "'") {
+    if (text[i + 1] === '\\') {
+      const close = text.indexOf("'", i + 3);
+      return close === -1 ? i : close + 1;
+    }
+    if (text[i + 2] === "'" && text[i + 1] !== undefined) return i + 3;
+  }
+  return i;
+}
+
+/** `text` with everything between a pair of braces blanked, except the braces of a `use` statement, which are copied whole to its `;`: what is left is the items a file itself puts in scope, and no name that exists only inside an inline `mod`, a function body or an `impl`. A brace inside a string or character literal is no brace. What can still go wrong: a macro body that is not balanced braces, or a `}` or `{` in a comment (the caller strips comments first), shifts the depth, so the rest of the file counts as nested (a name lost, no edge) or as top level (a nested name read as the root's); neither can fail the file. */
 function rustTopLevelText(text: string): string {
   let out = '';
   let depth = 0;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
+    const literalEnd = rustLiteralEnd(text, i);
+    if (literalEnd > i) {
+      if (depth === 0) out += text.slice(i, literalEnd);
+      i = literalEnd - 1;
+      continue;
+    }
     if (depth === 0 && c === 'u' && text.startsWith('use', i) && !/[A-Za-z0-9_#]/.test(text[i - 1] ?? ' ') && !/[A-Za-z0-9_]/.test(text[i + 3] ?? ' ')) {
       const end = text.indexOf(';', i);
       const stop = end === -1 ? text.length : end + 1;

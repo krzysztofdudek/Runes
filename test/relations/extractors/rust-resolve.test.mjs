@@ -956,6 +956,15 @@ path = "..\u002fmore"
     expect(rustFileDeclares('mod m { struct Error;', 'Error', true)).toBe(false);
     expect(rustFileDeclares('} struct Error;', 'Error', true)).toBe(true);
     expect(rustFileDeclares('use a::b', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { let s = "}"; struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { let c = \'}\'; let d = \'\\\\\'\'; struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { let s = r#"} " }"#; struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f<\'a>(x: &\'a str) { struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('const S: &str = "{ a \\" b";\nstruct Error;', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('fn f() { "open', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('fn f() { r#"open', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('struct Error; const C: char = \'\\n\';', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('fn f() { \'\\x', 'Error', true)).toBe(false);
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
   });
 });
