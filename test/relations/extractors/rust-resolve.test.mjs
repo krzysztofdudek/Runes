@@ -279,6 +279,28 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
+  it('in edition 2015 roots a bin whose name two inferred targets share at its legacy path alone', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "app"\n');
+    put('src/main.rs', 'mod cli;\npub struct Main;\n');
+    put('src/cli.rs', '');
+    put('src/bin/app.rs', 'pub struct Other;\n');
+    const resolve = makeResolvePathToFile(ws);
+    // src/main.rs and src/bin/app.rs both carry the package's name: with no src/app.rs the legacy path is src/main.rs, and src/bin/app.rs is a module of it.
+    expect(resolve('self::cli::Args', 'src/main.rs', 'rust')).toBe('src/cli.rs');
+    expect(resolve('crate::Main', 'src/bin/app.rs', 'rust')).toBe('src/main.rs');
+  });
+
+  it('in edition 2015 keeps both inferred roots of a bin whose name they share when no legacy path exists, where Cargo refuses the manifest', () => {
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "tool"\n');
+    put('src/lib.rs', '');
+    put('src/bin/tool.rs', 'pub struct Tool;\n');
+    put('src/bin/tool/main.rs', 'mod ui;\n');
+    put('src/bin/tool/ui.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::ui', 'src/bin/tool/main.rs', 'rust')).toBe('src/bin/tool/ui.rs');
+    expect(resolve('crate::Tool', 'src/bin/tool.rs', 'rust')).toBe('src/bin/tool.rs');
+  });
+
   it('reads an empty bin array as declaring bins: in edition 2015 bin discovery is off, from 2018 on it stays on', () => {
     put('src/main.rs', 'mod cli;\n');
     put('src/cli.rs', '');
