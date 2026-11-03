@@ -21577,14 +21577,14 @@ Fixed: a file that several referenced tsconfig projects include takes the `paths
 - `airflow` `+` `airflow-core/src/airflow/ui/tests/e2e/specs/xcoms.spec.ts:20` `airflow-core/src/airflow/ui/tests/e2e/fixtures/xcom-data.ts`: the first referenced tsconfig that includes a file serves it, so the `tests/*` and `*` paths of the UI tsconfig.app.json bind the import (tsserver takes the first project in the order of `references`, and tests/** is included by tsconfig.app.json before tsconfig.dev.json)
 - `airflow` `+` `airflow-core/src/airflow/ui/tests/e2e/utils/shared.ts:24` `airflow-core/src/airflow/ui/playwright.config.ts`: the first referenced tsconfig that includes a file serves it, so the `tests/*` and `*` paths of the UI tsconfig.app.json bind the import (tsserver takes the first project in the order of `references`, and tests/** is included by tsconfig.app.json before tsconfig.dev.json)
 
-### Commit "csharp: an extension method of the global namespace binds before the compilation unit's usings"
+### Merge 5a644bb (commit 63a57bc)
 
 Fixed: C#: an extension-method call reads the static classes of the global namespace before the namespaces the compilation unit's using directives import, as C# does. A global static class declaring the called method now wins over an imported one. Where several projects declare such a global method and the reference graph cannot rule them out, the call is ambiguous and gives no edge.
 
 - `eShop` `-` `src/Basket.API/Program.cs:4` `src/Basket.API/Extensions/Extensions.cs`: the commit "csharp: an extension method of the global namespace binds before the compilation unit's usings"; `builder.AddApplicationServices()` now reads the global namespace before the project's `global using eShop.Basket.API.Extensions;`, and four projects (Catalog.API, Ordering.API, Webhooks.API, WebApp) declare a global `AddApplicationServices`; Basket.API references EventBusRabbitMQ, which compiles a linked file from `src/Shared`, so the reference graph is open and cannot drop them, and four owners at one level are ambiguous; the compiler binds Basket.API's own method, because none of those projects is referenced, so this is a lost true edge, never a false one
 - `eShop` `-` `src/OrderProcessor/Program.cs:4` `src/OrderProcessor/Extensions/Extensions.cs`: the commit "csharp: an extension method of the global namespace binds before the compilation unit's usings"; the same call, the same four global definers and the same open reference graph through EventBusRabbitMQ; the compiler binds OrderProcessor's own method
 
-### Commit "typescript: export targets are chosen by the conditions the importing file's module settings select"
+### Merge 7e1cd3a (commit d680c05)
 
 Fixed: an import of a package whose `exports` lists conditions binds the target TypeScript chooses by the conditions of the importing file's settings (`import` or `require` by its module format, `types`, `node` except under Bundler, and its `customConditions`), where Runes took the first target that named a file. Each line below was a tracked oracle false edge, and its oracle line leaves the section below.
 
@@ -21634,7 +21634,7 @@ Fixed: an import of a package whose `exports` lists conditions binds the target 
 - `next-intl` `-` `examples/example-app-router-without-i18n-routing/next.config.ts:2` `packages/next-intl/plugin.d.cts`: the commit "typescript: export targets are chosen by the conditions the importing file's module settings select"; the app's tsconfig uses moduleResolution Bundler, so TypeScript reads the `import` branch of `next-intl/plugin`, whose `dist/types/plugin.d.ts` is not there at the pinned commit, and passes over the `require` branch's `plugin.d.cts`; this was a tracked oracle false edge
 - `next-intl` `-` `examples/example-app-router/next.config.ts:2` `packages/next-intl/plugin.d.cts`: the commit "typescript: export targets are chosen by the conditions the importing file's module settings select"; the app's tsconfig uses moduleResolution Bundler, so TypeScript reads the `import` branch of `next-intl/plugin`, whose `dist/types/plugin.d.ts` is not there at the pinned commit, and passes over the `require` branch's `plugin.d.cts`; this was a tracked oracle false edge
 
-### Commit "typescript: a workspace package declared by a range binds only where the package manager links it"
+### Merge 7e1cd3a (commit 39a3b3b)
 
 Fixed: a workspace package declared by a version range or a tag binds only where the package manager, read from the root's `packageManager` or its lockfile, links it (npm and yarn for a satisfied range, pnpm only with `link-workspace-packages` on), where Runes bound any workspace package of that name. In react every such reference is a fixture that pins an older or experimental React.
 
