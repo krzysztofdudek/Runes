@@ -92,6 +92,7 @@ describe('MATRIX — relative resolution (relative join pins the directory; exte
   it('typescript-explicit-ts-extension-edge', () => runCase('typescript-explicit-ts-extension-edge'));
   it('typescript-directory-index-edge', () => runCase('typescript-directory-index-edge'));
   it('typescript-index-mjs-cjs-edge', () => runCase('typescript-index-mjs-cjs-edge'));
+  it('typescript-esm-extensionless-import-edge', () => runCase('typescript-esm-extensionless-import-edge'));
   it('typescript-package-main-directory-edge', () => runCase('typescript-package-main-directory-edge'));
   it('typescript-sibling-same-name-trap-edge', () => runCase('typescript-sibling-same-name-trap-edge'));
   it('typescript-unmapped-target-silence', () => runCase('typescript-unmapped-target-silence'));
