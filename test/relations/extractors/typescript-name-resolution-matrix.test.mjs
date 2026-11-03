@@ -115,6 +115,10 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-tsconfig-alias-silence', () => runCase('typescript-tsconfig-alias-silence'));
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
   it('typescript-workspace-semver-range-linked-edge', () => runCase('typescript-workspace-semver-range-linked-edge'));
+  it('typescript-workspace-pnpm-range-unlinked-silence', () => runCase('typescript-workspace-pnpm-range-unlinked-silence'));
+  it('typescript-workspace-protocol-pnpm-edge', () => runCase('typescript-workspace-protocol-pnpm-edge'));
+  it('typescript-workspace-range-unsatisfied-silence', () => runCase('typescript-workspace-range-unsatisfied-silence'));
+  it('typescript-workspace-unknown-manager-range-edge', () => runCase('typescript-workspace-unknown-manager-range-edge'));
   it('typescript-workspace-subpath-exports-edge', () => runCase('typescript-workspace-subpath-exports-edge'));
   it('typescript-exports-bundler-import-branch-silence', () => runCase('typescript-exports-bundler-import-branch-silence'));
   it('typescript-exports-node16-import-branch-edge', () => runCase('typescript-exports-node16-import-branch-edge'));

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { diskFileView, type FileSource } from '../file-view.mjs';
 import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, type Failure } from '../diagnostics.mjs';
+import { satisfiesRange } from './semver-range.mjs';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -24,7 +25,7 @@ import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, typ
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -120,6 +121,8 @@ export interface PackageManifest {
   types?: unknown;
   typings?: unknown;
   type?: unknown;
+  version?: unknown;
+  packageManager?: unknown;
   tsconfig?: unknown;
   workspaces?: unknown;
   dependencies?: unknown;
@@ -1077,7 +1080,78 @@ export function makeTsResolveDeps(
       found ??= hit;
       declared = dir;
     }
-    return declared !== undefined ? found : packageIndex().get(lookup);
+    if (declared === undefined) return packageIndex().get(lookup);
+    // A member declared by a range (not `workspace:`, not a local path) is linked only where the package manager links by range; otherwise the install takes it from the registry. A peer dependency is not installed by the package that declares it (yarn 1 never installs peers, npm 7 and later and pnpm with auto-install-peers install them by rules of their own), so a member declared only as a peer stays bound, as before.
+    if (found !== undefined && found !== 'ambiguous' && typeof spec === 'string' && !spec.startsWith('workspace:') && field !== own!.manifest.peerDependencies && linksByRange(declared, spec, found) === false) return undefined;
+    return found;
+  };
+
+  // The package manager that installs the workspace rooted at `root`: the root package.json's `packageManager` (`pnpm@9.11.0`), else the one lockfile kind the root holds. undefined when neither says, when several lockfile kinds are there, or for a manager whose linking Runes does not read (bun). `major` is the pnpm or yarn major version where it is known; for pnpm with only a lockfile, `lockfileVersion` 9 and later is written by pnpm 9 and later (`major: 9` stands for "9 or later", `minor` unknown) and an earlier one by pnpm 8 or earlier (`major: 8`).
+  type Manager = { name: 'npm' | 'pnpm' | 'yarn'; major?: number; minor?: number; exact: boolean };
+  const managers = new Map<string, Manager | undefined>();
+  const managerAt = (root: string): Manager | undefined => {
+    if (managers.has(root)) return managers.get(root);
+    const at = (file: string): string => (root === '' ? file : `${root}/${file}`);
+    let manager: Manager | undefined;
+    const field = packageAt(root)?.manifest.packageManager;
+    const declaredManager = typeof field === 'string' ? /^(npm|pnpm|yarn|bun)@(\d+)(?:\.(\d+))?/.exec(field) : null;
+    if (declaredManager !== null) {
+      if (declaredManager[1] !== 'bun') manager = { name: declaredManager[1] as Manager['name'], major: Number(declaredManager[2]), ...(declaredManager[3] !== undefined ? { minor: Number(declaredManager[3]) } : {}), exact: true };
+    } else {
+      const kinds = [
+        isFile(at('pnpm-lock.yaml')) ? 'pnpm' : undefined,
+        isFile(at('package-lock.json')) || isFile(at('npm-shrinkwrap.json')) ? 'npm' : undefined,
+        isFile(at('yarn.lock')) ? 'yarn' : undefined,
+        isFile(at('bun.lock')) || isFile(at('bun.lockb')) ? 'bun' : undefined,
+      ].filter((k) => k !== undefined);
+      if (kinds.length === 1 && kinds[0] === 'pnpm') {
+        const version = /^lockfileVersion:\s*['"]?(\d+)/m.exec(files.read(at('pnpm-lock.yaml')) ?? '');
+        manager = { name: 'pnpm', ...(version !== null ? { major: Number(version[1]) >= 9 ? 9 : 8 } : {}), exact: false };
+      } else if (kinds.length === 1 && kinds[0] === 'yarn') {
+        // yarn 2 and later write `__metadata:` into yarn.lock and read .yarnrc.yml; yarn 1 does neither.
+        manager = { name: 'yarn', major: isFile(at('.yarnrc.yml')) || /^__metadata:/m.test(files.read(at('yarn.lock')) ?? '') ? 2 : 1, exact: false };
+      } else if (kinds.length === 1 && kinds[0] === 'npm') manager = { name: 'npm', exact: false };
+    }
+    managers.set(root, manager);
+    return manager;
+  };
+  // pnpm's `link-workspace-packages` for the workspace rooted at `root`: true (also `deep`), false, or undefined when it cannot be known. pnpm 9 turned its default from true to false ("link-workspace-packages: disabled by default", pnpm 9.0.0 changelog); pnpm up to 10 reads it from .npmrc and pnpm 10.6 and later also as `linkWorkspacePackages` in pnpm-workspace.yaml ("pnpm-workspace.yaml can now hold all the settings that .npmrc accepts", 10.6.0), and pnpm 11 reads only auth and registry settings from .npmrc (11.0.0). Two places that apply and disagree leave it unknown.
+  const pnpmLinksByRange = (root: string, manager: Manager): boolean | undefined => {
+    const at = (file: string): string => (root === '' ? file : `${root}/${file}`);
+    const { major, minor, exact } = manager;
+    const readsYaml = major === undefined || !exact || major > 10 || (major === 10 && minor !== undefined && minor >= 6);
+    const readsNpmrc = major === undefined || !exact || major < 11;
+    const settingOf = (text: string | undefined, pattern: RegExp): boolean | undefined => {
+      const value = text === undefined ? undefined : pattern.exec(text)?.[1].toLowerCase();
+      return value === undefined ? undefined : value !== 'false';
+    };
+    const values = [
+      readsYaml ? settingOf(isFile(at('pnpm-workspace.yaml')) ? files.read(at('pnpm-workspace.yaml')) : undefined, /^linkWorkspacePackages\s*:\s*['"]?(true|false|deep)['"]?\s*(?:#.*)?$/m) : undefined,
+      readsNpmrc ? settingOf(isFile(at('.npmrc')) ? files.read(at('.npmrc')) : undefined, /^\s*link-workspace-packages\s*=\s*['"]?(true|false|deep)['"]?\s*$/m) : undefined,
+    ].filter((v) => v !== undefined);
+    if (values.length > 0) return values.every((v) => v === values[0]) ? values[0] : undefined;
+    return major === undefined ? undefined : major < 9;
+  };
+  // Whether the package manager of the workspace rooted at `root` links `member` for a dependency declared as `spec` (a range or a tag, not `workspace:` and not a local path): false when it installs that dependency from the registry, undefined when the manager is not known (the member stays bound, as before). npm's arborist links a workspace when "the workspace node will satisfy the edge", `*` and the empty spec always, a range by `semver.satisfies(version, range, true)`, a tag never (it is valid only with a registry resolution). pnpm links by range only with link-workspace-packages on, and then picks by `resolveWorkspaceRange`: `*`, `^`, `~` and the empty spec match any version, a tag matches as `*` does, a range as `semver.maxSatisfying(versions, range, { loose: true })`. yarn 2 and later accept a pure semver range when `enableTransparentWorkspaces` (default true) is on and the workspace has a version (`Workspace.accepts`); yarn 1 links when `semver.satisfies(workspace version, range)`. Any other spec (`npm:` aliases, URLs, git) is never the member.
+  const linksByRange = (root: string, spec: string, member: TsPackage): boolean | undefined => {
+    const manager = managerAt(root);
+    if (manager === undefined) return undefined;
+    const raw = typeof member.manifest.version === 'string' ? member.manifest.version : undefined;
+    const trimmed = spec.trim();
+    const satisfied = raw === undefined ? undefined : satisfiesRange(raw, trimmed);
+    const isTag = /^[A-Za-z][\w.-]*$/.test(trimmed) && satisfiesRange('0.0.0', trimmed) === undefined;
+    if (manager.name === 'pnpm') {
+      const links = pnpmLinksByRange(root, manager);
+      if (links !== true) return links;
+      if (trimmed === '' || trimmed === '*' || trimmed === '^' || trimmed === '~' || isTag) return true;
+      return raw === trimmed || satisfied === true;
+    }
+    if (manager.name === 'npm') return trimmed === '' || trimmed === '*' || satisfied === true;
+    if (manager.major !== undefined && manager.major >= 2) {
+      const yarnrc = root === '' ? '.yarnrc.yml' : `${root}/.yarnrc.yml`;
+      if (isFile(yarnrc) && /^enableTransparentWorkspaces\s*:\s*['"]?false['"]?\s*(?:#.*)?$/m.test(files.read(yarnrc) ?? '')) return false;
+    }
+    return satisfied === true;
   };
 
   return {
