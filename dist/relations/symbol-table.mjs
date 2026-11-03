@@ -14,6 +14,8 @@ export class SymbolTable {
     /** `${namespace}\0${package}` → files declaring a DIRECT top-level member of that package (a key
      *  `<package>.<Name>` whose last segment carries no `+` nested-type separator). */
     packageMembers = new Map();
+    /** `${namespace}\0${prefix}` of every dotted namespace a declared key lies in: each proper dot prefix of the key's part before its first `+` (`A.B.Order` lies in `A` and `A.B`; `A.Outer+Inner` in `A`). */
+    namespaces = new Set();
     key(language, symbolKey) {
         return `${namespaceOf(language)}\0${symbolKey}`;
     }
@@ -28,6 +30,10 @@ export class SymbolTable {
         const sep = symbolKey.lastIndexOf('::');
         if (sep !== -1)
             this.nestedTails.add(this.key(language, symbolKey.slice(sep + 2)));
+        const plus = symbolKey.indexOf('+');
+        const typePart = plus === -1 ? symbolKey : symbolKey.slice(0, plus);
+        for (let i = typePart.indexOf('.'); i !== -1; i = typePart.indexOf('.', i + 1))
+            this.namespaces.add(this.key(language, typePart.slice(0, i)));
         const dot = symbolKey.lastIndexOf('.');
         if (!symbolKey.slice(dot + 1).includes('+')) {
             const pk = this.key(language, dot === -1 ? '' : symbolKey.slice(0, dot));
@@ -43,6 +49,10 @@ export class SymbolTable {
      *  `Order`): a constant of that name is nested in some namespace. Ruby's lexical guard. */
     hasNestedTail(language, name) {
         return this.nestedTails.has(this.key(language, name));
+    }
+    /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. */
+    hasNamespace(language, name) {
+        return this.namespaces.has(this.key(language, name));
     }
     /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. unowned) → undefined. */
     resolveUnique(language, symbolKey) {
