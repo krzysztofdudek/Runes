@@ -48,9 +48,9 @@ describe('csharp extractor — attribute usages emit a two-reading group', () =>
   it('reads a generic attribute `[Foo<Bar>]` as the base name plus each type argument', async () => {
     const { uses } = await run('namespace App;\n[Validate<Models.Customer>]\nclass Handler {}\n');
     const keys = symbolKeys(uses);
-    // Base container name resolves the attribute class (verbatim + suffixed reading).
-    expect(keys).toContain('Validate');
-    expect(keys).toContain('ValidateAttribute');
+    // Base container name resolves the attribute class (verbatim + suffixed reading), with the arity of its type arguments.
+    expect(keys).toContain('Validate`1');
+    expect(keys).toContain('ValidateAttribute`1');
     // Each generic type ARGUMENT is its own real type reference.
     expect(keys).toContain('Models.Customer');
   });
