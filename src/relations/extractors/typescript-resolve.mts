@@ -909,27 +909,28 @@ export function makeTsResolveDeps(
     };
     return names(file);
   };
-  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced config that holds it, searched through the whole reference tree as tsserver and `tsc -b` search it: the first that holds it, in the order of `references`; when one met before it cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
+  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced config that holds it, searched through the whole reference tree as tsserver searches it (below): the first that holds it; when one met before it cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
   const configInEffect = (file: string, fromFile: string): TsPathConfig | 'unknown' => {
     const own = loadConfig(file, dirOf(file));
     if (own === 'unknown') return 'unknown';
     const references = referencesOf(file);
     if (references.length === 0 || holds(own, dirOf(file), fromFile)) return view(own);
     const seen = new Set([file]);
-    // The first referenced project, in the order of `references`, every direct reference before any nested one, that holds the file serves it, as tsserver picks the project of a file several projects include; an unreadable config that may hold the file, met before any that does, leaves the answer unknown.
-    const search = (first: string[]): TsPathConfig | 'unknown' | undefined => {
-      for (let level = first; level.length > 0; ) {
-        const next: string[] = [];
-        for (const ref of level) {
-          if (seen.has(ref)) continue;
-          seen.add(ref);
-          const loaded = loadConfig(ref, dirOf(ref));
-          if (loaded === 'unknown') {
-            if (mayHold(ref, fromFile)) return 'unknown';
-          } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
-          next.push(...referencesOf(ref));
-        }
-        level = next;
+    // The first referenced project that holds the file serves it, in tsserver's order (`forEachResolvedProjectReferenceProjectLoad`): a config's direct references in the order of `references`, then the same search through the references of each of them in turn, one whole subtree before the next. A config already met is not met again. An unreadable config that may hold the file, met before any that does, leaves the answer unknown.
+    const search = (refs: string[]): TsPathConfig | 'unknown' | undefined => {
+      const children: string[] = [];
+      for (const ref of refs) {
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        const loaded = loadConfig(ref, dirOf(ref));
+        if (loaded === 'unknown') {
+          if (mayHold(ref, fromFile)) return 'unknown';
+        } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
+        children.push(ref);
+      }
+      for (const child of children) {
+        const found = search(referencesOf(child));
+        if (found !== undefined) return found;
       }
       return undefined;
     };
