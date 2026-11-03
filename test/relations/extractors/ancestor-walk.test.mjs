@@ -25,6 +25,45 @@ async function countAncestorSteps(fn) {
   return steps;
 }
 
+// Every accessor an extractor reaches the tree through: the climb (`parent`), the descent and the siblings. Rust, C and C++ read no ancestor at all, so their `parent` count is zero at every depth and says nothing; the number of calls through all of these grows with the nodes visited, hence with depth, and a hidden climb or a rescan per node makes it grow faster than that.
+const TREE_GETTERS = ['parent', 'children', 'namedChildren', 'firstChild', 'lastChild', 'firstNamedChild', 'lastNamedChild', 'nextSibling', 'previousSibling', 'nextNamedSibling', 'previousNamedSibling'];
+const TREE_METHODS = ['child', 'namedChild', 'childForFieldName', 'childWithDescendant', 'descendantsOfType', 'descendantForIndex', 'namedDescendantForIndex', 'descendantForPosition', 'namedDescendantForPosition', 'walk'];
+
+/** Runs `fn` with every tree accessor counting its calls, and returns the count. */
+async function countTreeAccesses(fn) {
+  const proto = TreeSitter.Node.prototype;
+  const originals = new Map();
+  let calls = 0;
+  for (const key of [...TREE_GETTERS, ...TREE_METHODS]) {
+    const original = Object.getOwnPropertyDescriptor(proto, key);
+    if (original === undefined) continue;
+    originals.set(key, original);
+    if (original.get !== undefined) {
+      Object.defineProperty(proto, key, {
+        ...original,
+        get() {
+          calls++;
+          return original.get.call(this);
+        },
+      });
+    } else {
+      Object.defineProperty(proto, key, {
+        ...original,
+        value(...args) {
+          calls++;
+          return original.value.apply(this, args);
+        },
+      });
+    }
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [key, original] of originals) Object.defineProperty(proto, key, original);
+  }
+  return calls;
+}
+
 const range = (n) => Array.from({ length: n }, (_, i) => i);
 
 // One synthetic file per language, nested `depth` levels, with a reference to a name and a declaration at every level, so that every context an extractor reads from the ancestors is asked for at every depth.
@@ -82,6 +121,16 @@ describe('extractors carry the context down the walk (ancestor steps grow linear
       const large = await countAncestorSteps(() => runExtractor(extractor, language, ext, source(LARGE)));
       // Linear growth doubles the count (2.0); a climb per node quadruples it (about 4.0).
       assert.ok(large <= 2.5 * small + 20, `${name}: ${small} ancestor steps at depth ${SMALL}, ${large} at depth ${LARGE}`);
+    });
+
+    it(`${name}: the tree accesses grow with the depth and no faster than linearly`, async () => {
+      const small = await countTreeAccesses(() => runExtractor(extractor, language, ext, source(SMALL)));
+      const large = await countTreeAccesses(() => runExtractor(extractor, language, ext, source(LARGE)));
+      // The count is not empty and it does grow with depth, so the bound below measures something for this language.
+      assert.ok(small > 0, `${name}: no tree access counted at depth ${SMALL}`);
+      assert.ok(large >= 1.5 * small, `${name}: ${small} tree accesses at depth ${SMALL}, ${large} at depth ${LARGE}: the count does not grow with depth`);
+      // Linear growth doubles the count (2.0); work per node that itself grows with depth quadruples it (about 4.0).
+      assert.ok(large <= 2.5 * small + 20, `${name}: ${small} tree accesses at depth ${SMALL}, ${large} at depth ${LARGE}`);
     });
   }
 });
