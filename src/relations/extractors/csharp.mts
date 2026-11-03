@@ -979,12 +979,13 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   }
 
   /**
-   * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does a chain through a using alias (`S::A.B`: a member access cannot spell one, and the qualified-name form rewrites it on assembly) or any other shape.
+   * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain led by a using alias (`S::Core.Customer`, which the grammar reads as a member access over `S::Core`) is the alias-qualified type it spells: its tail is rewritten on assembly onto the namespace the alias names, as a qualified name's is, and an alias the map does not bind (an extern alias) gives nothing. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does any other shape.
    */
   function emitMemberAccessType(access: Node): void {
     const segs: string[] = [];
     const generics: Node[] = [];
     let rooted = false;
+    let alias: string | undefined;
     const collect = (n: Node): boolean => {
       switch (n.type) {
         case 'identifier':
@@ -996,15 +997,21 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           return true;
         case 'member_access_expression':
           return collect(n.childForFieldName('expression')!) && collect(n.childForFieldName('name')!);
-        case 'alias_qualified_name':
-          rooted = n.childForFieldName('alias')!.text === 'global';
-          return rooted && collect(n.childForFieldName('name')!);
+        case 'alias_qualified_name': {
+          // The leftmost part of the chain: `global::` roots it, any other alias leads the tail it is rewritten onto.
+          const aliasText = n.childForFieldName('alias')!.text;
+          if (aliasText === 'global') rooted = true;
+          else alias = aliasText;
+          return collect(n.childForFieldName('name')!);
+        }
         default:
           return false;
       }
     };
-    if (!collect(access) || (!rooted && isTypeParameterInScope(segs[0], access))) return;
-    pushRef(segs.join('.'), access, access.startPosition.row + 1, rooted);
+    if (!collect(access) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], access))) return;
+    const line = access.startPosition.row + 1;
+    if (alias !== undefined) refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: enclosingNamespaceChain(fileNs, access), at: access.startIndex });
+    else pushRef(segs.join('.'), access, line, rooted);
     for (const g of generics) emitTypeArguments(g);
   }
 
