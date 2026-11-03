@@ -1209,23 +1209,22 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       const nameField = node.childForFieldName('name');
       if (nameField === null || emitted.has(nameField.id)) return undefined;
       emitted.add(nameField.id);
-      // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name. After a using alias (`[S::Foo]`, `[S::Gen<T>]`, `using S = N;`) the right side is the attribute's name in the aliased namespace, rewritten on assembly as a type's `S::Tail` is (B5).
+      // A name written after `global::` (`[global::Foo]`, `[global::A.Foo]`, `[global::Gen<T>]`) is looked up from the global namespace only (R12), never in an enclosing namespace or a using; the right side of `global::` is the attribute's name. After a using alias (`[S::Foo]`, `[S::Gen<T>]`, `[S::Core.Mark]`, `using S = N;`) the rest is the attribute's name in the aliased namespace, rewritten on assembly as a type's `S::Tail` is (B5).
       const rooted = nameField.text.startsWith('global::');
       const aliasField = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('alias') : null;
       const alias = aliasField !== null && aliasField.text !== 'global' ? aliasField.text : undefined;
       const named = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('name') : nameField;
       // The C# attribute-naming convention: `[Foo]` may name `Foo` OR `FooAttribute`. Emit both readings as ONE group (the verbatim and the `Attribute`-suffixed form), so the dependency resolves whichever the declaring type is named.
-      const emitAttribute = (written: string, at: Node): void => {
+      const emitAttribute = (written: string, at: Node, via = alias): void => {
         const last = written.split('.').pop() ?? written;
         const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
-        pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, alias);
+        pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, via);
       };
       if (named !== null && named.type === 'identifier') emitAttribute(named.text, nameField);
-      else if (named !== null && named.type === 'qualified_name' && !named.text.includes('<')) emitAttribute(stripGlobalQualifier(named.text), nameField);
       else if (named !== null && named.type === 'qualified_name') {
-        // A generic attribute behind a qualifier (`[A.Gen<Order>]`, `[global::A.Gen<Order>]`): the attribute is named by its plain dotted name, the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. A qualifier through a using alias (`[S::A.Gen<T>]`) is rewritten onto the aliased namespace on assembly, as in a type position (the alias is read from the outer `S::` qualifier above, so `parts.alias` is empty here).
+        // An attribute behind a qualifier (`[A.Mark]`, `[global::A.Mark]`, `[A.Gen<Order>]`): the attribute is named by its plain dotted name, the `global::` qualifier and the type-argument lists stripped as a qualified type name's are, and each type argument is its own reference. The grammar nests a using alias at the deepest qualifier (`[S::Core.Mark]` is `(S::Core).Mark`), so `parts.alias` is that alias and `parts.name` the dotted name after it (`Core.Mark`), rewritten on assembly onto the aliased namespace, as `S::Core.Order` is in a type position.
         const parts = qualifiedNameParts(named);
-        if (parts.alias === undefined) emitAttribute(parts.name, nameField);
+        emitAttribute(parts.name, nameField, parts.alias);
         for (const g of parts.generics) emitTypeArguments(g);
       } else if (named !== null && named.type === 'generic_name') {
         // C#11 generic attribute `[Foo<Bar>]`: the attribute NAME is the `generic_name`'s base identifier (`Foo`, with the `Foo`/`FooAttribute` convention), and each type ARGUMENT (`Bar`) is its own real type reference.
