@@ -148,8 +148,9 @@ export type CsharpRefDescriptor =
     rooted?: boolean;
 }
 /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
- *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the namespaces imported
- *  where the call stands (`at`) as one set, then the global namespace. */
+ *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
+ *  its using directives import where the call stands (`at`), then the global namespace, then the
+ *  namespaces the compilation unit's using directives import as one set. */
  | {
     kind: 'ext';
     name: string;
