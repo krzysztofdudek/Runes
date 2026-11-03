@@ -68,6 +68,8 @@ describe('MATRIX — qualified-reference & nested-type keying', () => {
   it('csharp-enclosing-nested-type-other-part-silence', () => runCase('csharp-enclosing-nested-type-other-part-silence'));
   it('csharp-enclosing-nested-type-before-global-alias-edge', () => runCase('csharp-enclosing-nested-type-before-global-alias-edge'));
   it('csharp-enclosing-nested-type-other-node-edge', () => runCase('csharp-enclosing-nested-type-other-node-edge'));
+  it('csharp-type-header-outside-nested-types-edge', () => runCase('csharp-type-header-outside-nested-types-edge'));
+  it('csharp-base-list-outside-nested-types-edge', () => runCase('csharp-base-list-outside-nested-types-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

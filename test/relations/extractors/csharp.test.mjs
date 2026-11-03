@@ -207,7 +207,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // type is its verbatim top-level form (`SomeGlobalType`), the harmless last candidate. With
     // no in-graph file declaring that bare top-level type, it resolves to nothing → SILENCE.
     const { uses } = await run(['class C : SomeGlobalType { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['C+SomeGlobalType', 'SomeGlobalType']); // the nested reading of the enclosing type C first, then the verbatim
+    expect(symbolKeys(uses)).toEqual(['SomeGlobalType']); // a base list is outside the body of C, so no nested reading of C
     const st = new SymbolTable(); // empty table — `global using` declared elsewhere is invisible here
     const resolver = makeResolver({
       ownerIndex: { ownerOf: () => 'someNode' },
@@ -259,7 +259,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // `List` simply resolves to no in-graph declaration (fail-to-silence), so the candidates are
     // harmless — only the in-scope readings are ever produced.
     const { uses } = await run(['using Foo.Bar;', 'class C : List<int> { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['C+List`1', 'List`1', 'Foo.Bar.List`1']);
+    expect(symbolKeys(uses)).toEqual(['List`1', 'Foo.Bar.List`1']);
   });
 
   it('handles a base_list with MULTIPLE entries (qualified bare base + bare interface)', async () => {
@@ -626,7 +626,7 @@ describe('csharp anti-FALSE-POSITIVE — the silence list (D8 gate)', () => {
     // top-level form (`RepositoryBase`, the harmless last candidate). A `global using` declared
     // elsewhere is invisible here, so nothing maps that bare name to a node → SILENCE.
     const { uses } = await run(['class C : RepositoryBase { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['C+RepositoryBase', 'RepositoryBase']); // the nested reading of C, then the verbatim
+    expect(symbolKeys(uses)).toEqual(['RepositoryBase']); // a base list is outside the body of C
     const owners = resolveAll(uses, new SymbolTable(), () => undefined);
     expect(owners.every((o) => o === undefined)).toBe(true);
   });
@@ -785,7 +785,7 @@ describe('csharp NESTED-TYPE resolution + the tri-state / split over-silence gua
           for (const d of csharpExtractor.declarations(f)) st.declare('csharp', d.symbolKey, f.path);
         }
         const owners = csharpExtractor.uses(consumer);
-        expect(groupContaining(owners, 'Widget')).toEqual(['App.C+Widget', 'App.Widget', 'Widget', 'L1.Widget', 'L2.Widget']); // the nested reading of the enclosing type C first
+        expect(groupContaining(owners, 'Widget')).toEqual(['App.Widget', 'Widget', 'L1.Widget', 'L2.Widget']); // a base list is outside the body of C, so no nested reading of C
         const resolver = makeResolver({
           ownerIndex: { ownerOf: (f) => f.split('/')[1] },
           symbolTable: st,
@@ -1053,7 +1053,7 @@ describe('csharp — a type parameter in scope shadows a type of the same name (
 
   it('a class type parameter names nothing in a field, a return type, a parameter, a constraint, typeof, a cast, `is`, `as` or `new T[n]`', async () => {
     const { uses } = await run(['class Repo<T> : Base<T> where T : class { T f; T M(T a) => (T)a ?? (a as T) ?? default(T); bool N(object o) => o is T; object K() => typeof(T); T[] P(int n) => new T[n]; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Repo`1+Base`1', 'Base`1']]);
+    expect(groups(uses)).toEqual([['Base`1']]); // the base list sees the type parameters, never the nested types (§7.7.1)
   });
   it('a method, local function, delegate, interface and record type parameter names nothing, a generic method call\'s type argument included', async () => {
     const { uses } = await run([
@@ -1067,7 +1067,7 @@ describe('csharp — a type parameter in scope shadows a type of the same name (
   });
   it('outside its declaration, and in the declaration\'s own attributes, the same name is a type reference', async () => {
     const { uses } = await run(['[A(typeof(T))] class Box<T> { }', 'class S { T M<T>() => default(T); T Current; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Box`1+A', 'A', 'Box`1+AAttribute', 'AAttribute'], ['Box`1+T', 'T'], ['S+T', 'T']]);
+    expect(groups(uses)).toEqual([['A', 'AAttribute'], ['T'], ['S+T', 'T']]); // an attribute of Box sees neither its type parameters nor its nested types
   });
   it('a name with type arguments never names a type parameter', async () => {
     const { uses } = await run(['class Repo<Entity> { Entity<int> keyed; }', ''].join('\n'));
@@ -1150,9 +1150,9 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       ['A.Bar', 'A.BarAttribute'],
       ['Foo', 'FooAttribute'],
       ['Gen`1', 'GenAttribute`1'],
-      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
       ['A.BazAttribute'],
-      ['Shop.Web.C+Local', 'Shop.Web.Local', 'Shop.Local', 'Local', 'Shop.Core.Local', 'Shop.Web.C+LocalAttribute', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'LocalAttribute', 'Shop.Core.LocalAttribute'],
+      ['Shop.Web.Local', 'Shop.Local', 'Local', 'Shop.Core.Local', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'LocalAttribute', 'Shop.Core.LocalAttribute'],
     ]);
   });
 
@@ -1239,13 +1239,13 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
     // `[A.Gen<Order>]` looked up `A.Gen<Order>` and `A.Gen<Order>Attribute` and emitted no type argument.
     const { uses } = await run(['using Shop.Core;', 'namespace Shop.Web;', '[A.Gen<Order>]', '[global::A.B.Gen<Order, Item>]', '[S::A.Gen<Item>]', 'class C { }', ''].join('\n'));
     expect(groups(uses)).toEqual([
-      ['Shop.Web.C+A.Gen`1', 'Shop.Web.A.Gen`1', 'Shop.A.Gen`1', 'A.Gen`1', 'Shop.Core.A.Gen`1', 'Shop.Web.C+A.GenAttribute`1', 'Shop.Web.A.GenAttribute`1', 'Shop.A.GenAttribute`1', 'A.GenAttribute`1', 'Shop.Core.A.GenAttribute`1'],
-      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.A.Gen`1', 'Shop.A.Gen`1', 'A.Gen`1', 'Shop.Core.A.Gen`1', 'Shop.Web.A.GenAttribute`1', 'Shop.A.GenAttribute`1', 'A.GenAttribute`1', 'Shop.Core.A.GenAttribute`1'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
       ['A.B.Gen`2', 'A.B.GenAttribute`2'],
-      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
-      ['Shop.Web.C+Item', 'Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
       // A qualifier through a using alias names nothing, as in a type position; the type argument is still read.
-      ['Shop.Web.C+Item', 'Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
+      ['Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
     ]);
   });
 
@@ -1257,7 +1257,7 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
       ['Shop.Attrs.Foo', 'Shop.Attrs.FooAttribute'],
       ['Shop.Attrs.BarAttribute'],
       ['Shop.Attrs.Gen`1', 'Shop.Attrs.GenAttribute`1'],
-      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order'],
     ]);
   });
 

@@ -157,6 +157,8 @@ interface CsScope {
   readonly ns: NsFrame | null;
   /** The enclosing-TYPE chain, outermost first, joined by `+` (the .NET reflection FQN separator) — distinct from the namespace `.` so a nested key lives in a disjoint string space from any dot-only use candidate (separator isolation). A nested `class Inner` inside `class Outer` yields `Outer`; deeper nesting `Outer+Mid`; empty when the node is not inside a type. */
   readonly chain: string;
+  /** The enclosing-TYPE chain of the types whose BODY holds the node, joined by `+` as `chain` is. A member of a type, a nested type included, is in scope in that type's body only, never in its attributes, its base list or its constraint clauses (C# spec §7.7.1), so a type's own header is read with the chain of the types around the type, not with its own name. */
+  readonly bodyChain: string;
   /** The nearest type declaration around the node, or null. */
   readonly typeDecl: { readonly node: Node; readonly nested: boolean; readonly fileLocal: boolean } | null;
   /** True when a type around the node carries the C#11 `file` modifier: a type nested in one cannot escape the file either. */
@@ -192,7 +194,7 @@ interface NsFrame {
   outerList?: OuterUsings[];
 }
 
-const TOP_SCOPE: CsScope = { ns: null, chain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
+const TOP_SCOPE: CsScope = { ns: null, chain: '', bodyChain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
 
 /** The scope the node is read in: its parent's scope, except that an attribute list of a declaration does not see that declaration's type parameters. */
 function csSeen(node: Node, inherited: CsScope): CsScope {
@@ -203,7 +205,7 @@ function csSeen(node: Node, inherited: CsScope): CsScope {
 /** The scope the children of `node` inherit, or undefined when it is `own`. */
 function csBelow(node: Node, own: CsScope): CsScope | undefined {
   const type = node.type;
-  let { ns, chain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
+  let { ns, chain, bodyChain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
   let tpSkip: TypeParameters | null | undefined;
   let changed = false;
   if (type === 'namespace_declaration') {
@@ -218,6 +220,11 @@ function csBelow(node: Node, own: CsScope): CsScope | undefined {
     fileLocal = own.fileLocal || hasFileModifier(node);
     typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
     extBelow = false;
+    changed = true;
+  }
+  // The body of a type declaration (`declaration_list`, or an enum's member list): only inside it are the type's members, its nested types included, in scope.
+  if ((type === 'declaration_list' || type === 'enum_member_declaration_list') && node.parent !== null && TYPE_DECLARATION_TYPES.has(node.parent.type)) {
+    bodyChain = chain;
     changed = true;
   }
   if (type === 'extension_declaration') {
@@ -242,7 +249,7 @@ function csBelow(node: Node, own: CsScope): CsScope | undefined {
   if (type === 'tuple_expression') tuple = { stage: 'tuple', root: own.tuple?.stage === 'arg' ? own.tuple.root : node };
   else if (type === 'argument' && own.tuple?.stage === 'tuple') tuple = { stage: 'arg', root: own.tuple.root };
   if (access !== null || own.access !== null || tuple !== null || own.tuple !== null) changed = true;
-  return changed ? { ns, chain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
+  return changed ? { ns, chain, bodyChain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
 }
 
 /** The names the `type_parameter_list` of a declaration declares (none when it has no list). */
@@ -813,9 +820,9 @@ export interface CsharpUsesOptions {
  * `assembleCsharpCandidates`. The descriptor carries no live AST node (the tree is destroyed
  * after `tree.delete()`) — every node-derived input is precomputed here, notably the
  * enclosing-namespace chain (`enclosingNs`), and, for a `plain`, `attr` or `receiver` reference
- * written inside a type, the declaration keys of the types around it, innermost first (`types`:
+ * written inside the body of a type, the declaration keys of the types whose bodies hold it, innermost first (`types`:
  * `['App.Outer+Inner', 'App.Outer']`), whose nested types C# reads before any namespace (spec
- * §7.6.1); the field is absent outside every type and on a `global::` reference.
+ * §7.6.1); the field is absent outside every type body (a type's attributes, base list and constraint clauses lie outside its body, §7.7.1) and on a `global::` reference.
  */
 export type CsharpRefDescriptor =
   /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
@@ -948,7 +955,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   /** The declaration keys of the types around `node`, innermost first (`['App.Outer+Inner', 'App.Outer']`), or undefined outside every type: C# reads the nested types of each enclosing type, from every part of a partial type, before any namespace, alias or using (spec §7.6.1, §12.8.4). Read once per type and namespace. */
   const typesMemo = new Map<string, string[]>();
   const enclosingTypes = (node: Node): { types?: string[] } => {
-    const chain = scopeOf(node).chain;
+    const chain = scopeOf(node).bodyChain;
     if (chain === '') return {};
     const ns = nsChain(node)[0];
     const memoKey = `${ns ?? ''}\0${chain}`;
@@ -2058,7 +2065,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 15,
+  rev: 16,
   declarations,
   uses,
 };
