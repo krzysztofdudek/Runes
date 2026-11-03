@@ -90,37 +90,75 @@ function selectRepositories(repos, opts) {
   return repos.filter((r) => opts.tier === 'all' || r.tier === opts.tier);
 }
 
+/** Every disagreement an oracle can report, as `<oracle>:<disagreement>`. An explanation of any other kind is refused, so a misspelt kind cannot explain nothing in silence. */
+const ORACLE_KINDS = new Set([
+  'typescript:false-edge', 'typescript:recall-loss', 'typescript:mismatch',
+  'python:false-edge',
+  'cargo:mismatch', 'cargo:crlf',
+  'go:false-edge', 'go:recall-loss', 'go:mismatch',
+  'csharp:recall-loss', 'csharp:false-reach',
+  'c:false-edge', 'c:unreadable',
+]);
+
+const EDGE_FORM = '- `<repository>` `<+|->` `<from>:<line>` `<target>`: <reason>';
+const ORACLE_FORM = "- `<repository>` `<oracle>:<disagreement>` `<from>:<line>` `<subject>` `<Runes' answer>` `<the oracle's answer>`: <reason>";
+
+/** The backticked fields of a list item and the reason after the colon that closes them, or undefined when the item does not read that way. */
+function entryFields(raw) {
+  let rest = raw.slice(2);
+  const fields = [];
+  for (;;) {
+    const m = /^`([^`]*)`/.exec(rest);
+    if (!m) return undefined;
+    fields.push(m[1]);
+    rest = rest.slice(m[0].length);
+    if (rest.startsWith(' `')) rest = rest.slice(1);
+    else if (rest.startsWith(':')) return { fields, reason: rest.slice(1).trim() };
+    else return undefined;
+  }
+}
+
 /**
  * corpus/explained.md: every list item of the form
- *   - `<repository>` `<kind>` `<from>:<line>` `<target>`: <reason>
- * explains one change. `<kind>` is `+` (an edge the golden lacks) or `-` (an edge of the golden that is gone) for the edge comparison, and `<oracle>:<disagreement>` for the oracles. `<line>` may be `*`, every line of that file to that target. A list item that opens with a backtick and does not parse, names a repository the manifest does not hold, or gives no reason fails the run: a typo must not explain nothing silently. Fenced code blocks are skipped.
+ *   - `<repository>` `<+|->` `<from>:<line>` `<target>`: <reason>
+ * explains one change of the edge comparison: `+` an edge the golden lacks, `-` an edge of the golden that is gone. An oracle disagreement is explained by
+ *   - `<repository>` `<oracle>:<disagreement>` `<from>:<line>` `<subject>` `<Runes' answer>` `<the oracle's answer>`: <reason>
+ * which names both answers, so it stops matching the moment either side answers otherwise: an explanation cannot outlive the answers it was written for. `<line>` may be `*`, every line of that file. A list item that opens with a backtick and does not parse, names a repository the manifest does not hold, names a kind no comparison reports, has the wrong fields for its kind, or gives no reason fails the run with its line: a typo must not explain nothing silently. Fenced code blocks are skipped. Returns each entry by its key, with where it stands.
  */
 function loadExplained(file, repoIds) {
-  const entries = new Set();
+  const entries = new Map();
   if (!existsSync(file)) return entries;
   const lines = readFileSync(file, 'utf8').split(/\r?\n/);
   let fenced = false;
-  const ENTRY = /^- `([^`]+)` `([^`]+)` `([^`]+):(\d+|\*)` `([^`]+)`:\s*(.*)$/;
   lines.forEach((raw, i) => {
     if (/^\s*```/.test(raw)) fenced = !fenced;
     if (fenced || !raw.startsWith('- `')) return;
     const where = `${path.basename(file)}:${i + 1}`;
-    const m = ENTRY.exec(raw);
-    if (!m) throw new CorpusError(`${where}: an entry must read - \`<repository>\` \`<kind>\` \`<from>:<line>\` \`<target>\`: <reason>`);
-    const [, repo, kind, from, line, target, reason] = m;
+    const parsed = entryFields(raw);
+    const site = parsed === undefined ? null : /^(.+):(\d+|\*)$/.exec(parsed.fields[2] ?? '');
+    if (parsed === undefined || parsed.fields.length < 4 || site === null) throw new CorpusError(`${where}: an entry must read ${EDGE_FORM}, or for an oracle ${ORACLE_FORM}`);
+    const { fields, reason } = parsed;
+    const [repo, kind, , target, ...answers] = fields;
     if (!repoIds.has(repo)) throw new CorpusError(`${where}: no repository '${repo}' in the manifest`);
-    if (!(kind === '+' || kind === '-' || /^[a-z]+:[a-z-]+$/.test(kind))) throw new CorpusError(`${where}: the kind must be +, - or <oracle>:<disagreement>, not '${kind}'`);
-    if (reason.trim() === '') throw new CorpusError(`${where}: the entry gives no reason`);
-    entries.add(explainKey(repo, kind, from, line, target));
+    const isEdge = kind === '+' || kind === '-';
+    if (!isEdge && !ORACLE_KINDS.has(kind)) throw new CorpusError(`${where}: no comparison reports the kind '${kind}'; it must be +, - or one of ${[...ORACLE_KINDS].join(', ')}`);
+    if (isEdge && answers.length !== 0) throw new CorpusError(`${where}: an edge entry ends at its target: ${EDGE_FORM}`);
+    if (!isEdge && answers.length !== 2) throw new CorpusError(`${where}: an oracle entry names both answers it explains after the subject: ${ORACLE_FORM}`);
+    if (reason === '') throw new CorpusError(`${where}: the entry gives no reason`);
+    entries.set(explainKey(repo, kind, site[1], site[2], target, answers), { where, repo, kind, text: raw });
   });
   return entries;
 }
 
-const explainKey = (repo, kind, from, line, target) => `${repo}\t${kind}\t${from}:${line}\t${target}`;
+const explainKey = (repo, kind, from, line, target, answers = []) => [repo, kind, `${from}:${line}`, target, ...answers].join('\t');
 
-function isExplained(entries, repo, kind, from, line, target) {
-  return entries.has(explainKey(repo, kind, from, String(line), target)) || entries.has(explainKey(repo, kind, from, '*', target));
+/** The key of the entry that explains this change or disagreement (its own line first, then `*`), or undefined. */
+function explainedBy(entries, repo, kind, from, line, target, answers = []) {
+  return [explainKey(repo, kind, from, String(line), target, answers), explainKey(repo, kind, from, '*', target, answers)].find((k) => entries.has(k));
 }
+
+/** An oracle disagreement in the form of the entry that would explain it, without the reason. */
+const oracleEntry = (repo, f) => `- \`${repo}\` \`${f.oracle}:${f.kind}\` \`${f.from}:${f.line}\` \`${f.subject}\` \`${f.runes}\` \`${f.answer}\``;
 
 // ---------------------------------------------------------------------------
 // Fetching a pinned commit
@@ -340,7 +378,7 @@ function diffAgainstGolden(repo, golden, current, explained) {
   const changes = [];
   for (const l of current) if (!before.has(l)) changes.push({ sign: '+', ...splitLine(l) });
   for (const l of golden.lines) if (!after.has(l)) changes.push({ sign: '-', ...splitLine(l) });
-  for (const c of changes) c.explained = isExplained(explained, repo.id, c.sign, c.from, c.line, c.target);
+  for (const c of changes) c.explained = explainedBy(explained, repo.id, c.sign, c.from, c.line, c.target) !== undefined;
   return changes;
 }
 
@@ -567,7 +605,7 @@ async function typescriptOracle(repoDir, result, findings) {
     if (runesTarget === tsTarget) continue;
     if (runesTarget !== undefined && tsTarget !== undefined && /\.d\.[mc]?ts$/.test(tsTarget) && sameStem(runesTarget, tsTarget)) continue;
     const kind = runesTarget === undefined ? 'recall-loss' : tsTarget === undefined ? 'false-edge' : 'mismatch';
-    findings.push({ oracle: 'typescript', kind, from: r.from, line: r.line, subject: specifier, detail: `Runes ${runesTarget ?? 'silent'}, TypeScript ${tsTarget ?? 'unresolved in the repository'}` });
+    findings.push({ oracle: 'typescript', kind, from: r.from, line: r.line, subject: specifier, runes: runesTarget ?? 'silent', answer: tsTarget ?? 'unresolved in the repository' });
   }
   return { checked };
 }
@@ -657,7 +695,7 @@ function pythonOracle(repoDir, result, findings) {
   const answers = JSON.parse(run.stdout);
   deps.forEach((r, i) => {
     const hits = answers[i].map((h) => path.relative(repoDir, h).split(path.sep).join('/')).filter((h) => listed.has(h));
-    if (!hits.includes(r.resolved)) findings.push({ oracle: 'python', kind: 'false-edge', from: r.from, line: r.line, subject: r.candidates.map((c) => c.specifier).join(' | '), detail: `Runes ${r.resolved}, PathFinder ${hits.length === 0 ? 'finds no file' : hits.join(', ')}` });
+    if (!hits.includes(r.resolved)) findings.push({ oracle: 'python', kind: 'false-edge', from: r.from, line: r.line, subject: r.candidates.map((c) => c.specifier).join(' | '), runes: r.resolved, answer: hits.length === 0 ? 'no file' : hits.join(', ') });
   });
   return { checked: deps.length };
 }
@@ -766,9 +804,9 @@ async function cargoOracle(result, runes, findings) {
     for (const field of Object.keys(want)) {
       const a = JSON.stringify(sortDeep(lf[field]));
       const b = JSON.stringify(sortDeep(want[field]));
-      if (a !== b) findings.push({ oracle: 'cargo', kind: 'mismatch', from: p, line: 0, subject: field, detail: `Runes ${a}, tomllib ${b}` });
+      if (a !== b) findings.push({ oracle: 'cargo', kind: 'mismatch', from: p, line: 0, subject: field, runes: a, answer: b });
       const c = JSON.stringify(sortDeep(crlf[field]));
-      if (c !== a) findings.push({ oracle: 'cargo', kind: 'crlf', from: p, line: 0, subject: field, detail: `LF ${a}, CRLF ${c}` });
+      if (c !== a) findings.push({ oracle: 'cargo', kind: 'crlf', from: p, line: 0, subject: field, runes: a, answer: c });
     }
   }
   return { checked };
@@ -812,7 +850,7 @@ function goOracle(repoDir, result, findings) {
     checked++;
     if (want === got) continue;
     const kind = got === undefined ? 'recall-loss' : want === undefined ? 'false-edge' : 'mismatch';
-    findings.push({ oracle: 'go', kind, from: r.from, line: r.line, subject: spec, detail: `Runes ${got ?? 'silent'}, go list ${want ?? 'no package in the repository'}` });
+    findings.push({ oracle: 'go', kind, from: r.from, line: r.line, subject: spec, runes: got ?? 'silent', answer: want ?? 'no package in the repository' });
   }
   return { checked };
 }
@@ -865,8 +903,8 @@ function csharpOracle(repoDir, result, findings) {
       checked++;
       if (answer === 'unknown') continue;
       const built = reached.has(b);
-      if (answer === 'unreachable' && built) findings.push({ oracle: 'csharp', kind: 'recall-loss', from: a, line: 0, subject: b, detail: 'Runes unreachable, msbuild references it' });
-      if (answer === 'reachable' && !built) findings.push({ oracle: 'csharp', kind: 'false-reach', from: a, line: 0, subject: b, detail: 'Runes reachable, msbuild does not reference it' });
+      if (answer === 'unreachable' && built) findings.push({ oracle: 'csharp', kind: 'recall-loss', from: a, line: 0, subject: b, runes: 'unreachable', answer: 'referenced' });
+      if (answer === 'reachable' && !built) findings.push({ oracle: 'csharp', kind: 'false-reach', from: a, line: 0, subject: b, runes: 'reachable', answer: 'not referenced' });
     }
   }
   return { checked };
@@ -890,7 +928,9 @@ function cOracle(repoDir, repo, result, findings) {
     const lang = /\.c$/.test(file) ? 'c' : 'c++';
     const run = spawnSync('cc', ['-MM', '-MG', '-x', lang, ...(lang === 'c++' ? ['-std=c++17'] : []), ...flags, path.join(repoDir, file)], { encoding: 'utf8', cwd: path.join(repoDir, dirOf(file)), maxBuffer: 1 << 26 });
     if (run.error || run.status !== 0) {
-      findings.push({ oracle: 'c', kind: 'unreadable', from: file, line: 0, subject: file, detail: `cc -MM failed: ${(run.error?.message ?? run.stderr).trim().split('\n')[0]}` });
+      // The preprocessor's first message, with the clone's own directory taken out so that it reads the same on every machine.
+      const message = (run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join('');
+      findings.push({ oracle: 'c', kind: 'unreadable', from: file, line: 0, subject: file, runes: 'not compared', answer: `cc -MM failed: ${message}` });
       continue;
     }
     const closure = new Set();
@@ -901,7 +941,7 @@ function cOracle(repoDir, repo, result, findings) {
     }
     for (const r of refs) {
       checked++;
-      if (!closure.has(r.resolved)) findings.push({ oracle: 'c', kind: 'false-edge', from: r.from, line: r.line, subject: r.resolved, detail: `Runes ${r.resolved}, the preprocessor does not include it` });
+      if (!closure.has(r.resolved)) findings.push({ oracle: 'c', kind: 'false-edge', from: r.from, line: r.line, subject: r.resolved, runes: r.resolved, answer: 'not included' });
     }
   }
   return { checked };
@@ -948,11 +988,29 @@ async function main() {
           parts.push(`${name} SKIPPED`);
         } else if (o.checked > 0) parts.push(`${name} ${o.checked}`);
       }
-      const unexplained = findings.filter((f) => !isExplained(explained, repo.id, `${f.oracle}:${f.kind}`, f.from, f.line, f.subject));
+      const used = new Set();
+      const unexplained = [];
+      for (const f of findings) {
+        const kind = `${f.oracle}:${f.kind}`;
+        if (!ORACLE_KINDS.has(kind)) throw new Error(`the ${f.oracle} oracle reported the kind ${kind}, which ORACLE_KINDS does not list`);
+        // An entry is backticked text, so an answer holding a backtick is matched with a quote in its place.
+        for (const k of ['subject', 'runes', 'answer']) f[k] = String(f[k]).replace(/`/g, "'");
+        const key = explainedBy(explained, repo.id, kind, f.from, f.line, f.subject, [f.runes, f.answer]);
+        if (key === undefined) unexplained.push(f);
+        else used.add(key);
+      }
       const status = unexplained.length > 0 ? 'FAIL' : 'ok  ';
       if (unexplained.length > 0) failed++;
       process.stdout.write(`${status} ${head}; checked: ${parts.join(', ') || 'no oracle applies'}; ${findings.length} disagreements, ${findings.length - unexplained.length} explained\n`);
-      reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => `${f.oracle}:${f.kind} ${f.from}:${f.line} ${f.subject} (${f.detail})`));
+      reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => oracleEntry(repo.id, f)));
+      // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. It is named, not failed, because a toolchain of another machine can see a disagreement this one does not.
+      const ran = new Set(Object.entries(outcomes).filter(([, o]) => o.skipped === undefined).map(([name]) => name));
+      const unused = [...explained].filter(([key, e]) => e.repo === repo.id && ran.has(e.kind.split(':')[0]) && !used.has(key)).map(([, e]) => `${e.where}: ${e.text.slice(0, 200)}`);
+      if (unused.length > 0) {
+        process.stdout.write(`    ${unused.length} explanations of ${repo.id} match no disagreement of this run:\n`);
+        for (const u of unused.slice(0, 20)) process.stdout.write(`    UNUSED ${u}\n`);
+        if (unused.length > 20) process.stdout.write(`    ... and ${unused.length - 20} more\n`);
+      }
       continue;
     }
     const goldenFile = path.join(opts.goldens, `${repo.id}.edges`);
