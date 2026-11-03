@@ -8,7 +8,7 @@ cites: "C# spec §14.5.2 (using alias directives: the target is resolved as if t
 
 ## Rule
 
-A using alias target is looked up from the namespace body that holds the directive outward. At each enclosing namespace C# reads that namespace's members, and then, when the reference sits inside a declaration of that namespace, the using directives of that declaration: an alias of that name first, then the types of the imported namespaces as one set (two of them declaring the name is an ambiguity). Only the directives of the body that holds the alias take no part. So in `namespace A { using Shop.Core; namespace B { using O = Order; } }` the target of `O` is `A.B.Order`, then `A.Order`, then `Shop.Core.Order` through the using of block `A`, and only then the global `Order`. A use of `O`, the type arguments of an alias target and a `using static` type are read that way. An alias of an outer declaration named like the target's first name decides at its level and is read where its own directive stands (the case csharp-alias-target-outer-alias-edge); the namespace an outer using names is read where that using stands (the case csharp-alias-target-outer-using-namespace-read-edge); an outer `using static` brings the nested types of its type (the case csharp-alias-target-outer-using-static-edge). The using directives of the compilation unit, which C# reads after the global namespace, are not read (a silence, never a false edge). The directive line of a plain alias target inside a namespace body reads only its nearest reading (the case csharp-alias-namespace-beside-global-type-edge).
+A using alias target is looked up from the namespace body that holds the directive outward. At each enclosing namespace C# reads that namespace's members, and then, when the reference sits inside a declaration of that namespace, the using directives of that declaration: an alias of that name first, then the types of the imported namespaces as one set (two of them declaring the name is an ambiguity). Only the directives of the body that holds the alias take no part. So in `namespace A { using Shop.Core; namespace B { using O = Order; } }` the target of `O` is `A.B.Order`, then `A.Order`, then `Shop.Core.Order` through the using of block `A`, and only then the global `Order`. A use of `O`, the type arguments of an alias target and a `using static` type are read that way. An alias of an outer declaration named like the target's first name decides at its level and is read where its own directive stands (the case csharp-alias-target-outer-alias-edge); the namespace an outer using names is read where that using stands (the case csharp-alias-target-outer-using-namespace-read-edge); an outer `using static` brings the nested types of its type (the case csharp-alias-target-outer-using-static-edge). The using directives of the compilation unit, which C# reads after the global namespace, are not read (a silence, never a false edge).
 
 ## Files
 
@@ -40,9 +40,10 @@ public class Repo<T> { }
 
 ## Expect
 
+- src/c/Use.cs:6 -> node:core       # the directive of O reads Order the same way
 - src/c/Use.cs:7 -> node:r          # the container Repo, the global one
 - src/c/Use.cs:7 -> node:core       # its type argument Order is Shop.Core.Order through the using of block A, never the global Order (node global)
-- src/c/Use.cs:8 -> node:core       # the use of O binds Shop.Core.Order the same way; line 6 gives no edge (nearest reading only)
+- src/c/Use.cs:8 -> node:core       # the use of O binds Shop.Core.Order the same way
 
 ## Why
 

@@ -8,7 +8,7 @@ cites: "C# spec §14.5.2 (using alias directives: the target may name a namespac
 
 ## Rule
 
-Inside a namespace body, the target of a using alias is looked up namespace by namespace, nearest first, and the first namespace that has a member of that name, a namespace as much as a type, decides. `namespace App; using M = Models;` beside a namespace `App.Models` and a global type `Models` makes `M` the namespace `App.Models`, and the global `Models` is never named. Only types carry keys, so a nearer namespace cannot be seen from one file: a reading farther than the nearest could bind a type the compiler never reaches. The directive line of an alias inside a namespace body therefore reads its target only in the nearest namespace (`App.Models` here), and gives no edge when that reading binds nothing, a deliberate silence: an alias to a farther type gives its edge on every line that uses it (`using O = Shop.Core.Order;` inside `namespace App.Web` with `O` unused gives none). A directive in the compilation unit reads from the global namespace, where nothing is nearer, and keeps its edge (the case csharp-using-alias-unused-type-edge). A use of the alias still reads every namespace of the directive's body, nearest first, because a namespace alias is used only as a qualifier, and `M.Order` binds `App.Models.Order` first.
+Inside a namespace body, the target of a using alias is looked up namespace by namespace, nearest first, and the first namespace that has a member of that name, a namespace as much as a type, decides. `namespace App; using M = Models;` beside a namespace `App.Models` and a global type `Models` makes `M` the namespace `App.Models`, and the global `Models` is never named. A nearer namespace has no key of its own, so each farther reading carries the nearer names of the target's first segment, and it binds nothing where the repository declares one of them as a namespace or a type: line 2 gives no edge to the global `Models`. Where nothing nearer has that name, the directive gives its edge whether or not the alias is used (`using O = Shop.Core.Order;` inside `namespace App.Web` gives the edge to `Shop.Core.Order`). A directive in the compilation unit reads from the global namespace, where nothing is nearer, and keeps its edge (the case csharp-using-alias-unused-type-edge). A use of the alias still reads every namespace of the directive's body, nearest first, because a namespace alias is used only as a qualifier, and `M.Order` binds `App.Models.Order` first.
 
 ## Files
 
@@ -38,7 +38,8 @@ public class Order { }
 
 ## Expect
 
-- src/c/Use.cs:3 -> node:models     # `M.Order` is App.Models.Order; line 2 gives no edge to the global type Models (node global), which C# never names, and src/w/Use.cs:1 gives none to node core (O is unused and Shop.Core.Order is farther than App.Web: the documented silence)
+- src/c/Use.cs:3 -> node:models     # `M.Order` is App.Models.Order; line 2 gives no edge to the global type Models (node global), which C# never names
+- src/w/Use.cs:1 -> node:core       # no namespace or type App.Web.Shop or App.Shop: the unused alias O names the global Shop.Core.Order
 
 ## Why
 

@@ -36,6 +36,7 @@ public class Order { }
 
 ## Expect
 
+- src/a/Use.cs:6 -> node:near     # the directive of O reads its target the same way
 - src/a/Use.cs:7 -> node:near     # the use of O binds A.Core.Order; the global Core.Order (node far) is never it
 
 ## Why

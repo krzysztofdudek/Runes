@@ -36,6 +36,7 @@ public class Inner { }
 ## Expect
 
 - src/a/Use.cs:3 -> node:lib      # the using static target Lib.Holder
+- src/a/Use.cs:6 -> node:lib      # the directive of I reads its target the same way
 - src/a/Use.cs:7 -> node:lib      # the use of I binds Lib.Holder.Inner; the global Inner (node global) is never it
 
 ## Why

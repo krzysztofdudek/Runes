@@ -21446,6 +21446,12 @@ Changed: C#: a plain using directive inside a namespace body is read at that nam
 - `eShop` `+` `tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:145` `src/Ordering.API/Application/Queries/OrderViewModel.cs`: the commit "csharp: a plain using directive reaches only its own namespace block"; `using eShop.Ordering.API.Application.Queries;` below the namespace line binds `CardType` before the project's global using of `eShop.Ordering.Domain.AggregatesModel.BuyerAggregate`, where both together were an ambiguity
 - `eShop` `+` `tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:153` `src/Ordering.API/Application/Queries/OrderViewModel.cs`: the commit "csharp: a plain using directive reaches only its own namespace block"; `using eShop.Ordering.API.Application.Queries;` below the namespace line binds `CardType` before the project's global using of `eShop.Ordering.Domain.AggregatesModel.BuyerAggregate`, where both together were an ambiguity
 
+### Commit "csharp: a fully qualified alias target gives its directive edge when nothing nearer has its first name"
+
+Changed: C#: the directive line of a plain using alias inside a namespace body reads every reading of its target again, each farther one behind the nearer namespaces or types of its first segment, so a fully qualified target whose first segment names nothing nearer in the repository gives its edge. This restores the reference merge f2ad16b removed.
+
+- `eShop` `+` `tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:5` `src/Ordering.API/Application/Queries/OrderViewModel.cs`: the commit "csharp: a fully qualified alias target gives its directive edge when nothing nearer has its first name"; `using Order = eShop.Ordering.API.Application.Queries.Order;` below `namespace eShop.Ordering.UnitTests.Application;`, and the repository declares no namespace or type `eShop` nearer than the global one
+
 ## Oracle disagreements at release 1.1.0
 
 What `npm run corpus:oracles` reports on the tip of `release/1.1.0` that is a known limit of Runes, a choice Runes makes on purpose, or a limit of the oracle itself. The Go and C# oracles need `go` and a .NET SDK and run in CI; their disagreements, if any, are added from the first CI run.

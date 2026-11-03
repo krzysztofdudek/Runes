@@ -36,6 +36,7 @@ public class Order { }
 
 ## Expect
 
+- src/d/Use.cs:6 -> node:core     # the directive of P reads its target the same way
 - src/d/Use.cs:7 -> node:core     # the use of P binds Shop.Core.Order through the alias X of block A; the global X.Order (node x) is never it
 
 ## Why

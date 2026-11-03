@@ -1017,11 +1017,11 @@ export function extractCsharpRefs(file) {
         return null;
     }
     /** Emit one named type written in a using directive's target as the directive reads it (a `target` descriptor): in the namespace body that holds the directive, nearest namespace first, no using directive or alias of that body taking part. A bare `Program` in a file of top-level statements names that file's own class and is not emitted, as in `pushRef`. */
-    const pushTarget = (name, directive, line, nearest = false) => {
+    const pushTarget = (name, directive, line) => {
         if (namesOwnProgram(name))
             return;
         const outer = outerUsings(info, scopeOf(directive));
-        refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(info, directive, scopeOf(directive)), at: directive.startIndex, ...(nearest ? { nearest } : {}), ...(outer.length > 0 ? { outer } : {}) });
+        refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(info, directive, scopeOf(directive)), at: directive.startIndex, ...(outer.length > 0 ? { outer } : {}) });
     };
     /**
      * Emit every named type of a type written in a using directive's target, each read where the directive reads its target (C# spec §14.5.2): a bare, qualified or generic name is one `target` reference, a generic's type arguments are references of their own read the same way, and an array, pointer or nullable type and each tuple element are descended to their named types (C# 12 lets an alias name any type; the tuple element labels are not types). A name written after `global::` is rooted. A name written after a using alias (`S::A.B`) gives nothing: an alias of the same body never applies to a directive, and an alias of an outer body or an extern alias is not read (a silence); its type arguments still give theirs.
@@ -1083,7 +1083,7 @@ export function extractCsharpRefs(file) {
         return false;
     });
     // ── The using alias target and the named types embedded in it (R7 + A6) ─────────────────
-    // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.Repo` before `Repo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part; a plain target is read more narrowly, below.
+    // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.Repo` before `Repo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part, each farther reading behind the nearer names the lookup would stop at.
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'using_directive')
             return undefined;
@@ -1093,13 +1093,8 @@ export function extractCsharpRefs(file) {
         const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
         if (target === undefined || target === null)
             return false;
-        // A plain name (`using M = Models;`, `using F = A.B.Foo;`) may name a namespace as much as a type, and a nearer namespace of that name, which no type key shows, decides before any farther type (`namespace App; using M = Models;` with a namespace `App.Models` and a global type `Models` names the namespace): inside a namespace body its directive reads only the nearest reading (`nearest`), a deliberate silence for an unused alias to a farther type. A generic name is always a type and is read in full.
-        if (target.type === 'identifier' || (target.type === 'qualified_name' && !target.text.includes('<') && !target.text.includes('::'))) {
-            pushTarget(qualifiedNameParts(target).name, node, target.startPosition.row + 1, true);
-        }
-        else {
-            emitDirectiveType(target, node);
-        }
+        // A plain name (`using M = Models;`, `using F = A.B.Foo;`) may name a namespace as much as a type, and a nearer namespace or type of its first name, which the lookup stops at, decides before any farther reading (`namespace App; using M = Models;` with a namespace `App.Models` and a global type `Models` names the namespace): each farther reading carries those nearer names (`shadow`), so the resolver voids it where the repository declares one.
+        emitDirectiveType(target, node);
         return false;
     });
     walk(file.tree.rootNode, (node) => {
@@ -1751,11 +1746,6 @@ export function assembleCsharpCandidates(extract, options = {}) {
         switch (r.kind) {
             case 'target': {
                 // A named type of a using alias or `using static` target, read where the directive reads it (`typeReadings`). A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
-                // An alias's own plain target inside a namespace body (`nearest`) reads its nearest reading only: a nearer namespace of that name would hide every farther one.
-                if (r.nearest === true && r.enclosingNs.length > 0) {
-                    pushHints([{ kind: 'symbol', symbolKey: `${r.enclosingNs[0]}.${r.fqn}` }], r.line);
-                    break;
-                }
                 const candidates = typeReadings(r.enclosingNs, r.outer ?? [], r.at, r.fqn);
                 if (r.fqn === 'Program')
                     candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
@@ -1823,7 +1813,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 9,
+    rev: 10,
     declarations,
     uses,
 };
