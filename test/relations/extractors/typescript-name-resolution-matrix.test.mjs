@@ -116,6 +116,12 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
   it('typescript-workspace-semver-range-linked-edge', () => runCase('typescript-workspace-semver-range-linked-edge'));
   it('typescript-workspace-subpath-exports-edge', () => runCase('typescript-workspace-subpath-exports-edge'));
+  it('typescript-exports-bundler-import-branch-silence', () => runCase('typescript-exports-bundler-import-branch-silence'));
+  it('typescript-exports-node16-import-branch-edge', () => runCase('typescript-exports-node16-import-branch-edge'));
+  it('typescript-exports-node16-require-branch-edge', () => runCase('typescript-exports-node16-require-branch-edge'));
+  it('typescript-exports-custom-condition-edge', () => runCase('typescript-exports-custom-condition-edge'));
+  it('typescript-exports-unmatched-custom-condition-silence', () => runCase('typescript-exports-unmatched-custom-condition-silence'));
+  it('typescript-exports-no-module-settings-first-target-edge', () => runCase('typescript-exports-no-module-settings-first-target-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
   it('typescript-workspace-member-beats-fixture-edge', () => runCase('typescript-workspace-member-beats-fixture-edge'));
