@@ -57,7 +57,10 @@
     "coverage": "npm run build && npm run grammars && node --test --experimental-test-coverage --test-coverage-include=\"dist/**\" --test-coverage-lines=98 --test-coverage-branches=92 --test-coverage-functions=97 \"test/**/*.test.mjs\"",
     "check:dist": "node scripts/check-dist.mjs",
     "check": "npm test && npm run check:dist",
-    "grammars": "node scripts/build-grammars.mjs --table"
+    "grammars": "node scripts/build-grammars.mjs --table",
+    "corpus": "node scripts/corpus.mjs verify",
+    "corpus:update": "node scripts/corpus.mjs update",
+    "corpus:oracles": "node scripts/corpus.mjs oracles"
   },
   "peerDependencies": {
     "web-tree-sitter": "0.27.0"
