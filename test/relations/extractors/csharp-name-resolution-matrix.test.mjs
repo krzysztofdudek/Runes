@@ -323,3 +323,14 @@ describe('MATRIX — C# Program across project references (issue 164)', () => {
   it('csharp-program-two-referenced-programs-silence', () => runCase('csharp-program-two-referenced-programs-silence'));
   it('csharp-program-referenced-partial-edge', () => runCase('csharp-program-referenced-partial-edge'));
 });
+
+describe('MATRIX — C# using directives scoped to their namespace block', () => {
+  it('csharp-using-sibling-block-silence', () => runCase('csharp-using-sibling-block-silence'));
+  it('csharp-using-nested-block-edge', () => runCase('csharp-using-nested-block-edge'));
+  it('csharp-using-block-namespace-shadow-silence', () => runCase('csharp-using-block-namespace-shadow-silence'));
+  it('csharp-using-block-before-outer-member-edge', () => runCase('csharp-using-block-before-outer-member-edge'));
+  it('csharp-extension-using-sibling-block-silence', () => runCase('csharp-extension-using-sibling-block-silence'));
+  it('csharp-alias-target-outer-using-namespace-read-edge', () => runCase('csharp-alias-target-outer-using-namespace-read-edge'));
+  it('csharp-alias-target-outer-using-static-edge', () => runCase('csharp-alias-target-outer-using-static-edge'));
+  it('csharp-alias-target-outer-alias-edge', () => runCase('csharp-alias-target-outer-alias-edge'));
+});

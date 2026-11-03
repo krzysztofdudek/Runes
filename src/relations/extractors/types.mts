@@ -4,8 +4,8 @@ export type DepKind = 'import' | 'call' | 'extends' | 'implements' | 'type-ref' 
 
 /** One member of a symbol resolution SET (C# only). `symbolKey` is resolved exactly like a
  *  plain symbol hint; `nestedOnly` (R4) restricts it to the guarded nested-type `+`-split
- *  reading, never the verbatim dotted reading. */
-export interface SymbolSetMember { symbolKey: string; nestedOnly?: boolean }
+ *  reading, never the verbatim dotted reading. `shadow` voids the member as it voids a hint. */
+export interface SymbolSetMember { symbolKey: string; nestedOnly?: boolean; shadow?: string[] }
 
 export type TargetHint =
   | { kind: 'path'; specifier: string; isPackage?: boolean }
@@ -25,6 +25,8 @@ export type TargetHint =
        *  The candidate's own `symbolKey` still drives the display shape; `set` drives only
        *  classification. Absent = resolve `symbolKey` alone as a singleton. */
       set?: SymbolSetMember[];
+      /** C#: the dotted names of nearer namespaces or types the language's lookup would stop at before it reaches this reading. When the repository declares any of them, as a namespace (some declared key lies inside it) or as a type, the reading binds nothing and the walk goes on to the next candidate. Absent = no such name. */
+      shadow?: string[];
       /** Ruby only: a lexical nesting candidate `N::A::B` carries its first-segment name
        *  `N::A`. When `N::A` has an in-repo definition but the candidate itself has none, Ruby
        *  has already committed to `N::A` and will not look further out, so the reference is

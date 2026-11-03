@@ -458,6 +458,8 @@ interface UsingScope {
   globalAliases: Map<string, string>;
   /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target, `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only; `outer` are the using directives of the namespace declarations around that body (`outerUsings`), which take part in the lookup at their own namespace. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
   aliasDecls: Map<string, Array<{ fqn: string; body: string[]; rooted: boolean; outer: OuterUsings[]; start: number; end: number }>>;
+  /** Every plain `using N;` directive of the file that is not a `global using`, in file order: `ns` the namespace as written (its `global::` qualifier stripped), `body` the enclosing-namespace chain of the body that holds it (innermost first, empty in the compilation unit), `start`/`end` the text range of that body's block (`directiveBlock`). The directive imports its namespace for the references inside that range only, at the level of `body[0]`; inside a namespace body the namespace it names is read where it stands, nearest namespace first (C# spec §14.5.3). `prefixes` lists the same directives' namespaces without their place. */
+  prefixDecls: Array<{ ns: string; body: string[]; start: number; end: number }>;
   /** The written TARGET type (its `global::` qualifier stripped, with the directive's line) of each `using static N.C;` /
    *  `global using static N.C;` directive in this file (A8/A11). The directive names a concrete
    *  type whose static members are imported — that target is a real type dependency of this file,
@@ -547,6 +549,7 @@ function buildUsingScope(file: ParsedFile): UsingScope {
   const aliases = new Map<string, string>();
   const globalAliases = new Map<string, string>();
   const aliasDecls = new Map<string, Array<{ fqn: string; body: string[]; rooted: boolean; outer: OuterUsings[]; start: number; end: number }>>();
+  const prefixDecls: UsingScope['prefixDecls'] = [];
   const staticTargets: Array<{ fqn: string; line: number }> = [];
 
   const info = fileNsInfo(file.tree.rootNode);
@@ -592,12 +595,16 @@ function buildUsingScope(file: ParsedFile): UsingScope {
     const ns = directiveNamespaceText(node);
     if (ns !== undefined && ns !== '') {
       if (hasTokenChild(node, 'global')) globalPrefixes.push(ns);
-      else prefixes.push(ns);
+      else {
+        prefixes.push(ns);
+        const block = directiveBlock(file, node, scope, info);
+        prefixDecls.push({ ns, body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
+      }
     }
     return undefined;
   });
 
-  return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, staticTargets };
+  return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, prefixDecls, staticTargets };
 }
 
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
@@ -609,19 +616,19 @@ function directiveBlock(file: ParsedFile, directive: Node, scope: CsScope, info:
   return { start: 0, end: root.endIndex };
 }
 
-/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings import, `aliases` the names its using aliases declare. */
-interface OuterUsings { ns: string; prefixes: string[]; aliases: string[] }
+/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings name (as written: each is read where the declaration stands), `aliases` the names its using aliases declare, `statics` the types its `using static` directives name (as written, type arguments stripped), whose nested types they import (C# spec §14.5.4). */
+interface OuterUsings { ns: string; prefixes: string[]; aliases: string[]; statics: string[] }
 
 /** A symbol hint, the only kind the C# extractor emits. */
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
-/** A using alias as one use sees it: its `target`, read where its directive reads it (`chain`, the namespaces of the directive's body innermost first, and `outer`, the using directives around that body); `nearer` the namespaces around the use inside that body, whose members hide the alias; `bodyNs` the namespace of the body that holds the directive (undefined for the compilation unit). */
-interface AliasView { target: string; chain: string[]; outer: OuterUsings[]; nearer: string[]; bodyNs: string | undefined }
+/** A using alias as one use sees it: its `target`, read where its directive reads it (`chain`, the namespaces of the directive's body innermost first, and `outer`, the using directives around that body); `bodyNs` the namespace of the body that holds the directive (undefined for the compilation unit); `at` a position inside the block of the directive, which tells the alias declarations of the declarations around it apart. */
+interface AliasView { target: string; chain: string[]; outer: OuterUsings[]; bodyNs: string | undefined; at: number }
 
 /** The using directives of every namespace declaration around the body that holds `directive`, innermost first, the declarations without any left out: in C# they take part in the lookup of the directive's target at their own namespace (spec §7.8.1), while those of the body that holds the directive do not (§14.5.2). The compilation unit's own usings are not listed (a deliberate silence: C# reads them only after the global namespace). */
 function outerUsings(info: FileNsInfo, scope: CsScope): OuterUsings[] {
   if (scope.ns === null) return [];
-  return outerList(scope.ns, info).map((o) => ({ ns: o.ns, prefixes: [...o.prefixes], aliases: [...o.aliases] }));
+  return outerList(scope.ns, info).map((o) => ({ ns: o.ns, prefixes: [...o.prefixes], aliases: [...o.aliases], statics: [...o.statics] }));
 }
 
 /** The using directives of the namespace declaration `frame`, as the lookup from a directive in a body inside it reads them; null when it has none (or its namespace has no name to spell). Read once per declaration. */
@@ -630,8 +637,14 @@ function nsEntry(frame: NsFrame, info: FileNsInfo): OuterUsings | null {
   const body = frame.decl.childForFieldName('body')!;
   const prefixes: string[] = [];
   const aliases: string[] = [];
+  const statics: string[] = [];
   for (const d of body.namedChildren) {
-    if (d!.type !== 'using_directive' || hasTokenChild(d!, 'static')) continue;
+    if (d!.type !== 'using_directive') continue;
+    if (hasTokenChild(d!, 'static')) {
+      const target = directiveNamespaceText(d!);
+      if (target !== undefined && target !== '') statics.push(stripTypeArguments(target));
+      continue;
+    }
     const aliasName = d!.childForFieldName('name');
     if (aliasName !== null) aliases.push(aliasName.text);
     else {
@@ -640,11 +653,11 @@ function nsEntry(frame: NsFrame, info: FileNsInfo): OuterUsings | null {
     }
   }
   let entry: OuterUsings | null = null;
-  if (prefixes.length > 0 || aliases.length > 0) {
+  if (prefixes.length > 0 || aliases.length > 0 || statics.length > 0) {
     // The namespace the declaration stands for, spelled as the levels of the lookup are (`directiveBodyChain`): the chain of a node directly in its body, innermost first.
     const below = info.scopedStart !== undefined && body.startIndex > info.scopedStart;
     const ns = namespaceChain(below ? info.fileNs : '', frame)[0];
-    if (ns !== undefined) entry = { ns, prefixes, aliases };
+    if (ns !== undefined) entry = { ns, prefixes, aliases, statics };
   }
   frame.entry = entry;
   return entry;
@@ -757,16 +770,16 @@ export type CsharpRefDescriptor =
    *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
    *  resolves verbatim-from-root; otherwise dropped (extern/unknown alias → R13 silence). */
   | { kind: 'alias'; aliasName: string; tail: string; line: number; enclosingNs: string[]; at: number }
-  /** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. The using directives of an enclosing namespace declaration (`outer`, absent when there are none) do take part, at their own namespace: after its reading, the types of the namespaces they import as one CS0104 set, and an alias they declare of the target's first name ends the group there (that alias is not read, a silence). `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). `nearest` marks the alias's own non-generic target, which may name a namespace as much as a type: inside a namespace body only its nearest reading is read, because a nearer namespace of that name, which no type key shows, would decide before any farther type (C# spec §7.8.1); a farther type keeps its edge on the lines that use the alias. */
-  | { kind: 'target'; fqn: string; line: number; enclosingNs: string[]; nearest?: boolean; outer?: OuterUsings[] }
+  /** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. The using directives of an enclosing namespace declaration (`outer`, absent when there are none) do take part, at their own namespace: after its reading, an alias they declare of the target's first name decides there and is read where its own directive reads its target; else the types of the namespaces they import (each namespace read where that declaration stands) and the nested types of the types their `using static` directives name, as one CS0104 set. Each reading farther than the first carries the nearer namespaces or types of the target's first name that C# would stop at (`shadow`). `at` is where the directive stands, which tells the outer alias declaration apart. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). `nearest` marks the alias's own non-generic target, which may name a namespace as much as a type: inside a namespace body only its nearest reading is read, because a nearer namespace of that name, which no type key shows, would decide before any farther type (C# spec §7.8.1); a farther type keeps its edge on the lines that use the alias. */
+  | { kind: 'target'; fqn: string; line: number; enclosingNs: string[]; at: number; nearest?: boolean; outer?: OuterUsings[] }
   /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
   | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; at: number; rooted?: boolean; alias?: string }
   /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
   | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
-   *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the imported
-   *  namespaces as one set, then the global namespace. */
-  | { kind: 'ext'; name: string; line: number; enclosingNs: string[] };
+   *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the namespaces imported
+   *  where the call stands (`at`) as one set, then the global namespace. */
+  | { kind: 'ext'; name: string; line: number; enclosingNs: string[]; at: number };
 
 /**
  * The pure, alias-UNRESOLVED extract of one C# file — the cacheable fact (design §14 Correction
@@ -1154,7 +1167,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   const pushTarget = (name: string, directive: Node, line: number, nearest = false): void => {
     if (namesOwnProgram(name)) return;
     const outer = outerUsings(info, scopeOf(directive));
-    refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(info, directive, scopeOf(directive)), ...(nearest ? { nearest } : {}), ...(outer.length > 0 ? { outer } : {}) });
+    refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(info, directive, scopeOf(directive)), at: directive.startIndex, ...(nearest ? { nearest } : {}), ...(outer.length > 0 ? { outer } : {}) });
   };
 
   /**
@@ -1436,6 +1449,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           name: call,
           line: node.startPosition.row + 1,
           enclosingNs: nsChain(node),
+          at: node.startIndex,
         });
       }
       return undefined;
@@ -1563,20 +1577,90 @@ export function assembleCsharpCandidates(
     else ambiguousAliases.add(name);
   }
 
-  // The using-import binding level (R2/R9: an UNORDERED set at one scope). File-local plain
-  // usings + this file's own `global using` + the project-wide aggregated global usings, all
-  // at one tier. Sorted by code point so the candidate display order is deterministic and never
-  // load-bearing; the CS0104 set rule (≥2 distinct files → silence) is order-independent.
+  // The using-import binding level of the compilation unit (R2/R9: an UNORDERED set at one scope): the plain usings outside every namespace body + this file's own `global using` + the project-wide aggregated global usings, all at one tier, read after every enclosing namespace. Sorted by code point so the candidate display order is deterministic and never load-bearing; the CS0104 set rule (≥2 distinct files → silence) is order-independent. A plain using inside a namespace body belongs to that body's level instead (`levelsAt`).
   const usingPrefixes = [
     ...new Set([
-      ...scope.prefixes,
+      ...scope.prefixDecls.filter((d) => d.body.length === 0).map((d) => d.ns),
       ...scope.globalPrefixes,
       ...(options.projectGlobalUsings ?? []),
     ]),
   ].sort();
 
+  // The plain usings and aliases that sit in a namespace body, the only ones whose reach depends on where a reference stands.
+  const blockPrefixes = scope.prefixDecls.filter((d) => d.body.length > 0);
+  const blockAliases = [...scope.aliasDecls].flatMap(([name, decls]) => decls.filter((d) => d.body.length > 0).map((d) => ({ name, d })));
 
-  /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `nearer` are the enclosing namespaces inside that body, `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
+  /** The using directives of the namespace declarations around a reference at `at` whose enclosing namespaces are `enclosingNs`, innermost first, those without any left out: each plain using and each alias whose block holds `at`, at the namespace of the body that holds it. A using directive reaches the references of its own body, nested bodies included, and of no other (C# spec §14.5.1). */
+  const levelsAt = (enclosingNs: string[], at: number): OuterUsings[] => {
+    const byNs = new Map<string, OuterUsings>();
+    const level = (ns: string): OuterUsings => {
+      let l = byNs.get(ns);
+      if (l === undefined) {
+        l = { ns, prefixes: [], aliases: [], statics: [] };
+        byNs.set(ns, l);
+      }
+      return l;
+    };
+    for (const d of blockPrefixes) if (at >= d.start && at < d.end) level(d.body[0]).prefixes.push(d.ns);
+    for (const { name, d } of blockAliases) if (at >= d.start && at < d.end) level(d.body[0]).aliases.push(name);
+    return enclosingNs.filter((ns) => byNs.has(ns)).map((ns) => byNs.get(ns)!);
+  };
+
+  /** The directive of the alias `name` declared in a body of namespace `ns` whose block holds `at`. */
+  const aliasAt = (name: string, ns: string, at: number): (typeof blockAliases)[number]['d'] | undefined =>
+    (scope.aliasDecls.get(name) ?? []).find((d) => d.body[0] === ns && at >= d.start && at < d.end);
+
+  /**
+   * The namespaces a namespace name written in a using directive may stand for (`name`, read in a body whose enclosing namespaces are `chain`, innermost first, with the using directives of the declarations around that body in `levels`), in C# lookup order (spec §14.5.3, §7.8.1): at each namespace of the chain, nearest first, its member namespace of that name; where a declaration of that namespace holds an alias of the name's first segment, that alias decides, read where its own directive reads its target; the global namespace last. Each reading but the first carries the nearer names of the first segment the lookup would stop at (`shadow`), so a nearer namespace the repository declares voids it.
+   */
+  const namespaceReadings = (chain: string[], levels: OuterUsings[], at: number, name: string): Array<{ key: string; shadow: string[] }> => {
+    const lead = name.split('.')[0];
+    const out: Array<{ key: string; shadow: string[] }> = [];
+    const shadow: string[] = [];
+    for (const ns of chain) {
+      out.push({ key: `${ns}.${name}`, shadow: [...shadow] });
+      shadow.push(`${ns}.${lead}`);
+      if (!levels.some((o) => o.ns === ns && o.aliases.includes(lead))) continue;
+      const d = aliasAt(lead, ns, at);
+      if (d !== undefined) {
+        const target = `${d.fqn}${name.slice(lead.length)}`;
+        const read = d.rooted ? [{ key: target, shadow: [] }] : namespaceReadings(d.body, d.outer, d.start, target);
+        for (const r of read) out.push({ key: r.key, shadow: [...shadow, ...r.shadow] });
+      }
+      return out;
+    }
+    out.push({ key: name, shadow });
+    return out;
+  };
+
+  /** One CS0104 set: the readings `key(namespace)` of each namespace the plain usings of `levels[k]` import (each read where that declaration stands: `chain` starts at its namespace, and the declarations farther out take part), behind the nearer names `base`. `nestedOnly` is carried on each member when given (R4). */
+  const levelSet = (chain: string[], levels: OuterUsings[], k: number, at: number, key: (ns: string) => string, nestedOnly: boolean | undefined, base: string[]): SymbolSetMember[] => {
+    const set: SymbolSetMember[] = [];
+    for (const p of levels[k].prefixes) {
+      for (const r of namespaceReadings(chain, levels.slice(k + 1), at, p)) {
+        const shadow = [...base, ...r.shadow];
+        set.push({ symbolKey: key(r.key), ...(nestedOnly === undefined ? {} : { nestedOnly }), ...(shadow.length > 0 ? { shadow } : {}) });
+      }
+    }
+    return set;
+  };
+
+  /** `hints` read behind the nearer names `shadow`: each hint, and each member of its set, gains them. */
+  const behind = (hints: SymbolHint[], shadow: string[]): SymbolHint[] => {
+    const sets = new Map<SymbolSetMember[], SymbolSetMember[]>();
+    const moved = (set: SymbolSetMember[]): SymbolSetMember[] => {
+      let m = sets.get(set);
+      if (m === undefined) {
+        m = set.map((s) => ({ ...s, shadow: [...shadow, ...(s.shadow ?? [])] }));
+        sets.set(set, m);
+      }
+      return m;
+    };
+    return hints.map((h) => (h.set === undefined ? { ...h, shadow: [...shadow, ...(h.shadow ?? [])] } : { ...h, set: moved(h.set) }));
+  };
+
+
+  /** The alias `name` as a reference inside `enclosingNs` sees it, or undefined when no alias of that name is in scope there. An alias is in scope only inside the namespace body that holds its directive (the compilation unit holds every body), and where several directives of one name reach the use the nearest body wins; `bodyNs` the namespace of the body itself (undefined for the compilation unit). A project-wide `global using` alias sits in the compilation unit and reads its target from the root. */
   const viewAlias = (name: string, enclosingNs: string[], at: number): AliasView | undefined => {
     // A name this file declares as an alias is read from its own directives: the one whose block is the innermost around the use. A block-only alias does not hide a project-wide `global using` alias of the same name, which sits in the compilation unit.
     let best: AliasView | undefined;
@@ -1586,20 +1670,20 @@ export function assembleCsharpCandidates(
       const bodyNs = d.body[0];
       const index = bodyNs === undefined ? enclosingNs.length : enclosingNs.indexOf(bodyNs);
       if (index < 0) continue;
-      best = { target: d.fqn, chain: d.rooted ? [] : d.body, outer: d.rooted ? [] : d.outer, nearer: enclosingNs.slice(0, index), bodyNs };
+      best = { target: d.fqn, chain: d.rooted ? [] : d.body, outer: d.rooted ? [] : d.outer, bodyNs, at: d.start };
       bestStart = d.start;
     }
     if (best !== undefined) return best;
     const projectTarget = projectAliases.get(name);
-    return projectTarget === undefined ? undefined : { target: projectTarget, chain: [], outer: [], nearer: enclosingNs, bodyNs: undefined };
+    return projectTarget === undefined ? undefined : { target: projectTarget, chain: [], outer: [], bodyNs: undefined, at: 0 };
   };
 
   /**
-   * The readings of a name written in a using directive's target (`target`, plus a dotted `tail` when an alias of it leads a longer name), in C# lookup order (spec §7.8.1, §14.5.2): at each namespace of the directive's body, nearest first, the member of that namespace; then, where a namespace declaration around that body holds using directives (`outer`), an alias of the target's first name ends the readings there (that alias is not read, a silence), or else the types of the namespaces its usings import form one CS0104 set (a dotted name binds only a nested type under them, R4); and the global namespace last. The using directives of the body that holds the directive take no part, and neither do those of the compilation unit (a silence: C# reads them only after the global namespace).
+   * The readings of a type name written in a using directive's target (`name`, read in the body whose enclosing namespaces are `chain`, innermost first, with the using directives of the declarations around that body in `outer` and `at` a position inside that body), in C# lookup order (spec §7.8.1, §14.5.2): at each namespace of the chain, nearest first, the member of that namespace; then, where a declaration of that namespace holds using directives, an alias of the name's first segment decides there, read where its own directive reads its target; or else the types of the namespaces its plain usings import (each namespace read where that declaration stands, `namespaceReadings`) and the nested types of the types its `using static` directives name form one CS0104 set (a dotted name binds only a nested type under them, R4); and the global namespace last. Every reading but the first carries the nearer namespaces or types of the first segment the lookup would stop at (`shadow`). The using directives of the body that holds the directive take no part, and neither do those of the compilation unit (a silence: C# reads them only after the global namespace).
    */
-  const directiveReadings = (chain: string[], outer: OuterUsings[], target: string, tail: string): SymbolHint[] => {
-    const name = `${target}${tail}`;
-    const lead = target.split('.')[0];
+  const typeReadings = (chain: string[], outer: OuterUsings[], at: number, name: string): SymbolHint[] => {
+    const lead = name.split('.')[0];
+    const nested = name.includes('.');
     const hints: SymbolHint[] = [];
     const seen = new Set<string>();
     const add = (hint: SymbolHint): void => {
@@ -1607,20 +1691,43 @@ export function assembleCsharpCandidates(
       seen.add(hint.symbolKey);
       hints.push(hint);
     };
-    for (const ns of chain) {
-      add({ kind: 'symbol', symbolKey: `${ns}.${name}` });
-      const level = outer.find((o) => o.ns === ns);
-      if (level === undefined) continue;
-      if (level.aliases.includes(lead)) return hints;
-      const set: SymbolSetMember[] = level.prefixes.map((p) => ({ symbolKey: `${p}.${name}`, nestedOnly: name.includes('.') }));
+    const shadow: string[] = [];
+    const reading = (symbolKey: string): SymbolHint => (shadow.length > 0 ? { kind: 'symbol', symbolKey, shadow: [...shadow] } : { kind: 'symbol', symbolKey });
+    for (const [i, ns] of chain.entries()) {
+      add(reading(`${ns}.${name}`));
+      shadow.push(`${ns}.${lead}`);
+      const k = outer.findIndex((o) => o.ns === ns);
+      if (k < 0) continue;
+      if (outer[k].aliases.includes(lead)) {
+        const d = aliasAt(lead, ns, at);
+        if (d !== undefined) {
+          const target = `${d.fqn}${name.slice(lead.length)}`;
+          const read: SymbolHint[] = d.rooted ? [{ kind: 'symbol', symbolKey: target }] : typeReadings(d.body, d.outer, d.start, target);
+          for (const h of behind(read, shadow)) add(h);
+        }
+        return hints;
+      }
+      const from = chain.slice(i);
+      const farther = outer.slice(k + 1);
+      const set = levelSet(from, outer, k, at, (p) => `${p}.${name}`, nested, shadow);
+      // A `using static T;` imports the nested types of T: the member `T.<name>` read as a nested type only, wherever T is read. T itself is read without the `using static` directives farther out (a limit: a type only an outer `using static` reaches is not seen there), which keeps a deep nest of them from multiplying the readings.
+      for (const s of outer[k].statics) {
+        const plain = farther.map((o) => (o.statics.length === 0 ? o : { ...o, statics: [] }));
+        for (const h of typeReadings(from, plain, at, s)) {
+          for (const m of h.set ?? [h]) {
+            const behindShadow = [...shadow, ...(m.shadow ?? [])];
+            set.push({ symbolKey: `${m.symbolKey}.${name}`, nestedOnly: true, shadow: behindShadow });
+          }
+        }
+      }
       for (const m of set) add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set });
     }
-    add({ kind: 'symbol', symbolKey: name });
+    add(reading(name));
     return hints;
   };
 
-  /** The readings of an alias target (plus a dotted `tail`): where its directive reads it (`directiveReadings`). */
-  const aliasTargetHints = (view: AliasView, tail: string): SymbolHint[] => directiveReadings(view.chain, view.outer, view.target, tail);
+  /** The readings of an alias target (plus a dotted `tail`): where its directive reads it (`typeReadings`). */
+  const aliasTargetHints = (view: AliasView, tail: string): SymbolHint[] => typeReadings(view.chain, view.outer, view.at, `${view.target}${tail}`);
 
   /** Push ONE group of readings in order (an alias rewrite, `S::Tail`): the first that binds wins. */
   const pushHints = (candidates: TargetHint[], line: number): void => {
@@ -1659,14 +1766,6 @@ export function assembleCsharpCandidates(
     if (ambiguousAliases.has(lead)) return; // M7: an alias with 2+ project-wide targets → silence
     const multi = ref.includes('.');
     const aliasView = viewAlias(lead, enclosingNs, at);
-    const enclosing = enclosingNs.map((ns) => `${ns}.${ref}`);
-
-    // The using-prefix expansions (one CS0104 set). A multi-segment ref under a using prefix is
-    // nested-split-only (R4); a single-segment ref binds the verbatim namespace.type.
-    const usingMembers: SymbolSetMember[] = usingPrefixes.map((p) => ({
-      symbolKey: `${p}.${ref}`,
-      nestedOnly: multi,
-    }));
 
     const candidates: TargetHint[] = [];
     const pushed = new Set<string>();
@@ -1677,28 +1776,37 @@ export function assembleCsharpCandidates(
       }
       candidates.push(hint);
     };
+    const addSet = (set: SymbolSetMember[]): void => {
+      for (const m of set) add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set });
+    };
 
-    if (aliasView !== undefined) {
-      // A member of a namespace nearer than the alias's body hides the alias: those readings come first.
-      for (const ns of aliasView.nearer) add({ kind: 'symbol', symbolKey: `${ns}.${ref}` });
+    const pushAlias = (view: AliasView): void => {
       // The alias rewrites the leftmost segment; the dotted tail follows it. Its target is read where the directive reads it, nearest namespace of the body first (C# spec §14.5.2).
       const tail = ref.slice(lead.length); // leading '.', or '' for a bare ref
       // Co-definition set (R8): a member named like the alias in the SAME body (CS0576) competes with
       // it — 2+ of these resolving = ambiguous → silence. A member of an outer namespace loses to the alias.
-      const sameBody = aliasView.bodyNs === undefined ? ref : `${aliasView.bodyNs}.${ref}`;
-      for (const hint of aliasTargetHints(aliasView, tail)) {
+      const sameBody = view.bodyNs === undefined ? ref : `${view.bodyNs}.${ref}`;
+      for (const hint of aliasTargetHints(view, tail)) {
         // A reading through an outer using is already a CS0104 set; the same-body member joins it.
-        const own: SymbolSetMember[] = hint.set ?? [{ symbolKey: hint.symbolKey }];
+        const own: SymbolSetMember[] = hint.set ?? [{ symbolKey: hint.symbolKey, ...(hint.shadow === undefined ? {} : { shadow: hint.shadow }) }];
         const coDef: SymbolSetMember[] = own.some((m) => m.symbolKey === sameBody) ? own : [...own, { symbolKey: sameBody }];
         add({ ...hint, set: coDef });
       }
-    }
+    };
 
-    for (const k of enclosing) add({ kind: 'symbol', symbolKey: k });
-
-    for (const m of usingMembers) {
-      add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set: usingMembers });
+    // Each enclosing namespace, innermost first: an alias of its body (whose own member competes with it, R8), its member, then the types the plain usings of its declarations import (one CS0104 set; a multi-segment ref is nested-split-only under them, R4), before the next namespace outward (C# spec §7.8.1). A member of a namespace nearer than the alias's body hides the alias.
+    const levels = levelsAt(enclosingNs, at);
+    for (const [i, ns] of enclosingNs.entries()) {
+      if (aliasView !== undefined && aliasView.bodyNs === ns) pushAlias(aliasView);
+      add({ kind: 'symbol', symbolKey: `${ns}.${ref}` });
+      const k = levels.findIndex((o) => o.ns === ns);
+      if (k >= 0) addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => `${p}.${ref}`, multi, []));
     }
+    // An alias of the compilation unit, or a project-wide `global using` alias, comes after every enclosing namespace.
+    if (aliasView !== undefined && aliasView.bodyNs === undefined) pushAlias(aliasView);
+
+    // The using-prefix expansions of the compilation unit and the project (one CS0104 set).
+    addSet(usingPrefixes.map((p) => ({ symbolKey: `${p}.${ref}`, nestedOnly: multi })));
 
     add({ kind: 'symbol', symbolKey: ref }); // verbatim / bare top-level — LAST of the explicit readings
     // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
@@ -1746,21 +1854,31 @@ export function assembleCsharpCandidates(
     out.push({ candidates: merged, kind: 'import', line });
   };
 
-  /** The extension-method group for a call `value.Name(…)`: the extension keys of the enclosing
-   *  namespaces innermost first, then the imported namespaces as ONE set (2+ owners declaring an
+  /** The extension-method group for a call `value.Name(…)` at `at`: the extension keys of the enclosing
+   *  namespaces innermost first, each followed by the namespaces the plain usings of its declarations
+   *  import (one set), then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
    *  in-scope `Name` → ambiguous → silence), then the global namespace. Aliases import no
    *  extension methods, and `using static` is not modelled, so neither contributes. */
-  const pushExtension = (name: string, enclosingNs: string[], line: number): void => {
-    // Distinct keys by construction: enclosing namespaces are distinct, the using prefixes are a
-    // set, and a namespace both enclosing and imported only repeats a key the set already covers.
-    const usingSet: SymbolSetMember[] = usingPrefixes
-      .filter((p) => !enclosingNs.includes(p))
-      .map((p) => ({ symbolKey: extensionKey(p, name) }));
-    const candidates: TargetHint[] = [
-      ...enclosingNs.map((ns): TargetHint => ({ kind: 'symbol', symbolKey: extensionKey(ns, name) })),
-      ...usingSet.map((m): TargetHint => ({ kind: 'symbol', symbolKey: m.symbolKey, set: usingSet })),
-      { kind: 'symbol', symbolKey: extensionKey('', name) },
-    ];
+  const pushExtension = (name: string, enclosingNs: string[], line: number, at: number): void => {
+    const candidates: TargetHint[] = [];
+    const pushed = new Set<string>();
+    const addSet = (set: SymbolSetMember[]): void => {
+      for (const m of set) {
+        if (pushed.has(m.symbolKey)) continue;
+        pushed.add(m.symbolKey);
+        candidates.push({ kind: 'symbol', symbolKey: m.symbolKey, set });
+      }
+    };
+    const levels = levelsAt(enclosingNs, at);
+    for (const [i, ns] of enclosingNs.entries()) {
+      pushed.add(extensionKey(ns, name));
+      candidates.push({ kind: 'symbol', symbolKey: extensionKey(ns, name) });
+      const k = levels.findIndex((o) => o.ns === ns);
+      if (k >= 0) addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, []));
+    }
+    // A namespace both enclosing and imported only repeats a key already read.
+    addSet(usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })));
+    candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
     out.push({ candidates, kind: 'import', line });
   };
 
@@ -1769,13 +1887,13 @@ export function assembleCsharpCandidates(
   for (const r of refs) {
     switch (r.kind) {
       case 'target': {
-        // A named type of a using alias or `using static` target, read where the directive reads it (`directiveReadings`). A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+        // A named type of a using alias or `using static` target, read where the directive reads it (`typeReadings`). A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
         // An alias's own plain target inside a namespace body (`nearest`) reads its nearest reading only: a nearer namespace of that name would hide every farther one.
         if (r.nearest === true && r.enclosingNs.length > 0) {
           pushHints([{ kind: 'symbol', symbolKey: `${r.enclosingNs[0]}.${r.fqn}` }], r.line);
           break;
         }
-        const candidates: TargetHint[] = directiveReadings(r.enclosingNs, r.outer ?? [], r.fqn, '');
+        const candidates: TargetHint[] = typeReadings(r.enclosingNs, r.outer ?? [], r.at, r.fqn);
         if (r.fqn === 'Program') candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
         out.push({ candidates, kind: 'import', line: r.line });
         break;
@@ -1817,7 +1935,7 @@ export function assembleCsharpCandidates(
         break;
       }
       case 'ext':
-        pushExtension(r.name, r.enclosingNs, r.line);
+        pushExtension(r.name, r.enclosingNs, r.line, r.at);
         break;
     }
   }
@@ -1841,7 +1959,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 8,
+  rev: 9,
   declarations,
   uses,
 };

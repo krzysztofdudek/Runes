@@ -1010,7 +1010,7 @@ src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:19	src/Orderi
 src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:29	src/Ordering.API/Application/Commands/CreateOrderCommand.cs
 src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:32	src/Ordering.API/Application/IntegrationEvents/Events/OrderStartedIntegrationEvent.cs
 src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:39	src/Ordering.Domain/AggregatesModel/OrderAggregate/Address.cs
-src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:40	src/Ordering.API/Application/Queries/OrderViewModel.cs
+src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:40	src/Ordering.Domain/AggregatesModel/OrderAggregate/Order.cs
 src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:57	src/Ordering.API/Application/Commands/CreateOrderCommand.cs
 src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:57	src/Ordering.API/Application/Commands/IdentifiedCommandHandler.cs
 src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:61	src/Ordering.Infrastructure/Idempotency/IRequestManager.cs
@@ -1021,9 +1021,9 @@ src/Ordering.API/Application/Commands/CreateOrderCommandHandler.cs:9	src/Orderin
 src/Ordering.API/Application/Commands/CreateOrderDraftCommand.cs:4	src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs
 src/Ordering.API/Application/Commands/CreateOrderDraftCommand.cs:4	src/Ordering.API/Application/Models/BasketItem.cs
 src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:10	src/Ordering.API/Application/Commands/CreateOrderDraftCommand.cs
-src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:12	src/Ordering.API/Application/Queries/OrderViewModel.cs
+src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:12	src/Ordering.Domain/AggregatesModel/OrderAggregate/Order.cs
 src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:13	src/Ordering.API/Extensions/BasketItemExtensions.cs
-src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:28	src/Ordering.API/Application/Queries/OrderViewModel.cs
+src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:28	src/Ordering.Domain/AggregatesModel/OrderAggregate/Order.cs
 src/Ordering.API/Application/Commands/CreateOrderDraftCommandHandler.cs:8	src/Ordering.API/Application/Commands/CreateOrderDraftCommand.cs
 src/Ordering.API/Application/Commands/IdentifiedCommandHandler.cs:13	src/Ordering.Infrastructure/Idempotency/IRequestManager.cs
 src/Ordering.API/Application/Commands/IdentifiedCommandHandler.cs:18	src/Ordering.Infrastructure/Idempotency/IRequestManager.cs
@@ -1278,10 +1278,10 @@ src/Ordering.API/Extensions/Extensions.cs:59	src/EventBus/Extensions/EventBusBui
 src/Ordering.API/Extensions/Extensions.cs:59	src/Ordering.API/Application/IntegrationEvents/EventHandling/OrderPaymentSucceededIntegrationEventHandler.cs
 src/Ordering.API/Extensions/Extensions.cs:59	src/Ordering.API/Application/IntegrationEvents/Events/OrderPaymentSucceededIntegrationEvent.cs
 src/Ordering.API/Extensions/OrderingApiTrace.cs:6	src/Ordering.Domain/AggregatesModel/OrderAggregate/OrderStatus.cs
-src/Ordering.API/Infrastructure/OrderingContextSeed.cs:19	src/Ordering.API/Application/Queries/OrderViewModel.cs
-src/Ordering.API/Infrastructure/OrderingContextSeed.cs:21	src/Ordering.API/Application/Queries/OrderViewModel.cs
-src/Ordering.API/Infrastructure/OrderingContextSeed.cs:22	src/Ordering.API/Application/Queries/OrderViewModel.cs
-src/Ordering.API/Infrastructure/OrderingContextSeed.cs:23	src/Ordering.API/Application/Queries/OrderViewModel.cs
+src/Ordering.API/Infrastructure/OrderingContextSeed.cs:19	src/Ordering.Domain/AggregatesModel/BuyerAggregate/CardType.cs
+src/Ordering.API/Infrastructure/OrderingContextSeed.cs:21	src/Ordering.Domain/AggregatesModel/BuyerAggregate/CardType.cs
+src/Ordering.API/Infrastructure/OrderingContextSeed.cs:22	src/Ordering.Domain/AggregatesModel/BuyerAggregate/CardType.cs
+src/Ordering.API/Infrastructure/OrderingContextSeed.cs:23	src/Ordering.Domain/AggregatesModel/BuyerAggregate/CardType.cs
 src/Ordering.API/Infrastructure/OrderingContextSeed.cs:5	src/Ordering.Infrastructure/OrderingContext.cs
 src/Ordering.API/Infrastructure/OrderingContextSeed.cs:5	src/Shared/MigrateDbContextExtensions.cs
 src/Ordering.API/Infrastructure/OrderingContextSeed.cs:7	src/Ordering.Infrastructure/OrderingContext.cs
@@ -1913,7 +1913,9 @@ tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:13	src/Ordering.API/Inf
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:134	src/Ordering.API/Apis/OrderServices.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:135	src/Ordering.API/Apis/OrdersApi.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:14	src/Ordering.API/Apis/OrderServices.cs
+tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:145	src/Ordering.API/Application/Queries/OrderViewModel.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:150	src/Ordering.API/Apis/OrdersApi.cs
+tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:153	src/Ordering.API/Application/Queries/OrderViewModel.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:160	src/Ordering.API/Application/Commands/CancelOrderCommand.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:160	src/Ordering.API/Application/Commands/IdentifiedCommand.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:162	src/Ordering.API/Apis/OrderServices.cs
