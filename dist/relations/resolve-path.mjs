@@ -261,7 +261,9 @@ function makeRustResolveDeps(plain, exists) {
         const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? manifest.declaredDirs.filter((d) => !manifest.undiscoveredDirs.includes(d) && !manifest.discoveredDirs.includes(d)) : [])];
         const namedTargets = manifest?.namedTargets.filter((n) => !sharedNameBins.has(n));
         const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
-        const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin);
+        // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
+        const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
+        const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred);
         return {
             srcDir: at(target.srcDir),
             crateName,
@@ -385,10 +387,12 @@ function makeRustResolveDeps(plain, exists) {
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
  *
  *  `undiscoveredDirs` are the directories among `src/bin`, `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autobins = false`, `autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
-export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = [], undiscoveredDirs = [], namedTargets = [], inferMain = true) {
+export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = [], undiscoveredDirs = [], namedTargets = [], inferMain = true, droppedInferred = []) {
     const targets = [...new Set(targetPaths.map((p) => path.posix.normalize(p)))];
-    // `src/main.rs` is a crate root when Cargo infers it (`inferMain`, false under `autobins = false` unless a `[[bin]]` is named like the package) or a `[[bin]]` names it by `path`; otherwise it belongs to no crate.
-    const mainIsRoot = inferMain || targets.includes('src/main.rs');
+    // `src/main.rs` is a crate root when Cargo infers it (`inferMain`, false under `autobins = false` unless a `[[bin]]` is named like the package, and when a declared bin of the package's name left it out) or a `[[bin]]` names it by `path`; otherwise it belongs to no crate.
+    const mainIsRoot = (inferMain && !droppedInferred.includes('src/main.rs')) || targets.includes('src/main.rs');
+    // Whether the auto-discovered root `root` (`src/bin/x.rs`, `tests/x/main.rs`, …) is still one: not when a declared target of its kind and name left it out, unless a declared target roots it (by `path`, or by its name alone).
+    const inferredLive = (root, dir) => !droppedInferred.includes(root) || targets.includes(root) || namedTargets.some((n) => n.startsWith(`${dir}/`) && !n.slice(dir.length + 1).includes('/') && (root === `${n}.rs` || root === `${n}/main.rs`));
     const mainRoots = mainIsRoot ? ['src/main.rs'] : [];
     const dirOfRoot = (root) => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
     if (targets.includes(rel))
@@ -409,8 +413,8 @@ export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = [], u
         return { srcDir: dir, rootFiles, fileIsRoot: false };
     };
     const segs = rel.split('/');
-    if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3 && undiscoveredDirs.includes('src/bin')) {
-        // `autobins = false`: only a declared bin is a crate, a `path`'s file or, for one that gives only a name, `src/bin/<name>.rs` or `src/bin/<name>/main.rs`; any other file is a module of the root holding it, if one does.
+    if (segs[0] === 'src' && segs[1] === 'bin' && segs.length >= 3 && (undiscoveredDirs.includes('src/bin') || !inferredLive(segs.length === 3 ? rel : `src/bin/${segs[2]}/main.rs`, 'src/bin'))) {
+        // `autobins = false`, or a bin Cargo infers here but a declared bin of its name left out: only a declared bin is a crate, a `path`'s file or, for one that gives only a name, `src/bin/<name>.rs` or `src/bin/<name>/main.rs`; any other file is a module of the root holding it, if one does.
         const named = namedTargets.filter((n) => n.startsWith('src/bin/') && !n.slice('src/bin/'.length).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
         if (named.includes(rel))
             return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
@@ -424,7 +428,7 @@ export function rustTargetFor(rel, existsInPackage, libPath, targetPaths = [], u
         const main = `${dir}/main.rs`;
         return { srcDir: dir, rootFiles: [main], fileIsRoot: rel === main };
     }
-    if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2 && undiscoveredDirs.includes(segs[0])) {
+    if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2 && (undiscoveredDirs.includes(segs[0]) || !inferredLive(segs.length === 2 ? rel : `${segs[0]}/${segs[1]}/main.rs`, segs[0]))) {
         const named = namedTargets.filter((n) => n.startsWith(`${segs[0]}/`) && !n.slice(segs[0].length + 1).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
         if (named.includes(rel))
             return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
@@ -800,6 +804,7 @@ export function parseCargoManifest(text) {
         discoveredDirs,
         declaredDirs: [...new Set([...targets.map((t) => t.kind), ...writtenKinds])].map((kind) => DISCOVERED_DIRS[kind].dir),
         namedTargets: targets.flatMap((t) => (t.path === undefined && typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
+        declaredNames: targets.flatMap((t) => (typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
         hasPackage,
         edition,
         editionInherited,
