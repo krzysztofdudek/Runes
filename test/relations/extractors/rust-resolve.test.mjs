@@ -589,9 +589,9 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('self::sub', 'tools/tool.rs', 'rust')).toBe('tools/sub.rs');
   });
 
-  it('leaves a shared helper under tests/ rootless beside a [[test]] path in tests/ itself, and gives no root to the modules of two test paths sharing a directory', () => {
-    // ripgrep's `[[test]] path = "tests/tests.rs"`: with test auto-discovery other test crates in tests/ may declare tests/common/ too.
-    put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[test]]\nname = "a"\npath = "suites/a.rs"\n[[test]]\nname = "b"\npath = "suites/b.rs"\n[[bench]]\nname = "c"\npath = "suites/c/main.rs"\n');
+  it('leaves a shared helper under tests/ rootless beside a [[test]] path in tests/ itself in an edition 2018 package, and gives no root to the modules of two test paths sharing a directory', () => {
+    // ripgrep's `[[test]] path = "tests/tests.rs"` in an edition 2018 package: test auto-discovery stays on, so other test crates in tests/ may declare tests/common/ too (in edition 2015 the declared [[test]] turns it off).
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2018"\n[[test]]\nname = "integration"\npath = "tests/tests.rs"\n[[test]]\nname = "a"\npath = "suites/a.rs"\n[[test]]\nname = "b"\npath = "suites/b.rs"\n[[bench]]\nname = "c"\npath = "suites/c/main.rs"\n');
     put('src/lib.rs', 'pub struct Dir;\npub struct Env;\n');
     put('tests/tests.rs', 'mod common;\npub struct Dir;\n');
     put('tests/common/mod.rs', '');
