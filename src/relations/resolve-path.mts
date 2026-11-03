@@ -260,8 +260,8 @@ function makeRustResolveDeps(
         if (legacy !== undefined) legacyBinPaths.push(legacy);
       }
     }
-    // Cargo (edition 2015): a package that declares a bin turns bin auto-discovery off unless `autobins = true`; from 2018 on discovery is always on. The same rule holds for tests, examples and benches, which are not yet read this way.
-    const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? (manifest.declaredDirs.includes('src/bin') && !manifest.undiscoveredDirs.includes('src/bin') && !manifest.discoveredDirs.includes('src/bin') ? ['src/bin'] : []) : [])];
+    // Cargo (edition 2015, `toml_targets_and_inferred`): a package that declares a target of a kind (bin, test, example, bench) turns that kind's auto-discovery off unless its flag (`autobins = true`, …) keeps it on; from 2018 on discovery is always on.
+    const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? manifest.declaredDirs.filter((d) => !manifest.undiscoveredDirs.includes(d) && !manifest.discoveredDirs.includes(d)) : [])];
     const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, manifest?.namedTargets, !undiscovered.includes('src/bin') || (manifest?.declaresMainBin ?? false));
     return {
       srcDir: at(target.srcDir),

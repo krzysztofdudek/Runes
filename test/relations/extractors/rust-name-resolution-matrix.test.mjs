@@ -72,6 +72,10 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-edition-2015-declared-bin-main-silence', () => runCase('rust-edition-2015-declared-bin-main-silence'));
   it('rust-edition-2018-declared-bin-main-edge', () => runCase('rust-edition-2018-declared-bin-main-edge'));
   it('rust-edition-2015-autobins-true-main-edge', () => runCase('rust-edition-2015-autobins-true-main-edge'));
+  it('rust-edition-2015-declared-test-undiscovered-silence', () => runCase('rust-edition-2015-declared-test-undiscovered-silence'));
+  it('rust-edition-2015-declared-example-undiscovered-silence', () => runCase('rust-edition-2015-declared-example-undiscovered-silence'));
+  it('rust-edition-2015-declared-bench-undiscovered-silence', () => runCase('rust-edition-2015-declared-bench-undiscovered-silence'));
+  it('rust-edition-2015-declared-test-common-module-edge', () => runCase('rust-edition-2015-declared-test-common-module-edge'));
   it('rust-edition-2015-legacy-bin-path-no-lib-edge', () => runCase('rust-edition-2015-legacy-bin-path-no-lib-edge'));
   it('rust-edition-2015-legacy-bin-path-main-edge', () => runCase('rust-edition-2015-legacy-bin-path-main-edge'));
   it('rust-edition-2015-legacy-bin-path-bin-main-edge', () => runCase('rust-edition-2015-legacy-bin-path-bin-main-edge'));
