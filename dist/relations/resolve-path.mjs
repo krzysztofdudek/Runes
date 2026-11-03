@@ -755,8 +755,37 @@ export function parseCargoManifest(text) {
 function stripRustComments(text) {
     return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
-export function rustFileDeclares(text, name, asItem = false) {
+/** `text` with everything between a pair of braces blanked, except the braces of a `use` statement, which are copied whole to its `;`: what is left is the items a file itself puts in scope, and no name that exists only inside an inline `mod`, a function body or an `impl`. Braces inside a string literal are not told from code, so a file with an unbalanced one can only lose a name, never invent one. */
+function rustTopLevelText(text) {
+    let out = '';
+    let depth = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (depth === 0 && c === 'u' && text.startsWith('use', i) && !/[A-Za-z0-9_#]/.test(text[i - 1] ?? ' ') && !/[A-Za-z0-9_]/.test(text[i + 3] ?? ' ')) {
+            const end = text.indexOf(';', i);
+            const stop = end === -1 ? text.length : end + 1;
+            out += text.slice(i, stop);
+            i = stop - 1;
+        }
+        else if (c === '{') {
+            if (depth === 0)
+                out += c;
+            depth++;
+        }
+        else if (c === '}') {
+            if (depth > 0)
+                depth--;
+            if (depth === 0)
+                out += c;
+        }
+        else if (depth === 0 || c === '\n')
+            out += c;
+    }
+    return out;
+}
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? With `asItem`, only at the top level of the file. */
+export function rustFileDeclares(fullText, name, asItem = false) {
+    const text = asItem ? rustTopLevelText(fullText) : fullText;
     const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const decl = new RegExp(`\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b` + (asItem ? '' : `|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`));
     if (decl.test(text))

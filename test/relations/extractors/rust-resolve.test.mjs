@@ -947,6 +947,15 @@ path = "..\u002fmore"
     expect(rustFileDeclares('use serde::Deserialize;', 'serde', true)).toBe(false);
     expect(rustFileDeclares('use a::Error as Other;', 'Error', true)).toBe(false);
     expect(rustFileDeclares('use a::Error as Other;', 'Other', true)).toBe(true);
+    expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('pub mod m { pub struct Error; }', 'm', true)).toBe(true);
+    expect(rustFileDeclares('fn f() { use a::Error; }', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('mod m { fn g() {} }\nstruct Error;', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('use a::{b::Error, c};', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('mod m { struct Error;', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('} struct Error;', 'Error', true)).toBe(true);
+    expect(rustFileDeclares('use a::b', 'Error', true)).toBe(false);
+    expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
   });
 });
 
