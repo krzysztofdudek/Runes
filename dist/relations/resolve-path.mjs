@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -36,7 +36,9 @@ import { makeDiagnosticSink, reportUnreadable, strictJsonFailure } from './diagn
  *  specifier can name any file on disk, excluded or not — must supply both `ownerOf` and an `isExcluded` built from the same exclusion set instead of calling this with `ownerOf` and no `isExcluded`:
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
- *  the surviving, non-excluded, fully enforced candidate. */
+ *  the surviving, non-excluded, fully enforced candidate.
+ *
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for one question only: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs; the Rust extractor declares those names from the file's parse tree (`rustTopLevelItemKey`). Without the table no name is known to be such an item, so those paths stay silent. */
 export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options) {
     // Every read goes through one of two sources, and with a view given they are the same one. On the disk they differ in a single manner: a candidate probe exists only under the name its directory lists (on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs, issue 482), while a configuration read or a repository walk takes the file system's own rule.
     const probe = options?.files ?? diskFileView(projectRoot, true);
@@ -48,13 +50,25 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
     const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
     const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
     const rustDeps = makeRustResolveDeps(plain, exists);
+    // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`).
+    const rustDepsByTable = new WeakMap();
+    const rustDepsFor = (table) => {
+        if (table === undefined)
+            return rustDeps;
+        let deps = rustDepsByTable.get(table);
+        if (deps === undefined) {
+            deps = { ...rustDeps, rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares(rootFile, name)) };
+            rustDepsByTable.set(table, deps);
+        }
+        return deps;
+    };
     // One Python resolver for the whole pass: it memoizes its probes and indexes the discovered roots by the names they hold (issue 013).
     const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(plain, isExcluded), (repoRelPosix) => plain.list(repoRelPosix)?.map((e) => e.name));
     // TS/JS: a candidate is a FILE (a directory named like `./x.config` is never a module), and
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => probe.isFile(repoRelPosix);
     const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
-    return (specifier, fromFile, language, isPackage = false) => {
+    return (specifier, fromFile, language, isPackage = false, symbolTable = undefined) => {
         if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
             return resolveTsPath(specifier, fromFile, isFile, tsDeps);
         }
@@ -106,7 +120,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return resolvePhpFqn(specifier, fromFile, phpDeps);
         }
         if (language === 'rust') {
-            return resolveRustPath(specifier, fromFile, exists, rustDeps);
+            return resolveRustPath(specifier, fromFile, exists, rustDepsFor(symbolTable));
         }
         if (language === 'c' || language === 'cpp') {
             // C and C++ share ONE include resolver: a quoted include resolves next to the
@@ -332,13 +346,16 @@ function makeRustResolveDeps(plain, exists) {
         return undefined;
     }
     function rootDeclares(rootFile, name, asItem = false) {
+        // Which names the root binds at its top level only its parse tree tells, through the pass's symbol table (`rustDepsFor` in makeResolvePathToFile); without one, none is known.
+        if (asItem)
+            return false;
         let text = rootTextByFile.get(rootFile);
         if (text === undefined) {
             const raw = plain.read(rootFile);
             text = raw === undefined ? '' : stripRustComments(raw);
             rootTextByFile.set(rootFile, text);
         }
-        return rustFileDeclares(text, name, asItem);
+        return rustFileDeclares(text, name);
     }
     return { crateRootFor, dependencyFor, rootDeclares };
 }
@@ -777,93 +794,13 @@ export function parseCargoManifest(text) {
 function stripRustComments(text) {
     return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
-/** The index just past the string or character literal that starts at `i` in Rust source `text` (a `"…"` string with its escapes, a raw string `r#"…"#` or byte raw string `br#"…"#` with any number of hashes, a character literal such as `'{'` or `'\n'`), or `i` itself when none starts there. A lifetime (`'a`) is no literal; an unterminated one runs to the end of the text. */
-function rustLiteralEnd(text, i) {
-    const c = text[i];
-    const before = text[i - 1] ?? ' ';
-    if ((c === 'r' || c === 'b') && !/[A-Za-z0-9_]/.test(before)) {
-        const raw = /^b?r(#*)"/.exec(text.slice(i, i + 40));
-        if (raw !== null) {
-            const close = text.indexOf(`"${raw[1]}`, i + raw[0].length);
-            return close === -1 ? text.length : close + 1 + raw[1].length;
-        }
-    }
-    if (c === '"') {
-        for (let j = i + 1; j < text.length; j++) {
-            if (text[j] === '\\')
-                j++;
-            else if (text[j] === '"')
-                return j + 1;
-        }
-        return text.length;
-    }
-    if (c === "'") {
-        if (text[i + 1] === '\\') {
-            const close = text.indexOf("'", i + 3);
-            return close === -1 ? i : close + 1;
-        }
-        if (text[i + 2] === "'" && text[i + 1] !== undefined)
-            return i + 3;
-    }
-    return i;
-}
-/** `text` with the bodies of `mod`, `fn`, `impl` and `trait` items blanked, and nothing else: what is left is the items a file itself puts in scope. The braces of anything else hold items of the file's own top level (`extern "C" { fn foo(); }`, `thread_local! { static … }`, `bitflags! { pub struct … }`, `cfg_if! { mod imp; }`), and a `use` statement keeps its braces whole. A brace inside a string or character literal is no brace. What can still go wrong: a macro body that is not balanced braces, or a brace in a comment (the caller strips comments first), shifts the nesting, so the rest of the file counts as nested (a name lost, no edge) or as top level (a nested name read as the root's); neither can fail the file. */
-function rustTopLevelText(text) {
-    let out = '';
-    // One entry per open brace: whether it is inside a blanked body (or opens one).
-    const blank = [];
-    const inBlank = () => blank.length > 0 && blank[blank.length - 1];
-    // Where the item header before the next `{` starts: just past the last `;`, `{` or `}`.
-    let header = 0;
-    for (let i = 0; i < text.length; i++) {
-        const c = text[i];
-        const literalEnd = rustLiteralEnd(text, i);
-        if (literalEnd > i) {
-            if (!inBlank())
-                out += text.slice(i, literalEnd);
-            i = literalEnd - 1;
-            continue;
-        }
-        if (!inBlank() && c === 'u' && text.startsWith('use', i) && !/[A-Za-z0-9_#]/.test(text[i - 1] ?? ' ') && !/[A-Za-z0-9_]/.test(text[i + 3] ?? ' ')) {
-            const end = text.indexOf(';', i);
-            const stop = end === -1 ? text.length : end + 1;
-            out += text.slice(i, stop);
-            i = stop - 1;
-            header = stop;
-        }
-        else if (c === '{') {
-            const body = inBlank() || RUST_BODY_HEADER.test(text.slice(header, i));
-            if (!inBlank())
-                out += c;
-            blank.push(body);
-            header = i + 1;
-        }
-        else if (c === '}') {
-            blank.pop();
-            if (!inBlank())
-                out += c;
-            header = i + 1;
-        }
-        else {
-            if (c === ';')
-                header = i + 1;
-            if (!inBlank() || c === '\n')
-                out += c;
-        }
-    }
-    return out;
-}
-/** An item header whose braces hold a body, not items of the file: it names `mod`, `fn`, `impl` or `trait`. */
-const RUST_BODY_HEADER = /(?:^|[^A-Za-z0-9_#])(?:mod|fn|impl|trait)(?![A-Za-z0-9_])/;
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? With `asItem`, only at the top level of the file. */
-export function rustFileDeclares(fullText, name, asItem = false) {
-    const text = asItem ? rustTopLevelText(fullText) : fullText;
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
+export function rustFileDeclares(text, name) {
     const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const decl = new RegExp(`\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b` + (asItem ? '' : `|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`));
+    const decl = new RegExp(`\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`);
     if (decl.test(text))
         return true;
-    // As an item of the module, a name a `use` brings in is the last segment of its path, a member of its group or the alias of an `as`: a name that leads a longer path (`use serde::Deserialize;`) or is renamed away (`use a::Name as Other;`) binds nothing called `name`.
-    const word = new RegExp(asItem ? `(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])(?!\\s*::)(?!\\s+as\\b)` : `(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);
+    const word = new RegExp(`(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);
     for (const m of text.matchAll(/\buse\s+[^;]*;/g)) {
         if (word.test(m[0]))
             return true;

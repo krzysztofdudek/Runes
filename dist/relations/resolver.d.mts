@@ -14,8 +14,8 @@ export interface ResolvedTarget {
 export interface ResolverDeps {
     ownerIndex: OwnerLookup;
     symbolTable: SymbolTable;
-    /** language-specific path → repo-rel file (or undefined). Injected per language. */
-    resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
+    /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items; a function that takes four ignores it. */
+    resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable) => string | undefined;
     /**
      * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). Both `resolve`, `classify` and `resolveFile` apply it.
      */

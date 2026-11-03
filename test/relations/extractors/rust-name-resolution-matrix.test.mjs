@@ -79,6 +79,15 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-edition-2015-use-crate-root-item-edge', () => runCase('rust-edition-2015-use-crate-root-item-edge'));
   it('rust-edition-2015-use-crate-root-item-inline-mod-silence', () => runCase('rust-edition-2015-use-crate-root-item-inline-mod-silence'));
   it('rust-edition-2015-use-crate-root-item-string-brace-silence', () => runCase('rust-edition-2015-use-crate-root-item-string-brace-silence'));
+  it('rust-edition-2015-use-crate-root-item-const-block-silence', () => runCase('rust-edition-2015-use-crate-root-item-const-block-silence'));
+  it('rust-edition-2015-use-crate-root-item-static-block-silence', () => runCase('rust-edition-2015-use-crate-root-item-static-block-silence'));
+  it('rust-edition-2015-use-crate-root-item-static-closure-silence', () => runCase('rust-edition-2015-use-crate-root-item-static-closure-silence'));
+  it('rust-edition-2015-use-crate-root-item-use-in-const-block-silence', () => runCase('rust-edition-2015-use-crate-root-item-use-in-const-block-silence'));
+  it('rust-edition-2015-use-crate-root-item-macro-rules-body-silence', () => runCase('rust-edition-2015-use-crate-root-item-macro-rules-body-silence'));
+  it('rust-edition-2015-use-crate-root-item-extern-block-edge', () => runCase('rust-edition-2015-use-crate-root-item-extern-block-edge'));
+  it('rust-edition-2015-use-crate-root-item-thread-local-edge', () => runCase('rust-edition-2015-use-crate-root-item-thread-local-edge'));
+  it('rust-edition-2015-use-crate-root-item-bitflags-edge', () => runCase('rust-edition-2015-use-crate-root-item-bitflags-edge'));
+  it('rust-edition-2015-use-crate-root-item-cfg-if-mod-edge', () => runCase('rust-edition-2015-use-crate-root-item-cfg-if-mod-edge'));
   it('rust-edition-2018-use-external-crate-silence', () => runCase('rust-edition-2018-use-external-crate-silence'));
   it('rust-bin-edition-2015-in-2018-package-edge', () => runCase('rust-bin-edition-2015-in-2018-package-edge'));
   it('rust-bin-edition-2018-in-2015-package-silence', () => runCase('rust-bin-edition-2018-in-2015-package-silence'));

@@ -36,6 +36,10 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     // External crate (std/core/alloc, third-party) — not a resolvable path.
     return undefined;
 }
+/** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
+export function rustTopLevelItemKey(name) {
+    return `item:${name}`;
+}
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */
 const EDITION_2015_EXTERNAL_ROOTS = new Set(['std', 'core', 'alloc', 'proc_macro', 'test']);
 /** The crate-root name check: the deps' own, or "every name is declared" when absent. */
