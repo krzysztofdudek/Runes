@@ -1,5 +1,5 @@
 import type { Node } from 'web-tree-sitter';
-import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
 
@@ -178,20 +178,19 @@ function unrawPath(specifier: string): string {
   return specifier.split('::').map(unraw).join('::');
 }
 
-/** The enclosing INLINE modules of `node`, outermost first: every `mod_item` ancestor that
- *  has a body. `unpinned` is true when any of them carries a `#[path]` attribute, which
- *  relocates its directory, or has no readable name (a malformed tree) — the caller then
- *  emits nothing relative (silence over a guess). */
-function inlineModChain(node: Node): { names: string[]; unpinned: boolean } {
+/** The enclosing INLINE modules of a node, innermost first, carried down the walk: one link per `mod_item` ancestor that has a body. `unpinned` is true when this module or any module around it carries a `#[path]` attribute, which relocates its directory, or has no readable name (a malformed tree) — the caller then emits nothing relative (silence over a guess). */
+interface ModScope {
+  readonly name: string;
+  readonly unpinned: boolean;
+  readonly outer: ModScope | null;
+}
+
+/** The enclosing inline modules as the names of the chain, outermost first. */
+function inlineModChain(scope: ModScope | null): { names: string[]; unpinned: boolean } {
   const names: string[] = [];
-  let unpinned = false;
-  for (let p: Node | null = node.parent; p !== null; p = p.parent) {
-    if (p.type !== 'mod_item' || p.childForFieldName('body') === null) continue;
-    const name = p.childForFieldName('name')?.text ?? '';
-    names.unshift(unraw(name));
-    if (name === '' || modHasPathOverride(p)) unpinned = true;
-  }
-  return { names, unpinned };
+  for (let m = scope; m !== null; m = m.outer) names.push(m.name);
+  names.reverse();
+  return { names, unpinned: scope?.unpinned ?? false };
 }
 
 /**
@@ -232,13 +231,16 @@ function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
 
+  // The inline modules around the node being visited, carried down the walk.
+  let mods: ModScope | null = null;
+
   const emit = (raw: string | undefined, node: Node): void => {
     if (raw === undefined || raw === '') return;
     let specifier = unrawPath(raw);
     const root = specifier.split('::', 1)[0];
     if (root === 'self' || root === 'super') {
       // Relative to the module the node sits in: rebase across enclosing inline modules.
-      const chain = inlineModChain(node);
+      const chain = inlineModChain(mods);
       if (chain.names.length > 0) {
         if (chain.unpinned) return; // a #[path]-relocated (or nameless) inline module → silence
         specifier = rebaseForInlineMods(specifier, chain.names);
@@ -321,7 +323,8 @@ function uses(file: ParsedFile): DetectedDep[] {
     }
   };
 
-  walk(file.tree.rootNode, (node) => {
+  walkScoped<ModScope | null>(file.tree.rootNode, null, (node, scope) => {
+    mods = scope;
     if (node.type === 'use_declaration') {
       const arg = node.childForFieldName('argument');
       if (arg !== null) handleArgument(arg, '');
@@ -337,7 +340,10 @@ function uses(file: ParsedFile): DetectedDep[] {
         const name = node.childForFieldName('name');
         if (name !== null) emit(`self::${name.text}`, node);
       }
-      return undefined;
+      if (body === null) return undefined;
+      // An inline module: what sits inside it is read relative to it.
+      const name = node.childForFieldName('name')?.text ?? '';
+      return { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope };
     }
 
     // `extern crate name [as alias];` → the bare crate name (never `self`); the resolver
