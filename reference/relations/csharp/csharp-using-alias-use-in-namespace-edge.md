@@ -8,7 +8,7 @@ cites: "C# spec §14.5.2 (using alias directives — the target is resolved in t
 
 ## Rule
 
-A using alias names one type, and every line of the file reads it the same way. Below `namespace App;` the target of `using O = Shared.Order;` is read in that namespace body, so it is `App.Shared.Order` when that type exists and `Shared.Order` only otherwise; a use of `O` binds the type the directive binds. (When only the farther `Shared.Order` exists the use gives its edge and the directive line gives none: the directive of a plain alias target inside a namespace body reads its nearest reading only, the case csharp-alias-namespace-beside-global-type-edge.) The nearer type gets the edge on the directive line and on the use line, and the global `Shared.Order` gets none.
+A using alias names one type, and every line of the file reads it the same way. Below `namespace App;` the target of `using O = Shared.Order;` is read in that namespace body, so it is `App.Shared.Order` when that type exists and `Shared.Order` only otherwise; a use of `O` binds the type the directive binds. (A farther reading binds nothing where the repository declares a nearer namespace or type named like the first segment, the case csharp-alias-namespace-beside-global-type-edge.) The nearer type gets the edge on the directive line and on the use line, and the global `Shared.Order` gets none.
 
 ## Files
 

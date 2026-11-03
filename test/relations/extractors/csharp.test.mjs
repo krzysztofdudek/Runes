@@ -394,21 +394,25 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
           resolvePathToFile: () => undefined,
         });
         const group = groupContaining(csharpExtractor.uses(consumer), 'Models.Order');
-        // Enclosing-ns chain innermost→outermost (App.Services, App), then the using prefix
-        // (App.Data), then the verbatim LAST.
+        // The innermost namespace App.Services, then the using below its declaration (one set: the
+        // namespace `App.Data` read where the directive stands, App.Services.App.Data, App.App.Data and
+        // App.Data), then the outer namespace App, then the verbatim LAST.
         expect(group).toEqual([
           'App.Services.Models.Order',
-          'App.Models.Order',
+          'App.Services.App.Data.Models.Order',
+          'App.App.Data.Models.Order',
           'App.Data.Models.Order',
+          'App.Models.Order',
           'Models.Order',
         ]);
         // Walk the group in order: first resolved wins and stops.
         const outcomes = group.map((k) => resolver.classify({ kind: 'symbol', symbolKey: k }, consumer.path, 'csharp'));
         expect(outcomes[0]).toEqual({ kind: 'absent' }); // App.Services.Models.Order — absent
-        expect(outcomes[1]).toEqual({ kind: 'absent' }); // App.Models.Order — absent
+        expect(outcomes[1]).toEqual({ kind: 'absent' }); // App.Services.App.Data.Models.Order — absent
+        expect(outcomes[2]).toEqual({ kind: 'absent' }); // App.App.Data.Models.Order — absent
         // App.Data.Models.Order splits at the declared type App.Data.Models → App.Data.Models+Order → n1.
-        expect(outcomes[2]).toEqual({ kind: 'resolved', owner: 'n1', resolvedFile: 'src/n1/Data.cs' }); // binds n1, stop
-        // outcomes[3] (verbatim Models.Order → n2) is NEVER reached by the walk, so n2 is never flagged.
+        expect(outcomes[3]).toEqual({ kind: 'resolved', owner: 'n1', resolvedFile: 'src/n1/Data.cs' }); // binds n1, stop
+        // outcomes[5] (verbatim Models.Order → n2) is NEVER reached by the walk, so n2 is never flagged.
         expect(walkResolve(csharpExtractor.uses(consumer), 'Models.Order', resolver, consumer.path)).toBe('n1');
       },
     );

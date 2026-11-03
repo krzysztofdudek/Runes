@@ -4,11 +4,15 @@ export declare class SymbolTable {
     /** `${namespace}\0${package}` → files declaring a DIRECT top-level member of that package (a key
      *  `<package>.<Name>` whose last segment carries no `+` nested-type separator). */
     private readonly packageMembers;
+    /** `${namespace}\0${prefix}` of every dotted namespace a declared key lies in: each proper dot prefix of the key's part before its first `+` (`A.B.Order` lies in `A` and `A.B`; `A.Outer+Inner` in `A`). */
+    private readonly namespaces;
     private key;
     declare(language: string, symbolKey: string, file: string): void;
     /** True when some `::`-qualified key ends in the segment `name` (e.g. `Admin::Order` for
      *  `Order`): a constant of that name is nested in some namespace. Ruby's lexical guard. */
     hasNestedTail(language: string, name: string): boolean;
+    /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. */
+    hasNamespace(language: string, name: string): boolean;
     /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. unowned) → undefined. */
     resolveUnique(language: string, symbolKey: string): string | undefined;
     /** Number of distinct files declaring `symbolKey` in `language` (0 = absent, ≥2 = ambiguous).
