@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as TreeSitter from 'web-tree-sitter';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
-import { javaExtractor, kotlinExtractor, rustExtractor, cExtractor, cppExtractor, pythonExtractor, phpExtractor, rubyExtractor } from '../../helpers/internal/relations.mjs';
+import { csharpExtractor, javaExtractor, kotlinExtractor, rustExtractor, cExtractor, cppExtractor, pythonExtractor, phpExtractor, rubyExtractor } from '../../helpers/internal/relations.mjs';
 
 /** Runs `fn` with the node's `parent` accessor counting its calls, and returns the count. */
 async function countAncestorSteps(fn) {
@@ -29,6 +29,12 @@ const range = (n) => Array.from({ length: n }, (_, i) => i);
 
 // One synthetic file per language, nested `depth` levels, with a reference to a name and a declaration at every level, so that every context an extractor reads from the ancestors is asked for at every depth.
 const SOURCES = {
+  csharp: {
+    extractor: csharpExtractor, language: 'csharp', ext: '.cs',
+    source: (n) =>
+      range(n).map((i) => `namespace N${i} {\n using A${i} = Lib.T${i};\n using static Lib.S${i};\n [Mark${i}] class C${i}<T${i}> {\n Foo${i} f${i}; T${i} g${i};\n void M${i}<U${i}>(Bar${i} b) { var x = Guard${i}.Run(); b.Ext${i}(); (Quux${i} p, int q) = Pair(); string s = nameof(Hid${i}); Make<(Tup${i} Item, int Index)>(1); }\n`).join('') +
+      range(n).map(() => '} }\n').join(''),
+  },
   java: {
     extractor: javaExtractor, language: 'java', ext: '.java',
     source: (n) =>
