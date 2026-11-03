@@ -137,7 +137,7 @@ function fileScopedNamespace(root) {
     });
     return ns;
 }
-const TOP_SCOPE = { ns: null, chain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
+const TOP_SCOPE = { ns: null, chain: '', bodyChain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
 /** The scope the node is read in: its parent's scope, except that an attribute list of a declaration does not see that declaration's type parameters. */
 function csSeen(node, inherited) {
     if (inherited.tpSkip === undefined)
@@ -147,7 +147,7 @@ function csSeen(node, inherited) {
 /** The scope the children of `node` inherit, or undefined when it is `own`. */
 function csBelow(node, own) {
     const type = node.type;
-    let { ns, chain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
+    let { ns, chain, bodyChain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
     let tpSkip;
     let changed = false;
     if (type === 'namespace_declaration') {
@@ -163,6 +163,11 @@ function csBelow(node, own) {
         fileLocal = own.fileLocal || hasFileModifier(node);
         typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
         extBelow = false;
+        changed = true;
+    }
+    // The body of a type declaration (`declaration_list`, or an enum's member list): only inside it are the type's members, its nested types included, in scope.
+    if ((type === 'declaration_list' || type === 'enum_member_declaration_list') && node.parent !== null && TYPE_DECLARATION_TYPES.has(node.parent.type)) {
+        bodyChain = chain;
         changed = true;
     }
     if (type === 'extension_declaration') {
@@ -191,7 +196,7 @@ function csBelow(node, own) {
         tuple = { stage: 'arg', root: own.tuple.root };
     if (access !== null || own.access !== null || tuple !== null || own.tuple !== null)
         changed = true;
-    return changed ? { ns, chain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
+    return changed ? { ns, chain, bodyChain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
 }
 /** The names the `type_parameter_list` of a declaration declares (none when it has no list). */
 function typeParameterNames(decl) {
@@ -789,7 +794,7 @@ export function extractCsharpRefs(file) {
     /** The declaration keys of the types around `node`, innermost first (`['App.Outer+Inner', 'App.Outer']`), or undefined outside every type: C# reads the nested types of each enclosing type, from every part of a partial type, before any namespace, alias or using (spec §7.6.1, §12.8.4). Read once per type and namespace. */
     const typesMemo = new Map();
     const enclosingTypes = (node) => {
-        const chain = scopeOf(node).chain;
+        const chain = scopeOf(node).bodyChain;
         if (chain === '')
             return {};
         const ns = nsChain(node)[0];
@@ -1918,7 +1923,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 15,
+    rev: 16,
     declarations,
     uses,
 };

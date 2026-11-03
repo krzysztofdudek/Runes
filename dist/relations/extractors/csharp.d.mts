@@ -94,9 +94,9 @@ export interface CsharpUsesOptions {
  * `assembleCsharpCandidates`. The descriptor carries no live AST node (the tree is destroyed
  * after `tree.delete()`) — every node-derived input is precomputed here, notably the
  * enclosing-namespace chain (`enclosingNs`), and, for a `plain`, `attr` or `receiver` reference
- * written inside a type, the declaration keys of the types around it, innermost first (`types`:
+ * written inside the body of a type, the declaration keys of the types whose bodies hold it, innermost first (`types`:
  * `['App.Outer+Inner', 'App.Outer']`), whose nested types C# reads before any namespace (spec
- * §7.6.1); the field is absent outside every type and on a `global::` reference.
+ * §7.6.1); the field is absent outside every type body (a type's attributes, base list and constraint clauses lie outside its body, §7.7.1) and on a `global::` reference.
  */
 export type CsharpRefDescriptor = 
 /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
