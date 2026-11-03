@@ -215,6 +215,26 @@ describe('the corpus gate', () => {
     manifest([fixture()]);
   });
 
+  test('gate, the default command, runs the edges and the oracles over one resolution, and an edge change fails it with the oracles still reported', () => {
+    const golden = readFileSync(goldenFile(), 'utf8');
+    for (const r of [corpus('gate'), spawnSync(process.execPath, [SCRIPT, '--manifest', join(work, 'manifest.json'), '--goldens', join(work, 'goldens'), '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache')], { env: ENV, encoding: 'utf8' })]) {
+      const out = r.out ?? `${r.stdout}${r.stderr}`;
+      assert.equal(r.code ?? r.status, 0, out);
+      assert.match(out, /^corpus gate: 1 repositories/m);
+      assert.match(out, /ok {3}fixture .*0 added, 0 removed/);
+      assert.match(out, /ok {3}fixture .*checked: typescript 2; 0 disagreements/);
+      assert.match(out, /corpus gate: passed/);
+    }
+    writeFileSync(goldenFile(), `${golden}app/main.js:3\tlib/util.js\n`);
+    const edges = corpus('gate');
+    assert.equal(edges.code, 1, edges.out);
+    assert.match(edges.out, /UNEXPLAINED - app\/main\.js:3 -> lib\/util\.js/);
+    // The oracles still run when the edges fail, so one run shows both.
+    assert.match(edges.out, /ok {3}fixture .*checked: typescript 2/);
+    assert.match(edges.out, /corpus gate: FAILED \(1\)/);
+    writeFileSync(goldenFile(), golden);
+  });
+
   test('oracles through a cache reached by a symbolic link (as the temporary directory of macOS is) agree on the fixture as through its real path', () => {
     const real = join(tmp, 'real-cache');
     mkdirSync(real, { recursive: true });
