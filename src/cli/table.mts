@@ -74,6 +74,11 @@ export function publicCommands(table: CommandTable): string[] {
   return Object.keys(table.commands).filter((c) => !table.commands[c]?.internal);
 }
 
+/** A command as the part of an MCP tool name after the prefix: its words joined with `_`, a space and a dash alike. The one rule `toolName` and the table check share. */
+export function toolWord(command: string): string {
+  return command.replace(/[ -]/g, '_');
+}
+
 /** Every problem with a table; empty means it is well formed. */
 export function tableProblems(table: CommandTable): string[] {
   const p: string[] = [];
@@ -118,7 +123,7 @@ export function tableProblems(table: CommandTable): string[] {
   // A tool's name joins a command's words with `_`, a space and a dash alike, so two public commands can end up with one name.
   const byToolName = new Map<string, string>();
   for (const cmd of Object.keys(commands).filter((c) => !commands[c]?.internal)) {
-    const joined = cmd.replace(/[ -]/g, '_');
+    const joined = toolWord(cmd);
     const first = byToolName.get(joined);
     if (first === undefined) byToolName.set(joined, cmd);
     else p.push(`commands "${first}" and "${cmd}": both give the MCP tool name "<prefix>${joined}"`);
