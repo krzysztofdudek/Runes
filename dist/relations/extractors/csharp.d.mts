@@ -93,7 +93,10 @@ export interface CsharpUsesOptions {
  * cached fact must be PRE-assembly: the alias merge + candidate building is deferred entirely to
  * `assembleCsharpCandidates`. The descriptor carries no live AST node (the tree is destroyed
  * after `tree.delete()`) — every node-derived input is precomputed here, notably the
- * enclosing-namespace chain (`enclosingNs`).
+ * enclosing-namespace chain (`enclosingNs`), and, for a `plain`, `attr` or `receiver` reference
+ * written inside a type, the declaration keys of the types around it, innermost first (`types`:
+ * `['App.Outer+Inner', 'App.Outer']`), whose nested types C# reads before any namespace (spec
+ * §7.6.1); the field is absent outside every type and on a `global::` reference.
  */
 export type CsharpRefDescriptor = 
 /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
@@ -106,6 +109,7 @@ export type CsharpRefDescriptor =
     rooted: boolean;
     enclosingNs: string[];
     at: number;
+    types?: string[];
 }
 /** An `S::Tail` alias-qualified reference (`alias_qualified_name`, non-`global` alias). Emitted
  *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
@@ -137,6 +141,7 @@ export type CsharpRefDescriptor =
     at: number;
     rooted?: boolean;
     alias?: string;
+    types?: string[];
 }
 /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
  | {
@@ -146,6 +151,7 @@ export type CsharpRefDescriptor =
     enclosingNs: string[];
     at: number;
     rooted?: boolean;
+    types?: string[];
 }
 /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
  *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces

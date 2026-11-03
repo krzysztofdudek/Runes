@@ -53,7 +53,8 @@ import type {
  *    cast operands, tuple/array/nullable element types (a named tuple type argument the grammar misreads as comparisons included), the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    the compilation unit's usings LAST), and emit it as a single `DetectedDep`:
- *      [alias-expansion?]                              ← leftmost segment is a local alias
+ *      [nested types of the enclosing types]          ← `<ns>.<Outer>+<Name>`, innermost type first (§7.6.1)
+ *        ++ [alias-expansion?]                         ← leftmost segment is a local alias
  *        ++ [enclosing-namespace chain innermost→outermost]
  *        ++ [verbatim / bare top-level]                ← the global namespace's own member
  *        ++ [using-prefix block, code-point sorted]    ← the compilation unit's usings: ONE binding level (CS0104 set), farthest, last (C# spec §7.8.1 reads a namespace's members before the usings of its declaration, and the compilation unit declares the global namespace)
@@ -764,13 +765,16 @@ export interface CsharpUsesOptions {
  * cached fact must be PRE-assembly: the alias merge + candidate building is deferred entirely to
  * `assembleCsharpCandidates`. The descriptor carries no live AST node (the tree is destroyed
  * after `tree.delete()`) — every node-derived input is precomputed here, notably the
- * enclosing-namespace chain (`enclosingNs`).
+ * enclosing-namespace chain (`enclosingNs`), and, for a `plain`, `attr` or `receiver` reference
+ * written inside a type, the declaration keys of the types around it, innermost first (`types`:
+ * `['App.Outer+Inner', 'App.Outer']`), whose nested types C# reads before any namespace (spec
+ * §7.6.1); the field is absent outside every type and on a `global::` reference.
  */
 export type CsharpRefDescriptor =
   /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
    *  identifier. `rooted` (a `global::`-stripped or `using static` target form) resolves
    *  verbatim-only; otherwise alias/enclosing-ns/using-prefix expansion applies on assembly. */
-  | { kind: 'plain'; ref: string; line: number; rooted: boolean; enclosingNs: string[]; at: number }
+  | { kind: 'plain'; ref: string; line: number; rooted: boolean; enclosingNs: string[]; at: number; types?: string[] }
   /** An `S::Tail` alias-qualified reference (`alias_qualified_name`, non-`global` alias). Emitted
    *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
    *  resolves verbatim-from-root; otherwise dropped (extern/unknown alias → R13 silence). */
@@ -778,9 +782,9 @@ export type CsharpRefDescriptor =
   /** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. The using directives of an enclosing namespace declaration (`outer`, absent when there are none) do take part, at their own namespace: after its reading, an alias they declare of the target's first name decides there and is read where its own directive reads its target; else the types of the namespaces they import (each namespace read where that declaration stands) and the nested types of the types their `using static` directives name, as one CS0104 set. Each reading farther than the first carries the nearer namespaces or types of the target's first name that C# would stop at (`shadow`). `at` is where the directive stands, which tells the outer alias declaration apart. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). An alias target may name a namespace as much as a type; a nearer namespace of its first name voids every farther reading through `shadow` (C# spec §7.8.1). */
   | { kind: 'target'; fqn: string; line: number; enclosingNs: string[]; at: number; outer?: OuterUsings[] }
   /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
-  | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; at: number; rooted?: boolean; alias?: string }
+  | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; at: number; rooted?: boolean; alias?: string; types?: string[] }
   /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
-  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean }
+  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean; types?: string[] }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
    *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
    *  its using directives import where the call stands (`at`), then the global namespace, then the
@@ -894,6 +898,26 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   const nsChain = (node: Node): string[] => namespaceChain(fileNs, scopeOf(node).ns);
   const refs: CsharpRefDescriptor[] = [];
 
+  /** The declaration keys of the types around `node`, innermost first (`['App.Outer+Inner', 'App.Outer']`), or undefined outside every type: C# reads the nested types of each enclosing type, from every part of a partial type, before any namespace, alias or using (spec §7.6.1, §12.8.4). Read once per type and namespace. */
+  const typesMemo = new Map<string, string[]>();
+  const enclosingTypes = (node: Node): { types?: string[] } => {
+    const chain = scopeOf(node).chain;
+    if (chain === '') return {};
+    const ns = nsChain(node)[0];
+    const memoKey = `${ns ?? ''}\0${chain}`;
+    let types = typesMemo.get(memoKey);
+    if (types === undefined) {
+      const parts = chain.split('+');
+      types = [];
+      for (let i = parts.length; i >= 1; i--) {
+        const type = parts.slice(0, i).join('+');
+        types.push(ns === undefined ? type : `${ns}.${type}`);
+      }
+      typesMemo.set(memoKey, types);
+    }
+    return { types: types.slice() };
+  };
+
   // A node id is recorded here once its TYPE reference has been emitted, so a later, broader
   // walk visit (e.g. the generic outermost-qualified_name pass) never re-emits the same node.
   const emitted = new Set<number>();
@@ -955,6 +979,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       rooted,
       enclosingNs: nsChain(node),
       at: node.startIndex,
+      ...(rooted ? {} : enclosingTypes(node)),
     });
   };
 
@@ -976,6 +1001,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       at: node.startIndex,
       rooted,
       ...(alias !== undefined ? { alias } : {}),
+      ...(rooted || alias !== undefined ? {} : enclosingTypes(node)),
     });
   };
 
@@ -1431,6 +1457,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           enclosingNs: nsChain(node),
           at: node.startIndex,
           rooted,
+          ...(rooted ? {} : enclosingTypes(node)),
         });
       }
       // A generic member `sp.GetRequiredService<Ctx>()`, `Substitute.For<Ctx>()`: its type arguments are type references; the member name itself is a method, never a type.
@@ -1518,6 +1545,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
             enclosingNs: nsChain(arg),
             at: arg.startIndex,
             rooted: false,
+            ...enclosingTypes(arg),
           });
         }
         return false;
@@ -1742,7 +1770,7 @@ export function assembleCsharpCandidates(
    * Build and push ONE ordered candidate group for a reference whose written text is `ref` (a
    * dotted partial name or a bare identifier) with its precomputed `enclosingNs` chain. Candidate
    * order = C# name-binding order:
-   *   [alias-expansion?] ++ [enclosing-ns chain innermost→outermost]
+   *   [nested types of the enclosing types, innermost first] ++ [alias-expansion?] ++ [enclosing-ns chain innermost→outermost]
    *                       ++ [verbatim / bare top-level] ++ [compilation-unit using-prefix block, sorted]
    * with resolution refinements attached as hint metadata (invisible to the group's display
    * shape, which reads only `symbolKey`):
@@ -1754,7 +1782,7 @@ export function assembleCsharpCandidates(
    *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
    *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
    */
-  const pushRef = (ref: string, enclosingNs: string[], line: number, rooted: boolean, at: number): void => {
+  const pushRef = (ref: string, enclosingNs: string[], line: number, rooted: boolean, at: number, types: readonly string[] = []): void => {
     // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
     // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
     // candidate.
@@ -1766,12 +1794,19 @@ export function assembleCsharpCandidates(
       return;
     }
 
+    // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
+    const nestedReadings: TargetHint[] = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}` }));
+
     const lead = ref.split('.')[0];
-    if (ambiguousAliases.has(lead)) return; // M7: an alias with 2+ project-wide targets → silence
+    if (ambiguousAliases.has(lead)) {
+      // M7: an alias with 2+ project-wide targets → silence, unless a nested type of an enclosing type, which comes before every alias, binds.
+      if (nestedReadings.length > 0) out.push({ candidates: nestedReadings, kind: 'import', line });
+      return;
+    }
     const multi = ref.includes('.');
     const aliasView = viewAlias(lead, enclosingNs, at);
 
-    const candidates: TargetHint[] = [];
+    const candidates: TargetHint[] = [...nestedReadings];
     const pushed = new Set<string>();
     const add = (hint: TargetHint): void => {
       if (hint.kind === 'symbol') {
@@ -1832,10 +1867,11 @@ export function assembleCsharpCandidates(
     line: number,
     rooted: boolean,
     at: number,
+    types: readonly string[] = [],
   ): void => {
     const before = out.length;
-    pushRef(written, enclosingNs, line, rooted, at);
-    if (suffixed !== undefined) pushRef(suffixed, enclosingNs, line, rooted, at);
+    pushRef(written, enclosingNs, line, rooted, at, types);
+    if (suffixed !== undefined) pushRef(suffixed, enclosingNs, line, rooted, at, types);
     // Merge the (at most two) groups just pushed into one ordered group so both readings live
     // in a single reference (an attribute is ONE dependency, resolved by whichever name binds).
     mergeGroupsFrom(before, line);
@@ -1902,7 +1938,7 @@ export function assembleCsharpCandidates(
         break;
       }
       case 'plain':
-        pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at);
+        pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at, r.types);
         break;
       case 'alias': {
         // `S::Tail` (B5): rewrite the leftmost alias to its aliased FQN and resolve `N.Tail` from
@@ -1915,7 +1951,7 @@ export function assembleCsharpCandidates(
       }
       case 'attr': {
         if (r.alias === undefined) {
-          pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true, r.at);
+          pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true, r.at, r.types);
           break;
         }
         // `[S::Foo]`: both readings in the namespace `S` names, from the root (B5); nothing when `S` is no confirmed alias.
@@ -1929,11 +1965,10 @@ export function assembleCsharpCandidates(
         break;
       }
       case 'receiver': {
-        // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies.
+        // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
         const rooted = r.rooted === true;
-        if (!rooted && ambiguousAliases.has(r.chain[0])) break;
         const before = out.length;
-        for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at);
+        for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types);
         mergeGroupsFrom(before, r.line);
         break;
       }
@@ -1962,7 +1997,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 13,
+  rev: 14,
   declarations,
   uses,
 };

@@ -21292,7 +21292,6 @@ MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:77	MediaBrowser.Control
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:135	MediaBrowser.Providers/Plugins/Omdb/OmdbProvider.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:137	MediaBrowser.Common/Net/NamedClient.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:144	MediaBrowser.Model/Providers/RemoteSearchResult.cs
-MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:155	MediaBrowser.Controller/Library/SearchResult.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:162	MediaBrowser.Model/Providers/RemoteSearchResult.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:165	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:165	MediaBrowser.Controller/Providers/MetadataResult.cs
@@ -21306,7 +21305,6 @@ MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:175	MediaBrowser.Control
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:175	MediaBrowser.Controller/Providers/MetadataResult.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:175	MediaBrowser.Controller/Providers/MovieInfo.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:177	MediaBrowser.Controller/Entities/Movies/Movie.cs
-MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:180	MediaBrowser.Controller/Library/SearchResult.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:180	MediaBrowser.Controller/Providers/ItemLookupInfo.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:180	MediaBrowser.Model/Providers/RemoteSearchResult.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:182	MediaBrowser.Model/Providers/RemoteSearchResult.cs
@@ -21334,7 +21332,6 @@ MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:30	MediaBrowser.Controll
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:30	MediaBrowser.Controller/Providers/IRemoteMetadataProvider.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:30	MediaBrowser.Controller/Providers/MovieInfo.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:30	MediaBrowser.Controller/Providers/TrailerInfo.cs
-MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:308	MediaBrowser.Controller/Library/SearchResult.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:33	MediaBrowser.Controller/Library/ILibraryManager.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:35	MediaBrowser.Providers/Plugins/Omdb/OmdbProvider.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:39	MediaBrowser.Controller/Library/ILibraryManager.cs

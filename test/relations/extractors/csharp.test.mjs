@@ -181,12 +181,12 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     const { uses } = await run(
       ['using Gw = Foo.Bar.IGateway;', 'class C { void M() { var x = new Gw(); } }', ''].join('\n'),
     );
-    // The aliased FQN is the dependency and sits FIRST in the ordered group (the alias is a
+    // The aliased FQN is the dependency and sits FIRST in the ordered group after the nested reading of the enclosing type C (the alias is a
     // hard local override, nearest binding). The bare alias name `Gw` is only the harmless
     // verbatim last candidate — it resolves to nothing, so the alias FQN is what binds.
     // The use's group is the one carrying the bare alias name `Gw`; the directive has its own one-candidate group (185).
     const group = groupContaining(uses, 'Gw');
-    expect(group?.[0]).toBe('Foo.Bar.IGateway');
+    expect(group?.slice(0, 2)).toEqual(['C+Gw', 'Foo.Bar.IGateway']);
     expect(group?.[group.length - 1]).toBe('Gw');
   });
 
@@ -207,7 +207,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // type is its verbatim top-level form (`SomeGlobalType`), the harmless last candidate. With
     // no in-graph file declaring that bare top-level type, it resolves to nothing → SILENCE.
     const { uses } = await run(['class C : SomeGlobalType { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['SomeGlobalType']);
+    expect(symbolKeys(uses)).toEqual(['C+SomeGlobalType', 'SomeGlobalType']); // the nested reading of the enclosing type C first, then the verbatim
     const st = new SymbolTable(); // empty table — `global using` declared elsewhere is invisible here
     const resolver = makeResolver({
       ownerIndex: { ownerOf: () => 'someNode' },
@@ -244,7 +244,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
       ['global using Gw = Foo.Bar.IGateway;', 'class C { void M() { var x = new Gw(); } }', ''].join('\n'),
     );
     const group = groupContaining(uses, 'Gw'); // the use's group, not the directive's own one-candidate group (185)
-    expect(group?.[0]).toBe('Foo.Bar.IGateway'); // alias expansion is the first/nearest candidate
+    expect(group?.slice(0, 2)).toEqual(['C+Gw', 'Foo.Bar.IGateway']); // alias expansion is the nearest candidate after the nested type of the enclosing type C
     expect(group?.[group.length - 1]).toBe('Gw'); // bare alias name only as harmless last
   });
 
@@ -259,7 +259,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // `List` simply resolves to no in-graph declaration (fail-to-silence), so the candidates are
     // harmless — only the in-scope readings are ever produced.
     const { uses } = await run(['using Foo.Bar;', 'class C : List<int> { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['List', 'Foo.Bar.List']);
+    expect(symbolKeys(uses)).toEqual(['C+List', 'List', 'Foo.Bar.List']);
   });
 
   it('handles a base_list with MULTIPLE entries (qualified bare base + bare interface)', async () => {
@@ -339,7 +339,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     const keys = symbolKeys(uses);
     expect(keys).toContain('Foo.Bar.Baz');
     // No spurious namespace/using expansion exists to emit.
-    expect(keys).toEqual(['Foo.Bar.Baz']);
+    expect(keys).toEqual(['C+Foo.Bar.Baz', 'Foo.Bar.Baz']); // and the nested reading of the enclosing type C
   });
 
   it('ORDERED GROUP: nearest expansion FIRST, verbatim LAST — and the verbatim binds when nothing nearer does (recall)', async () => {
@@ -352,7 +352,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
       [{ path: 'src/c/Use.cs', code: 'namespace App;\nclass C { void M() { var o = new Models.Order(); } }\n' }],
       ([consumer]) => {
         const group = groupContaining(csharpExtractor.uses(consumer), 'Models.Order');
-        expect(group).toEqual(['App.Models.Order', 'Models.Order']); // nearest first, verbatim last
+        expect(group).toEqual(['App.C+Models.Order', 'App.Models.Order', 'Models.Order']); // the nested reading of C, then nearest namespace first, verbatim last
 
         const st = new SymbolTable();
         st.declare('csharp', 'Models.Order', 'src/m/Order.cs'); // ONLY the top-level form exists
@@ -396,8 +396,9 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
         const group = groupContaining(csharpExtractor.uses(consumer), 'Models.Order');
         // The innermost namespace App.Services, then the using below its declaration (one set: the
         // namespace `App.Data` read where the directive stands, App.Services.App.Data, App.App.Data and
-        // App.Data), then the outer namespace App, then the verbatim LAST.
+        // App.Data), then the outer namespace App, then the verbatim LAST; the nested reading of the enclosing type C comes before all of them.
         expect(group).toEqual([
+          'App.Services.C+Models.Order',
           'App.Services.Models.Order',
           'App.Services.App.Data.Models.Order',
           'App.App.Data.Models.Order',
@@ -407,12 +408,13 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
         ]);
         // Walk the group in order: first resolved wins and stops.
         const outcomes = group.map((k) => resolver.classify({ kind: 'symbol', symbolKey: k }, consumer.path, 'csharp'));
-        expect(outcomes[0]).toEqual({ kind: 'absent' }); // App.Services.Models.Order — absent
-        expect(outcomes[1]).toEqual({ kind: 'absent' }); // App.Services.App.Data.Models.Order — absent
-        expect(outcomes[2]).toEqual({ kind: 'absent' }); // App.App.Data.Models.Order — absent
+        expect(outcomes[0]).toEqual({ kind: 'absent' }); // App.Services.C+Models.Order — absent
+        expect(outcomes[1]).toEqual({ kind: 'absent' }); // App.Services.Models.Order — absent
+        expect(outcomes[2]).toEqual({ kind: 'absent' }); // App.Services.App.Data.Models.Order — absent
+        expect(outcomes[3]).toEqual({ kind: 'absent' }); // App.App.Data.Models.Order — absent
         // App.Data.Models.Order splits at the declared type App.Data.Models → App.Data.Models+Order → n1.
-        expect(outcomes[3]).toEqual({ kind: 'resolved', owner: 'n1', resolvedFile: 'src/n1/Data.cs' }); // binds n1, stop
-        // outcomes[5] (verbatim Models.Order → n2) is NEVER reached by the walk, so n2 is never flagged.
+        expect(outcomes[4]).toEqual({ kind: 'resolved', owner: 'n1', resolvedFile: 'src/n1/Data.cs' }); // binds n1, stop
+        // outcomes[6] (verbatim Models.Order → n2) is NEVER reached by the walk, so n2 is never flagged.
         expect(walkResolve(csharpExtractor.uses(consumer), 'Models.Order', resolver, consumer.path)).toBe('n1');
       },
     );
@@ -438,8 +440,9 @@ describe('csharp SYMBOL-TABLE resolution — the half this language validates', 
         // [MyApp.Orders.MyApp.Payments.Gateway (enclosing-ns, absent), MyApp.Payments.Gateway
         // (verbatim, binds)] — the ordered walk skips the absent nearest and binds the verbatim.
         const uses = csharpExtractor.uses(consumer);
-        // Enclosing-ns chain innermost→outermost (MyApp.Orders, MyApp), then the verbatim LAST.
+        // The nested reading of the enclosing type Order, then the enclosing-ns chain innermost→outermost (MyApp.Orders, MyApp), then the verbatim LAST.
         expect(groupContaining(uses, 'MyApp.Payments.Gateway')).toEqual([
+          'MyApp.Orders.Order+MyApp.Payments.Gateway',
           'MyApp.Orders.MyApp.Payments.Gateway',
           'MyApp.MyApp.Payments.Gateway',
           'MyApp.Payments.Gateway',
@@ -623,7 +626,7 @@ describe('csharp anti-FALSE-POSITIVE — the silence list (D8 gate)', () => {
     // top-level form (`RepositoryBase`, the harmless last candidate). A `global using` declared
     // elsewhere is invisible here, so nothing maps that bare name to a node → SILENCE.
     const { uses } = await run(['class C : RepositoryBase { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['RepositoryBase']);
+    expect(symbolKeys(uses)).toEqual(['C+RepositoryBase', 'RepositoryBase']); // the nested reading of C, then the verbatim
     const owners = resolveAll(uses, new SymbolTable(), () => undefined);
     expect(owners.every((o) => o === undefined)).toBe(true);
   });
@@ -782,7 +785,7 @@ describe('csharp NESTED-TYPE resolution + the tri-state / split over-silence gua
           for (const d of csharpExtractor.declarations(f)) st.declare('csharp', d.symbolKey, f.path);
         }
         const owners = csharpExtractor.uses(consumer);
-        expect(groupContaining(owners, 'Widget')).toEqual(['App.Widget', 'Widget', 'L1.Widget', 'L2.Widget']);
+        expect(groupContaining(owners, 'Widget')).toEqual(['App.C+Widget', 'App.Widget', 'Widget', 'L1.Widget', 'L2.Widget']); // the nested reading of the enclosing type C first
         const resolver = makeResolver({
           ownerIndex: { ownerOf: (f) => f.split('/')[1] },
           symbolTable: st,
@@ -847,7 +850,7 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
 
   it('a dotted receiver emits ONE group of its prefixes, leftmost first', async () => {
     const { uses } = await run(['class C { void M(object o) { Shop.Core.Guard.NotNull(o); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Shop', 'Shop.Core', 'Shop.Core.Guard']]);
+    expect(groups(uses)).toEqual([['C+Shop', 'Shop', 'C+Shop.Core', 'Shop.Core', 'C+Shop.Core.Guard', 'Shop.Core.Guard']]); // each prefix after the nested reading of the enclosing type C
   });
   it('a receiver inside nameof(…) emits nothing', async () => {
     const { uses } = await run(['class C { string M() => nameof(Guard.NotNull); }', ''].join('\n'));
@@ -859,7 +862,7 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
   });
   it('an unshadowed type-name receiver emits no extension group (a static call)', async () => {
     const { uses } = await run(['class C { void M() { Guard.Check(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Guard']]);
+    expect(groups(uses)).toEqual([['C+Guard', 'Guard']]);
   });
   it('System.Object members, names the file declares as methods, and base.X() are never extension calls', async () => {
     const { uses } = await run(
@@ -873,15 +876,15 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
   });
   it('a generic receiver `Result<Order>.Ok()` is a type position (base + argument)', async () => {
     const { uses } = await run(['class C { void M() { Result<Order>.Ok(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Result'], ['Order']]);
+    expect(groups(uses)).toEqual([['C+Result', 'Result'], ['C+Order', 'Order']]);
   });
   it('a qualified generic `A.B<C>.D` resolves by its plain dotted name, with its arguments', async () => {
     const { uses } = await run(['class C { A.B<X.Y>.D f; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['A.B.D'], ['X.Y']]);
+    expect(groups(uses)).toEqual([['C+A.B.D', 'A.B.D'], ['C+X.Y', 'X.Y']]);
   });
   it('a closed-generic alias target binds by its plain container name', async () => {
     const { uses } = await run(['using R = Shop.Core.Repository<int>;', 'class C { R r; }', ''].join('\n'));
-    expect(groups(uses)[0][0]).toBe('Shop.Core.Repository');
+    expect(groups(uses)[0][0]).toBe('Shop.Core.Repository'); // the directive's own group
   });
 });
 
@@ -891,9 +894,10 @@ describe('csharp — project-wide global alias with 2+ targets (M7)', () => {
     await withParsedFile('x.cs', code, (tree) => {
       const file = { path: 'x.cs', content: code, tree, language: 'csharp' };
       const ambiguous = csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money'], ['Money', 'B.Money']] });
-      expect(ambiguous).toHaveLength(0);
+      // Only the nested type of the enclosing type C, which comes before every alias, is left.
+      expect(ambiguous.map((u) => u.candidates.map((c) => c.symbolKey))).toEqual([['C+Money']]);
       const single = csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money']] });
-      expect(single[0].candidates[0]).toMatchObject({ kind: 'symbol', symbolKey: 'A.Money' });
+      expect(single[0].candidates[1]).toMatchObject({ kind: 'symbol', symbolKey: 'A.Money' });
     });
     const local = ['using Money = L.Money;', 'class C { Money m; }', ''].join('\n');
     await withParsedFile('y.cs', local, (tree) => {
@@ -941,7 +945,7 @@ describe('csharp — extension and receiver shapes that must NOT count (branch g
   });
   it('a generic segment ends the receiver chain (`A.B<int>.C()`)', async () => {
     const { uses } = await run(['class C { void M() { A.B<int>.C(); } }', ''].join('\n'));
-    expect(groups(uses)).toContainEqual(['A']);
+    expect(groups(uses)).toContainEqual(['C+A', 'A']);
   });
   it('a `global::` qualified generic resolves from the root; a non-global alias-qualified generic emits nothing', async () => {
     const { uses } = await run(['class C { global::A.B<X> f; Lib::A<X>.B g; }', ''].join('\n'));
@@ -965,27 +969,27 @@ describe('csharp — type arguments of generic methods and the remaining typed e
   });
   it('a value-receiver generic call keeps its extension group and adds its type arguments after it', async () => {
     const { uses } = await run(['class C { void M(object sp) { sp.Get<Ctx>(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Get()'], ['Ctx']]);
+    expect(groups(uses)).toEqual([['Get()'], ['C+Ctx', 'Ctx']]);
   });
   it('a null-conditional generic call `sp?.Get<Ctx>()` emits its type arguments', async () => {
     const { uses } = await run(['class C { void M(object sp) { sp?.Get<Ctx>(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Get()'], ['Ctx']]);
+    expect(groups(uses)).toEqual([['Get()'], ['C+Ctx', 'Ctx']]);
   });
   it('a nested generic type argument `Get<List<Ctx>>()` emits the container and its argument', async () => {
     const { uses } = await run(['class C { void M(object sp) { sp.Get<List<Ctx>>(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Get()'], ['List'], ['Ctx']]);
+    expect(groups(uses)).toEqual([['Get()'], ['C+List', 'List'], ['C+Ctx', 'Ctx']]);
   });
   it('an array creation emits its element type through jagged ranks; `new[] { … }` names none', async () => {
     const { uses } = await run(['class C { object M() { var a = new[] { 1 }; return new Order[2][]; } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Order']]);
+    expect(groups(uses)).toEqual([['C+Order', 'Order']]);
   });
   it('a deconstructing foreach emits each typed element; `var` and predefined types emit nothing', async () => {
     const { uses } = await run(['class C { void M(object xs) { foreach ((Order p, int q) in xs) {} foreach (var r in xs) {} } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Order']]);
+    expect(groups(uses)).toEqual([['C+Order', 'Order']]);
   });
   it('`out var x` emits nothing; `out Order x` emits Order', async () => {
     const { uses } = await run(['class C { void M(object c) { c.TryGet(out var a); c.TryGet(out Order b); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['TryGet()'], ['TryGet()'], ['Order']]);
+    expect(groups(uses)).toEqual([['TryGet()'], ['TryGet()'], ['C+Order', 'Order']]);
   });
 });
 
@@ -1013,11 +1017,11 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
   });
   it('a bare `Program` reference tries every explicit reading first and the implicit fallback last', async () => {
     const { uses } = await run(['namespace T;', 'class C { F<Program> f; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['T.F', 'F'], ['T.Program', 'Program', '<Program>$']]);
+    expect(groups(uses)).toEqual([['T.C+F', 'T.F', 'F'], ['T.C+Program', 'T.Program', 'Program', '<Program>$']]);
   });
   it('inside a file of top-level statements, `Program` and `Program.X` name the file\'s own class and emit nothing', async () => {
     const { uses } = await run(['var s = AddUserSecrets<Program>();', 'var t = typeof(Program);', 'Program.Helper();', 'Program.Inner x = null;', 'Order o = null;', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Order']]);
+    expect(groups(uses)).toEqual([['Order']]); // top-level statements sit in no type
   });
   it('any other name, and a qualified `App.Program`, gets no fallback', async () => {
     const { uses } = await run(['class C { Programs a; App.Program b; global::App.Program c; }', ''].join('\n'));
@@ -1039,7 +1043,7 @@ describe('csharp — a declaration expression names a type only where C# allows 
   });
   it('a nested deconstruction target emits every typed element', async () => {
     const { uses } = await run(['class C { void M() { ((Order a, int b), Customer c) = P(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Order'], ['Customer']]);
+    expect(groups(uses)).toEqual([['C+Order', 'Order'], ['C+Customer', 'Customer']]);
   });
 });
 
@@ -1049,7 +1053,7 @@ describe('csharp — a type parameter in scope shadows a type of the same name (
 
   it('a class type parameter names nothing in a field, a return type, a parameter, a constraint, typeof, a cast, `is`, `as` or `new T[n]`', async () => {
     const { uses } = await run(['class Repo<T> : Base<T> where T : class { T f; T M(T a) => (T)a ?? (a as T) ?? default(T); bool N(object o) => o is T; object K() => typeof(T); T[] P(int n) => new T[n]; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Base']]);
+    expect(groups(uses)).toEqual([['Repo+Base', 'Base']]);
   });
   it('a method, local function, delegate, interface and record type parameter names nothing, a generic method call\'s type argument included', async () => {
     const { uses } = await run([
@@ -1063,11 +1067,11 @@ describe('csharp — a type parameter in scope shadows a type of the same name (
   });
   it('outside its declaration, and in the declaration\'s own attributes, the same name is a type reference', async () => {
     const { uses } = await run(['[A(typeof(T))] class Box<T> { }', 'class S { T M<T>() => default(T); T Current; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['A', 'AAttribute'], ['T'], ['T']]);
+    expect(groups(uses)).toEqual([['Box+A', 'A', 'Box+AAttribute', 'AAttribute'], ['Box+T', 'T'], ['S+T', 'T']]);
   });
   it('a name with type arguments never names a type parameter', async () => {
     const { uses } = await run(['class Repo<Entity> { Entity<int> keyed; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Entity']]);
+    expect(groups(uses)).toEqual([['Repo+Entity', 'Entity']]);
   });
 });
 
@@ -1077,11 +1081,11 @@ describe('csharp — a qualified comparison pair the grammar reads as a declarat
 
   it('`x.i < A, j > B` and `a.b.i < A, j.k > B` in a call, constructor or indexer argument list emit nothing', async () => {
     const { uses } = await run(['class C { object M(object x, object a, int j) => F(x.i < A, j > B) && new P(x.i < A, j > B) && this[a.b.i < A, j.k > B]; }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['P']]);
+    expect(groups(uses)).toEqual([['C+P', 'P']]);
   });
   it('a qualified generic `out` declaration and deconstruction element still emit the type and its arguments', async () => {
     const { uses } = await run(['class C { void M(object c) { c.TryGet(out A.B<X, Y> v); (A.B<Z> p, int q) = c.Pair(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['TryGet()'], ['A.B'], ['X'], ['Y'], ['A.B'], ['Z'], ['Pair()']]);
+    expect(groups(uses)).toEqual([['TryGet()'], ['C+A.B', 'A.B'], ['C+X', 'X'], ['C+Y', 'Y'], ['C+A.B', 'A.B'], ['C+Z', 'Z'], ['Pair()']]);
   });
 });
 
@@ -1091,7 +1095,7 @@ describe('csharp — the element type of a stackalloc (issue 139)', () => {
 
   it('`stackalloc Foo[n]` and `stackalloc Baz[] { … }` emit the element; a predefined element and `stackalloc[] { … }` emit nothing', async () => {
     const { uses } = await run(['class C { unsafe void M(int n) { var s = stackalloc Foo[n]; var u = stackalloc Baz[] { 1 }; var a = stackalloc int[2]; var w = stackalloc[] { 1, 2 }; } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Foo'], ['Baz']]);
+    expect(groups(uses)).toEqual([['C+Foo', 'Foo'], ['C+Baz', 'Baz']]);
   });
 });
 
@@ -1101,7 +1105,7 @@ describe('csharp — `global::` with a single name binds the global namespace on
 
   it('`global::Settings` and `global::Box<Order>` are rooted: no enclosing namespace or using candidate; the type argument is an ordinary reference', async () => {
     const { uses } = await run(['using Shop.Core;', 'namespace App;', 'class C : global::Base { global::Settings s; global::Box<Order> b; object M() => new global::Thing(); }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Base'], ['Settings'], ['Box'], ['App.Order', 'Order', 'Shop.Core.Order'], ['Thing']]);
+    expect(groups(uses)).toEqual([['Base'], ['Settings'], ['Box'], ['App.C+Order', 'App.Order', 'Order', 'Shop.Core.Order'], ['Thing']]);
   });
   it('`global::Program` falls back to the implicit Program; a type parameter `T` never shadows `global::T`', async () => {
     const { uses } = await run(['namespace App;', 'class C<T> { global::Program p; global::T t; T u; }', ''].join('\n'));
@@ -1127,11 +1131,11 @@ describe('csharp — a tuple type with named elements as a type argument (issue 
       '} }',
       '',
     ].join('\n'));
-    expect(groups(uses)).toEqual([['Order'], ['List'], ['Customer'], ['Line'], ['List'], ['Shipment'], ['Invoice']]);
+    expect(groups(uses)).toEqual([['C+Order', 'Order'], ['C+List', 'List'], ['C+Customer', 'Customer'], ['C+Line', 'Line'], ['C+List', 'List'], ['C+Shipment', 'Shipment'], ['C+Invoice', 'Invoice']]);
   });
   it('a bare unnamed element beside a named one is a type; a comparison with a plain tuple or a plain operand emits nothing', async () => {
     const { uses } = await run(['class C { object M(int n, int i, int a, int b) => new List<(Foo F, Bar)>(n) ?? (i < (a, b)) ?? (i < a); }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Foo'], ['Bar'], ['List']]);
+    expect(groups(uses)).toEqual([['C+Foo', 'Foo'], ['C+Bar', 'Bar'], ['C+List', 'List']]);
   });
 });
 
@@ -1146,9 +1150,9 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       ['A.Bar', 'A.BarAttribute'],
       ['Foo', 'FooAttribute'],
       ['Gen', 'GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
       ['A.BazAttribute'],
-      ['Shop.Web.Local', 'Shop.Local', 'Local', 'Shop.Core.Local', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'LocalAttribute', 'Shop.Core.LocalAttribute'],
+      ['Shop.Web.C+Local', 'Shop.Web.Local', 'Shop.Local', 'Local', 'Shop.Core.Local', 'Shop.Web.C+LocalAttribute', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'LocalAttribute', 'Shop.Core.LocalAttribute'],
     ]);
   });
 
@@ -1171,14 +1175,14 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       '',
     ].join('\n'));
     // The last line's `X` is the field, so `X.Member()` is only an extension-method call on a value.
-    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Member()', 'Shop.Core.Member()']]);
+    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Member()', 'Shop.Core.Member()']]);
   });
 
   it('a `global::` receiver ignores a project-wide alias that silences the same bare name, and in a file of top-level statements `global::Program` is the file\'s own class', async () => {
     const code = ['class C { void M() { global::Money.Parse(); Money.Parse(); } }', ''].join('\n');
     await withParsedFile('x.cs', code, (tree) => {
       const file = { path: 'x.cs', content: code, tree, language: 'csharp' };
-      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money'], ['Money', 'B.Money']] }))).toEqual([['Money']]);
+      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money'], ['Money', 'B.Money']] }))).toEqual([['Money'], ['C+Money']]); // the bare one keeps only the nested reading of C
     });
     const { uses } = await run(['global::Program.Main();', 'global::Other.Run();', ''].join('\n'));
     expect(groups(uses)).toEqual([['Other']]);
@@ -1223,7 +1227,7 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       '',
     ].join('\n'));
     // Per line: the tuple's element types, then the enclosing generics innermost first, then the created type.
-    expect(groups(uses)).toEqual([['Order'], ['List'], ['List'], ['Customer'], ['Line'], ['Page'], ['List'], ['Invoice'], ['List'], ['Shipment'], ['List'], ['Page'], ['Box'], ['List'], ['List']]);
+    expect(groups(uses)).toEqual([['C+Order', 'Order'], ['C+List', 'List'], ['C+List', 'List'], ['C+Customer', 'Customer'], ['C+Line', 'Line'], ['C+Page', 'Page'], ['C+List', 'List'], ['C+Invoice', 'Invoice'], ['C+List', 'List'], ['C+Shipment', 'Shipment'], ['C+List', 'List'], ['C+Page', 'Page'], ['C+Box', 'Box'], ['C+List', 'List'], ['C+List', 'List']]);
   });
 });
 
@@ -1235,13 +1239,13 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
     // `[A.Gen<Order>]` looked up `A.Gen<Order>` and `A.Gen<Order>Attribute` and emitted no type argument.
     const { uses } = await run(['using Shop.Core;', 'namespace Shop.Web;', '[A.Gen<Order>]', '[global::A.B.Gen<Order, Item>]', '[S::A.Gen<Item>]', 'class C { }', ''].join('\n'));
     expect(groups(uses)).toEqual([
-      ['Shop.Web.A.Gen', 'Shop.A.Gen', 'A.Gen', 'Shop.Core.A.Gen', 'Shop.Web.A.GenAttribute', 'Shop.A.GenAttribute', 'A.GenAttribute', 'Shop.Core.A.GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.C+A.Gen', 'Shop.Web.A.Gen', 'Shop.A.Gen', 'A.Gen', 'Shop.Core.A.Gen', 'Shop.Web.C+A.GenAttribute', 'Shop.Web.A.GenAttribute', 'Shop.A.GenAttribute', 'A.GenAttribute', 'Shop.Core.A.GenAttribute'],
+      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
       ['A.B.Gen', 'A.B.GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
-      ['Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
+      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.C+Item', 'Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
       // A qualifier through a using alias names nothing, as in a type position; the type argument is still read.
-      ['Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
+      ['Shop.Web.C+Item', 'Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
     ]);
   });
 
@@ -1253,7 +1257,7 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
       ['Shop.Attrs.Foo', 'Shop.Attrs.FooAttribute'],
       ['Shop.Attrs.BarAttribute'],
       ['Shop.Attrs.Gen', 'Shop.Attrs.GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Order'],
+      ['Shop.Web.C+Order', 'Shop.Web.Order', 'Shop.Order', 'Order'],
     ]);
   });
 

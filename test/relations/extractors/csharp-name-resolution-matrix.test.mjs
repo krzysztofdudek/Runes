@@ -62,6 +62,12 @@ describe('MATRIX — namespace declaration shapes & enclosing-chain resolution',
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — qualified-reference & nested-type keying', () => {
   it('csharp-nested-type-keying', () => runCase('csharp-nested-type-keying'));
+  it('csharp-enclosing-nested-type-before-namespace-silence', () => runCase('csharp-enclosing-nested-type-before-namespace-silence'));
+  it('csharp-enclosing-nested-type-before-using-silence', () => runCase('csharp-enclosing-nested-type-before-using-silence'));
+  it('csharp-enclosing-nested-enum-receiver-silence', () => runCase('csharp-enclosing-nested-enum-receiver-silence'));
+  it('csharp-enclosing-nested-type-other-part-silence', () => runCase('csharp-enclosing-nested-type-other-part-silence'));
+  it('csharp-enclosing-nested-type-before-global-alias-edge', () => runCase('csharp-enclosing-nested-type-before-global-alias-edge'));
+  it('csharp-enclosing-nested-type-other-node-edge', () => runCase('csharp-enclosing-nested-type-other-node-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
