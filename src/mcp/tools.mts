@@ -87,6 +87,13 @@ export function buildTools(table: CommandTable, options: ToolOptions = {}): McpT
   const prefix = prefixOf(table, options);
   const describe = options.describe ?? defaultDescription;
   const tools: McpTool[] = [];
+  const seen = new Map<string, string>();
+  for (const command of publicCommands(table)) {
+    const name = toolName(prefix, command);
+    const first = seen.get(name);
+    if (first !== undefined) throw new Error(`commands "${first}" and "${command}" both give the MCP tool name "${name}"`);
+    seen.set(name, command);
+  }
   for (const command of publicCommands(table)) {
     const spec = table.commands[command] as CommandSpec;
     const paths = pathFields(table, command);
