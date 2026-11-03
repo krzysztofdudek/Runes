@@ -237,7 +237,7 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
     expect(r('@/m', 'vite.config.ts')).toBe('build/m.ts');
     expect(r('@/m', 'src/cart/__tests__/cart.spec.ts')).toBe('fixtures/m.ts');
   });
-  it('several referenced configs that include the file agree, or the file is silent', () => {
+  it('several referenced configs that include the file: the first in the order of references serves it', () => {
     const files = (bPaths) => ({
       'tsconfig.json': '{ "files": [], "references": [{ "path": "./a.json" }, { "path": "./b.json" }] }',
       'a.json': JSON.stringify({ include: ['src'], compilerOptions: { paths: { '@/*': ['./src/*'] } } }),
@@ -246,7 +246,7 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
       'lib/m.ts': '',
     });
     expect(project(files({ '@/*': ['./src/*'] }))('@/m', 'src/x.ts')).toBe('src/m.ts');
-    expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/x.ts')).toBeUndefined();
+    expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/x.ts')).toBe('src/m.ts');
     // A file only one of them includes takes that one's paths.
     expect(project(files({ '@/*': ['./lib/*'] }))('@/m', 'src/y.ts')).toBe('src/m.ts');
   });
@@ -276,14 +276,22 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
     });
     expect(own('@/m', 'src/a.ts')).toBe('src/m.ts');
   });
-  it('a referenced config that cannot be read silences the file, which it may include', () => {
+  it('a referenced config that cannot be read, met before one that holds the file, silences the file, which it may include', () => {
     const r = project({
-      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./broken.json" }] }',
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./broken.json" }, { "path": "./tsconfig.app.json" }] }',
       'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
       'broken.json': '{ "include": [',
       'src/m.ts': '',
     });
     expect(r('@/m', 'src/a.ts')).toBeUndefined();
+    // One met after the project that holds the file is never read.
+    const after = project({
+      'tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./broken.json" }] }',
+      'tsconfig.app.json': app({ '@/*': ['./src/*'] }),
+      'broken.json': '{ "include": [',
+      'src/m.ts': '',
+    });
+    expect(after('@/m', 'src/a.ts')).toBe('src/m.ts');
   });
   // Issue 155 (4): a referenced config whose extends chain cannot be read (a generated SvelteKit or Nuxt base absent from the commit) keeps its options unknowable, but tsc still reads it without that base, so it may hold only what lies under its own directory and what its readable configs name; a file outside both is not silenced by it.
   describe('a referenced config whose extends chain cannot be read (issue 155, 4)', () => {
@@ -352,7 +360,7 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
       });
       expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
     });
-    it('a referenced config holding the file by default and another holding it by include disagree, so the file is silent', () => {
+    it('a referenced config holding the file by default is the first, so another holding it by include does not change its paths', () => {
       const r = project({
         'apps/web.v2/tsconfig.json': '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.lint.json" }] }',
         'apps/web.v2/tsconfig.app.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
@@ -360,7 +368,7 @@ describe('resolveTsPath — solution-style tsconfig references', () => {
         'apps/web.v2/src/m.ts': '',
         'apps/web.v2/lint/m.ts': '',
       });
-      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBeUndefined();
+      expect(r('@/m', 'apps/web.v2/src/a.ts')).toBe('apps/web.v2/src/m.ts');
     });
     it('the only referenced config, holding the file by default, gives its paths', () => {
       const r = project({
