@@ -21419,6 +21419,12 @@ Added: Java and Kotlin: a simple name of a type of the file's own package gives 
 - `spring-petclinic` `+` `src/test/java/org/springframework/samples/petclinic/vet/VetTests.java:30` `src/main/java/org/springframework/samples/petclinic/vet/Vet.java`: merge e44fa6e
 - `spring-petclinic` `+` `src/test/java/org/springframework/samples/petclinic/vet/VetTests.java:35` `src/main/java/org/springframework/samples/petclinic/vet/Vet.java`: merge e44fa6e
 
+### Merge f2ad16b
+
+Changed: C#: the directive line of a plain using alias inside a namespace body reads its target in the nearest namespace only, so an alias whose target lies farther out gives no edge on that line; every line that uses the alias keeps its edge (ruling csharp-unused-alias-silence-over-false-edge of the Althing 6.2.0 loop).
+
+- `eShop` `-` `tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:5` `src/Ordering.API/Application/Queries/OrderViewModel.cs`: merge f2ad16b; the alias `Order` is used on lines 110, 119 and 120 of the same file, which keep their edges to the same target
+
 ## Oracle disagreements at release 1.1.0
 
 What `npm run corpus:oracles` reports on the tip of `release/1.1.0` that is a known limit of Runes, a choice Runes makes on purpose, or a limit of the oracle itself. The Go and C# oracles need `go` and a .NET SDK and run in CI; their disagreements, if any, are added from the first CI run.

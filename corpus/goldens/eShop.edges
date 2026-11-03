@@ -1937,7 +1937,6 @@ tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:43	src/Ordering.API/App
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:47	src/Ordering.API/Apis/OrderServices.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:48	src/Ordering.API/Apis/OrdersApi.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:48	src/Ordering.API/Application/Commands/CancelOrderCommand.cs
-tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:5	src/Ordering.API/Application/Queries/OrderViewModel.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:58	src/Ordering.API/Application/Commands/IdentifiedCommand.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:58	src/Ordering.API/Application/Commands/ShipOrderCommand.cs
 tests/Ordering.UnitTests/Application/OrdersWebApiTest.cs:62	src/Ordering.API/Apis/OrderServices.cs
