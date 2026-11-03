@@ -58,7 +58,8 @@
     "check:dist": "node scripts/check-dist.mjs",
     "check": "npm test && npm run check:dist",
     "grammars": "node scripts/build-grammars.mjs --table",
-    "corpus": "node scripts/corpus.mjs verify",
+    "corpus": "node scripts/corpus.mjs gate",
+    "corpus:edges": "node scripts/corpus.mjs verify",
     "corpus:update": "node scripts/corpus.mjs update",
     "corpus:oracles": "node scripts/corpus.mjs oracles"
   },
