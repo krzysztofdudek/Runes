@@ -666,6 +666,7 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     // `autotests` and `autobins` were not read, so every file in tests/ and src/bin/ was a crate root.
     expect(read('[package]\nname = "p"\nautotests = false\nautoexamples = true\nautobins = false\n[package.metadata]\nautobenches = false\n').undiscoveredDirs).toEqual(['tests', 'src/bin']);
     expect(read('package = { name = "p", autobenches = false, autoexamples = false }\n').undiscoveredDirs).toEqual(['benches', 'examples']);
+    { const m = parseCargoManifest('[package]\nname = "p"\nautobins = true\nautobins = true\nautotests = false\n[[bin]]\nname = "a"\n[[bin]]\npath = "b.rs"\n[[test]]\nname = "t"\n'); expect({ d: m.discoveredDirs, u: m.undiscoveredDirs, k: m.declaredDirs }).toEqual({ d: ['src/bin'], u: ['tests'], k: ['src/bin', 'tests'] }); }
     expect(read('package.autotests = false\r\n[package]\r\nautotests = "false"\r\n').undiscoveredDirs).toEqual(['tests']);
   });
 

@@ -66,6 +66,10 @@ interface CargoManifest {
     targetPaths: string[];
     /** The directories (`tests`, `examples`, `benches`) whose target auto-discovery `[package]` turns off (`autotests = false`, `autoexamples = false`, `autobenches = false`). */
     undiscoveredDirs: string[];
+    /** The directories whose auto-discovery `[package]` turns on by writing the flag `true` (`autobins = true`): the one thing that keeps discovery on in an edition 2015 package that declares a target of that kind. */
+    discoveredDirs: string[];
+    /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) of which the manifest declares at least one target, by `path` or by `name`. */
+    declaredDirs: string[];
     /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name` and no `path`: Cargo roots it at `<dir>/<name>.rs` or `<dir>/<name>/main.rs`, whether or not auto-discovery is on. */
     namedTargets: string[];
     /** Whether a `[package]` table is written at all (a virtual workspace manifest has none, and no crate of its own). */
