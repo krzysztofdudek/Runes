@@ -48,6 +48,8 @@ export declare function commandFlags(table: CommandTable, command: string): Reco
 export declare function pathFields(table: CommandTable, command: string): Set<string>;
 /** The commands the tool offers: every command not marked internal. */
 export declare function publicCommands(table: CommandTable): string[];
+/** A command as the part of an MCP tool name after the prefix: its words joined with `_`, a space and a dash alike. The one rule `toolName` and the table check share. */
+export declare function toolWord(command: string): string;
 /** Every problem with a table; empty means it is well formed. */
 export declare function tableProblems(table: CommandTable): string[];
 /** Checks a table and returns it unchanged; throws listing every problem. Call it once where the table is declared. */
