@@ -624,6 +624,8 @@ export function parseCargoManifest(text) {
     let libPath;
     // Each element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array, with the `name` and `path` it gives (`null` for one written but not readable as a string).
     const targets = [];
+    // The kinds whose target array is written at all, an empty `bin = []` included: Cargo's edition 2015 default turns that kind's discovery off.
+    const writtenKinds = new Set();
     const undiscoveredDirs = [];
     const discoveredDirs = [];
     let hasPackage = false;
@@ -692,8 +694,11 @@ export function parseCargoManifest(text) {
                 discoveredDirs.push(dir);
         }
         else if (keyPath.length === 1 && TARGET_TABLES.has(top)) {
-            // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
-            for (const item of inlineArrayItems(value) ?? []) {
+            // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table. An empty array declares the kind all the same, as Cargo reads it.
+            const items = inlineArrayItems(value);
+            if (items !== undefined)
+                writtenKinds.add(top);
+            for (const item of items ?? []) {
                 const target = { kind: top };
                 for (const [key, member] of membersOf(item))
                     if (key[0] === 'name' || key[0] === 'path' || key[0] === 'edition')
@@ -773,7 +778,7 @@ export function parseCargoManifest(text) {
         targetPaths: targets.flatMap((t) => (typeof t.path === 'string' ? [t.path] : [])),
         undiscoveredDirs,
         discoveredDirs,
-        declaredDirs: [...new Set(targets.filter((t) => Object.hasOwn(DISCOVERED_DIRS, t.kind)).map((t) => DISCOVERED_DIRS[t.kind].dir))],
+        declaredDirs: [...new Set([...targets.map((t) => t.kind), ...writtenKinds])].map((kind) => DISCOVERED_DIRS[kind].dir),
         namedTargets: targets.flatMap((t) => (t.path === undefined && typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
         hasPackage,
         edition,

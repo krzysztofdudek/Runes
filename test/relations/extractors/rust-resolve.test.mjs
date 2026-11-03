@@ -279,6 +279,20 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
+  it('reads an empty bin array as declaring bins: in edition 2015 bin discovery is off, from 2018 on it stays on', () => {
+    put('src/main.rs', 'mod cli;\n');
+    put('src/cli.rs', '');
+    const resolve = (manifest) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)('self::cli::Args', 'src/main.rs', 'rust');
+    };
+    expect(resolve('bin = []\n[package]\nname = "app"\n')).toBe('src/main.rs');
+    expect(resolve('bin = [\n]\n[package]\nname = "app"\nautobins = true\n')).toBe('src/cli.rs');
+    expect(resolve('bin = []\n[package]\nname = "app"\nedition = "2018"\n')).toBe('src/cli.rs');
+    // A value that is no array declares nothing.
+    expect(resolve('bin = "x"\n[package]\nname = "app"\n')).toBe('src/cli.rs');
+  });
+
   // The pass's symbol table over every Rust file of the workspace as it stands now, built from the extractor's declarations as a consumer builds it: it is what tells which names a crate root binds at its top level, which an edition 2015 `use` path needs.
   const tableNow = async () => {
     const table = new SymbolTable();
