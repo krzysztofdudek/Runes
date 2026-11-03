@@ -248,21 +248,27 @@ function makeRustResolveDeps(
     const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
     // Target sub-paths are package-relative and never climb, so a plain join is exact.
     const at = (sub: string): string => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-    // Cargo (edition 2015 only, `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found neither as `src/bin/<name>.rs`, `src/bin/<name>/main.rs` nor (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`.
+    // Cargo (edition 2015 only, `target_path` and `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found as neither or as more than one of `src/bin/<name>.rs`, `src/bin/<name>/main.rs` and (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`. A bin found twice that takes such a path is rooted there alone.
     const legacyBinPaths: string[] = [];
+    const sharedNameBins = new Set<string>();
     if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
       const hasLib = exists(at(path.posix.normalize(manifest.libPath ?? 'src/lib.rs')));
       for (const named of manifest.namedTargets) {
         if (!named.startsWith('src/bin/')) continue;
         const name = named.slice('src/bin/'.length);
-        if (exists(at(`${named}.rs`)) || exists(at(`${named}/main.rs`)) || (name === manifest.packageName && exists(at('src/main.rs')))) continue;
+        const inferred = [`${named}.rs`, `${named}/main.rs`, ...(name === manifest.packageName ? ['src/main.rs'] : [])].filter((p) => exists(at(p)));
+        if (inferred.length === 1) continue;
         const legacy = [...(hasLib ? [] : [`src/${name}.rs`]), 'src/main.rs', 'src/bin/main.rs'].find((p) => exists(at(p)));
-        if (legacy !== undefined) legacyBinPaths.push(legacy);
+        if (legacy === undefined) continue;
+        legacyBinPaths.push(legacy);
+        if (inferred.length > 1) sharedNameBins.add(named);
       }
     }
     // Cargo (edition 2015, `toml_targets_and_inferred`): a package that declares a target of a kind (bin, test, example, bench) turns that kind's auto-discovery off unless its flag (`autobins = true`, …) keeps it on; from 2018 on discovery is always on.
     const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? manifest.declaredDirs.filter((d) => !manifest.undiscoveredDirs.includes(d) && !manifest.discoveredDirs.includes(d)) : [])];
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, manifest?.namedTargets, !undiscovered.includes('src/bin') || (manifest?.declaresMainBin ?? false));
+    const namedTargets = manifest?.namedTargets.filter((n) => !sharedNameBins.has(n));
+    const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin);
     return {
       srcDir: at(target.srcDir),
       crateName,
