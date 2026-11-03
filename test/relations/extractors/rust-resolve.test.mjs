@@ -301,6 +301,26 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::Tool', 'src/bin/tool.rs', 'rust')).toBe('src/bin/tool.rs');
   });
 
+  it('in edition 2015 finds a written [lib] with no path at src/<name>.rs when src/lib.rs is missing, and nowhere else', () => {
+    put('src/my_kit.rs', 'mod tools;\npub struct Kit;\n');
+    put('src/tools.rs', '');
+    const resolve = (manifest) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)('crate::Kit', 'src/tools.rs', 'rust');
+    };
+    // The [lib] table in any spelling, and the crate name with its dash made an underscore.
+    expect(resolve('[package]\nname = "my-kit"\n[lib]\n')).toBe('src/my_kit.rs');
+    expect(resolve('lib.doctest = false\n[package]\nname = "my-kit"\n')).toBe('src/my_kit.rs');
+    expect(resolve('lib = {}\n[package]\nname = "my-kit"\n')).toBe('src/my_kit.rs');
+    // No [lib] table, edition 2018, or a [lib] path: no library at src/<name>.rs.
+    expect(resolve('[package]\nname = "my-kit"\n')).toBeUndefined();
+    expect(resolve('[package]\nname = "my-kit"\nedition = "2018"\n[lib]\n')).toBeUndefined();
+    expect(resolve('[package]\nname = "my-kit"\n[lib]\npath = "lib/lib.rs"\n')).toBeUndefined();
+    // src/lib.rs, when it exists, is the library.
+    put('src/lib.rs', 'pub struct Kit;\n');
+    expect(resolve('[package]\nname = "my-kit"\n[lib]\n')).toBe('src/lib.rs');
+  });
+
   it('reads an empty bin array as declaring bins: in edition 2015 bin discovery is off, from 2018 on it stays on', () => {
     put('src/main.rs', 'mod cli;\n');
     put('src/cli.rs', '');
