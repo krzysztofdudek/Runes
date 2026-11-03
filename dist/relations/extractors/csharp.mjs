@@ -1,4 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
+import { indexScopes, walkScoped } from './scope-walk.mjs';
 /**
  * C# dependency extractor — the HARDEST language, and the design's poster child for
  * SymbolTable resolution.
@@ -135,40 +136,94 @@ function fileScopedNamespace(root) {
     });
     return ns;
 }
-/** The dotted BLOCK-namespace prefix for a node, read from its ancestor chain. Nested
- *  `namespace A { namespace B { } }` concatenates outermost-first → "A.B". Empty when no
- *  block namespace ancestor (the type may still sit in a file-scoped namespace). */
-function blockNamespace(node) {
-    const parts = [];
-    let cur = node.parent;
-    while (cur !== null) {
-        if (cur.type === 'namespace_declaration') {
-            const nameField = cur.childForFieldName('name');
-            if (nameField !== null && nameField.text !== '')
-                parts.unshift(nameField.text);
-        }
-        cur = cur.parent;
-    }
-    return parts.join('.');
+const TOP_SCOPE = { ns: null, chain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
+/** The scope the node is read in: its parent's scope, except that an attribute list of a declaration does not see that declaration's type parameters. */
+function csSeen(node, inherited) {
+    if (inherited.tpSkip === undefined)
+        return inherited;
+    return { ...inherited, tp: node.type === 'attribute_list' ? inherited.tpSkip : inherited.tp, tpSkip: undefined };
 }
-/** The enclosing-TYPE chain of `node`, read from its ancestor chain, outermost-first.
- *  A nested `class Inner` inside `class Outer` yields `["Outer"]`; deeper nesting yields
- *  `["Outer", "Mid"]`. Empty when the type is not nested in another type. Joined with the
- *  type's own simple name by `+` (the .NET reflection FQN separator) — distinct from the
- *  namespace `.` so a nested key lives in a disjoint string space from any dot-only use
- *  candidate (separator isolation). */
-function enclosingTypeChain(node) {
-    const parts = [];
-    let cur = node.parent;
-    while (cur !== null) {
-        if (TYPE_DECLARATION_TYPES.has(cur.type)) {
-            const nameField = cur.childForFieldName('name');
-            if (nameField !== null && nameField.text !== '')
-                parts.unshift(nameField.text);
-        }
-        cur = cur.parent;
+/** The scope the children of `node` inherit, or undefined when it is `own`. */
+function csBelow(node, own) {
+    const type = node.type;
+    let { ns, chain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
+    let tpSkip;
+    let changed = false;
+    if (type === 'namespace_declaration') {
+        const name = node.childForFieldName('name')?.text ?? '';
+        const outerJoined = own.ns?.joined ?? '';
+        ns = { decl: node, joined: name === '' ? outerJoined : outerJoined === '' ? name : `${outerJoined}.${name}`, outer: own.ns };
+        changed = true;
     }
-    return parts;
+    if (TYPE_DECLARATION_TYPES.has(type)) {
+        const name = node.childForFieldName('name')?.text ?? '';
+        if (name !== '')
+            chain = chain === '' ? name : `${chain}+${name}`;
+        fileLocal = own.fileLocal || hasFileModifier(node);
+        typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
+        extBelow = false;
+        changed = true;
+    }
+    if (type === 'extension_declaration') {
+        extBelow = true;
+        changed = true;
+    }
+    if (TYPE_PARAMETER_OWNERS.has(type)) {
+        const names = typeParameterNames(node);
+        if (names.size > 0)
+            tp = { names, outer: own.tp };
+        tpSkip = own.tp;
+        changed = true;
+    }
+    if (type === 'invocation_expression') {
+        const fn = node.childForFieldName('function');
+        if (fn !== null && fn.type === 'identifier' && fn.text === 'nameof') {
+            nameof = true;
+            changed = true;
+        }
+    }
+    const access = type === 'member_access_expression' ? { node, outer: own.access } : null;
+    let tuple = null;
+    if (type === 'tuple_expression')
+        tuple = { stage: 'tuple', root: own.tuple?.stage === 'arg' ? own.tuple.root : node };
+    else if (type === 'argument' && own.tuple?.stage === 'tuple')
+        tuple = { stage: 'arg', root: own.tuple.root };
+    if (access !== null || own.access !== null || tuple !== null || own.tuple !== null)
+        changed = true;
+    return changed ? { ns, chain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
+}
+/** The names the `type_parameter_list` of a declaration declares (none when it has no list). */
+function typeParameterNames(decl) {
+    const names = new Set();
+    for (let i = 0; i < decl.namedChildCount; i++) {
+        const list = decl.namedChild(i);
+        if (list === null || list.type !== 'type_parameter_list')
+            continue;
+        for (let j = 0; j < list.namedChildCount; j++) {
+            const name = list.namedChild(j)?.childForFieldName('name')?.text;
+            if (name !== undefined)
+                names.add(name);
+        }
+        break;
+    }
+    return names;
+}
+/** Walk the tree with the scope of every node (see `CsScope`); a visitor that returns `false` skips the children of the node it was given. */
+function walkCs(root, visit) {
+    walkScoped(root, TOP_SCOPE, (node, inherited) => {
+        const own = csSeen(node, inherited);
+        if (visit(node, own) === false)
+            return false;
+        return csBelow(node, own) ?? (own === inherited ? undefined : own);
+    });
+}
+/** The scope of every node of a file, by node id, for the helpers that are handed a node a few levels under the one the walk is at. */
+function csIndex(root) {
+    return indexScopes([root], TOP_SCOPE, csBelow, csSeen);
+}
+/** The dotted BLOCK-namespace prefix of a scope. Nested `namespace A { namespace B { } }` concatenates outermost-first → "A.B". Empty when there is no block namespace around (the type may still sit in a file-scoped namespace). */
+function blockNamespace(scope) {
+    return scope.ns?.joined ?? '';
 }
 /** True when a `*_declaration` node carries the C#11 `file` modifier — a child `modifier`
  *  node whose text is the keyword `file`. A `file`-modified type is visible ONLY inside its
@@ -185,14 +240,8 @@ function hasFileModifier(node) {
 /** True when `node` is a `file`-local type OR is nested (at any depth) inside a `file`-local
  *  type. A type unreachable across files because an enclosing type is `file`-local must also be
  *  withheld from the cross-file index — a nested type of a `file` type cannot escape the file. */
-function isFileLocalType(node) {
-    let cur = node;
-    while (cur !== null) {
-        if (TYPE_DECLARATION_TYPES.has(cur.type) && hasFileModifier(cur))
-            return true;
-        cur = cur.parent;
-    }
-    return false;
+function isFileLocalType(node, scope) {
+    return scope.fileLocal || (TYPE_DECLARATION_TYPES.has(node.type) && hasFileModifier(node));
 }
 /**
  * The symbol key of an EXTENSION METHOD named `name` declared in namespace `ns`: `<ns>.<name>()`
@@ -232,16 +281,6 @@ function isThisParameter(param) {
     }
     return false;
 }
-/** The enclosing type declaration of `node` (its nearest TYPE ancestor), or null. */
-function enclosingTypeDecl(node) {
-    let cur = node.parent;
-    while (cur !== null) {
-        if (TYPE_DECLARATION_TYPES.has(cur.type))
-            return cur;
-        cur = cur.parent;
-    }
-    return null;
-}
 /** The declarations that may carry a type-parameter list: a generic type (`class Repository<T>`), method, local function, delegate, or C# 14 extension block. */
 const TYPE_PARAMETER_OWNERS = new Set([
     ...TYPE_DECLARATION_TYPES,
@@ -251,17 +290,12 @@ const TYPE_PARAMETER_OWNERS = new Set([
     'extension_declaration',
 ]);
 /**
- * True when the bare name `name`, written at `node`, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because the receiver reading asks this function too.
+ * True when the bare name `name`, written where the scope `scope` holds, names a type parameter in scope there. C# looks a simple name without type arguments up among the type parameters of the enclosing generic declarations before any member, namespace or using (§7.6.1), so inside `class Repository<Entity>` or `T Resolve<T>()` such a name is never a type of the repository, whatever an imported namespace declares. A type parameter's scope is its whole declaration except the declaration's own attributes (`[A(typeof(T))] class C<T>` names an outer `T`). A name with type arguments (`Entity<int>`) never names a type parameter, so only bare names are asked about; a qualified name cannot start with a type parameter in valid C# (CS0704), and a member access through one (`T.Create()`) is no receiver because the receiver reading asks this function too.
  */
-function isTypeParameterInScope(name, node) {
-    let child = node;
-    for (let cur = node.parent; cur !== null; child = cur, cur = cur.parent) {
-        if (!TYPE_PARAMETER_OWNERS.has(cur.type) || child.type === 'attribute_list')
-            continue;
-        const list = cur.namedChildren.find((c) => c.type === 'type_parameter_list');
-        if (list !== undefined && list.namedChildren.some((p) => p.childForFieldName('name').text === name))
+function isTypeParameterInScope(name, scope) {
+    for (let t = scope.tp; t !== null; t = t.outer)
+        if (t.names.has(name))
             return true;
-    }
     return false;
 }
 /**
@@ -275,11 +309,12 @@ function isTypeParameterInScope(name, node) {
  *    named `extension` and its methods as local functions in that constructor's body.
  * Indexing the last shape only ever ADDS a key; nothing else depends on the misreading.
  */
-function extensionMethodName(node) {
+function extensionMethodName(node, scope) {
     if (node.type !== 'method_declaration' && node.type !== 'local_function_statement')
         return undefined;
-    const owner = enclosingTypeDecl(node);
-    if (owner?.type !== 'class_declaration' || !hasStaticModifier(owner) || isFileLocalType(owner) || enclosingTypeDecl(owner) !== null) {
+    const decl = scope.typeDecl;
+    const owner = decl?.node;
+    if (decl === null || owner === undefined || owner.type !== 'class_declaration' || !hasStaticModifier(owner) || decl.fileLocal || decl.nested) {
         return undefined;
     }
     const name = node.childForFieldName('name').text; // a method / local function always has a name
@@ -291,10 +326,8 @@ function extensionMethodName(node) {
         return misreadBlock ? name : undefined;
     }
     // The C# 14 block form on a grammar that knows it: a method inside an extension declaration.
-    for (let cur = node.parent; cur.id !== owner.id; cur = cur.parent) {
-        if (cur.type === 'extension_declaration')
-            return name;
-    }
+    if (scope.extBelow)
+        return name;
     // The classic form: the first parameter carries `this`.
     const first = node.childForFieldName('parameters').namedChild(0);
     return first?.type === 'parameter' && isThisParameter(first) ? name : undefined;
@@ -321,10 +354,10 @@ function extensionMethodName(node) {
 function declarations(file) {
     const out = [];
     const fileNs = fileScopedNamespace(file.tree.rootNode);
-    walk(file.tree.rootNode, (node) => {
-        const extName = extensionMethodName(node);
+    walkCs(file.tree.rootNode, (node, scope) => {
+        const extName = extensionMethodName(node, scope);
         if (extName !== undefined) {
-            const ns = [fileNs, blockNamespace(node)].filter((p) => p !== '').join('.');
+            const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
             out.push({ symbolKey: extensionKey(ns, extName), line: node.startPosition.row + 1 });
             return undefined;
         }
@@ -334,11 +367,11 @@ function declarations(file) {
         if (nameField === null || nameField.text === '')
             return undefined;
         // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN.
-        if (isFileLocalType(node))
+        if (isFileLocalType(node, scope))
             return undefined;
-        const blockNs = blockNamespace(node);
+        const blockNs = blockNamespace(scope);
         const ns = [fileNs, blockNs].filter((p) => p !== '').join('.');
-        const typeKey = [...enclosingTypeChain(node), nameField.text].join('+');
+        const typeKey = scope.chain === '' ? nameField.text : `${scope.chain}+${nameField.text}`;
         const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
         out.push({ symbolKey, line: node.startPosition.row + 1 });
         return undefined;
@@ -375,14 +408,12 @@ function directiveNamespaceText(directive, skipName = null) {
 /**
  * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)` or `F(x.i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>` or `x.i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
  */
-function declaresVariable(decl) {
+function declaresVariable(decl, scope) {
     const arg = decl.parent; // a declaration expression is always an argument's child
     if (hasTokenChild(arg, 'out'))
         return true;
-    let tuple = arg.parent;
-    while (tuple.type === 'tuple_expression' && tuple.parent.type === 'argument' && tuple.parent.parent.type === 'tuple_expression') {
-        tuple = tuple.parent.parent;
-    }
+    // A tuple in an argument of a tuple continues the nest: the outermost tuple of the nest is carried down the walk (`scope.tuple`).
+    const tuple = scope.tuple?.stage === 'arg' ? scope.tuple.root : arg.parent;
     if (tuple.type !== 'tuple_expression')
         return false;
     const target = tuple.parent;
@@ -438,7 +469,8 @@ function buildUsingScope(file) {
     const globalAliases = new Map();
     const aliasDecls = new Map();
     const staticTargets = [];
-    walk(file.tree.rootNode, (node) => {
+    const info = fileNsInfo(file.tree.rootNode);
+    walkCs(file.tree.rootNode, (node, scope) => {
         if (node.type !== 'using_directive')
             return undefined;
         // `using static N.C;` imports a type's static MEMBERS, not a namespace → NO namespace
@@ -465,8 +497,8 @@ function buildUsingScope(file) {
                 aliases.set(aliasName.text, fqn);
                 const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
                 const decls = aliasDecls.get(aliasName.text) ?? [];
-                const block = directiveBlock(file, node);
-                decls.push({ fqn, body: directiveBodyChain(file, node), rooted: targetNode?.text.startsWith('global::') === true, outer: outerUsings(file, node), start: block.start, end: block.end });
+                const block = directiveBlock(file, node, scope, info);
+                decls.push({ fqn, body: directiveBodyChain(info, node, scope), rooted: targetNode?.text.startsWith('global::') === true, outer: outerUsings(info, scope), start: block.start, end: block.end });
                 aliasDecls.set(aliasName.text, decls);
                 if (hasTokenChild(node, 'global'))
                     globalAliases.set(aliasName.text, fqn);
@@ -489,54 +521,66 @@ function buildUsingScope(file) {
 }
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
 /** The text range of the block that holds a using directive: the namespace declaration around it, or from a file-scoped `namespace X;` to the end of the file when the directive sits below one, or the whole file when it sits in the compilation unit. An alias reaches the uses inside that range and no other. */
-function directiveBlock(file, directive) {
-    for (let cur = directive.parent; cur !== null; cur = cur.parent) {
-        if (cur.type === 'namespace_declaration')
-            return { start: cur.startIndex, end: cur.endIndex };
-    }
+function directiveBlock(file, directive, scope, info) {
+    if (scope.ns !== null)
+        return { start: scope.ns.decl.startIndex, end: scope.ns.decl.endIndex };
     const root = file.tree.rootNode;
-    const scoped = root.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
-    if (scoped !== undefined && scoped !== null && directive.startIndex > scoped.startIndex)
-        return { start: scoped.startIndex, end: root.endIndex };
+    if (info.scopedStart !== undefined && directive.startIndex > info.scopedStart)
+        return { start: info.scopedStart, end: root.endIndex };
     return { start: 0, end: root.endIndex };
 }
 /** The using directives of every namespace declaration around the body that holds `directive`, innermost first, the declarations without any left out: in C# they take part in the lookup of the directive's target at their own namespace (spec §7.8.1), while those of the body that holds the directive do not (§14.5.2). The compilation unit's own usings are not listed (a deliberate silence: C# reads them only after the global namespace). */
-function outerUsings(file, directive) {
-    const out = [];
-    let ownBlockSeen = false;
-    for (let cur = directive.parent; cur !== null; cur = cur.parent) {
-        if (cur.type !== 'namespace_declaration')
-            continue;
-        if (!ownBlockSeen) {
-            ownBlockSeen = true;
-            continue;
-        }
-        const prefixes = [];
-        const aliases = [];
-        for (const d of cur.childForFieldName('body').namedChildren) {
-            if (d.type !== 'using_directive' || hasTokenChild(d, 'static'))
-                continue;
-            const aliasName = d.childForFieldName('name');
-            if (aliasName !== null)
-                aliases.push(aliasName.text);
-            else {
-                const ns = directiveNamespaceText(d);
-                if (ns !== undefined && ns !== '')
-                    prefixes.push(ns);
-            }
-        }
-        // The namespace the declaration stands for, spelled as the levels of the lookup are (`directiveBodyChain`): the chain of a node directly in its body, innermost first.
-        if (prefixes.length === 0 && aliases.length === 0)
-            continue;
-        for (const ns of directiveBodyChain(file, cur.childForFieldName('body')).slice(0, 1))
-            out.push({ ns, prefixes, aliases });
-    }
-    return out;
+function outerUsings(info, scope) {
+    if (scope.ns === null)
+        return [];
+    return outerList(scope.ns, info).map((o) => ({ ns: o.ns, prefixes: [...o.prefixes], aliases: [...o.aliases] }));
 }
-function directiveBodyChain(file, node) {
-    const scoped = file.tree.rootNode.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
-    const below = scoped !== undefined && scoped !== null && node.startIndex > scoped.startIndex;
-    return enclosingNamespaceChain(below ? fileScopedNamespace(file.tree.rootNode) : '', node);
+/** The using directives of the namespace declaration `frame`, as the lookup from a directive in a body inside it reads them; null when it has none (or its namespace has no name to spell). Read once per declaration. */
+function nsEntry(frame, info) {
+    if (frame.entry !== undefined)
+        return frame.entry;
+    const body = frame.decl.childForFieldName('body');
+    const prefixes = [];
+    const aliases = [];
+    for (const d of body.namedChildren) {
+        if (d.type !== 'using_directive' || hasTokenChild(d, 'static'))
+            continue;
+        const aliasName = d.childForFieldName('name');
+        if (aliasName !== null)
+            aliases.push(aliasName.text);
+        else {
+            const ns = directiveNamespaceText(d);
+            if (ns !== undefined && ns !== '')
+                prefixes.push(ns);
+        }
+    }
+    let entry = null;
+    if (prefixes.length > 0 || aliases.length > 0) {
+        // The namespace the declaration stands for, spelled as the levels of the lookup are (`directiveBodyChain`): the chain of a node directly in its body, innermost first.
+        const below = info.scopedStart !== undefined && body.startIndex > info.scopedStart;
+        const ns = namespaceChain(below ? info.fileNs : '', frame)[0];
+        if (ns !== undefined)
+            entry = { ns, prefixes, aliases };
+    }
+    frame.entry = entry;
+    return entry;
+}
+/** The using directives of the namespace declarations around the body of `frame`, innermost first, those without any left out; memoised on each declaration so that a deep nest of namespaces reads each once. */
+function outerList(frame, info) {
+    const pending = [];
+    for (let f = frame; f !== null && f.outerList === undefined; f = f.outer)
+        pending.push(f);
+    while (pending.length > 0) {
+        const f = pending.pop();
+        const outside = f.outer === null ? undefined : nsEntry(f.outer, info);
+        const rest = f.outer === null ? [] : f.outer.outerList;
+        f.outerList = outside === null || outside === undefined ? rest : [outside, ...rest];
+    }
+    return frame.outerList;
+}
+function directiveBodyChain(info, directive, scope) {
+    const below = info.scopedStart !== undefined && directive.startIndex > info.scopedStart;
+    return namespaceChain(below ? info.fileNs : '', scope.ns);
 }
 /**
  * Collect the `global using Foo.Bar;` namespace prefixes a C# file declares (project-wide
@@ -566,16 +610,28 @@ export function collectGlobalUsingAliases(file) {
  *  is `["App.Services.Sub", "App.Services", "App"]` — C# looks an unqualified/partial name
  *  up against each progressively-shorter enclosing namespace, innermost outward, before the
  *  imports. An empty result means the reference sits at true file scope. */
-function enclosingNamespaceChain(fileNs, node) {
-    const segments = [fileNs, blockNamespace(node)]
-        .filter((p) => p !== '')
-        .join('.')
-        .split('.')
-        .filter((s) => s !== '');
-    const chain = [];
-    for (let i = segments.length; i >= 1; i--)
-        chain.push(segments.slice(0, i).join('.'));
-    return chain;
+function namespaceChain(fileNs, ns) {
+    const build = () => {
+        const segments = [fileNs, ns?.joined ?? '']
+            .filter((p) => p !== '')
+            .join('.')
+            .split('.')
+            .filter((s) => s !== '');
+        const chain = [];
+        for (let i = segments.length; i >= 1; i--)
+            chain.push(segments.slice(0, i).join('.'));
+        return chain;
+    };
+    if (ns === null)
+        return build();
+    // Read once per namespace: a node's chain is its namespace's, however many nodes sit in it (a copy, so no two descriptors share an array).
+    if (fileNs === '')
+        return (ns.chainPlain ??= build()).slice();
+    return (ns.chainWithFile ??= build()).slice();
+}
+function fileNsInfo(root) {
+    const scoped = root.namedChildren.find((c) => c !== null && c.type === 'file_scoped_namespace_declaration');
+    return { fileNs: fileScopedNamespace(root), scopedStart: scoped?.startIndex };
 }
 /** Receiver node types that name a TYPE, never an instance (`base.X()`, `string.Join()`,
  *  `List<int>.X`, `A.B.X()` as a qualified name) — an extension method is never called on them. */
@@ -623,7 +679,7 @@ const NAME_DECLARING_TYPES = new Set([
 function collectDeclaredNames(root) {
     const declaredNames = new Set();
     const methodNames = new Set();
-    walk(root, (node) => {
+    walkCs(root, (node, scope) => {
         if (node.type === 'implicit_parameter' || node.type === 'single_variable_designation') {
             declaredNames.add(node.text);
         }
@@ -634,7 +690,7 @@ function collectDeclaredNames(root) {
         }
         else if (NAME_DECLARING_TYPES.has(node.type)) {
             // An ordinary (non-extension) method or local function also names a callable member.
-            const ordinaryMethod = (node.type === 'method_declaration' || node.type === 'local_function_statement') && extensionMethodName(node) === undefined;
+            const ordinaryMethod = (node.type === 'method_declaration' || node.type === 'local_function_statement') && extensionMethodName(node, scope) === undefined;
             for (let i = 0; i < node.childCount; i++) {
                 if (node.fieldNameForChild(i) !== 'name' || node.child(i).type !== 'identifier')
                     continue;
@@ -658,7 +714,12 @@ function collectDeclaredNames(root) {
  */
 export function extractCsharpRefs(file) {
     const scope = buildUsingScope(file);
-    const fileNs = fileScopedNamespace(file.tree.rootNode);
+    const info = fileNsInfo(file.tree.rootNode);
+    const fileNs = info.fileNs;
+    // The scope of every node (the namespaces and types around it, the type parameters in scope...), read once down the tree instead of by climbing from each node.
+    const scopes = csIndex(file.tree.rootNode);
+    const scopeOf = (node) => scopes.get(node.id);
+    const nsChain = (node) => namespaceChain(fileNs, scopeOf(node).ns);
     const refs = [];
     // A node id is recorded here once its TYPE reference has been emitted, so a later, broader
     // walk visit (e.g. the generic outermost-qualified_name pass) never re-emits the same node.
@@ -667,13 +728,7 @@ export function extractCsharpRefs(file) {
     // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
     const { declaredNames, methodNames } = collectDeclaredNames(file.tree.rootNode);
     /** True when `node` sits inside a `nameof(…)` operand — a string producer, never a dependency. */
-    const insideNameof = (node) => {
-        for (let cur = node.parent; cur !== null; cur = cur.parent) {
-            if (cur.type === 'invocation_expression' && cur.childForFieldName('function')?.text === 'nameof')
-                return true;
-        }
-        return false;
-    };
+    const insideNameof = (node) => scopeOf(node).nameof;
     /** True when a call's receiver is a VALUE rather than a type name: its leftmost element is a
      *  name this file declares, `this`, or any non-name expression (a call result, `new`, a literal,
      *  an index…). An undeclared leftmost identifier reads as a type (a static call, handled as a
@@ -726,7 +781,7 @@ export function extractCsharpRefs(file) {
             ref,
             line,
             rooted,
-            enclosingNs: enclosingNamespaceChain(fileNs, node),
+            enclosingNs: nsChain(node),
             at: node.startIndex,
         });
     };
@@ -737,7 +792,7 @@ export function extractCsharpRefs(file) {
             written,
             suffixed,
             line,
-            enclosingNs: enclosingNamespaceChain(fileNs, node),
+            enclosingNs: nsChain(node),
             at: node.startIndex,
             rooted,
             ...(alias !== undefined ? { alias } : {}),
@@ -761,7 +816,7 @@ export function extractCsharpRefs(file) {
                 if (emitted.has(typeNode.id))
                     return;
                 emitted.add(typeNode.id);
-                if (isTypeParameterInScope(typeNode.text, typeNode))
+                if (isTypeParameterInScope(typeNode.text, scopeOf(typeNode)))
                     return; // `T x;`, `GetRequiredService<T>()` inside `M<T>()` name the type parameter
                 pushRef(typeNode.text, typeNode, typeNode.startPosition.row + 1);
                 return;
@@ -804,7 +859,7 @@ export function extractCsharpRefs(file) {
                             aliasName: aliasField.text,
                             tail: stripTypeArguments(generic !== null ? findChild(generic, 'identifier').text : stripGlobalQualifier(nameField.text)),
                             line: typeNode.startPosition.row + 1,
-                            enclosingNs: enclosingNamespaceChain(fileNs, typeNode),
+                            enclosingNs: nsChain(typeNode),
                             at: typeNode.startIndex,
                         });
                         if (generic !== null)
@@ -863,7 +918,7 @@ export function extractCsharpRefs(file) {
         const parts = qualifiedNameParts(q);
         if (parts.alias !== undefined) {
             // `S::Core.Order` (188): the leftmost `S` is a using alias, rewritten on assembly to the namespace it names; an alias the map does not bind (an extern alias, `Lib::A.B`) is dropped there (R13).
-            refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: enclosingNamespaceChain(fileNs, q), at: q.startIndex });
+            refs.push({ kind: 'alias', aliasName: parts.alias, tail: parts.name, line, enclosingNs: nsChain(q), at: q.startIndex });
         }
         else {
             pushRef(parts.name, q, line, rooted);
@@ -903,11 +958,11 @@ export function extractCsharpRefs(file) {
                     return false;
             }
         };
-        if (!collect(access) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], access)))
+        if (!collect(access) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], scopeOf(access))))
             return;
         const line = access.startPosition.row + 1;
         if (alias !== undefined)
-            refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: enclosingNamespaceChain(fileNs, access), at: access.startIndex });
+            refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: nsChain(access), at: access.startIndex });
         else
             pushRef(segs.join('.'), access, line, rooted);
         for (const g of generics)
@@ -954,8 +1009,8 @@ export function extractCsharpRefs(file) {
     const pushTarget = (name, directive, line, nearest = false) => {
         if (namesOwnProgram(name))
             return;
-        const outer = outerUsings(file, directive);
-        refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(file, directive), ...(nearest ? { nearest } : {}), ...(outer.length > 0 ? { outer } : {}) });
+        const outer = outerUsings(info, scopeOf(directive));
+        refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(info, directive, scopeOf(directive)), ...(nearest ? { nearest } : {}), ...(outer.length > 0 ? { outer } : {}) });
     };
     /**
      * Emit every named type of a type written in a using directive's target, each read where the directive reads its target (C# spec §14.5.2): a bare, qualified or generic name is one `target` reference, a generic's type arguments are references of their own read the same way, and an array, pointer or nullable type and each tuple element are descended to their named types (C# 12 lets an alias name any type; the tuple element labels are not types). A name written after `global::` is rooted. A name written after a using alias (`S::A.B`) gives nothing: an alias of the same body never applies to a directive, and an alias of an outer body or an extern alias is not read (a silence); its type arguments still give theirs.
@@ -1205,26 +1260,27 @@ export function extractCsharpRefs(file) {
             if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
                 emitTypeNode(expr);
             }
-            else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text) && !isTypeParameterInScope(expr.text, expr))) && !insideNameof(node)) {
+            else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
                 const rooted = rootedName !== null;
                 const chain = [(rootedName ?? expr).text];
                 let cur = node;
                 // Walk outward while this access is itself the receiver of a further access (a member
-                // access only ever nests through its `expression`): every name but the outermost accessed
-                // member is a receiver segment. A generic segment (`A.B<int>.C`) ends the dotted chain.
-                while (cur.parent.type === 'member_access_expression') {
+                // access only ever nests through its `expression`, and the walk carries the accesses it
+                // nests in as `scope.access`): every name but the outermost accessed member is a receiver
+                // segment. A generic segment (`A.B<int>.C`) ends the dotted chain.
+                for (let outer = scopeOf(node).access; outer !== null; outer = outer.outer) {
                     const nm = cur.childForFieldName('name');
                     if (nm.type !== 'identifier')
                         break;
                     chain.push(nm.text);
-                    cur = cur.parent;
+                    cur = outer.node;
                 }
                 if (!namesOwnProgram(chain[0]))
                     refs.push({
                         kind: 'receiver',
                         chain,
                         line: expr.startPosition.row + 1,
-                        enclosingNs: enclosingNamespaceChain(fileNs, node),
+                        enclosingNs: nsChain(node),
                         at: node.startIndex,
                         rooted,
                     });
@@ -1247,7 +1303,7 @@ export function extractCsharpRefs(file) {
                     kind: 'ext',
                     name: call,
                     line: node.startPosition.row + 1,
-                    enclosingNs: enclosingNamespaceChain(fileNs, node),
+                    enclosingNs: nsChain(node),
                 });
             }
             return undefined;
@@ -1299,7 +1355,7 @@ export function extractCsharpRefs(file) {
         }
         // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
         if (node.type === 'declaration_expression') {
-            if (!declaresVariable(node)) {
+            if (!declaresVariable(node, scopeOf(node))) {
                 // The comparison reading (177): `F(x < Limits.Max, y > z)` is two comparisons, so each type argument that is a member access `Limits.Max` is a receiver of its own, `Limits` being a type unless this file declares it as a value.
                 const type = node.childForFieldName('type');
                 const args = type?.type === 'generic_name' ? findChild(type, 'type_argument_list') : null;
@@ -1310,13 +1366,13 @@ export function extractCsharpRefs(file) {
                     if (chainText === undefined)
                         continue;
                     const head = chainText.split('.')[0];
-                    if (declaredNames.has(head) || isTypeParameterInScope(head, qualifier))
+                    if (declaredNames.has(head) || isTypeParameterInScope(head, scopeOf(qualifier)))
                         continue;
                     refs.push({
                         kind: 'receiver',
                         chain: chainText.split('.'),
                         line: arg.startPosition.row + 1,
-                        enclosingNs: enclosingNamespaceChain(fileNs, arg),
+                        enclosingNs: nsChain(arg),
                         at: arg.startIndex,
                         rooted: false,
                     });

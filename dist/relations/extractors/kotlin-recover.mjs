@@ -614,13 +614,14 @@ function readMisread(view) {
             if (decl.kind === 'type')
                 view.incompleteTypes.add(decl.name);
         }
-        for (const cut of cutClasses(root)) {
-            let owner = cut;
-            while (owner.parent !== null && owner.parent.type !== 'source_file')
-                owner = owner.parent;
-            const name = owner.type === 'class_declaration' || owner.type === 'object_declaration' ? owner.childForFieldName('name')?.text : undefined;
-            if (name !== undefined)
-                view.incompleteTypes.add(name);
+        // The top-level declaration a cut class sits in is the top node it is found under (a cut class that is itself a top node of the file, next to a constructor that is one too, is its own), so the cuts are asked of each top node and none climbs to it.
+        for (const node of top) {
+            for (const cut of cutClasses(node)) {
+                const owner = cut.startIndex >= node.startIndex && cut.endIndex <= node.endIndex ? node : cut;
+                const name = owner.type === 'class_declaration' || owner.type === 'object_declaration' ? owner.childForFieldName('name')?.text : undefined;
+                if (name !== undefined)
+                    view.incompleteTypes.add(name);
+            }
         }
     }
 }
