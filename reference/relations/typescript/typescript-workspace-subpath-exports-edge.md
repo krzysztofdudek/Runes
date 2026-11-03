@@ -8,7 +8,7 @@ cites: "Node package `exports` — subpath entries with conditions"
 
 ## Rule
 
-A subpath import of a workspace package (`@acme/b/feature`) resolves through that subpath's `exports` entry. Conditions are read in declaration order and the first target that names a repository file wins, so a `types` entry pointing at source beats an `import` entry pointing at unbuilt `dist/` output.
+A subpath import of a workspace package (`@acme/b/feature`) resolves through that subpath's `exports` entry. No tsconfig decides the conditions here, so every target is read in declaration order and the first that names a repository file wins: a `types` entry pointing at source beats an `import` entry pointing at unbuilt `dist/` output (where the settings decide, the conditions choose the target, see `typescript-exports-bundler-import-branch-silence`; `types` is among them for every resolution that reads `exports`).
 
 ## Files
 
