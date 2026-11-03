@@ -174,6 +174,52 @@ describe('the corpus gate', () => {
     manifest([fixture()]);
   });
 
+  // The go command lists no package under testdata for `./...`, yet imports one by its import path; the stub does the same, so the oracle runs where go is not installed. Where it is, the real one answers too.
+  const GO_STUB = [
+    '#!/usr/bin/env node',
+    "const fs = require('fs'); const path = require('path');",
+    'const args = process.argv.slice(2);',
+    "if (args[0] === 'version') { console.log('go version stub'); process.exit(0); }",
+    "if (args[0] !== 'list') process.exit(2);",
+    "const mod = /^module\\s+(\\S+)/m.exec(fs.readFileSync('go.mod', 'utf8'))[1];",
+    "const hasGo = (d) => fs.existsSync(d) && fs.readdirSync(d).some((f) => f.endsWith('.go'));",
+    'const out = [];',
+    "const walk = (d, rel) => { if (hasGo(d)) out.push({ ImportPath: rel ? `${mod}/${rel}` : mod, Dir: d }); for (const e of fs.readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !['testdata', 'vendor'].includes(e.name) && !/^[._]/.test(e.name)) walk(path.join(d, e.name), rel ? `${rel}/${e.name}` : e.name); };",
+    "for (const p of args.slice(1).filter((a) => !a.startsWith('-'))) {",
+    "  if (p === './...') walk(process.cwd(), '');",
+    "  else if (p.startsWith(`${mod}/`) && hasGo(path.join(process.cwd(), p.slice(mod.length + 1)))) out.push({ ImportPath: p, Dir: path.join(process.cwd(), p.slice(mod.length + 1)) });",
+    "  else out.push({ ImportPath: p, Error: { Err: 'no package' } });",
+    '}',
+    "process.stdout.write(out.map((o) => JSON.stringify(o, null, '\\t')).join('\\n') + '\\n');",
+    '',
+  ].join('\n');
+  const realGo = spawnSync('go', ['version'], { encoding: 'utf8' }).status === 0;
+
+  for (const which of ['stub', 'real']) {
+    test(`the Go oracle asks go list for an import path that ./... leaves out, a package under testdata (${which} go)`, { skip: which === 'stub' ? process.platform === 'win32' && 'the stub is a script with a shebang' : !realGo && 'go is not installed' }, () => {
+      const goRepo = join(tmp, `go-${which}`);
+      mkdirSync(goRepo);
+      git(goRepo, 'init', '-q');
+      put(goRepo, 'go.mod', 'module example.com/m\n\ngo 1.21\n');
+      put(goRepo, 'a/a.go', 'package a\n\nimport "example.com/m/testdata/proto"\n\nvar X = proto.Y\n');
+      put(goRepo, 'testdata/proto/p.go', 'package proto\n\nvar Y = 1\n');
+      git(goRepo, 'add', '.');
+      git(goRepo, 'commit', '-q', '-m', 'go');
+      manifest([{ id: 'gomod', url: pathToFileURL(goRepo).href, commit: git(goRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+      const env = { ...ENV };
+      if (which === 'stub') {
+        const bin = join(tmp, 'go-stub-bin');
+        mkdirSync(bin, { recursive: true });
+        writeFileSync(join(bin, 'go'), GO_STUB, { mode: 0o755 });
+        env.PATH = `${bin}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH}`;
+      }
+      const r = spawnSync(process.execPath, [SCRIPT, 'oracles', '--manifest', join(work, 'manifest.json'), '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache')], { env, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /ok {3}gomod .*checked: go 1; 0 disagreements/);
+      manifest([fixture()]);
+    });
+  }
+
   test('a golden made at another commit than the pin fails verify and is replaced by update', () => {
     writeFileSync(goldenFile(), `# runes corpus golden: fixture at ${'0'.repeat(40)}\n`);
     const v = corpus('verify');

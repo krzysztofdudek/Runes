@@ -818,7 +818,9 @@ function sortDeep(v) {
   return v;
 }
 
-/** `go list` of every in-repository package (the module graph comes from the module proxy, checked against go.sum, so the answer is the same on every machine), and each Go import Runes resolves held to the package directory the go command gives, both ways: an import of an in-repository package Runes leaves silent is a recall loss, a binding outside every listed package a false edge. Only files of listed packages are compared (testdata and vendor are not packages). */
+/**
+ * `go list` of every in-repository package (the module graph comes from the module proxy, checked against go.sum, so the answer is the same on every machine), and each Go import Runes resolves held to the package directory the go command gives, both ways: an import of an in-repository package Runes leaves silent is a recall loss, a binding outside every in-repository package a false edge. Only files of the packages `./...` lists are compared (testdata and vendor are not packages of the build). An import of an in-repository module's path that `./...` leaves out is asked of go list by its import path, from the importing file's module, because the go command imports such a package by its path even where the pattern skips it (a test that imports a package under testdata).
+ */
 function goOracle(repoDir, result, findings) {
   const deps = result.references.filter((r) => r.language === 'go' && r.candidates.every((c) => c.kind === 'path'));
   if (deps.length === 0) return { checked: 0 };
@@ -826,21 +828,50 @@ function goOracle(repoDir, result, findings) {
   if (probe.error || probe.status !== 0) return { skipped: `go is not installed (${probe.error?.message ?? probe.stderr})` };
   const listed = result.tracked.map((f) => f.path);
   const hasWork = listed.includes('go.work');
-  const moduleDirs = hasWork ? [''] : listed.filter((p) => path.posix.basename(p) === 'go.mod' && !/(^|\/)(testdata|vendor)\//.test(p)).map(dirOf);
+  const goMods = listed.filter((p) => path.posix.basename(p) === 'go.mod' && !/(^|\/)(testdata|vendor)\//.test(p));
+  const moduleDirs = hasWork ? [''] : goMods.map(dirOf);
+  const modulePaths = goMods.map((p) => /^\s*module\s+"?([^\s"]+)"?/m.exec(result.read(p))?.[1]).filter((m) => m !== undefined);
+  const ofModule = (spec) => modulePaths.some((m) => spec === m || spec.startsWith(`${m}/`));
+  const goDirs = new Set(listed.filter((p) => p.endsWith('.go')).map(dirOf));
   const env = { ...process.env, GOFLAGS: '-mod=readonly', GOWORK: hasWork ? path.join(repoDir, 'go.work') : 'off', GOCACHE: process.env.GOCACHE ?? path.join(os.tmpdir(), 'runes-corpus-gocache') };
-  const packageDir = new Map();
-  for (const m of moduleDirs) {
-    const run = spawnSync('go', ['list', '-e', '-json=ImportPath,Dir', './...'], { cwd: m === '' ? repoDir : path.join(repoDir, m), env, encoding: 'utf8', maxBuffer: 1 << 30 });
-    if (run.error || run.status !== 0) return { skipped: `go list failed in ${m || '.'}: ${run.error?.message ?? run.stderr.trim().split('\n')[0]}` };
+  const cwdOf = (m) => (m === '' ? repoDir : path.join(repoDir, m));
+  /** Runs go list in one module and keeps each in-repository package it gives; an error message when go list itself fails. */
+  const list = (m, args, into, keep) => {
+    const run = spawnSync('go', ['list', '-e', '-json=ImportPath,Dir', ...args], { cwd: cwdOf(m), env, encoding: 'utf8', maxBuffer: 1 << 30 });
+    if (run.error || run.status !== 0) return `go list failed in ${m || '.'}: ${run.error?.message ?? run.stderr.trim().split('\n')[0]}`;
     for (const chunk of run.stdout.split(/\n(?=\{)/)) {
       if (chunk.trim() === '') continue;
       const pkg = JSON.parse(chunk);
       if (typeof pkg.Dir !== 'string') continue;
       const rel = path.relative(repoDir, pkg.Dir).split(path.sep).join('/');
-      if (!rel.startsWith('..')) packageDir.set(pkg.ImportPath, rel);
+      if (!rel.startsWith('..') && keep(rel)) into.set(pkg.ImportPath, rel);
     }
+    return undefined;
+  };
+  const packageDir = new Map();
+  for (const m of moduleDirs) {
+    const failed = list(m, ['./...'], packageDir, () => true);
+    if (failed !== undefined) return { skipped: failed };
   }
   const packageDirs = new Set(packageDir.values());
+  // The module of a file is its nearest module directory; under go.work every module is the workspace's.
+  const moduleOf = (file) => moduleDirs.filter((m) => m === '' || file.startsWith(`${m}/`)).sort((a, b) => b.length - a.length)[0];
+  const asked = new Map();
+  for (const r of deps) {
+    const spec = r.candidates[0].specifier;
+    const m = moduleOf(r.from);
+    if (m === undefined || !packageDirs.has(dirOf(r.from)) || packageDir.has(spec) || !ofModule(spec)) continue;
+    if (!asked.has(m)) asked.set(m, new Set());
+    asked.get(m).add(spec);
+  }
+  for (const [m, specs] of asked) {
+    const all = [...specs].sort();
+    for (let i = 0; i < all.length; i += 100) {
+      // A directory with no tracked Go file is no package, whatever go list says of the path.
+      const failed = list(m, all.slice(i, i + 100), packageDir, (rel) => goDirs.has(rel));
+      if (failed !== undefined) return { skipped: failed };
+    }
+  }
   let checked = 0;
   for (const r of deps) {
     if (!packageDirs.has(dirOf(r.from))) continue;
