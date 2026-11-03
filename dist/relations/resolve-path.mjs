@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -36,7 +36,9 @@ import { makeDiagnosticSink, reportUnreadable, strictJsonFailure } from './diagn
  *  specifier can name any file on disk, excluded or not — must supply both `ownerOf` and an `isExcluded` built from the same exclusion set instead of calling this with `ownerOf` and no `isExcluded`:
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
- *  the surviving, non-excluded, fully enforced candidate. */
+ *  the surviving, non-excluded, fully enforced candidate.
+ *
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for one question only: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs; the Rust extractor declares those names from the file's parse tree (`rustTopLevelItemKey`). Without the table no name is known to be such an item, so those paths stay silent. */
 export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options) {
     // Every read goes through one of two sources, and with a view given they are the same one. On the disk they differ in a single manner: a candidate probe exists only under the name its directory lists (on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs, issue 482), while a configuration read or a repository walk takes the file system's own rule.
     const probe = options?.files ?? diskFileView(projectRoot, true);
@@ -48,13 +50,25 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
     const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
     const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
     const rustDeps = makeRustResolveDeps(plain, exists);
+    // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`).
+    const rustDepsByTable = new WeakMap();
+    const rustDepsFor = (table) => {
+        if (table === undefined)
+            return rustDeps;
+        let deps = rustDepsByTable.get(table);
+        if (deps === undefined) {
+            deps = { ...rustDeps, rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares(rootFile, name)) };
+            rustDepsByTable.set(table, deps);
+        }
+        return deps;
+    };
     // One Python resolver for the whole pass: it memoizes its probes and indexes the discovered roots by the names they hold (issue 013).
     const python = makePythonResolver(exists, isExcluded, makePythonProjectRoots(plain, isExcluded), (repoRelPosix) => plain.list(repoRelPosix)?.map((e) => e.name));
     // TS/JS: a candidate is a FILE (a directory named like `./x.config` is never a module), and
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => probe.isFile(repoRelPosix);
     const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
-    return (specifier, fromFile, language, isPackage = false) => {
+    return (specifier, fromFile, language, isPackage = false, symbolTable = undefined) => {
         if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
             return resolveTsPath(specifier, fromFile, isFile, tsDeps);
         }
@@ -106,7 +120,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return resolvePhpFqn(specifier, fromFile, phpDeps);
         }
         if (language === 'rust') {
-            return resolveRustPath(specifier, fromFile, exists, rustDeps);
+            return resolveRustPath(specifier, fromFile, exists, rustDepsFor(symbolTable));
         }
         if (language === 'c' || language === 'cpp') {
             // C and C++ share ONE include resolver: a quoted include resolves next to the
@@ -215,7 +229,24 @@ function makeRustResolveDeps(plain, exists) {
         const rel = pkgDir === '' ? file : file.slice(pkgDir.length + 1);
         // Target sub-paths are package-relative and never climb, so a plain join is exact.
         const at = (sub) => (pkgDir === '' || sub === '' ? pkgDir + sub : `${pkgDir}/${sub}`);
-        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, manifest?.targetPaths, manifest?.undiscoveredDirs, manifest?.namedTargets, !(manifest?.undiscoveredDirs.includes('src/bin') ?? false) || (manifest?.declaresMainBin ?? false));
+        // Cargo (edition 2015 only, `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found neither as `src/bin/<name>.rs`, `src/bin/<name>/main.rs` nor (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`.
+        const legacyBinPaths = [];
+        if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
+            const hasLib = exists(at(path.posix.normalize(manifest.libPath ?? 'src/lib.rs')));
+            for (const named of manifest.namedTargets) {
+                if (!named.startsWith('src/bin/'))
+                    continue;
+                const name = named.slice('src/bin/'.length);
+                if (exists(at(`${named}.rs`)) || exists(at(`${named}/main.rs`)) || (name === manifest.packageName && exists(at('src/main.rs'))))
+                    continue;
+                const legacy = [...(hasLib ? [] : [`src/${name}.rs`]), 'src/main.rs', 'src/bin/main.rs'].find((p) => exists(at(p)));
+                if (legacy !== undefined)
+                    legacyBinPaths.push(legacy);
+            }
+        }
+        // Cargo (edition 2015): a package that declares a bin turns bin auto-discovery off unless `autobins = true`; from 2018 on discovery is always on. The same rule holds for tests, examples and benches, which are not yet read this way.
+        const undiscovered = manifest === undefined ? [] : [...manifest.undiscoveredDirs, ...(isEdition2015(pkgDir, manifest) ? (manifest.declaredDirs.includes('src/bin') && !manifest.undiscoveredDirs.includes('src/bin') && !manifest.discoveredDirs.includes('src/bin') ? ['src/bin'] : []) : [])];
+        const target = rustTargetFor(rel, (sub) => exists(at(sub)), manifest?.libPath, [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, manifest?.namedTargets, !undiscovered.includes('src/bin') || (manifest?.declaresMainBin ?? false));
         return {
             srcDir: at(target.srcDir),
             crateName,
@@ -315,13 +346,16 @@ function makeRustResolveDeps(plain, exists) {
         return undefined;
     }
     function rootDeclares(rootFile, name, asItem = false) {
+        // Which names the root binds at its top level only its parse tree tells, through the pass's symbol table (`rustDepsFor` in makeResolvePathToFile); without one, none is known.
+        if (asItem)
+            return false;
         let text = rootTextByFile.get(rootFile);
         if (text === undefined) {
             const raw = plain.read(rootFile);
             text = raw === undefined ? '' : stripRustComments(raw);
             rootTextByFile.set(rootFile, text);
         }
-        return rustFileDeclares(text, name, asItem);
+        return rustFileDeclares(text, name);
     }
     return { crateRootFor, dependencyFor, rootDeclares };
 }
@@ -591,6 +625,7 @@ export function parseCargoManifest(text) {
     // Each element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array, with the `name` and `path` it gives (`null` for one written but not readable as a string).
     const targets = [];
     const undiscoveredDirs = [];
+    const discoveredDirs = [];
     let hasPackage = false;
     let edition;
     let editionInherited = false;
@@ -653,6 +688,8 @@ export function parseCargoManifest(text) {
             const { dir } = Object.values(DISCOVERED_DIRS).find((d) => d.flag === keyPath[1]);
             if (value === 'false' && !undiscoveredDirs.includes(dir))
                 undiscoveredDirs.push(dir);
+            else if (value === 'true' && !discoveredDirs.includes(dir))
+                discoveredDirs.push(dir);
         }
         else if (keyPath.length === 1 && TARGET_TABLES.has(top)) {
             // `bin = [{ name = …, path = … }, …]`: the array of tables written inline, each element read as a `[[bin]]` table.
@@ -735,6 +772,8 @@ export function parseCargoManifest(text) {
         libPath,
         targetPaths: targets.flatMap((t) => (typeof t.path === 'string' ? [t.path] : [])),
         undiscoveredDirs,
+        discoveredDirs,
+        declaredDirs: [...new Set(targets.filter((t) => Object.hasOwn(DISCOVERED_DIRS, t.kind)).map((t) => DISCOVERED_DIRS[t.kind].dir))],
         namedTargets: targets.flatMap((t) => (t.path === undefined && typeof t.name === 'string' && Object.hasOwn(DISCOVERED_DIRS, t.kind) ? [`${DISCOVERED_DIRS[t.kind].dir}/${t.name}`] : [])),
         hasPackage,
         edition,
@@ -755,14 +794,13 @@ export function parseCargoManifest(text) {
 function stripRustComments(text) {
     return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
-export function rustFileDeclares(text, name, asItem = false) {
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
+export function rustFileDeclares(text, name) {
     const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const decl = new RegExp(`\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b` + (asItem ? '' : `|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`));
+    const decl = new RegExp(`\\b(?:struct|enum|union|trait|type|fn|const|static|mod)\\s+(?:r#)?${id}\\b|\\bmacro_rules!\\s*(?:r#)?${id}\\b|\\bextern\\s+crate\\s+(?:(?:r#)?\\w+\\s+as\\s+)?(?:r#)?${id}\\s*;`);
     if (decl.test(text))
         return true;
-    // As an item of the module, a name a `use` brings in is the last segment of its path, a member of its group or the alias of an `as`: a name that leads a longer path (`use serde::Deserialize;`) or is renamed away (`use a::Name as Other;`) binds nothing called `name`.
-    const word = new RegExp(asItem ? `(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])(?!\\s*::)(?!\\s+as\\b)` : `(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);
+    const word = new RegExp(`(?:^|[^A-Za-z0-9_#])(?:r#)?${id}(?![A-Za-z0-9_])`);
     for (const m of text.matchAll(/\buse\s+[^;]*;/g)) {
         if (word.test(m[0]))
             return true;

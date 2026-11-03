@@ -267,12 +267,13 @@ describe('rust extractor — declarations()', () => {
 
   it('ignores top-level items that are not struct/enum/trait/fn/mod (impl, const, static, use)', async () => {
     // Only the five named item kinds become declarations; an `impl` (no name), a `const`,
-    // a `static`, and a `use` are all skipped by the item-type filter.
+    // a `static`, and a `use` are all skipped by the item-type filter. Every name the top level binds as an item is declared besides, under its own `item:` key.
     const { declarations } = await run(
       'use crate::a;\nstruct S {}\nimpl S {}\nconst X: u32 = 1;\nstatic Y: u32 = 2;\n',
     );
     const keys = declarations.map((d) => d.symbolKey);
-    expect(keys).toEqual(['S']);
+    expect(keys.filter((k) => !k.startsWith('item:'))).toEqual(['S']);
+    expect(keys.filter((k) => k.startsWith('item:'))).toEqual(['item:a', 'item:S', 'item:X', 'item:Y']);
   });
 
   it('reports the line of a top-level declaration', async () => {

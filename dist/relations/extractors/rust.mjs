@@ -1,5 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
+import { rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -381,6 +382,13 @@ function join(prefix, tail) {
  *     (each carries field `name`).
  * Only top-level items (direct children of the file root) are emitted — items nested
  * inside an inline `mod { … }` are same-file detail, not the node's public surface.
+ *
+ * Beside them, every name the file's top level binds as an item is declared under
+ * `rustTopLevelItemKey(name)` (`item:<name>`), read from the parse tree by
+ * `topLevelItemNames`: this is what the resolver asks of a crate-root file when an edition
+ * 2015 `use` path names one of its items, so a name defined only inside an inline `mod`, a
+ * function body, a `const` or `static` initializer, a closure or a `macro_rules!` body is
+ * never taken for an item of the root.
  */
 function declarations(file) {
     const out = [];
@@ -400,11 +408,145 @@ function declarations(file) {
             }
         }
     }
+    for (const { name, line } of topLevelItemNames(root))
+        out.push({ symbolKey: rustTopLevelItemKey(name), line });
+    return out;
+}
+/** The item kinds whose `name` field a file's top level binds as an item. */
+const NAMED_ITEMS = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item', 'function_item', 'function_signature_item', 'const_item', 'static_item', 'mod_item', 'macro_definition']);
+/** The item macros whose expansion Runes can read from their tokens: each defines items at the top level of its body (`thread_local!`, `lazy_static!`, `bitflags!`), or, for `cfg_if!`, in each braced branch. A top-level invocation of any other macro defines nothing Runes can tell, so its names stay unknown (a lost edge, never a false one). */
+const ITEM_MACROS = new Set(['thread_local', 'lazy_static', 'bitflags']);
+/** The keywords that, followed by a name, define an item in a macro's tokens. */
+const ITEM_KEYWORDS = new Set(['struct', 'enum', 'union', 'trait', 'type', 'fn', 'const', 'static', 'mod']);
+/**
+ * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
+ */
+export function topLevelItemNames(root) {
+    const out = [];
+    const add = (name, node) => {
+        if (name === undefined)
+            return;
+        const plain = unraw(name);
+        if (plain !== '_' && plain !== '')
+            out.push({ name: plain, line: node.startPosition.row + 1 });
+    };
+    for (const node of root.namedChildren) {
+        if (node === null)
+            continue;
+        if (NAMED_ITEMS.has(node.type)) {
+            add(node.childForFieldName('name')?.text, node);
+        }
+        else if (node.type === 'foreign_mod_item') {
+            for (const item of node.childForFieldName('body')?.namedChildren ?? []) {
+                if (item !== null && item.type !== 'macro_invocation')
+                    add(item.childForFieldName('name')?.text, item);
+            }
+        }
+        else if (node.type === 'use_declaration') {
+            const arg = node.childForFieldName('argument');
+            if (arg !== null)
+                for (const name of useBindings(arg, undefined))
+                    add(name, node);
+        }
+        else {
+            const call = node.type === 'expression_statement' ? node.namedChild(0) : node;
+            if (call?.type !== 'macro_invocation')
+                continue;
+            const macro = call.childForFieldName('macro');
+            const macroName = macro?.type === 'scoped_identifier' ? macro.childForFieldName('name')?.text : macro?.text;
+            const body = call.namedChildren.find((c) => c?.type === 'token_tree') ?? null;
+            if (body === null || macroName === undefined)
+                continue;
+            if (macroName === 'cfg_if')
+                for (const name of cfgIfItems(body))
+                    add(name, node);
+            else if (ITEM_MACROS.has(macroName))
+                for (const name of tokenItems(body))
+                    add(name, node);
+        }
+    }
+    return out;
+}
+/** The names a `use` argument binds. `last` is the last segment of the path of the group it sits in, which a `self` member binds. */
+function useBindings(arg, last) {
+    switch (arg.type) {
+        case 'identifier':
+            return [arg.text];
+        case 'scoped_identifier': {
+            const name = arg.childForFieldName('name');
+            return name?.type === 'identifier' ? [name.text] : [];
+        }
+        case 'self':
+            return last === undefined ? [] : [last];
+        case 'use_as_clause': {
+            const alias = arg.childForFieldName('alias');
+            return alias === null ? [] : [alias.text];
+        }
+        case 'scoped_use_list': {
+            const p = arg.childForFieldName('path');
+            const segment = p?.type === 'identifier' ? p.text : p?.type === 'scoped_identifier' ? p.childForFieldName('name')?.text : undefined;
+            const list = arg.childForFieldName('list');
+            return list === null ? [] : useBindings(list, segment);
+        }
+        case 'use_list':
+            return arg.namedChildren.flatMap((c) => (c === null ? [] : useBindings(c, last)));
+        default:
+            // A glob (`use a::*;`) binds names no tree shows; `crate`, `super` alone bind none.
+            return [];
+    }
+}
+/** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
+function cfgIfItems(body) {
+    return body.namedChildren.flatMap((c) => (c !== null && c.type === 'token_tree' && c.child(0)?.type === '{' ? tokenItems(c) : []));
+}
+/**
+ * The names a macro's token tree defines at its own level: a keyword of `ITEM_KEYWORDS` followed by a name (`static mut` and `static ref` skipped to the name), `macro_rules! name`, a `use` without a group or a glob (its alias, else its last name), and the items of a nested `cfg_if!`. What follows an `=` up to the `;` is an initializer and is skipped, and nothing inside a nested token tree (a body, an attribute, a group) is read: those are no items of this level.
+ */
+function tokenItems(tree) {
+    const out = [];
+    // The tree's own delimiters are its first and last tokens.
+    const tokens = tree.children.filter((c) => c !== null).slice(1, -1);
+    // `union` is a keyword only in front of an item's name, so the grammar leaves it an identifier.
+    const isItemKeyword = (t) => (!t.isNamed && ITEM_KEYWORDS.has(t.type)) || (t.type === 'identifier' && t.text === 'union');
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        if (t.type === '=') {
+            while (i + 1 < tokens.length && tokens[i + 1].type !== ';')
+                i++;
+        }
+        else if (t.type === 'use') {
+            let end = i + 1;
+            while (end < tokens.length && tokens[end].type !== ';')
+                end++;
+            const stmt = tokens.slice(i + 1, end);
+            if (!stmt.some((x) => x.type === 'token_tree' || x.type === '*')) {
+                const as = stmt.findIndex((x) => x.type === 'as');
+                const names = stmt.slice(as + 1).filter((x) => x.type === 'identifier');
+                if (names.length > 0)
+                    out.push(names[names.length - 1].text);
+            }
+            i = end;
+        }
+        else if (isItemKeyword(t)) {
+            let j = i + 1;
+            while (j < tokens.length && (tokens[j].type === 'mutable_specifier' || (tokens[j].type === 'identifier' && tokens[j].text === 'ref' && tokens[j + 1]?.type === 'identifier')))
+                j++;
+            if (tokens[j]?.type === 'identifier')
+                out.push(tokens[j].text);
+        }
+        else if (t.type === 'identifier' && (t.text === 'macro_rules' || t.text === 'cfg_if') && tokens[i + 1]?.type === '!') {
+            const next = tokens[i + 2];
+            if (t.text === 'macro_rules' && next?.type === 'identifier')
+                out.push(next.text);
+            else if (t.text === 'cfg_if' && next?.type === 'token_tree')
+                out.push(...cfgIfItems(next));
+        }
+    }
     return out;
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 3,
+    rev: 4,
     declarations,
     uses,
 };

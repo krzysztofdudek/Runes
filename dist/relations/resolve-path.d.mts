@@ -1,3 +1,4 @@
+import type { SymbolTable } from './symbol-table.mjs';
 import { type FileView } from './file-view.mjs';
 import { type RelationDiagnostic } from './diagnostics.mjs';
 /** What `makeResolvePathToFile` takes besides the root and the owner and exclusion lookups. Every field is optional; a minor release may add more. */
@@ -35,8 +36,10 @@ export interface ResolvePathOptions {
  *  specifier can name any file on disk, excluded or not — must supply both `ownerOf` and an `isExcluded` built from the same exclusion set instead of calling this with `ownerOf` and no `isExcluded`:
  *  without `isExcluded`, an excluded file still counts toward the ambiguity decision (or, for
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
- *  the surviving, non-excluded, fully enforced candidate. */
-export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): (specifier: string, fromFile: string, language: string, isPackage?: boolean) => string | undefined;
+ *  the surviving, non-excluded, fully enforced candidate.
+ *
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for one question only: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs; the Rust extractor declares those names from the file's parse tree (`rustTopLevelItemKey`). Without the table no name is known to be such an item, so those paths stay silent. */
+export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable) => string | undefined;
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
@@ -66,6 +69,10 @@ interface CargoManifest {
     targetPaths: string[];
     /** The directories (`tests`, `examples`, `benches`) whose target auto-discovery `[package]` turns off (`autotests = false`, `autoexamples = false`, `autobenches = false`). */
     undiscoveredDirs: string[];
+    /** The directories whose auto-discovery `[package]` turns on by writing the flag `true` (`autobins = true`): the one thing that keeps discovery on in an edition 2015 package that declares a target of that kind. */
+    discoveredDirs: string[];
+    /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) of which the manifest declares at least one target, by `path` or by `name`. */
+    declaredDirs: string[];
     /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name` and no `path`: Cargo roots it at `<dir>/<name>.rs` or `<dir>/<name>/main.rs`, whether or not auto-discovery is on. */
     namedTargets: string[];
     /** Whether a `[package]` table is written at all (a virtual workspace manifest has none, and no crate of its own). */
@@ -96,8 +103,8 @@ interface CargoTargetEdition {
 }
 /** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export declare function parseCargoManifest(text: string): CargoManifest;
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? */
-export declare function rustFileDeclares(text: string, name: string, asItem?: boolean): boolean;
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
+export declare function rustFileDeclares(text: string, name: string): boolean;
 /** The module path declared by go.mod text: `module x`, `module "x"`, ``module `x` ``, or
  *  the block form `module ( x )`. The first declaration wins; undefined when there is none. */
 export declare function parseGoModulePath(text: string): string | undefined;
