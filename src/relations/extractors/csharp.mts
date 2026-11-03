@@ -782,8 +782,9 @@ export type CsharpRefDescriptor =
   /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
   | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
-   *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, then the namespaces imported
-   *  where the call stands (`at`) as one set, then the global namespace. */
+   *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
+   *  its using directives import where the call stands (`at`), then the global namespace, then the
+   *  namespaces the compilation unit's using directives import as one set. */
   | { kind: 'ext'; name: string; line: number; enclosingNs: string[]; at: number };
 
 /**
@@ -1861,8 +1862,8 @@ export function assembleCsharpCandidates(
 
   /** The extension-method group for a call `value.Name(…)` at `at`: the extension keys of the enclosing
    *  namespaces innermost first, each followed by the namespaces the plain usings of its declarations
-   *  import (one set), then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
-   *  in-scope `Name` → ambiguous → silence), then the global namespace. Aliases import no
+   *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
+   *  in-scope `Name` → ambiguous → silence). Aliases import no
    *  extension methods, and `using static` is not modelled, so neither contributes. */
   const pushExtension = (name: string, enclosingNs: string[], line: number, at: number): void => {
     const candidates: TargetHint[] = [];
@@ -1881,9 +1882,11 @@ export function assembleCsharpCandidates(
       const k = levels.findIndex((o) => o.ns === ns);
       if (k >= 0) addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, []));
     }
+    // The compilation unit is the last level, and its namespace is the global one: the global namespace's own static classes come before the namespaces its using directives import (C# spec §12.8.10.3, §7.8.1).
+    pushed.add(extensionKey('', name));
+    candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
     // A namespace both enclosing and imported only repeats a key already read.
     addSet(usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })));
-    candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
     out.push({ candidates, kind: 'import', line });
   };
 
@@ -1959,7 +1962,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 12,
+  rev: 13,
   declarations,
   uses,
 };

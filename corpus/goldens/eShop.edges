@@ -27,7 +27,6 @@ src/Basket.API/Model/CustomerBasket.cs:7	src/Basket.API/Model/BasketItem.cs
 src/Basket.API/Program.cs:10	src/eShop.ServiceDefaults/Extensions.cs
 src/Basket.API/Program.cs:12	src/Basket.API/Grpc/BasketService.cs
 src/Basket.API/Program.cs:3	src/eShop.ServiceDefaults/Extensions.cs
-src/Basket.API/Program.cs:4	src/Basket.API/Extensions/Extensions.cs
 src/Basket.API/Repositories/IBasketRepository.cs:7	src/Basket.API/Model/CustomerBasket.cs
 src/Basket.API/Repositories/IBasketRepository.cs:8	src/Basket.API/Model/CustomerBasket.cs
 src/Basket.API/Repositories/RedisBasketRepository.cs:23	src/Basket.API/Model/CustomerBasket.cs
@@ -939,7 +938,6 @@ src/OrderProcessor/Extensions/Extensions.cs:18	src/OrderProcessor/Services/Grace
 src/OrderProcessor/Extensions/Extensions.cs:19	src/OrderProcessor/Services/GracePeriodManagerService.cs
 src/OrderProcessor/Extensions/Extensions.cs:23	src/OrderProcessor/Events/GracePeriodConfirmedIntegrationEvent.cs
 src/OrderProcessor/Program.cs:3	src/eShop.ServiceDefaults/Extensions.cs
-src/OrderProcessor/Program.cs:4	src/OrderProcessor/Extensions/Extensions.cs
 src/OrderProcessor/Program.cs:8	src/eShop.ServiceDefaults/Extensions.cs
 src/OrderProcessor/Services/GracePeriodManagerService.cs:11	src/OrderProcessor/Services/GracePeriodOrdersRepository.cs
 src/OrderProcessor/Services/GracePeriodManagerService.cs:13	src/OrderProcessor/BackgroundTaskOptions.cs
