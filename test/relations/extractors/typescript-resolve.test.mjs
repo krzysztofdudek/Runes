@@ -218,6 +218,70 @@ describe('resolveTsPath — packages', () => {
   });
 });
 
+describe('resolveTsPath — export conditions follow the importing file\'s module settings', () => {
+  // `require` lists ./cjs first, `import` ./esm: which one binds says which condition was entered.
+  const lib = {
+    'lib/package.json': '{ "name": "lib", "exports": { ".": { "require": "./cjs/index.cts", "import": "./esm/index.ts" }, "./types": { "types@>=99": "./v99.d.ts", "types": "./t.d.ts" }, "./blocked": { "import": null, "default": "./t.d.ts" }, "./list": [{ "import": "./nope.ts" }, "./esm/index.ts"] } }',
+    'lib/cjs/index.cts': '',
+    'lib/esm/index.ts': '',
+    'lib/t.d.ts': '',
+    'lib/v99.d.ts': '',
+  };
+  const withConfig = (options, extra = {}) => project({ ...lib, 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': JSON.stringify({ compilerOptions: options }), ...extra });
+  it('reads the file format by extension: .mts imports and .cts requires, under Bundler as under Node16', () => {
+    const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
+    expect(r('lib', 'app/a.mts')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.cts')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.mjs')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.cjs')).toBe('lib/cjs/index.cts');
+  });
+  it('under Bundler a CommonJS module requires and an ES or other non-Node module imports; values are read case-insensitively', () => {
+    expect(withConfig({ module: 'CommonJS', moduleResolution: 'Bundler' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(withConfig({ module: 'ES2022', moduleResolution: 'bundler' })('lib', 'app/a.tsx')).toBe('lib/esm/index.ts');
+    expect(withConfig({ module: 'preserve' })('lib', 'app/a.js')).toBe('lib/esm/index.ts');
+  });
+  it('under a Node module the package type decides a .ts file, and module nodenext implies its resolution', () => {
+    const esm = withConfig({ module: 'nodenext' }, { 'app/package.json': '{ "name": "app", "type": "module" }' });
+    expect(esm('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(withConfig({ module: 'node20', moduleResolution: 'node16' })('lib', 'app/a.jsx')).toBe('lib/cjs/index.cts');
+  });
+  it('inherits the settings through extends', () => {
+    const r = project({ ...lib, 'base.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler", "customConditions": ["x", 1] } }', 'app/tsconfig.json': '{ "extends": "../base.json" }' });
+    expect(r('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+  });
+  it('keeps the earlier reading, the first target that names a file, wherever the settings do not decide', () => {
+    for (const [options, from] of [
+      [{ moduleResolution: 'bundler' }, 'app/a.ts'], // module unset: its default moved between TypeScript 5 and 6
+      [{ module: 'esnext' }, 'app/a.ts'], // resolution unset and not implied
+      [{ module: 'esnext', moduleResolution: 'node10' }, 'app/a.ts'], // Node10 reads no exports, which Runes does not model
+      [{ module: 'esnext', moduleResolution: 'nodenext' }, 'app/a.ts'], // a Node resolution with a non-Node module, which tsc rejects
+      [{ module: 'nodenext', moduleResolution: 'bundler' }, 'app/a.ts'], // and the reverse
+      [{ module: 7, moduleResolution: 'bundler' }, 'app/a.ts'], // a value of another type is unset
+      [{ module: 'esnext', moduleResolution: 'bundler' }, 'app/a.vue'], // a component's format is not read
+    ]) expect(withConfig(options)('lib', from), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+    expect(project(lib)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts'); // no tsconfig at all
+  });
+  it('stops at a null target and at a versioned types key, and reads an array entry by entry', () => {
+    const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
+    expect(r('lib/types', 'app/a.ts')).toBeUndefined();
+    expect(r('lib/blocked', 'app/a.ts')).toBeUndefined();
+    expect(r('lib/list', 'app/a.ts')).toBe('lib/esm/index.ts');
+    // Without settings that decide, the earlier reading: every target in order.
+    expect(project(lib)('lib/types', 'app/a.ts')).toBe('lib/v99.d.ts');
+    expect(project(lib)('lib/blocked', 'app/a.ts')).toBe('lib/t.d.ts');
+  });
+  it('chooses a package.json imports target by the same conditions', () => {
+    const r = project({
+      'app/package.json': '{ "name": "app", "imports": { "#dep": { "require": "./cjs.cts", "import": "./esm.ts" } } }',
+      'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }',
+      'app/cjs.cts': '',
+      'app/esm.ts': '',
+    });
+    expect(r('#dep', 'app/a.ts')).toBe('app/esm.ts');
+    expect(r('#dep', 'app/a.cts')).toBe('app/cjs.cts');
+  });
+});
+
 // Issue 011: a solution-style tsconfig.json (`files: []` plus `references`) gives a file the options of the referenced config that includes it; a Vue or Svelte component reads jsconfig.json as a JavaScript file does.
 describe('resolveTsPath — solution-style tsconfig references', () => {
   const app = (paths, extra = {}) => JSON.stringify({ include: ['env.d.ts', 'src/**/*', 'src/**/*.vue'], exclude: ['src/**/__tests__/*'], ...extra, compilerOptions: { paths } });
@@ -909,6 +973,79 @@ describe('resolveTsPath — workspace membership', () => {
 });
 
 // Issue 010: a verdict must be a function of the commit, so a file the caller excludes (git-ignored build output, a generated config) acts as though it does not exist, for every probe and every configuration read: the result with it on disk equals the result without it.
+describe('resolveTsPath — a workspace member declared by a range binds only where the package manager links it', () => {
+  // `app` declares `lib` as `spec`; `lib` is a member at `version` (null: none); `root` holds the manager's files.
+  const ws = (spec, root = {}, version = '2.0.0') => project({
+    'package.json': JSON.stringify({ name: 'root', private: true, workspaces: ['packages/*'], ...(root['package.json'] ?? {}) }),
+    ...Object.fromEntries(Object.entries(root).filter(([k]) => k !== 'package.json')),
+    'packages/lib/package.json': JSON.stringify({ name: 'lib', ...(version === null ? {} : { version }), main: './index.ts' }),
+    'packages/lib/index.ts': '',
+    'packages/app/package.json': JSON.stringify({ name: 'app', ...(spec === undefined ? {} : { dependencies: { lib: spec } }) }),
+  })('lib', 'packages/app/use.ts');
+  const hit = 'packages/lib/index.ts';
+  it('npm links a satisfied range, `*` and the empty spec, never an unsatisfied range or a tag', () => {
+    const npm = { 'package.json': { packageManager: 'npm@10.8.0' } };
+    expect(ws('^2.0.0', npm)).toBe(hit);
+    expect(ws('*', npm, null)).toBe(hit);
+    expect(ws('', npm, null)).toBe(hit);
+    expect(ws('^1.0.0', npm)).toBeUndefined();
+    expect(ws('latest', npm)).toBeUndefined();
+    expect(ws('^2.0.0', npm, null)).toBeUndefined();
+    expect(ws('npm:lib@^2.0.0', npm)).toBeUndefined();
+    expect(ws('^1.0.0', { 'npm-shrinkwrap.json': '{}' })).toBeUndefined();
+  });
+  it('an undeclared import, an unknown manager, bun, or two lockfile kinds keep the earlier binding', () => {
+    expect(ws(undefined, { 'package.json': { packageManager: 'npm@10.8.0' } })).toBe(hit);
+    expect(ws('^1.0.0')).toBe(hit);
+    expect(ws('^1.0.0', { 'package.json': { packageManager: 'bun@1.2.0' } })).toBe(hit);
+    expect(ws('^1.0.0', { 'bun.lock': '{}' })).toBe(hit);
+    expect(ws('^1.0.0', { 'package-lock.json': '{}', 'yarn.lock': '' })).toBe(hit);
+    // A member declared only as a peer: the declaring package does not install it.
+    const peer = project({
+      'package.json': '{ "name": "root", "private": true, "workspaces": ["packages/*"], "packageManager": "yarn@1.22.22" }',
+      'packages/lib/package.json': '{ "name": "lib", "version": "2.0.0", "main": "./index.ts" }',
+      'packages/lib/index.ts': '',
+      'packages/app/package.json': '{ "name": "app", "peerDependencies": { "lib": "^1.0.0" } }',
+    });
+    expect(peer('lib', 'packages/app/use.ts')).toBe(hit);
+  });
+  it('pnpm reads its version from packageManager or the lockfile, and link-workspace-packages from .npmrc and pnpm-workspace.yaml', () => {
+    const lock = (v) => ({ 'pnpm-lock.yaml': `lockfileVersion: '${v}'\n` });
+    expect(ws('^2.0.0', lock('9.0'))).toBeUndefined(); // pnpm 9 or later: off by default
+    expect(ws('^2.0.0', lock('6.0'))).toBe(hit); // pnpm 8 or earlier: on by default
+    expect(ws('^1.0.0', lock('6.0'))).toBeUndefined(); // on, but the range is not satisfied
+    expect(ws('^2.0.0', { 'pnpm-lock.yaml': 'importers: {}\n' })).toBe(hit); // no version: unknown
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@8.15.0' } })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@9.11.0' }, '.npmrc': 'link-workspace-packages = deep\n' })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@8.15.0' }, '.npmrc': 'link-workspace-packages=false\n' })).toBeUndefined();
+    // pnpm 11 reads no such setting from .npmrc; pnpm 10.6 and later read it from pnpm-workspace.yaml, earlier ones do not.
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@11.0.0' }, '.npmrc': 'link-workspace-packages=true\n' })).toBeUndefined();
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@10.6.0' }, 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: true\n" })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@10' }, 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: true\n" })).toBeUndefined();
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@10.5.0' }, 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: true\n" })).toBeUndefined();
+    // Two places that apply and disagree: unknown, the earlier binding.
+    expect(ws('^1.0.0', { ...lock('9.0'), 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: false\n", '.npmrc': 'link-workspace-packages=true\n' })).toBe(hit);
+  });
+  it('pnpm with linking on takes a tag and the wildcard specs as any version, an exact version as written', () => {
+    const on = { 'package.json': { packageManager: 'pnpm@9.11.0' }, '.npmrc': 'link-workspace-packages=true\n' };
+    expect(ws('latest', on)).toBe(hit);
+    expect(ws('^', on, null)).toBe(hit);
+    expect(ws('~', on)).toBe(hit);
+    expect(ws('*', on, '1.0.0-beta')).toBe(hit);
+    expect(ws('1', on, '1')).toBe(hit);
+    expect(ws('github:a/lib', on)).toBeUndefined();
+  });
+  it('yarn links a satisfied range; yarn 2 and later not with enableTransparentWorkspaces off', () => {
+    expect(ws('^2.0.0', { 'yarn.lock': '# yarn lockfile v1\n' })).toBe(hit);
+    expect(ws('^1.0.0', { 'yarn.lock': '# yarn lockfile v1\n' })).toBeUndefined();
+    expect(ws('latest', { 'yarn.lock': '# yarn lockfile v1\n' })).toBeUndefined();
+    expect(ws('^2.0.0', { 'yarn.lock': '__metadata:\n  version: 8\n' })).toBe(hit);
+    expect(ws('^2.0.0', { 'yarn.lock': '', '.yarnrc.yml': 'enableTransparentWorkspaces: false\n' })).toBeUndefined();
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'yarn@4.5.0' }, '.yarnrc.yml': 'nodeLinker: node-modules\n' })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'yarn@1.22.22' }, '.yarnrc.yml': 'enableTransparentWorkspaces: false\n' })).toBe(hit);
+  });
+});
+
 describe('resolveTsPath — an excluded file acts as though it does not exist', () => {
   const builtCore = {
     'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js", "types": "./dist/index.d.ts", "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } } }',

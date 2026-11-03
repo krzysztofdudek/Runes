@@ -17,12 +17,12 @@ import { type DiagnosticSink, type Failure } from '../diagnostics.mjs';
  *      package.json). No package root → undefined. Never joined onto the importer's own
  *      directory, which names a file the import does not mean.
  *   3. Package-internal ('#x') → the nearest package.json `imports` map (exact key, then
- *      the longest `*` pattern); a relative target resolves inside that package, a bare
- *      target resolves as step 4 would.
+ *      the longest `*` pattern; the target chosen by the conditions, as for `exports`); a
+ *      relative target resolves inside that package, a bare target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -48,6 +48,10 @@ export interface TsResolveDeps {
 export interface TsPathConfig {
     /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
     baseUrl?: string;
+    /** `moduleResolution` and `module`, lower-cased, and `customConditions`, when set anywhere in the chain: what the conditions of a package's `exports` and `imports` are chosen by. */
+    moduleResolution?: string;
+    module?: string;
+    customConditions?: string[];
     /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
     paths?: {
         base: string;
@@ -67,6 +71,9 @@ export interface PackageManifest {
     module?: unknown;
     types?: unknown;
     typings?: unknown;
+    type?: unknown;
+    version?: unknown;
+    packageManager?: unknown;
     tsconfig?: unknown;
     workspaces?: unknown;
     dependencies?: unknown;

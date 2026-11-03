@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { diskFileView, type FileSource } from '../file-view.mjs';
 import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, type Failure } from '../diagnostics.mjs';
+import { satisfiesRange } from './semver-range.mjs';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -19,12 +20,12 @@ import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, typ
  *      package.json). No package root → undefined. Never joined onto the importer's own
  *      directory, which names a file the import does not mean.
  *   3. Package-internal ('#x') → the nearest package.json `imports` map (exact key, then
- *      the longest `*` pattern); a relative target resolves inside that package, a bare
- *      target resolves as step 4 would.
+ *      the longest `*` pattern; the target chosen by the conditions, as for `exports`); a
+ *      relative target resolves inside that package, a bare target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -58,17 +59,13 @@ export function resolveTsPath(
   if (spec.startsWith('#')) {
     const pkg = deps.nearestPackage(from);
     if (pkg === undefined) return undefined;
-    const targets = matchSubpathMap(pkg.manifest.imports, spec);
-    if (targets === undefined) return undefined;
-    for (const target of targets) {
-      const hit = target.startsWith('./')
+    return pickTarget(matchSubpathKey(pkg.manifest.imports, spec), exportConditions(from, deps), (target) =>
+      target.startsWith('./')
         ? probe(joinUnder(pkg.dir, target), exists, deps)
         : target.startsWith('#') || target.startsWith('/') || target.startsWith('.')
           ? undefined
-          : resolveBare(target, from, exists, deps);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
+          : resolveBare(target, from, exists, deps),
+    );
   }
   return resolveBare(spec, from, exists, deps);
 }
@@ -90,6 +87,10 @@ export interface TsResolveDeps {
 export interface TsPathConfig {
   /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
   baseUrl?: string;
+  /** `moduleResolution` and `module`, lower-cased, and `customConditions`, when set anywhere in the chain: what the conditions of a package's `exports` and `imports` are chosen by. */
+  moduleResolution?: string;
+  module?: string;
+  customConditions?: string[];
   /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
   paths?: { base: string; map: Record<string, string[]> };
 }
@@ -119,6 +120,9 @@ export interface PackageManifest {
   module?: unknown;
   types?: unknown;
   typings?: unknown;
+  type?: unknown;
+  version?: unknown;
+  packageManager?: unknown;
   tsconfig?: unknown;
   workspaces?: unknown;
   dependencies?: unknown;
@@ -185,14 +189,9 @@ function resolveWorkspacePackage(
   if (manifest.exports !== undefined && manifest.exports !== null) {
     // `exports` is the package's whole public surface: a subpath it does not list is not
     // importable, so no fallback to the directory layout.
-    const targets = matchSubpathMap(normalizeExports(manifest.exports), subpath);
-    if (targets === undefined) return undefined;
-    for (const target of targets) {
-      if (!target.startsWith('./')) continue;
-      const hit = probe(joinUnder(dir, target), exists);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
+    return pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps), (target) =>
+      target.startsWith('./') ? probe(joinUnder(dir, target), exists) : undefined,
+    );
   }
   if (subpath !== '.') return probe(joinUnder(dir, subpath), exists, deps);
   return entryOf(pkg, exists) ?? probe(joinUnder(dir, 'index'), exists);
@@ -208,15 +207,75 @@ function normalizeExports(exportsField: unknown): unknown {
   return exportsField;
 }
 
+const NODE_MODULE_KINDS = new Set(['node16', 'node18', 'node20', 'nodenext']);
+const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
+
 /**
- * Match `key` against a package.json `exports`/`imports` subpath map: the exact key
- * first, else the `*` pattern with the longest prefix. Returns the ordered string
- * targets (conditions in declaration order, arrays in order, `*` replaced), or
- * undefined when no key matches or the match is explicitly blocked (`null`).
+ * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
+ *
+ * The settings decide when the config in effect names the resolution: `moduleResolution` `bundler`, `node16` or `nodenext`, or, with no `moduleResolution`, a `module` that implies it in TypeScript 5 and 6 alike (`node16`, `node18`, `node20` and `nodenext` imply their own, `preserve` implies Bundler). Nothing else decides: with neither set the default moved between TypeScript 5 (Node10 or Classic) and 6 (Bundler), and under Node10 or Classic `exports` is not read at all, a difference Runes does not model.
+ *
+ * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
+ *
+ * The format is the file's, which is what TypeScript reads for an `import` or `export` statement; a `require()` call or `import x = require()` reads `require` and a dynamic `import()` may read `import` in a file of the other format, and the extractor does not say which form an import was written in, so those take the file's conditions too.
  */
-function matchSubpathMap(map: unknown, key: string): string[] | undefined {
-  const match = matchSubpathKey(map, key);
-  return match === undefined ? undefined : collectTargets(match.value, match.captured);
+function exportConditions(from: string, deps: TsResolveDeps): Set<string> | undefined {
+  const config = deps.tsconfigFor(from);
+  if (config === undefined || config === 'unknown') return undefined;
+  const { moduleResolution: resolution, module } = config;
+  const kind =
+    resolution === 'bundler' || (resolution === undefined && module === 'preserve')
+      ? 'bundler'
+      : resolution === 'node16' || resolution === 'nodenext' || (resolution === undefined && module !== undefined && NODE_MODULE_KINDS.has(module))
+        ? 'node'
+        : undefined;
+  if (kind === undefined || module === undefined) return undefined;
+  const ext = /\.[^./]*$/.exec(from)?.[0].toLowerCase();
+  let format: 'import' | 'require' | undefined;
+  if (ext === '.mts' || ext === '.mjs') format = 'import';
+  else if (ext === '.cts' || ext === '.cjs') format = 'require';
+  else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
+    if (kind === 'node' && NODE_MODULE_KINDS.has(module)) format = deps.nearestPackage(from)?.manifest.type === 'module' ? 'import' : 'require';
+    else if (kind === 'bundler' && module === 'commonjs') format = 'require';
+    else if (kind === 'bundler' && ESM_MODULE_KINDS.has(module)) format = 'import';
+  }
+  if (format === undefined) return undefined;
+  const conditions = new Set(['default', format, 'types', ...(config.customConditions ?? [])]);
+  if (kind === 'node') conditions.add('node');
+  return conditions;
+}
+
+/**
+ * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing, and so does a versioned `types@<range>` key, whose match depends on the compiler's version. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
+ */
+function pickTarget(
+  match: { value: unknown; captured: string | undefined } | undefined,
+  conditions: Set<string> | undefined,
+  resolve: (target: string) => string | undefined,
+): string | undefined {
+  if (match === undefined) return undefined;
+  const { value, captured } = match;
+  if (conditions === undefined) {
+    for (const target of collectTargets(value, captured) ?? []) {
+      const hit = resolve(target);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  }
+  const STOP = null;
+  const walk = (v: unknown): string | typeof STOP | undefined => {
+    if (typeof v === 'string') return resolve(captured === undefined ? v : v.split('*').join(captured));
+    if (v === null) return STOP;
+    const branches = Array.isArray(v) ? v.map((entry): [string, unknown] => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
+    for (const [condition, branch] of branches) {
+      if (condition.startsWith('types@') && conditions.has('types')) return STOP;
+      if (!conditions.has(condition)) continue;
+      const hit = walk(branch);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  };
+  return walk(value) ?? undefined;
 }
 
 /** The entry of a subpath map `key` selects: the exact key, else the `*` pattern with the longest prefix, with what its `*` captured. */
@@ -847,6 +906,13 @@ export function makeTsResolveDeps(
         }
         merged.paths = { base: dir, map };
       }
+      // tsc reads these two enum options case-insensitively; a value of another type is unset, as tsc then takes the default.
+      for (const field of ['moduleResolution', 'module'] as const) {
+        const value = options?.[field];
+        if (typeof value === 'string') merged[field] = value.toLowerCase();
+      }
+      const custom = options?.customConditions;
+      if (Array.isArray(custom)) merged.customConditions = custom.filter((c): c is string => typeof c === 'string');
       // `outDir` and `declarationDir` resolve from the config that sets them, like every path option; one outside the repository excludes nothing in it.
       for (const field of ['outDir', 'declarationDir'] as const) {
         const value = options?.[field];
@@ -887,6 +953,9 @@ export function makeTsResolveDeps(
   // `paths` resolve from the directory of the config that declares them unless a `baseUrl` is in effect (TypeScript 4.1+).
   const view = (config: LoadedConfig): TsPathConfig => ({
     ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+    ...(config.moduleResolution !== undefined ? { moduleResolution: config.moduleResolution } : {}),
+    ...(config.module !== undefined ? { module: config.module } : {}),
+    ...(config.customConditions !== undefined ? { customConditions: config.customConditions } : {}),
     ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
   });
   // Whether a referenced config whose options cannot be read may hold a file. tsc reads such a config without the bases it cannot read (a generated base absent from the commit), so it holds what the `files` and `include` of the configs in its chain it can read name, or by default what lies under its own directory; here its own directory always counts and every `exclude` is ignored, so the answer errs towards holding, which is towards silence. A referenced config that does not parse may hold anything.
@@ -909,27 +978,28 @@ export function makeTsResolveDeps(
     };
     return names(file);
   };
-  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced config that holds it, searched through the whole reference tree as tsserver and `tsc -b` search it: the first that holds it, in the order of `references`; when one met before it cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
+  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced config that holds it, searched through the whole reference tree as tsserver searches it (below): the first that holds it; when one met before it cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
   const configInEffect = (file: string, fromFile: string): TsPathConfig | 'unknown' => {
     const own = loadConfig(file, dirOf(file));
     if (own === 'unknown') return 'unknown';
     const references = referencesOf(file);
     if (references.length === 0 || holds(own, dirOf(file), fromFile)) return view(own);
     const seen = new Set([file]);
-    // The first referenced project, in the order of `references`, every direct reference before any nested one, that holds the file serves it, as tsserver picks the project of a file several projects include; an unreadable config that may hold the file, met before any that does, leaves the answer unknown.
-    const search = (first: string[]): TsPathConfig | 'unknown' | undefined => {
-      for (let level = first; level.length > 0; ) {
-        const next: string[] = [];
-        for (const ref of level) {
-          if (seen.has(ref)) continue;
-          seen.add(ref);
-          const loaded = loadConfig(ref, dirOf(ref));
-          if (loaded === 'unknown') {
-            if (mayHold(ref, fromFile)) return 'unknown';
-          } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
-          next.push(...referencesOf(ref));
-        }
-        level = next;
+    // The first referenced project that holds the file serves it, in tsserver's order (`forEachResolvedProjectReferenceProjectLoad`): a config's direct references in the order of `references`, then the same search through the references of each of them in turn, one whole subtree before the next. A config already met is not met again. An unreadable config that may hold the file, met before any that does, leaves the answer unknown.
+    const search = (refs: string[]): TsPathConfig | 'unknown' | undefined => {
+      const children: string[] = [];
+      for (const ref of refs) {
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        const loaded = loadConfig(ref, dirOf(ref));
+        if (loaded === 'unknown') {
+          if (mayHold(ref, fromFile)) return 'unknown';
+        } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
+        children.push(ref);
+      }
+      for (const child of children) {
+        const found = search(referencesOf(child));
+        if (found !== undefined) return found;
       }
       return undefined;
     };
@@ -1010,7 +1080,78 @@ export function makeTsResolveDeps(
       found ??= hit;
       declared = dir;
     }
-    return declared !== undefined ? found : packageIndex().get(lookup);
+    if (declared === undefined) return packageIndex().get(lookup);
+    // A member declared by a range (not `workspace:`, not a local path) is linked only where the package manager links by range; otherwise the install takes it from the registry. A peer dependency is not installed by the package that declares it (yarn 1 never installs peers, npm 7 and later and pnpm with auto-install-peers install them by rules of their own), so a member declared only as a peer stays bound, as before.
+    if (found !== undefined && found !== 'ambiguous' && typeof spec === 'string' && !spec.startsWith('workspace:') && field !== own!.manifest.peerDependencies && linksByRange(declared, spec, found) === false) return undefined;
+    return found;
+  };
+
+  // The package manager that installs the workspace rooted at `root`: the root package.json's `packageManager` (`pnpm@9.11.0`), else the one lockfile kind the root holds. undefined when neither says, when several lockfile kinds are there, or for a manager whose linking Runes does not read (bun). `major` is the pnpm or yarn major version where it is known; for pnpm with only a lockfile, `lockfileVersion` 9 and later is written by pnpm 9 and later (`major: 9` stands for "9 or later", `minor` unknown) and an earlier one by pnpm 8 or earlier (`major: 8`).
+  type Manager = { name: 'npm' | 'pnpm' | 'yarn'; major?: number; minor?: number; exact: boolean };
+  const managers = new Map<string, Manager | undefined>();
+  const managerAt = (root: string): Manager | undefined => {
+    if (managers.has(root)) return managers.get(root);
+    const at = (file: string): string => (root === '' ? file : `${root}/${file}`);
+    let manager: Manager | undefined;
+    const field = packageAt(root)?.manifest.packageManager;
+    const declaredManager = typeof field === 'string' ? /^(npm|pnpm|yarn|bun)@(\d+)(?:\.(\d+))?/.exec(field) : null;
+    if (declaredManager !== null) {
+      if (declaredManager[1] !== 'bun') manager = { name: declaredManager[1] as Manager['name'], major: Number(declaredManager[2]), ...(declaredManager[3] !== undefined ? { minor: Number(declaredManager[3]) } : {}), exact: true };
+    } else {
+      const kinds = [
+        isFile(at('pnpm-lock.yaml')) ? 'pnpm' : undefined,
+        isFile(at('package-lock.json')) || isFile(at('npm-shrinkwrap.json')) ? 'npm' : undefined,
+        isFile(at('yarn.lock')) ? 'yarn' : undefined,
+        isFile(at('bun.lock')) || isFile(at('bun.lockb')) ? 'bun' : undefined,
+      ].filter((k) => k !== undefined);
+      if (kinds.length === 1 && kinds[0] === 'pnpm') {
+        const version = /^lockfileVersion:\s*['"]?(\d+)/m.exec(files.read(at('pnpm-lock.yaml')) ?? '');
+        manager = { name: 'pnpm', ...(version !== null ? { major: Number(version[1]) >= 9 ? 9 : 8 } : {}), exact: false };
+      } else if (kinds.length === 1 && kinds[0] === 'yarn') {
+        // yarn 2 and later write `__metadata:` into yarn.lock and read .yarnrc.yml; yarn 1 does neither.
+        manager = { name: 'yarn', major: isFile(at('.yarnrc.yml')) || /^__metadata:/m.test(files.read(at('yarn.lock')) ?? '') ? 2 : 1, exact: false };
+      } else if (kinds.length === 1 && kinds[0] === 'npm') manager = { name: 'npm', exact: false };
+    }
+    managers.set(root, manager);
+    return manager;
+  };
+  // pnpm's `link-workspace-packages` for the workspace rooted at `root`: true (also `deep`), false, or undefined when it cannot be known. pnpm 9 turned its default from true to false ("link-workspace-packages: disabled by default", pnpm 9.0.0 changelog); pnpm up to 10 reads it from .npmrc and pnpm 10.6 and later also as `linkWorkspacePackages` in pnpm-workspace.yaml ("pnpm-workspace.yaml can now hold all the settings that .npmrc accepts", 10.6.0), and pnpm 11 reads only auth and registry settings from .npmrc (11.0.0). Two places that apply and disagree leave it unknown.
+  const pnpmLinksByRange = (root: string, manager: Manager): boolean | undefined => {
+    const at = (file: string): string => (root === '' ? file : `${root}/${file}`);
+    const { major, minor, exact } = manager;
+    const readsYaml = major === undefined || !exact || major > 10 || (major === 10 && minor !== undefined && minor >= 6);
+    const readsNpmrc = major === undefined || !exact || major < 11;
+    const settingOf = (text: string | undefined, pattern: RegExp): boolean | undefined => {
+      const value = text === undefined ? undefined : pattern.exec(text)?.[1].toLowerCase();
+      return value === undefined ? undefined : value !== 'false';
+    };
+    const values = [
+      readsYaml ? settingOf(isFile(at('pnpm-workspace.yaml')) ? files.read(at('pnpm-workspace.yaml')) : undefined, /^linkWorkspacePackages\s*:\s*['"]?(true|false|deep)['"]?\s*(?:#.*)?$/m) : undefined,
+      readsNpmrc ? settingOf(isFile(at('.npmrc')) ? files.read(at('.npmrc')) : undefined, /^\s*link-workspace-packages\s*=\s*['"]?(true|false|deep)['"]?\s*$/m) : undefined,
+    ].filter((v) => v !== undefined);
+    if (values.length > 0) return values.every((v) => v === values[0]) ? values[0] : undefined;
+    return major === undefined ? undefined : major < 9;
+  };
+  // Whether the package manager of the workspace rooted at `root` links `member` for a dependency declared as `spec` (a range or a tag, not `workspace:` and not a local path): false when it installs that dependency from the registry, undefined when the manager is not known (the member stays bound, as before). npm's arborist links a workspace when "the workspace node will satisfy the edge", `*` and the empty spec always, a range by `semver.satisfies(version, range, true)`, a tag never (it is valid only with a registry resolution). pnpm links by range only with link-workspace-packages on, and then picks by `resolveWorkspaceRange`: `*`, `^`, `~` and the empty spec match any version, a tag matches as `*` does, a range as `semver.maxSatisfying(versions, range, { loose: true })`. yarn 2 and later accept a pure semver range when `enableTransparentWorkspaces` (default true) is on and the workspace has a version (`Workspace.accepts`); yarn 1 links when `semver.satisfies(workspace version, range)`. Any other spec (`npm:` aliases, URLs, git) is never the member.
+  const linksByRange = (root: string, spec: string, member: TsPackage): boolean | undefined => {
+    const manager = managerAt(root);
+    if (manager === undefined) return undefined;
+    const raw = typeof member.manifest.version === 'string' ? member.manifest.version : undefined;
+    const trimmed = spec.trim();
+    const satisfied = raw === undefined ? undefined : satisfiesRange(raw, trimmed);
+    const isTag = /^[A-Za-z][\w.-]*$/.test(trimmed) && satisfiesRange('0.0.0', trimmed) === undefined;
+    if (manager.name === 'pnpm') {
+      const links = pnpmLinksByRange(root, manager);
+      if (links !== true) return links;
+      if (trimmed === '' || trimmed === '*' || trimmed === '^' || trimmed === '~' || isTag) return true;
+      return raw === trimmed || satisfied === true;
+    }
+    if (manager.name === 'npm') return trimmed === '' || trimmed === '*' || satisfied === true;
+    if (manager.major !== undefined && manager.major >= 2) {
+      const yarnrc = root === '' ? '.yarnrc.yml' : `${root}/.yarnrc.yml`;
+      if (isFile(yarnrc) && /^enableTransparentWorkspaces\s*:\s*['"]?false['"]?\s*(?:#.*)?$/m.test(files.read(yarnrc) ?? '')) return false;
+    }
+    return satisfied === true;
   };
 
   return {
