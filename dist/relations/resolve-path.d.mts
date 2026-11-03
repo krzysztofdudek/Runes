@@ -71,7 +71,7 @@ interface CargoManifest {
     undiscoveredDirs: string[];
     /** The directories whose auto-discovery `[package]` turns on by writing the flag `true` (`autobins = true`): the one thing that keeps discovery on in an edition 2015 package that declares a target of that kind. */
     discoveredDirs: string[];
-    /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) of which the manifest declares at least one target, by `path` or by `name`. */
+    /** The directories of the kinds (`src/bin`, `tests`, `examples`, `benches`) whose target array the manifest writes: a `[[bin]]` table, or an inline array, an empty `bin = []` included. */
     declaredDirs: string[];
     /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name` and no `path`: Cargo roots it at `<dir>/<name>.rs` or `<dir>/<name>/main.rs`, whether or not auto-discovery is on. */
     namedTargets: string[];
@@ -85,6 +85,8 @@ interface CargoManifest {
     workspaceEdition: string | undefined;
     /** `[lib].edition` as written, undefined when absent: the edition of the library target alone. */
     libEdition: string | undefined;
+    /** Whether a `[lib]` table is written, in any spelling: Cargo then has a library even where `src/lib.rs` is missing, at `src/<name>.rs` in edition 2015. */
+    libDeclared: boolean;
     /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
     packageName: string | undefined;
     /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
