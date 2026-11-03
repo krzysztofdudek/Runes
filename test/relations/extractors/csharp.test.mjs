@@ -855,7 +855,7 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
   });
   it('a value receiver emits an extension group, never a type group', async () => {
     const { uses } = await run(['using Shop.Infra;', 'class C { void M(object s) { s.AddInfra(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Shop.Infra.AddInfra()', 'AddInfra()']]);
+    expect(groups(uses)).toEqual([['AddInfra()', 'Shop.Infra.AddInfra()']]);
   });
   it('an unshadowed type-name receiver emits no extension group (a static call)', async () => {
     const { uses } = await run(['class C { void M() { Guard.Check(); } }', ''].join('\n'));
@@ -1171,7 +1171,7 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       '',
     ].join('\n'));
     // The last line's `X` is the field, so `X.Member()` is only an extension-method call on a value.
-    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Shop.Core.Member()', 'Member()']]);
+    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Member()', 'Shop.Core.Member()']]);
   });
 
   it('a `global::` receiver ignores a project-wide alias that silences the same bare name, and in a file of top-level statements `global::Program` is the file\'s own class', async () => {

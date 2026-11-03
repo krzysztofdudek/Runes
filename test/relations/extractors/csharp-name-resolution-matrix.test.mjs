@@ -216,6 +216,9 @@ describe('MATRIX — C# 14 forms on the shipped grammar', () => {
 describe('MATRIX — extension-method calls (bound at compile time)', () => {
   it('csharp-extension-via-owned-namespace', () => runCase('csharp-extension-via-owned-namespace'));
   it('csharp-extension-not-in-scope-silence', () => runCase('csharp-extension-not-in-scope-silence'));
+  it('csharp-extension-global-class-beside-using-edge', () => runCase('csharp-extension-global-class-beside-using-edge'));
+  it('csharp-extension-enclosing-namespace-beside-using-edge', () => runCase('csharp-extension-enclosing-namespace-beside-using-edge'));
+  it('csharp-extension-using-beside-other-global-method-edge', () => runCase('csharp-extension-using-beside-other-global-method-edge'));
 });
 
 describe('MATRIX — type arguments of generic methods and the remaining typed expressions', () => {
