@@ -42,11 +42,11 @@ import { indexScopes, walkScoped } from './scope-walk.mjs';
  *    and type arguments, the type arguments of a generic METHOD call (`services.AddScoped<IFoo, Foo>()`, `Resolve<Ctx>()`; never the method name), member-access receivers through a type name (`Guard.NotNull()`), attributes `[Foo]`/`[FooAttribute]` (a generic one by its name without type arguments, `[A.Gen<T>]` as `A.Gen`, and one after a using alias, `[S::Foo]`, in the aliased namespace), generic constraints, `typeof`/`is`/`as`/
  *    cast operands, tuple/array/nullable element types (a named tuple type argument the grammar misreads as comparisons included), the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
- *    verbatim/top-level LAST), and emit it as a single `DetectedDep`:
+ *    the compilation unit's usings LAST), and emit it as a single `DetectedDep`:
  *      [alias-expansion?]                              ← leftmost segment is a local alias
  *        ++ [enclosing-namespace chain innermost→outermost]
- *        ++ [using-prefix block, code-point sorted]    ← ONE binding level (CS0104 set)
- *        ++ [verbatim / bare top-level]                ← farthest, last
+ *        ++ [verbatim / bare top-level]                ← the global namespace's own member
+ *        ++ [using-prefix block, code-point sorted]    ← the compilation unit's usings: ONE binding level (CS0104 set), farthest, last (C# spec §7.8.1 reads a namespace's members before the usings of its declaration, and the compilation unit declares the global namespace)
  *    The per-reference resolver (the consumer's relation pass) walks this group and takes the FIRST candidate
  *    that binds to a UNIQUE mapped definition — that IS the binding; it emits at most one
  *    edge and STOPS, never reaching a farther candidate. A nearer candidate that is
@@ -1608,7 +1608,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      * dotted partial name or a bare identifier) with its precomputed `enclosingNs` chain. Candidate
      * order = C# name-binding order:
      *   [alias-expansion?] ++ [enclosing-ns chain innermost→outermost]
-     *                       ++ [using-prefix block, sorted] ++ [verbatim / bare top-level]
+     *                       ++ [verbatim / bare top-level] ++ [compilation-unit using-prefix block, sorted]
      * with resolution refinements attached as hint metadata (invisible to the group's display
      * shape, which reads only `symbolKey`):
      *   - the alias candidate carries a CO-DEFINITION set (R8): the alias target plus the same
@@ -1676,9 +1676,10 @@ export function assembleCsharpCandidates(extract, options = {}) {
         // An alias of the compilation unit, or a project-wide `global using` alias, comes after every enclosing namespace.
         if (aliasView !== undefined && aliasView.bodyNs === undefined)
             pushAlias(aliasView);
-        // The using-prefix expansions of the compilation unit and the project (one CS0104 set).
+        // The global namespace's own member (the verbatim reading), before the using directives of the compilation unit, which is the declaration of the global namespace (C# spec §7.8.1): `using Lib;` beside a global `Order` leaves `Order` the global type.
+        add({ kind: 'symbol', symbolKey: ref });
+        // The using-prefix expansions of the compilation unit and the project (one CS0104 set), the last of the explicit readings.
         addSet(usingPrefixes.map((p) => ({ symbolKey: `${p}.${ref}`, nestedOnly: multi })));
-        add({ kind: 'symbol', symbolKey: ref }); // verbatim / bare top-level — LAST of the explicit readings
         // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
         if (ref === 'Program')
             add({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
@@ -1820,7 +1821,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 11,
+    rev: 12,
     declarations,
     uses,
 };

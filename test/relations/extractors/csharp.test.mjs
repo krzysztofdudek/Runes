@@ -259,7 +259,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // `List` simply resolves to no in-graph declaration (fail-to-silence), so the candidates are
     // harmless — only the in-scope readings are ever produced.
     const { uses } = await run(['using Foo.Bar;', 'class C : List<int> { }', ''].join('\n'));
-    expect(symbolKeys(uses)).toEqual(['Foo.Bar.List', 'List']);
+    expect(symbolKeys(uses)).toEqual(['List', 'Foo.Bar.List']);
   });
 
   it('handles a base_list with MULTIPLE entries (qualified bare base + bare interface)', async () => {
@@ -766,42 +766,40 @@ describe('csharp NESTED-TYPE resolution + the tri-state / split over-silence gua
     );
   });
 
-  it('USING-LEVEL CS0104: two usings each defining `Widget` → the using tier is AMBIGUOUS → SILENCE (never the foreign verbatim either)', async () => {
-    // `using L1; using L2;` both declare `Widget`; a stray top-level `Widget` also exists in
-    // node d. The bare base `Widget`'s ordered group is the enclosing-ns level, then the
-    // code-point-sorted using prefixes (L1.Widget, L2.Widget), then the verbatim `Widget` LAST.
-    // The using-prefix expansions form ONE binding level (a CS0104 set): both L1.Widget and
-    // L2.Widget resolve, to DIFFERENT nodes → the simple name is genuinely ambiguous per the C#
-    // spec → the whole group SILENCES. It binds NEITHER an arbitrary import NOR the foreign
-    // top-level `Widget` in node d. Zero edge, zero false positive.
-    await parseAll(
+  // `using L1; using L2;` both declare `Widget`. The bare base `Widget`'s ordered group is the enclosing-ns level, then the global namespace's own member (the verbatim `Widget`), then the code-point-sorted using prefixes of the compilation unit (L1.Widget, L2.Widget) LAST: C# reads a namespace's members before the usings of its declaration, and the compilation unit declares the global namespace (spec §7.8.1). The using-prefix expansions form ONE binding level (a CS0104 set).
+  const usingTier = (files, check) =>
+    parseAll(
       [
         { path: 'src/a/W.cs', code: 'namespace L1;\nclass Widget { }\n' },
         { path: 'src/b/W.cs', code: 'namespace L2;\nclass Widget { }\n' },
-        { path: 'src/d/W.cs', code: 'class Widget { }\n' }, // top-level `Widget` — must NEVER bind
+        ...files,
         { path: 'src/c/Use.cs', code: 'using L1;\nusing L2;\nnamespace App;\nclass C : Widget { }\n' },
       ],
-      ([l1, l2, verbatim, consumer]) => {
+      (parsed) => {
+        const consumer = parsed[parsed.length - 1];
         const st = new SymbolTable();
-        for (const f of [l1, l2, verbatim]) {
+        for (const f of parsed.slice(0, -1)) {
           for (const d of csharpExtractor.declarations(f)) st.declare('csharp', d.symbolKey, f.path);
         }
         const owners = csharpExtractor.uses(consumer);
-        const group = groupContaining(owners, 'Widget');
-        // Verbatim LAST; using prefixes code-point sorted ahead of it.
-        expect(group).toEqual(['App.Widget', 'L1.Widget', 'L2.Widget', 'Widget']);
-        expect(group[group.length - 1]).toBe('Widget');
+        expect(groupContaining(owners, 'Widget')).toEqual(['App.Widget', 'Widget', 'L1.Widget', 'L2.Widget']);
         const resolver = makeResolver({
-          ownerIndex: {
-            ownerOf: (f) => (f === 'src/a/W.cs' ? 'a' : f === 'src/b/W.cs' ? 'b' : f === 'src/d/W.cs' ? 'd' : undefined),
-          },
+          ownerIndex: { ownerOf: (f) => f.split('/')[1] },
           symbolTable: st,
           resolvePathToFile: () => undefined,
         });
-        const bound = walkResolve(owners, 'Widget', resolver, consumer.path);
-        expect(bound).toBeUndefined(); // CS0104: ambiguous using tier silences the whole group
+        check(walkResolve(owners, 'Widget', resolver, consumer.path));
       },
     );
+
+  it('USING-LEVEL CS0104: two usings each defining `Widget` → the using tier is AMBIGUOUS → SILENCE', async () => {
+    // Both L1.Widget and L2.Widget resolve, to DIFFERENT nodes → the simple name is genuinely ambiguous per the C# spec → the whole group SILENCES, never an arbitrary import.
+    await usingTier([], (bound) => expect(bound).toBeUndefined());
+  });
+
+  it('a `Widget` the global namespace declares binds before the ambiguous using tier of the compilation unit', async () => {
+    // The global `Widget` (node d) is read before the compilation unit's usings, so the CS0104 set is never reached.
+    await usingTier([{ path: 'src/d/W.cs', code: 'class Widget { }\n' }], (bound) => expect(bound).toBe('d'));
   });
 });
 
@@ -1103,7 +1101,7 @@ describe('csharp — `global::` with a single name binds the global namespace on
 
   it('`global::Settings` and `global::Box<Order>` are rooted: no enclosing namespace or using candidate; the type argument is an ordinary reference', async () => {
     const { uses } = await run(['using Shop.Core;', 'namespace App;', 'class C : global::Base { global::Settings s; global::Box<Order> b; object M() => new global::Thing(); }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['Base'], ['Settings'], ['Box'], ['App.Order', 'Shop.Core.Order', 'Order'], ['Thing']]);
+    expect(groups(uses)).toEqual([['Base'], ['Settings'], ['Box'], ['App.Order', 'Order', 'Shop.Core.Order'], ['Thing']]);
   });
   it('`global::Program` falls back to the implicit Program; a type parameter `T` never shadows `global::T`', async () => {
     const { uses } = await run(['namespace App;', 'class C<T> { global::Program p; global::T t; T u; }', ''].join('\n'));
@@ -1148,9 +1146,9 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       ['A.Bar', 'A.BarAttribute'],
       ['Foo', 'FooAttribute'],
       ['Gen', 'GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
       ['A.BazAttribute'],
-      ['Shop.Web.Local', 'Shop.Local', 'Shop.Core.Local', 'Local', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'Shop.Core.LocalAttribute', 'LocalAttribute'],
+      ['Shop.Web.Local', 'Shop.Local', 'Local', 'Shop.Core.Local', 'Shop.Web.LocalAttribute', 'Shop.LocalAttribute', 'LocalAttribute', 'Shop.Core.LocalAttribute'],
     ]);
   });
 
@@ -1173,7 +1171,7 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
       '',
     ].join('\n'));
     // The last line's `X` is the field, so `X.Member()` is only an extension-method call on a value.
-    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Shop.Core.Member()', 'Member()']]);
+    expect(groups(uses)).toEqual([['X'], ['A', 'A.B', 'A.B.C'], ['X'], ['Box'], ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'], ['Shop.Web.Member()', 'Shop.Member()', 'Shop.Core.Member()', 'Member()']]);
   });
 
   it('a `global::` receiver ignores a project-wide alias that silences the same bare name, and in a file of top-level statements `global::Program` is the file\'s own class', async () => {
@@ -1237,13 +1235,13 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
     // `[A.Gen<Order>]` looked up `A.Gen<Order>` and `A.Gen<Order>Attribute` and emitted no type argument.
     const { uses } = await run(['using Shop.Core;', 'namespace Shop.Web;', '[A.Gen<Order>]', '[global::A.B.Gen<Order, Item>]', '[S::A.Gen<Item>]', 'class C { }', ''].join('\n'));
     expect(groups(uses)).toEqual([
-      ['Shop.Web.A.Gen', 'Shop.A.Gen', 'Shop.Core.A.Gen', 'A.Gen', 'Shop.Web.A.GenAttribute', 'Shop.A.GenAttribute', 'Shop.Core.A.GenAttribute', 'A.GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'],
+      ['Shop.Web.A.Gen', 'Shop.A.Gen', 'A.Gen', 'Shop.Core.A.Gen', 'Shop.Web.A.GenAttribute', 'Shop.A.GenAttribute', 'A.GenAttribute', 'Shop.Core.A.GenAttribute'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
       ['A.B.Gen', 'A.B.GenAttribute'],
-      ['Shop.Web.Order', 'Shop.Order', 'Shop.Core.Order', 'Order'],
-      ['Shop.Web.Item', 'Shop.Item', 'Shop.Core.Item', 'Item'],
+      ['Shop.Web.Order', 'Shop.Order', 'Order', 'Shop.Core.Order'],
+      ['Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
       // A qualifier through a using alias names nothing, as in a type position; the type argument is still read.
-      ['Shop.Web.Item', 'Shop.Item', 'Shop.Core.Item', 'Item'],
+      ['Shop.Web.Item', 'Shop.Item', 'Item', 'Shop.Core.Item'],
     ]);
   });
 

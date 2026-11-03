@@ -38,6 +38,7 @@ import { withParsedFile } from '../../helpers/tree-sitter.mjs';
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — using-import & alias forms', () => {
   it('csharp-plain-using-simple-name', () => runCase('csharp-plain-using-simple-name'));
+  it('csharp-using-beside-global-type-edge', () => runCase('csharp-using-beside-global-type-edge'));
   it('csharp-using-static-no-namespace-prefix', () => runCase('csharp-using-static-no-namespace-prefix'));
   it('csharp-using-alias', () => runCase('csharp-using-alias'));
   it('csharp-using-alias-to-namespace', () => runCase('csharp-using-alias-to-namespace'));
