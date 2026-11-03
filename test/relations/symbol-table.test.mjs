@@ -50,3 +50,21 @@ describe('SymbolTable — JVM namespace and package members', () => {
     expect(st.filesInPackage('kotlin', 'zz')).toEqual([]);
   });
 });
+
+describe('SymbolTable.hasNamespace', () => {
+  it('knows every dotted namespace a declared key lies in, and nothing else', () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'A.B.Order', 'Order.cs');
+    st.declare('csharp', 'C.Outer+Inner', 'Outer.cs');
+    st.declare('csharp', 'D.Ext.Run()', 'Ext.cs');
+    st.declare('csharp', 'Global', 'Global.cs');
+    expect(st.hasNamespace('csharp', 'A')).toBe(true);
+    expect(st.hasNamespace('csharp', 'A.B')).toBe(true);
+    expect(st.hasNamespace('csharp', 'A.B.Order')).toBe(false); // a type, not a namespace
+    expect(st.hasNamespace('csharp', 'C')).toBe(true);
+    expect(st.hasNamespace('csharp', 'C.Outer')).toBe(false); // a type nesting another
+    expect(st.hasNamespace('csharp', 'D.Ext')).toBe(true); // the namespace of an extension key
+    expect(st.hasNamespace('csharp', 'Global')).toBe(false);
+    expect(st.hasNamespace('java', 'A')).toBe(false); // per language
+  });
+});
