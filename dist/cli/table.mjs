@@ -98,6 +98,16 @@ export function tableProblems(table) {
         if (typeof spec.stdoutJson === 'string' && !Object.hasOwn(flags, spec.stdoutJson))
             p.push(`${at}: stdoutJson names --${spec.stdoutJson}, which it does not take`);
     }
+    // A tool's name joins a command's words with `_`, a space and a dash alike, so two public commands can end up with one name.
+    const byToolName = new Map();
+    for (const cmd of Object.keys(commands).filter((c) => !commands[c]?.internal)) {
+        const joined = cmd.replace(/[ -]/g, '_');
+        const first = byToolName.get(joined);
+        if (first === undefined)
+            byToolName.set(joined, cmd);
+        else
+            p.push(`commands "${first}" and "${cmd}": both give the MCP tool name "<prefix>${joined}"`);
+    }
     for (const [alias, target] of Object.entries(table?.aliases ?? {})) {
         if (!COMMAND_KEY.test(alias))
             p.push(`alias "${alias}": not lower-case words`);

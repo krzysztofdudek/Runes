@@ -132,6 +132,8 @@ The command table: `defineTable` and the shape it takes (`CommandTable`, `Comman
 
 The MCP server generated from a table, the spawn executor, the stdio transport, and the pieces a consumer with its own message handler reuses (`buildTools`, `argvFor`, `answersJson`, `commandForTool`, `toolName`, `InvalidParams`).
 
+Two public commands may not give one tool name: `toolName` joins a command's words with `_`, a space and a dash alike, so `a a` and `a-a` would both be `<prefix>a_a`, and a call to that name could not tell which command it meant. `defineTable` refuses such a table and `buildTools` throws for one that skipped `defineTable`, each naming both commands; a command marked `internal` has no tool and takes no part in the check.
+
 The in-process executor is internal: `inProcess`, `InProcessExecutor`, `CallContext` and the `Executor` union are not exported, and an in-process value given as `ServerOptions.executor` is outside the promise. No tool runs one: Jarl dispatches in process through its own message handler and `serveStdio`, and builds its refusals itself, so it never goes through the adapter's error document. The in-process `run` answers with the CLI's internal `CommandResult` and throws its internal `CliError` to give a refusal its `why` and `next`; exporting the executor without those would let a consumer signal only a `code`. A 1.x minor exports the four with `CommandResult` and `CliError` when a tool adopts the executor.
 
 | Export | Kind | Consumers |
