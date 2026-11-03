@@ -285,6 +285,7 @@ describe('MATRIX — C# using aliases to a type, with and without use (issue 185
 describe('MATRIX — C# using directive targets, read where the directive reads them', () => {
   it('csharp-alias-target-type-argument-directive-scope-edge', () => runCase('csharp-alias-target-type-argument-directive-scope-edge'));
   it('csharp-using-static-namespace-body-generic-edge', () => runCase('csharp-using-static-namespace-body-generic-edge'));
+  it('csharp-alias-namespace-beside-global-type-edge', () => runCase('csharp-alias-namespace-beside-global-type-edge'));
 });
 
 describe('MATRIX — C# alias-qualified type names (issue 188)', () => {

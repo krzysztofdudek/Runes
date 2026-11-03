@@ -619,8 +619,8 @@ export type CsharpRefDescriptor =
    *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
    *  resolves verbatim-from-root; otherwise dropped (extern/unknown alias → R13 silence). */
   | { kind: 'alias'; aliasName: string; tail: string; line: number; enclosingNs: string[]; at: number }
-  /** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). */
-  | { kind: 'target'; fqn: string; line: number; enclosingNs: string[] }
+  /** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). `nearest` marks the alias's own non-generic target, which may name a namespace as much as a type: inside a namespace body only its nearest reading is read, because a nearer namespace of that name, which no type key shows, would decide before any farther type (C# spec §7.8.1); a farther type keeps its edge on the lines that use the alias. */
+  | { kind: 'target'; fqn: string; line: number; enclosingNs: string[]; nearest?: boolean }
   /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
   | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; at: number; rooted?: boolean; alias?: string }
   /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. */
@@ -1006,9 +1006,9 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   }
 
   /** Emit one named type written in a using directive's target as the directive reads it (a `target` descriptor): in the namespace body that holds the directive, nearest namespace first, no using directive or alias of that body taking part. A bare `Program` in a file of top-level statements names that file's own class and is not emitted, as in `pushRef`. */
-  const pushTarget = (name: string, directive: Node, line: number): void => {
+  const pushTarget = (name: string, directive: Node, line: number, nearest = false): void => {
     if (namesOwnProgram(name)) return;
-    refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(file, directive) });
+    refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(file, directive), ...(nearest ? { nearest } : {}) });
   };
 
   /**
@@ -1066,13 +1066,19 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   });
 
   // ── The using alias target and the named types embedded in it (R7 + A6) ─────────────────
-  // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part.
+  // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.Repo` before `Repo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part; a plain target is read more narrowly, below.
   walk(file.tree.rootNode, (node) => {
     if (node.type !== 'using_directive') return undefined;
     const aliasName = node.childForFieldName('name');
     if (aliasName === null) return false; // not an alias directive
     const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
-    if (target !== undefined && target !== null) emitDirectiveType(target, node);
+    if (target === undefined || target === null) return false;
+    // A plain name (`using M = Models;`, `using F = A.B.Foo;`) may name a namespace as much as a type, and a nearer namespace of that name, which no type key shows, decides before any farther type (`namespace App; using M = Models;` with a namespace `App.Models` and a global type `Models` names the namespace): inside a namespace body its directive reads only the nearest reading (`nearest`), a deliberate silence for an unused alias to a farther type. A generic name is always a type and is read in full.
+    if (target.type === 'identifier' || (target.type === 'qualified_name' && !target.text.includes('<') && !target.text.includes('::'))) {
+      pushTarget(qualifiedNameParts(target).name, node, target.startPosition.row + 1, true);
+    } else {
+      emitDirectiveType(target, node);
+    }
     return false;
   });
 
@@ -1606,6 +1612,11 @@ export function assembleCsharpCandidates(
     switch (r.kind) {
       case 'target': {
         // A named type of a using alias or `using static` target: the enclosing namespaces innermost first, then the name from the root; no using prefix and no alias takes part. A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
+        // An alias's own plain target inside a namespace body (`nearest`) reads its nearest reading only: a nearer namespace of that name would hide every farther one.
+        if (r.nearest === true && r.enclosingNs.length > 0) {
+          pushKeys([`${r.enclosingNs[0]}.${r.fqn}`], r.line);
+          break;
+        }
         const keys = dedupKeys([...r.enclosingNs.map((ns) => `${ns}.${r.fqn}`), r.fqn]);
         const candidates: TargetHint[] = keys.map((symbolKey) => ({ kind: 'symbol', symbolKey }));
         if (r.fqn === 'Program') candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
