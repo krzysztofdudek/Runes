@@ -8,7 +8,7 @@ cites: "pnpm `link-workspace-packages=true` (.npmrc): a dependency declared by a
 
 ## Rule
 
-A dependency written as a semver range (`^4.0.0`) of a workspace package whose version satisfies it binds to that package by name when pnpm links by range, which a repository asks for with `link-workspace-packages=true` in its .npmrc (the case format carries no such file and Runes does not read it), so the import of the package's own name gives an edge to its entry file. Runes binds a member by its name whatever range the dependency states, which is right whenever pnpm links; a range the member's version does not satisfy, or a pnpm that does not link by range, installs a registry copy and binds nothing, and Runes does not tell these apart yet.
+A dependency written as a semver range (`^4.0.0`) of a workspace package whose version satisfies it binds to that package by name when pnpm links by range, which a repository asks for with `link-workspace-packages=true` in its .npmrc (the case format carries no such file and Runes does not read it), so the import of the package's own name gives an edge to its entry file. Runes binds a member by its name whatever range the dependency states, which is right whenever pnpm links; a range the member's version does not satisfy, or a pnpm that does not link by range, installs a registry copy and binds nothing, and Runes does not tell these apart yet. The fixture's `exports` names one target, so no export-condition question comes in.
 
 ## Files
 
