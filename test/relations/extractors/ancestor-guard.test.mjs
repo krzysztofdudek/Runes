@@ -13,7 +13,12 @@ function ancestorClimbs(text) {
   const found = [];
   text.split('\n').forEach((line, i) => {
     const code = line.replace(/\/\/.*$/, '');
-    if (/\b(\w+)\s*=\s*\1\s*!?\s*\.\s*parent\b/.test(code) || /\bclosest\s*\(/.test(code)) {
+    // `x = x.parent`, `x = x!.parent`, `x = x?.parent`; `f(node.parent)`, `f(node?.parent, …)` and `f(a, node!.parent)`, the recursive climb (a call handed the parent of a node); `closest(`.
+    if (
+      /\b(\w+)\s*=\s*\1\s*[!?]?\s*\.\s*parent\b/.test(code) ||
+      /(?:(?<![\w.])|(?<=\bthis\.))(?!(?:(?:if|while|for|switch)|(?:is|has)[A-Z_]\w*)\s*\()\w+\s*\((?:[^()]|\([^()]*\))*?\b\w+\s*[!?]?\s*\.\s*parent\s*[!?]?\s*[,)]/.test(code) ||
+      /\bclosest\s*\(/.test(code)
+    ) {
       found.push([i + 1, line.trim()]);
     }
   });
@@ -34,6 +39,25 @@ describe('no extractor climbs the ancestors in a loop', () => {
     assert.equal(ancestorClimbs('while (cur !== null) { cur = cur.parent; }').length, 1);
     assert.equal(ancestorClimbs('cur = cur.parent!;').length, 1);
     assert.equal(ancestorClimbs('const found = closest(node, "class");').length, 1);
+    // The forms that slipped past: an optional-chaining climb and a recursive one.
+    assert.equal(ancestorClimbs('cur = cur?.parent;').length, 1);
+    assert.equal(ancestorClimbs('cur = cur?.parent ?? null;').length, 1);
+    assert.equal(ancestorClimbs('return enclosing(node.parent);').length, 1);
+    assert.equal(ancestorClimbs('return enclosing(node?.parent, depth + 1);').length, 1);
+    assert.equal(ancestorClimbs('return enclosing(depth + 1, node!.parent);').length, 1);
+    // Only the whole keywords are conditions: a function whose name starts with one is a call.
+    assert.equal(ancestorClimbs('return formatScope(node.parent);').length, 1);
+    assert.equal(ancestorClimbs('return forwardTo(node.parent);').length, 1);
+    // A bracket before the parent argument does not hide the call.
+    assert.equal(ancestorClimbs('return enclosing(next(d), node.parent);').length, 1);
+    // A method of another object is not a recursion; a method of this one is.
+    assert.equal(ancestorClimbs('if (seen.has(node.parent)) return;').length, 0);
+    assert.equal(ancestorClimbs('seen.add(node.parent);').length, 0);
+    assert.equal(ancestorClimbs('return this.enclosing(node.parent);').length, 1);
+    // A test of the parent, not a climb.
+    assert.equal(ancestorClimbs('if (node.parent) return;').length, 0);
+    assert.equal(ancestorClimbs('while (cur.parent) { n++; }').length, 0);
+    assert.equal(ancestorClimbs('return isExported(node.parent);').length, 0);
     assert.equal(ancestorClimbs('const p = node.parent; // one step').length, 0);
     assert.equal(ancestorClimbs('if (node.parent?.type !== "x") return;').length, 0);
   });
