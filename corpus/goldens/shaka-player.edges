@@ -1,0 +1,11 @@
+# runes corpus golden: shaka-player at 9babbcd3090f7d316199b084adcccc964099269e
+build/all.py:24	build/__init__.py
+build/apps.py:24	build/__init__.py
+build/check.py:31	build/__init__.py
+build/eslint-plugin-shaka-rules/index.js:10	build/eslint-plugin-shaka-rules/no-iterator-type.js
+build/eslint-plugin-shaka-rules/index.js:11	build/eslint-plugin-shaka-rules/private.js
+build/eslint-plugin-shaka-rules/index.js:7	build/eslint-plugin-shaka-rules/arg-comment-spacing.js
+build/eslint-plugin-shaka-rules/index.js:8	build/eslint-plugin-shaka-rules/array-no-instanceof.js
+build/eslint-plugin-shaka-rules/index.js:9	build/eslint-plugin-shaka-rules/buffersource-no-instanceof.js
+build/test.py:26	build/__init__.py
+eslint.config.mjs:13	build/eslint-plugin-shaka-rules/index.js
