@@ -419,6 +419,10 @@ function declaresVariable(decl, scope) {
     const target = tuple.parent;
     return (target.type === 'assignment_expression' || target.type === 'foreach_statement') && target.childForFieldName('left')?.id === tuple.id;
 }
+/** True when a using directive's namespace is written after `global::` (`using global::Core;`): it names that namespace from the global namespace. */
+function isRootedDirective(directive) {
+    return directive.namedChildren.some((c) => c !== null && NAMESPACE_NODE_TYPES.has(c.type) && c.text.startsWith('global::'));
+}
 /** True when the directive has an anonymous token child of the given keyword type. */
 function hasTokenChild(directive, token) {
     for (let i = 0; i < directive.childCount; i++) {
@@ -516,7 +520,7 @@ function buildUsingScope(file) {
             else {
                 prefixes.push(ns);
                 const block = directiveBlock(file, node, scope, info);
-                prefixDecls.push({ ns, body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
+                prefixDecls.push({ ns, rooted: isRootedDirective(node), body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
             }
         }
         return undefined;
@@ -562,7 +566,7 @@ function nsEntry(frame, info) {
         else {
             const ns = directiveNamespaceText(d);
             if (ns !== undefined && ns !== '')
-                prefixes.push(ns);
+                prefixes.push(isRootedDirective(d) ? `global::${ns}` : ns);
         }
     }
     let entry = null;
@@ -1463,7 +1467,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
         };
         for (const d of blockPrefixes)
             if (at >= d.start && at < d.end)
-                level(d.body[0]).prefixes.push(d.ns);
+                level(d.body[0]).prefixes.push(d.rooted ? `global::${d.ns}` : d.ns);
         for (const { name, d } of blockAliases)
             if (at >= d.start && at < d.end)
                 level(d.body[0]).aliases.push(name);
@@ -1472,9 +1476,12 @@ export function assembleCsharpCandidates(extract, options = {}) {
     /** The directive of the alias `name` declared in a body of namespace `ns` whose block holds `at`. */
     const aliasAt = (name, ns, at) => (scope.aliasDecls.get(name) ?? []).find((d) => d.body[0] === ns && at >= d.start && at < d.end);
     /**
-     * The namespaces a namespace name written in a using directive may stand for (`name`, read in a body whose enclosing namespaces are `chain`, innermost first, with the using directives of the declarations around that body in `levels`), in C# lookup order (spec §14.5.3, §7.8.1): at each namespace of the chain, nearest first, its member namespace of that name; where a declaration of that namespace holds an alias of the name's first segment, that alias decides, read where its own directive reads its target; the global namespace last. Each reading but the first carries the nearer names of the first segment the lookup would stop at (`shadow`), so a nearer namespace the repository declares voids it.
+     * The namespaces a namespace name written in a using directive may stand for (`name`, read in a body whose enclosing namespaces are `chain`, innermost first, with the using directives of the declarations around that body in `levels`), in C# lookup order (spec §14.5.3, §7.8.1): at each namespace of the chain, nearest first, its member namespace of that name; where a declaration of that namespace holds an alias of the name's first segment, that alias decides, read where its own directive reads its target; the global namespace last. A name written after `global::` is read from the global namespace only. Each reading but the first carries the nearer names of the first segment the lookup would stop at (`shadow`), so a nearer namespace the repository declares voids it.
      */
     const namespaceReadings = (chain, levels, at, name) => {
+        // A namespace written after `global::` is read from the global namespace only, whatever is nearer (C# spec §14.8.1).
+        if (name.startsWith('global::'))
+            return [{ key: name.slice('global::'.length), shadow: [] }];
         const lead = name.split('.')[0];
         const out = [];
         const shadow = [];
@@ -1813,7 +1820,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 10,
+    rev: 11,
     declarations,
     uses,
 };
