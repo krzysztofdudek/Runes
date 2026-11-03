@@ -92,6 +92,7 @@ describe('MATRIX — relative resolution (relative join pins the directory; exte
   it('typescript-explicit-ts-extension-edge', () => runCase('typescript-explicit-ts-extension-edge'));
   it('typescript-directory-index-edge', () => runCase('typescript-directory-index-edge'));
   it('typescript-index-mjs-cjs-edge', () => runCase('typescript-index-mjs-cjs-edge'));
+  it('typescript-esm-extensionless-import-edge', () => runCase('typescript-esm-extensionless-import-edge'));
   it('typescript-package-main-directory-edge', () => runCase('typescript-package-main-directory-edge'));
   it('typescript-sibling-same-name-trap-edge', () => runCase('typescript-sibling-same-name-trap-edge'));
   it('typescript-unmapped-target-silence', () => runCase('typescript-unmapped-target-silence'));
@@ -107,9 +108,12 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-tsconfig-baseurl-edge', () => runCase('typescript-tsconfig-baseurl-edge'));
   it('typescript-tsconfig-extends-paths-edge', () => runCase('typescript-tsconfig-extends-paths-edge'));
   it('typescript-tsconfig-references-paths-edge', () => runCase('typescript-tsconfig-references-paths-edge'));
+  it('typescript-tsconfig-references-first-project-edge', () => runCase('typescript-tsconfig-references-first-project-edge'));
+  it('typescript-tsconfig-references-direct-before-nested-edge', () => runCase('typescript-tsconfig-references-direct-before-nested-edge'));
   it('typescript-tsconfig-paths-multi-target-silence', () => runCase('typescript-tsconfig-paths-multi-target-silence'));
   it('typescript-tsconfig-alias-silence', () => runCase('typescript-tsconfig-alias-silence'));
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
+  it('typescript-workspace-semver-range-linked-edge', () => runCase('typescript-workspace-semver-range-linked-edge'));
   it('typescript-workspace-subpath-exports-edge', () => runCase('typescript-workspace-subpath-exports-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));

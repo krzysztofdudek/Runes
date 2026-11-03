@@ -22,7 +22,7 @@ import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, typ
  *      the longest `*` pattern); a relative target resolves inside that package, a bare
  *      target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
- *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it, and silence when several hold it and disagree. The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
+ *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
  *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
@@ -75,7 +75,7 @@ export function resolveTsPath(
 
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
-  /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, referenced configs that hold the file and disagree, or a referenced config that may hold the file and cannot be read), or undefined when the file has none. */
+  /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, a referenced config that may hold the file and cannot be read), or undefined when the file has none. */
   tsconfigFor(fromFile: string): TsPathConfig | 'unknown' | undefined;
   /** The nearest ancestor package of a file: its directory and parsed package.json. */
   nearestPackage(fromFile: string): TsPackage | undefined;
@@ -909,30 +909,31 @@ export function makeTsResolveDeps(
     };
     return names(file);
   };
-  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced configs that hold it, searched through the whole reference tree as tsserver and `tsc -b` search it: when they agree on `baseUrl` and `paths`, those; when they disagree, or one cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
+  // The options in effect for a file whose nearest config is `file`. A solution-style config (one with `references` whose own project does not hold the file, as `files: []` holds nothing) defers to the referenced config that holds it, searched through the whole reference tree as tsserver and `tsc -b` search it: the first that holds it, in the order of `references`; when one met before it cannot be read and may hold the file, 'unknown'; when none holds it, the nearest config's own options.
   const configInEffect = (file: string, fromFile: string): TsPathConfig | 'unknown' => {
     const own = loadConfig(file, dirOf(file));
     if (own === 'unknown') return 'unknown';
     const references = referencesOf(file);
     if (references.length === 0 || holds(own, dirOf(file), fromFile)) return view(own);
-    const holding: TsPathConfig[] = [];
     const seen = new Set([file]);
-    const search = (configs: string[]): boolean => {
-      for (const ref of configs) {
-        if (seen.has(ref)) continue;
-        seen.add(ref);
-        const loaded = loadConfig(ref, dirOf(ref));
-        if (loaded === 'unknown') {
-          if (mayHold(ref, fromFile)) return false;
-        } else if (holds(loaded, dirOf(ref), fromFile)) holding.push(view(loaded));
-        if (!search(referencesOf(ref))) return false;
+    // The first referenced project, in the order of `references`, every direct reference before any nested one, that holds the file serves it, as tsserver picks the project of a file several projects include; an unreadable config that may hold the file, met before any that does, leaves the answer unknown.
+    const search = (first: string[]): TsPathConfig | 'unknown' | undefined => {
+      for (let level = first; level.length > 0; ) {
+        const next: string[] = [];
+        for (const ref of level) {
+          if (seen.has(ref)) continue;
+          seen.add(ref);
+          const loaded = loadConfig(ref, dirOf(ref));
+          if (loaded === 'unknown') {
+            if (mayHold(ref, fromFile)) return 'unknown';
+          } else if (holds(loaded, dirOf(ref), fromFile)) return view(loaded);
+          next.push(...referencesOf(ref));
+        }
+        level = next;
       }
-      return true;
+      return undefined;
     };
-    if (!search(references)) return 'unknown';
-    if (holding.length === 0) return view(own);
-    const first = JSON.stringify(holding[0]);
-    return holding.every((v) => JSON.stringify(v) === first) ? holding[0] : 'unknown';
+    return search(references) ?? view(own);
   };
 
   const nearestConfigByDir = new Map<string, string | undefined>();
