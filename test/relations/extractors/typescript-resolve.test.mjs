@@ -973,6 +973,79 @@ describe('resolveTsPath — workspace membership', () => {
 });
 
 // Issue 010: a verdict must be a function of the commit, so a file the caller excludes (git-ignored build output, a generated config) acts as though it does not exist, for every probe and every configuration read: the result with it on disk equals the result without it.
+describe('resolveTsPath — a workspace member declared by a range binds only where the package manager links it', () => {
+  // `app` declares `lib` as `spec`; `lib` is a member at `version` (null: none); `root` holds the manager's files.
+  const ws = (spec, root = {}, version = '2.0.0') => project({
+    'package.json': JSON.stringify({ name: 'root', private: true, workspaces: ['packages/*'], ...(root['package.json'] ?? {}) }),
+    ...Object.fromEntries(Object.entries(root).filter(([k]) => k !== 'package.json')),
+    'packages/lib/package.json': JSON.stringify({ name: 'lib', ...(version === null ? {} : { version }), main: './index.ts' }),
+    'packages/lib/index.ts': '',
+    'packages/app/package.json': JSON.stringify({ name: 'app', ...(spec === undefined ? {} : { dependencies: { lib: spec } }) }),
+  })('lib', 'packages/app/use.ts');
+  const hit = 'packages/lib/index.ts';
+  it('npm links a satisfied range, `*` and the empty spec, never an unsatisfied range or a tag', () => {
+    const npm = { 'package.json': { packageManager: 'npm@10.8.0' } };
+    expect(ws('^2.0.0', npm)).toBe(hit);
+    expect(ws('*', npm, null)).toBe(hit);
+    expect(ws('', npm, null)).toBe(hit);
+    expect(ws('^1.0.0', npm)).toBeUndefined();
+    expect(ws('latest', npm)).toBeUndefined();
+    expect(ws('^2.0.0', npm, null)).toBeUndefined();
+    expect(ws('npm:lib@^2.0.0', npm)).toBeUndefined();
+    expect(ws('^1.0.0', { 'npm-shrinkwrap.json': '{}' })).toBeUndefined();
+  });
+  it('an undeclared import, an unknown manager, bun, or two lockfile kinds keep the earlier binding', () => {
+    expect(ws(undefined, { 'package.json': { packageManager: 'npm@10.8.0' } })).toBe(hit);
+    expect(ws('^1.0.0')).toBe(hit);
+    expect(ws('^1.0.0', { 'package.json': { packageManager: 'bun@1.2.0' } })).toBe(hit);
+    expect(ws('^1.0.0', { 'bun.lock': '{}' })).toBe(hit);
+    expect(ws('^1.0.0', { 'package-lock.json': '{}', 'yarn.lock': '' })).toBe(hit);
+    // A member declared only as a peer: the declaring package does not install it.
+    const peer = project({
+      'package.json': '{ "name": "root", "private": true, "workspaces": ["packages/*"], "packageManager": "yarn@1.22.22" }',
+      'packages/lib/package.json': '{ "name": "lib", "version": "2.0.0", "main": "./index.ts" }',
+      'packages/lib/index.ts': '',
+      'packages/app/package.json': '{ "name": "app", "peerDependencies": { "lib": "^1.0.0" } }',
+    });
+    expect(peer('lib', 'packages/app/use.ts')).toBe(hit);
+  });
+  it('pnpm reads its version from packageManager or the lockfile, and link-workspace-packages from .npmrc and pnpm-workspace.yaml', () => {
+    const lock = (v) => ({ 'pnpm-lock.yaml': `lockfileVersion: '${v}'\n` });
+    expect(ws('^2.0.0', lock('9.0'))).toBeUndefined(); // pnpm 9 or later: off by default
+    expect(ws('^2.0.0', lock('6.0'))).toBe(hit); // pnpm 8 or earlier: on by default
+    expect(ws('^1.0.0', lock('6.0'))).toBeUndefined(); // on, but the range is not satisfied
+    expect(ws('^2.0.0', { 'pnpm-lock.yaml': 'importers: {}\n' })).toBe(hit); // no version: unknown
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@8.15.0' } })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@9.11.0' }, '.npmrc': 'link-workspace-packages = deep\n' })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@8.15.0' }, '.npmrc': 'link-workspace-packages=false\n' })).toBeUndefined();
+    // pnpm 11 reads no such setting from .npmrc; pnpm 10.6 and later read it from pnpm-workspace.yaml, earlier ones do not.
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@11.0.0' }, '.npmrc': 'link-workspace-packages=true\n' })).toBeUndefined();
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@10.6.0' }, 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: true\n" })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@10' }, 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: true\n" })).toBeUndefined();
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'pnpm@10.5.0' }, 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: true\n" })).toBeUndefined();
+    // Two places that apply and disagree: unknown, the earlier binding.
+    expect(ws('^1.0.0', { ...lock('9.0'), 'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\nlinkWorkspacePackages: false\n", '.npmrc': 'link-workspace-packages=true\n' })).toBe(hit);
+  });
+  it('pnpm with linking on takes a tag and the wildcard specs as any version, an exact version as written', () => {
+    const on = { 'package.json': { packageManager: 'pnpm@9.11.0' }, '.npmrc': 'link-workspace-packages=true\n' };
+    expect(ws('latest', on)).toBe(hit);
+    expect(ws('^', on, null)).toBe(hit);
+    expect(ws('~', on)).toBe(hit);
+    expect(ws('*', on, '1.0.0-beta')).toBe(hit);
+    expect(ws('1', on, '1')).toBe(hit);
+    expect(ws('github:a/lib', on)).toBeUndefined();
+  });
+  it('yarn links a satisfied range; yarn 2 and later not with enableTransparentWorkspaces off', () => {
+    expect(ws('^2.0.0', { 'yarn.lock': '# yarn lockfile v1\n' })).toBe(hit);
+    expect(ws('^1.0.0', { 'yarn.lock': '# yarn lockfile v1\n' })).toBeUndefined();
+    expect(ws('latest', { 'yarn.lock': '# yarn lockfile v1\n' })).toBeUndefined();
+    expect(ws('^2.0.0', { 'yarn.lock': '__metadata:\n  version: 8\n' })).toBe(hit);
+    expect(ws('^2.0.0', { 'yarn.lock': '', '.yarnrc.yml': 'enableTransparentWorkspaces: false\n' })).toBeUndefined();
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'yarn@4.5.0' }, '.yarnrc.yml': 'nodeLinker: node-modules\n' })).toBe(hit);
+    expect(ws('^2.0.0', { 'package.json': { packageManager: 'yarn@1.22.22' }, '.yarnrc.yml': 'enableTransparentWorkspaces: false\n' })).toBe(hit);
+  });
+});
+
 describe('resolveTsPath — an excluded file acts as though it does not exist', () => {
   const builtCore = {
     'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js", "types": "./dist/index.d.ts", "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } } }',
