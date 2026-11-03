@@ -43,7 +43,8 @@ import { indexScopes, walkScoped } from './scope-walk.mjs';
  *    cast operands, tuple/array/nullable element types (a named tuple type argument the grammar misreads as comparisons included), the element type of `new T[n]` and `stackalloc T[n]`, an explicitly typed `foreach (T x in …)`, a declaration expression (`out T x`, `(T a, U b) = …`), and a C#12 alias RHS's embedded named
  *    types), build ONE ORDERED candidate group in C# name-binding order (nearest scope first,
  *    the compilation unit's usings LAST), and emit it as a single `DetectedDep`:
- *      [alias-expansion?]                              ← leftmost segment is a local alias
+ *      [nested types of the enclosing types]          ← `<ns>.<Outer>+<Name>`, innermost type first (§7.6.1)
+ *        ++ [alias-expansion?]                         ← leftmost segment is a local alias
  *        ++ [enclosing-namespace chain innermost→outermost]
  *        ++ [verbatim / bare top-level]                ← the global namespace's own member
  *        ++ [using-prefix block, code-point sorted]    ← the compilation unit's usings: ONE binding level (CS0104 set), farthest, last (C# spec §7.8.1 reads a namespace's members before the usings of its declaration, and the compilation unit declares the global namespace)
@@ -136,7 +137,7 @@ function fileScopedNamespace(root) {
     });
     return ns;
 }
-const TOP_SCOPE = { ns: null, chain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
+const TOP_SCOPE = { ns: null, chain: '', bodyChain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
 /** The scope the node is read in: its parent's scope, except that an attribute list of a declaration does not see that declaration's type parameters. */
 function csSeen(node, inherited) {
     if (inherited.tpSkip === undefined)
@@ -146,7 +147,7 @@ function csSeen(node, inherited) {
 /** The scope the children of `node` inherit, or undefined when it is `own`. */
 function csBelow(node, own) {
     const type = node.type;
-    let { ns, chain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
+    let { ns, chain, bodyChain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
     let tpSkip;
     let changed = false;
     if (type === 'namespace_declaration') {
@@ -156,12 +157,17 @@ function csBelow(node, own) {
         changed = true;
     }
     if (TYPE_DECLARATION_TYPES.has(type)) {
-        const name = node.childForFieldName('name')?.text ?? '';
+        const name = declaredTypeName(node);
         if (name !== '')
             chain = chain === '' ? name : `${chain}+${name}`;
         fileLocal = own.fileLocal || hasFileModifier(node);
         typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
         extBelow = false;
+        changed = true;
+    }
+    // The body of a type declaration (`declaration_list`, or an enum's member list): only inside it are the type's members, its nested types included, in scope.
+    if ((type === 'declaration_list' || type === 'enum_member_declaration_list') && node.parent !== null && TYPE_DECLARATION_TYPES.has(node.parent.type)) {
+        bodyChain = chain;
         changed = true;
     }
     if (type === 'extension_declaration') {
@@ -190,7 +196,7 @@ function csBelow(node, own) {
         tuple = { stage: 'arg', root: own.tuple.root };
     if (access !== null || own.access !== null || tuple !== null || own.tuple !== null)
         changed = true;
-    return changed ? { ns, chain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
+    return changed ? { ns, chain, bodyChain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
 }
 /** The names the `type_parameter_list` of a declaration declares (none when it has no list). */
 function typeParameterNames(decl) {
@@ -371,7 +377,8 @@ function declarations(file) {
             return undefined;
         const blockNs = blockNamespace(scope);
         const ns = [fileNs, blockNs].filter((p) => p !== '').join('.');
-        const typeKey = scope.chain === '' ? nameField.text : `${scope.chain}+${nameField.text}`;
+        const own = declaredTypeName(node);
+        const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
         const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
         out.push({ symbolKey, line: node.startPosition.row + 1 });
         return undefined;
@@ -463,6 +470,54 @@ function stripTypeArguments(text) {
     }
     return out;
 }
+/**
+ * The generic arity of a type argument or type parameter list written as `text` (`<int, Dictionary<K, V>>` → 2, `<(int, int)>` → 1, the unbound `<,>` → 2 and `<>` → 1): the commas at the list's own level, plus one. C# looks a name with K type arguments up among the types with K type parameters only (spec §7.6.1), so the arity is part of every C# type key, as the .NET reflection name writes it: `Result` for a non-generic type, ``Result`1`` for `Result<T>`.
+ */
+function arityOf(list) {
+    let depth = 0;
+    let commas = 0;
+    for (const ch of list) {
+        if (ch === '<' || ch === '(' || ch === '[')
+            depth++;
+        else if (ch === '>' || ch === ')' || ch === ']')
+            depth--;
+        else if (ch === ',' && depth === 1)
+            commas++;
+    }
+    return commas + 1;
+}
+/** `A.B<C<D>, E>.F` → ``A.B`2.F``: every type-argument list of a written type name becomes its arity (see `arityOf`), so the name reads as a key. */
+function withArity(text) {
+    let depth = 0;
+    let list = '';
+    let out = '';
+    for (const ch of text) {
+        if (ch === '<')
+            depth++;
+        if (depth > 0)
+            list += ch;
+        else
+            out += ch;
+        if (ch === '>' && depth > 0 && --depth === 0) {
+            out += `\`${arityOf(list)}`;
+            list = '';
+        }
+    }
+    return out;
+}
+/** The key segment of a `generic_name` (`Result<int>` → ``Result`1``): its identifier and the arity of its type-argument list. */
+function genericKey(generic) {
+    const id = generic.namedChildren.find((c) => c !== null && c.type === 'identifier').text;
+    const args = generic.namedChildren.find((c) => c !== null && c.type === 'type_argument_list');
+    return `${id}\`${arityOf(args.text)}`;
+}
+/** The key segment a type declaration declares: its name, and its arity when it declares type parameters (`class Result<T>` → ``Result`1``). */
+function declaredTypeName(decl) {
+    const name = decl.childForFieldName('name')?.text ?? '';
+    const list = decl.namedChildren.find((c) => c !== null && c.type === 'type_parameter_list');
+    const arity = list === undefined || list === null ? 0 : list.namedChildren.filter((c) => c !== null && c.type === 'type_parameter').length;
+    return name === '' || arity === 0 ? name : `${name}\`${arity}`;
+}
 /** Build the file's using scope: file-local plain prefixes, project-wide `global using`
  *  prefixes, the alias map (file-local + project-wide global aliases tracked apart), and the
  *  fully-resolved target type of each `using static` / `global using static` directive. */
@@ -497,7 +552,7 @@ function buildUsingScope(file) {
             // A closed-generic alias target (`using R = Shop.Core.Repository<Order>;`) binds by its
             // plain container name — declaration keys carry no arity (the embedded type arguments are
             // harvested separately as their own references).
-            const fqn = written === undefined ? undefined : stripTypeArguments(written);
+            const fqn = written === undefined ? undefined : withArity(written);
             if (fqn !== undefined && fqn !== '') {
                 aliases.set(aliasName.text, fqn);
                 const targetNode = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
@@ -557,7 +612,7 @@ function nsEntry(frame, info) {
         if (hasTokenChild(d, 'static')) {
             const target = directiveNamespaceText(d);
             if (target !== undefined && target !== '')
-                statics.push(stripTypeArguments(target));
+                statics.push(withArity(target));
             continue;
         }
         const aliasName = d.childForFieldName('name');
@@ -736,6 +791,26 @@ export function extractCsharpRefs(file) {
     const scopeOf = (node) => scopes.get(node.id);
     const nsChain = (node) => namespaceChain(fileNs, scopeOf(node).ns);
     const refs = [];
+    /** The declaration keys of the types around `node`, innermost first (`['App.Outer+Inner', 'App.Outer']`), or undefined outside every type: C# reads the nested types of each enclosing type, from every part of a partial type, before any namespace, alias or using (spec §7.6.1, §12.8.4). Read once per type and namespace. */
+    const typesMemo = new Map();
+    const enclosingTypes = (node) => {
+        const chain = scopeOf(node).bodyChain;
+        if (chain === '')
+            return {};
+        const ns = nsChain(node)[0];
+        const memoKey = `${ns ?? ''}\0${chain}`;
+        let types = typesMemo.get(memoKey);
+        if (types === undefined) {
+            const parts = chain.split('+');
+            types = [];
+            for (let i = parts.length; i >= 1; i--) {
+                const type = parts.slice(0, i).join('+');
+                types.push(ns === undefined ? type : `${ns}.${type}`);
+            }
+            typesMemo.set(memoKey, types);
+        }
+        return { types: types.slice() };
+    };
     // A node id is recorded here once its TYPE reference has been emitted, so a later, broader
     // walk visit (e.g. the generic outermost-qualified_name pass) never re-emits the same node.
     const emitted = new Set();
@@ -798,6 +873,7 @@ export function extractCsharpRefs(file) {
             rooted,
             enclosingNs: nsChain(node),
             at: node.startIndex,
+            ...(rooted ? {} : enclosingTypes(node)),
         });
     };
     /** Emit an attribute descriptor (the two-reading `[Foo]`/`[FooAttribute]` group). */
@@ -811,6 +887,7 @@ export function extractCsharpRefs(file) {
             at: node.startIndex,
             rooted,
             ...(alias !== undefined ? { alias } : {}),
+            ...(rooted || alias !== undefined ? {} : enclosingTypes(node)),
         });
     };
     /**
@@ -853,7 +930,7 @@ export function extractCsharpRefs(file) {
                     // `global::Settings` / `global::Box<T>`: the one name is looked up in the global namespace only, never in an enclosing namespace or a using, and no type parameter shadows it, so it is a rooted reference; the type arguments are ordinary references.
                     const nameField = typeNode.childForFieldName('name'); // an alias-qualified name always has its name
                     const generic = nameField.type === 'generic_name';
-                    pushRef((generic ? findChild(nameField, 'identifier') : nameField).text, typeNode, typeNode.startPosition.row + 1, true);
+                    pushRef(generic ? genericKey(nameField) : nameField.text, typeNode, typeNode.startPosition.row + 1, true);
                     if (generic)
                         emitTypeArguments(nameField);
                     return;
@@ -872,7 +949,7 @@ export function extractCsharpRefs(file) {
                         refs.push({
                             kind: 'alias',
                             aliasName: aliasField.text,
-                            tail: stripTypeArguments(generic !== null ? findChild(generic, 'identifier').text : stripGlobalQualifier(nameField.text)),
+                            tail: generic !== null ? genericKey(generic) : stripTypeArguments(stripGlobalQualifier(nameField.text)),
                             line: typeNode.startPosition.row + 1,
                             enclosingNs: nsChain(typeNode),
                             at: typeNode.startIndex,
@@ -891,7 +968,7 @@ export function extractCsharpRefs(file) {
                 if (emitted.has(typeNode.id))
                     return;
                 emitted.add(typeNode.id);
-                pushRef(findChild(typeNode, 'identifier').text, typeNode, typeNode.startPosition.row + 1);
+                pushRef(genericKey(typeNode), typeNode, typeNode.startPosition.row + 1);
                 emitTypeArguments(typeNode);
                 return;
             }
@@ -955,7 +1032,7 @@ export function extractCsharpRefs(file) {
                     segs.push(n.text);
                     return true;
                 case 'generic_name':
-                    segs.push(findChild(n, 'identifier').text);
+                    segs.push(genericKey(n));
                     generics.push(n);
                     return true;
                 case 'member_access_expression':
@@ -994,7 +1071,7 @@ export function extractCsharpRefs(file) {
                 collect(n.childForFieldName('name'));
             }
             else if (n.type === 'generic_name') {
-                segs.push(findChild(n, 'identifier').text);
+                segs.push(genericKey(n));
                 generics.push(n);
             }
             else if (n.type === 'alias_qualified_name') {
@@ -1037,7 +1114,7 @@ export function extractCsharpRefs(file) {
                 pushTarget(typeNode.text, directive, line);
                 return;
             case 'generic_name':
-                pushTarget(findChild(typeNode, 'identifier').text, directive, line);
+                pushTarget(genericKey(typeNode), directive, line);
                 emitDirectiveArguments(typeNode, directive);
                 return;
             case 'qualified_name':
@@ -1195,8 +1272,11 @@ export function extractCsharpRefs(file) {
             const named = nameField.type === 'alias_qualified_name' ? nameField.childForFieldName('name') : nameField;
             // The C# attribute-naming convention: `[Foo]` may name `Foo` OR `FooAttribute`. Emit both readings as ONE group (the verbatim and the `Attribute`-suffixed form), so the dependency resolves whichever the declaring type is named.
             const emitAttribute = (written, at, via = alias) => {
-                const last = written.split('.').pop() ?? written;
-                const suffixed = last.endsWith('Attribute') ? undefined : `${written}Attribute`;
+                // A generic attribute's arity follows the suffix: `[Gen<T>]` reads ``Gen`1`` and ``GenAttribute`1``.
+                const tick = written.lastIndexOf('`');
+                const [base, arity] = tick > written.lastIndexOf('.') ? [written.slice(0, tick), written.slice(tick)] : [written, ''];
+                const last = base.split('.').pop() ?? base;
+                const suffixed = last.endsWith('Attribute') ? undefined : `${base}Attribute${arity}`;
                 pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, via);
             };
             if (named !== null && named.type === 'identifier')
@@ -1210,7 +1290,7 @@ export function extractCsharpRefs(file) {
             }
             else if (named !== null && named.type === 'generic_name') {
                 // C#11 generic attribute `[Foo<Bar>]`: the attribute NAME is the `generic_name`'s base identifier (`Foo`, with the `Foo`/`FooAttribute` convention), and each type ARGUMENT (`Bar`) is its own real type reference.
-                emitAttribute(findChild(named, 'identifier').text, findChild(named, 'identifier')); // a generic_name always has its identifier
+                emitAttribute(genericKey(named), findChild(named, 'identifier')); // a generic_name always has its identifier
                 emitTypeArguments(named);
             }
             return undefined;
@@ -1293,6 +1373,7 @@ export function extractCsharpRefs(file) {
                         enclosingNs: nsChain(node),
                         at: node.startIndex,
                         rooted,
+                        ...(rooted ? {} : enclosingTypes(node)),
                     });
             }
             // A generic member `sp.GetRequiredService<Ctx>()`, `Substitute.For<Ctx>()`: its type arguments are type references; the member name itself is a method, never a type.
@@ -1352,14 +1433,28 @@ export function extractCsharpRefs(file) {
                     else if (e.type === 'member_access_expression')
                         emitMemberAccessType(e);
                 }
+                // Each generic around the tuple holds it, or the generic that holds it, as its one type argument, so its key has the arity 1 (`List<(Order Item, int Index)>` is ``List`1``).
+                const emitHolder = (name) => {
+                    if (emitted.has(name.id))
+                        return;
+                    emitted.add(name.id);
+                    if (!isTypeParameterInScope(name.text, scopeOf(name)))
+                        pushRef(`${name.text}\`1`, name, name.startPosition.row + 1);
+                };
                 let generic = node.childForFieldName('left');
                 for (let level = 1; shift !== undefined && level < shift.childForFieldName('operator').type.length; level++) {
                     if (generic.type !== 'binary_expression' || generic.childForFieldName('operator').type !== '<')
                         break;
                     const name = generic.childForFieldName('right');
                     if (name.type === 'identifier')
-                        emitTypeNode(name);
+                        emitHolder(name);
                     generic = generic.childForFieldName('left');
+                }
+                // The created generic of `new List<(Order Item, int Index)>(n)`, which the grammar reads as `new List` compared with the tuple: it holds the one tuple type argument.
+                if (generic.type === 'object_creation_expression') {
+                    const created = generic.childForFieldName('type');
+                    if (created.type === 'identifier')
+                        emitHolder(created);
                 }
             }
             return undefined;
@@ -1386,6 +1481,7 @@ export function extractCsharpRefs(file) {
                         enclosingNs: nsChain(arg),
                         at: arg.startIndex,
                         rooted: false,
+                        ...enclosingTypes(arg),
                     });
                 }
                 return false;
@@ -1607,7 +1703,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      * Build and push ONE ordered candidate group for a reference whose written text is `ref` (a
      * dotted partial name or a bare identifier) with its precomputed `enclosingNs` chain. Candidate
      * order = C# name-binding order:
-     *   [alias-expansion?] ++ [enclosing-ns chain innermost→outermost]
+     *   [nested types of the enclosing types, innermost first] ++ [alias-expansion?] ++ [enclosing-ns chain innermost→outermost]
      *                       ++ [verbatim / bare top-level] ++ [compilation-unit using-prefix block, sorted]
      * with resolution refinements attached as hint metadata (invisible to the group's display
      * shape, which reads only `symbolKey`):
@@ -1619,7 +1715,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
      *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
      */
-    const pushRef = (ref, enclosingNs, line, rooted, at) => {
+    const pushRef = (ref, enclosingNs, line, rooted, at, types = []) => {
         // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
         // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
         // candidate.
@@ -1631,12 +1727,18 @@ export function assembleCsharpCandidates(extract, options = {}) {
             out.push({ candidates, kind: 'import', line });
             return;
         }
+        // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
+        const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}` }));
         const lead = ref.split('.')[0];
-        if (ambiguousAliases.has(lead))
-            return; // M7: an alias with 2+ project-wide targets → silence
+        if (ambiguousAliases.has(lead)) {
+            // M7: an alias with 2+ project-wide targets → silence, unless a nested type of an enclosing type, which comes before every alias, binds.
+            if (nestedReadings.length > 0)
+                out.push({ candidates: nestedReadings, kind: 'import', line });
+            return;
+        }
         const multi = ref.includes('.');
         const aliasView = viewAlias(lead, enclosingNs, at);
-        const candidates = [];
+        const candidates = [...nestedReadings];
         const pushed = new Set();
         const add = (hint) => {
             if (hint.kind === 'symbol') {
@@ -1690,11 +1792,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
     /** Emit a two-reading attribute group (`written` and its `Attribute`-suffixed form) as ONE
      *  ordered group, each reading carrying its own alias/enclosing-ns/using/verbatim candidates,
      *  concatenated so the verbatim short form is reached only when nothing nearer binds. */
-    const pushAttribute = (written, suffixed, enclosingNs, line, rooted, at) => {
+    const pushAttribute = (written, suffixed, enclosingNs, line, rooted, at, types = []) => {
         const before = out.length;
-        pushRef(written, enclosingNs, line, rooted, at);
+        pushRef(written, enclosingNs, line, rooted, at, types);
         if (suffixed !== undefined)
-            pushRef(suffixed, enclosingNs, line, rooted, at);
+            pushRef(suffixed, enclosingNs, line, rooted, at, types);
         // Merge the (at most two) groups just pushed into one ordered group so both readings live
         // in a single reference (an attribute is ONE dependency, resolved by whichever name binds).
         mergeGroupsFrom(before, line);
@@ -1763,7 +1865,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 break;
             }
             case 'plain':
-                pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at);
+                pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at, r.types);
                 break;
             case 'alias': {
                 // `S::Tail` (B5): rewrite the leftmost alias to its aliased FQN and resolve `N.Tail` from
@@ -1777,7 +1879,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
             }
             case 'attr': {
                 if (r.alias === undefined) {
-                    pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true, r.at);
+                    pushAttribute(r.written, r.suffixed, r.enclosingNs, r.line, r.rooted === true, r.at, r.types);
                     break;
                 }
                 // `[S::Foo]`: both readings in the namespace `S` names, from the root (B5); nothing when `S` is no confirmed alias.
@@ -1792,13 +1894,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 break;
             }
             case 'receiver': {
-                // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies.
+                // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
                 const rooted = r.rooted === true;
-                if (!rooted && ambiguousAliases.has(r.chain[0]))
-                    break;
                 const before = out.length;
                 for (let i = 1; i <= r.chain.length; i++)
-                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at);
+                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types);
                 mergeGroupsFrom(before, r.line);
                 break;
             }
@@ -1823,7 +1923,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 13,
+    rev: 16,
     declarations,
     uses,
 };
