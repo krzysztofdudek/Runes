@@ -792,12 +792,12 @@ function stripRustComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
-/** The index just past the string or character literal that starts at `i` in Rust source `text` (a `"…"` string with its escapes, a raw string `r#"…"#` with any number of hashes, a character literal such as `'{'` or `'\n'`), or `i` itself when none starts there. A lifetime (`'a`) is no literal; an unterminated one runs to the end of the text. */
+/** The index just past the string or character literal that starts at `i` in Rust source `text` (a `"…"` string with its escapes, a raw string `r#"…"#` or byte raw string `br#"…"#` with any number of hashes, a character literal such as `'{'` or `'\n'`), or `i` itself when none starts there. A lifetime (`'a`) is no literal; an unterminated one runs to the end of the text. */
 function rustLiteralEnd(text: string, i: number): number {
   const c = text[i];
   const before = text[i - 1] ?? ' ';
-  if (c === 'r' && !/[A-Za-z0-9_]/.test(before)) {
-    const raw = /^r(#*)"/.exec(text.slice(i, i + 40));
+  if ((c === 'r' || c === 'b') && !/[A-Za-z0-9_]/.test(before)) {
+    const raw = /^b?r(#*)"/.exec(text.slice(i, i + 40));
     if (raw !== null) {
       const close = text.indexOf(`"${raw[1]}`, i + raw[0].length);
       return close === -1 ? text.length : close + 1 + raw[1].length;
@@ -820,33 +820,47 @@ function rustLiteralEnd(text: string, i: number): number {
   return i;
 }
 
-/** `text` with everything between a pair of braces blanked, except the braces of a `use` statement, which are copied whole to its `;`: what is left is the items a file itself puts in scope, and no name that exists only inside an inline `mod`, a function body or an `impl`. A brace inside a string or character literal is no brace. What can still go wrong: a macro body that is not balanced braces, or a `}` or `{` in a comment (the caller strips comments first), shifts the depth, so the rest of the file counts as nested (a name lost, no edge) or as top level (a nested name read as the root's); neither can fail the file. */
+/** `text` with the bodies of `mod`, `fn`, `impl` and `trait` items blanked, and nothing else: what is left is the items a file itself puts in scope. The braces of anything else hold items of the file's own top level (`extern "C" { fn foo(); }`, `thread_local! { static … }`, `bitflags! { pub struct … }`, `cfg_if! { mod imp; }`), and a `use` statement keeps its braces whole. A brace inside a string or character literal is no brace. What can still go wrong: a macro body that is not balanced braces, or a brace in a comment (the caller strips comments first), shifts the nesting, so the rest of the file counts as nested (a name lost, no edge) or as top level (a nested name read as the root's); neither can fail the file. */
 function rustTopLevelText(text: string): string {
   let out = '';
-  let depth = 0;
+  // One entry per open brace: whether it is inside a blanked body (or opens one).
+  const blank: boolean[] = [];
+  const inBlank = (): boolean => blank.length > 0 && blank[blank.length - 1]!;
+  // Where the item header before the next `{` starts: just past the last `;`, `{` or `}`.
+  let header = 0;
   for (let i = 0; i < text.length; i++) {
-    const c = text[i];
+    const c = text[i]!;
     const literalEnd = rustLiteralEnd(text, i);
     if (literalEnd > i) {
-      if (depth === 0) out += text.slice(i, literalEnd);
+      if (!inBlank()) out += text.slice(i, literalEnd);
       i = literalEnd - 1;
       continue;
     }
-    if (depth === 0 && c === 'u' && text.startsWith('use', i) && !/[A-Za-z0-9_#]/.test(text[i - 1] ?? ' ') && !/[A-Za-z0-9_]/.test(text[i + 3] ?? ' ')) {
+    if (!inBlank() && c === 'u' && text.startsWith('use', i) && !/[A-Za-z0-9_#]/.test(text[i - 1] ?? ' ') && !/[A-Za-z0-9_]/.test(text[i + 3] ?? ' ')) {
       const end = text.indexOf(';', i);
       const stop = end === -1 ? text.length : end + 1;
       out += text.slice(i, stop);
       i = stop - 1;
+      header = stop;
     } else if (c === '{') {
-      if (depth === 0) out += c;
-      depth++;
+      const body = inBlank() || RUST_BODY_HEADER.test(text.slice(header, i));
+      if (!inBlank()) out += c;
+      blank.push(body);
+      header = i + 1;
     } else if (c === '}') {
-      if (depth > 0) depth--;
-      if (depth === 0) out += c;
-    } else if (depth === 0 || c === '\n') out += c;
+      blank.pop();
+      if (!inBlank()) out += c;
+      header = i + 1;
+    } else {
+      if (c === ';') header = i + 1;
+      if (!inBlank() || c === '\n') out += c;
+    }
   }
   return out;
 }
+
+/** An item header whose braces hold a body, not items of the file: it names `mod`, `fn`, `impl` or `trait`. */
+const RUST_BODY_HEADER = /(?:^|[^A-Za-z0-9_#])(?:mod|fn|impl|trait)(?![A-Za-z0-9_])/;
 
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`? With `asItem`, only at the top level of the file. */
 export function rustFileDeclares(fullText: string, name: string, asItem = false): boolean {
