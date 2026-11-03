@@ -218,6 +218,70 @@ describe('resolveTsPath — packages', () => {
   });
 });
 
+describe('resolveTsPath — export conditions follow the importing file\'s module settings', () => {
+  // `require` lists ./cjs first, `import` ./esm: which one binds says which condition was entered.
+  const lib = {
+    'lib/package.json': '{ "name": "lib", "exports": { ".": { "require": "./cjs/index.cts", "import": "./esm/index.ts" }, "./types": { "types@>=99": "./v99.d.ts", "types": "./t.d.ts" }, "./blocked": { "import": null, "default": "./t.d.ts" }, "./list": [{ "import": "./nope.ts" }, "./esm/index.ts"] } }',
+    'lib/cjs/index.cts': '',
+    'lib/esm/index.ts': '',
+    'lib/t.d.ts': '',
+    'lib/v99.d.ts': '',
+  };
+  const withConfig = (options, extra = {}) => project({ ...lib, 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': JSON.stringify({ compilerOptions: options }), ...extra });
+  it('reads the file format by extension: .mts imports and .cts requires, under Bundler as under Node16', () => {
+    const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
+    expect(r('lib', 'app/a.mts')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.cts')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.mjs')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.cjs')).toBe('lib/cjs/index.cts');
+  });
+  it('under Bundler a CommonJS module requires and an ES or other non-Node module imports; values are read case-insensitively', () => {
+    expect(withConfig({ module: 'CommonJS', moduleResolution: 'Bundler' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(withConfig({ module: 'ES2022', moduleResolution: 'bundler' })('lib', 'app/a.tsx')).toBe('lib/esm/index.ts');
+    expect(withConfig({ module: 'preserve' })('lib', 'app/a.js')).toBe('lib/esm/index.ts');
+  });
+  it('under a Node module the package type decides a .ts file, and module nodenext implies its resolution', () => {
+    const esm = withConfig({ module: 'nodenext' }, { 'app/package.json': '{ "name": "app", "type": "module" }' });
+    expect(esm('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(withConfig({ module: 'node20', moduleResolution: 'node16' })('lib', 'app/a.jsx')).toBe('lib/cjs/index.cts');
+  });
+  it('inherits the settings through extends', () => {
+    const r = project({ ...lib, 'base.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler", "customConditions": ["x", 1] } }', 'app/tsconfig.json': '{ "extends": "../base.json" }' });
+    expect(r('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+  });
+  it('keeps the earlier reading, the first target that names a file, wherever the settings do not decide', () => {
+    for (const [options, from] of [
+      [{ moduleResolution: 'bundler' }, 'app/a.ts'], // module unset: its default moved between TypeScript 5 and 6
+      [{ module: 'esnext' }, 'app/a.ts'], // resolution unset and not implied
+      [{ module: 'esnext', moduleResolution: 'node10' }, 'app/a.ts'], // Node10 reads no exports, which Runes does not model
+      [{ module: 'esnext', moduleResolution: 'nodenext' }, 'app/a.ts'], // a Node resolution with a non-Node module, which tsc rejects
+      [{ module: 'nodenext', moduleResolution: 'bundler' }, 'app/a.ts'], // and the reverse
+      [{ module: 7, moduleResolution: 'bundler' }, 'app/a.ts'], // a value of another type is unset
+      [{ module: 'esnext', moduleResolution: 'bundler' }, 'app/a.vue'], // a component's format is not read
+    ]) expect(withConfig(options)('lib', from), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+    expect(project(lib)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts'); // no tsconfig at all
+  });
+  it('stops at a null target and at a versioned types key, and reads an array entry by entry', () => {
+    const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
+    expect(r('lib/types', 'app/a.ts')).toBeUndefined();
+    expect(r('lib/blocked', 'app/a.ts')).toBeUndefined();
+    expect(r('lib/list', 'app/a.ts')).toBe('lib/esm/index.ts');
+    // Without settings that decide, the earlier reading: every target in order.
+    expect(project(lib)('lib/types', 'app/a.ts')).toBe('lib/v99.d.ts');
+    expect(project(lib)('lib/blocked', 'app/a.ts')).toBe('lib/t.d.ts');
+  });
+  it('chooses a package.json imports target by the same conditions', () => {
+    const r = project({
+      'app/package.json': '{ "name": "app", "imports": { "#dep": { "require": "./cjs.cts", "import": "./esm.ts" } } }',
+      'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }',
+      'app/cjs.cts': '',
+      'app/esm.ts': '',
+    });
+    expect(r('#dep', 'app/a.ts')).toBe('app/esm.ts');
+    expect(r('#dep', 'app/a.cts')).toBe('app/cjs.cts');
+  });
+});
+
 // Issue 011: a solution-style tsconfig.json (`files: []` plus `references`) gives a file the options of the referenced config that includes it; a Vue or Svelte component reads jsconfig.json as a JavaScript file does.
 describe('resolveTsPath — solution-style tsconfig references', () => {
   const app = (paths, extra = {}) => JSON.stringify({ include: ['env.d.ts', 'src/**/*', 'src/**/*.vue'], exclude: ['src/**/__tests__/*'], ...extra, compilerOptions: { paths } });

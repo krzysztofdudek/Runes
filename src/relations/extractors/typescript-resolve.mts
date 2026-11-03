@@ -19,12 +19,12 @@ import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, typ
  *      package.json). No package root → undefined. Never joined onto the importer's own
  *      directory, which names a file the import does not mean.
  *   3. Package-internal ('#x') → the nearest package.json `imports` map (exact key, then
- *      the longest `*` pattern); a relative target resolves inside that package, a bare
- *      target resolves as step 4 would.
+ *      the longest `*` pattern; the target chosen by the conditions, as for `exports`); a
+ *      relative target resolves inside that package, a bare target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the first condition target that names a file), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too; with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -58,17 +58,13 @@ export function resolveTsPath(
   if (spec.startsWith('#')) {
     const pkg = deps.nearestPackage(from);
     if (pkg === undefined) return undefined;
-    const targets = matchSubpathMap(pkg.manifest.imports, spec);
-    if (targets === undefined) return undefined;
-    for (const target of targets) {
-      const hit = target.startsWith('./')
+    return pickTarget(matchSubpathKey(pkg.manifest.imports, spec), exportConditions(from, deps), (target) =>
+      target.startsWith('./')
         ? probe(joinUnder(pkg.dir, target), exists, deps)
         : target.startsWith('#') || target.startsWith('/') || target.startsWith('.')
           ? undefined
-          : resolveBare(target, from, exists, deps);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
+          : resolveBare(target, from, exists, deps),
+    );
   }
   return resolveBare(spec, from, exists, deps);
 }
@@ -90,6 +86,10 @@ export interface TsResolveDeps {
 export interface TsPathConfig {
   /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
   baseUrl?: string;
+  /** `moduleResolution` and `module`, lower-cased, and `customConditions`, when set anywhere in the chain: what the conditions of a package's `exports` and `imports` are chosen by. */
+  moduleResolution?: string;
+  module?: string;
+  customConditions?: string[];
   /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
   paths?: { base: string; map: Record<string, string[]> };
 }
@@ -119,6 +119,7 @@ export interface PackageManifest {
   module?: unknown;
   types?: unknown;
   typings?: unknown;
+  type?: unknown;
   tsconfig?: unknown;
   workspaces?: unknown;
   dependencies?: unknown;
@@ -185,14 +186,9 @@ function resolveWorkspacePackage(
   if (manifest.exports !== undefined && manifest.exports !== null) {
     // `exports` is the package's whole public surface: a subpath it does not list is not
     // importable, so no fallback to the directory layout.
-    const targets = matchSubpathMap(normalizeExports(manifest.exports), subpath);
-    if (targets === undefined) return undefined;
-    for (const target of targets) {
-      if (!target.startsWith('./')) continue;
-      const hit = probe(joinUnder(dir, target), exists);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
+    return pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps), (target) =>
+      target.startsWith('./') ? probe(joinUnder(dir, target), exists) : undefined,
+    );
   }
   if (subpath !== '.') return probe(joinUnder(dir, subpath), exists, deps);
   return entryOf(pkg, exists) ?? probe(joinUnder(dir, 'index'), exists);
@@ -208,15 +204,75 @@ function normalizeExports(exportsField: unknown): unknown {
   return exportsField;
 }
 
+const NODE_MODULE_KINDS = new Set(['node16', 'node18', 'node20', 'nodenext']);
+const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
+
 /**
- * Match `key` against a package.json `exports`/`imports` subpath map: the exact key
- * first, else the `*` pattern with the longest prefix. Returns the ordered string
- * targets (conditions in declaration order, arrays in order, `*` replaced), or
- * undefined when no key matches or the match is explicitly blocked (`null`).
+ * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
+ *
+ * The settings decide when the config in effect names the resolution: `moduleResolution` `bundler`, `node16` or `nodenext`, or, with no `moduleResolution`, a `module` that implies it in TypeScript 5 and 6 alike (`node16`, `node18`, `node20` and `nodenext` imply their own, `preserve` implies Bundler). Nothing else decides: with neither set the default moved between TypeScript 5 (Node10 or Classic) and 6 (Bundler), and under Node10 or Classic `exports` is not read at all, a difference Runes does not model.
+ *
+ * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
+ *
+ * The format is the file's, which is what TypeScript reads for an `import` or `export` statement; a `require()` call or `import x = require()` reads `require` and a dynamic `import()` may read `import` in a file of the other format, and the extractor does not say which form an import was written in, so those take the file's conditions too.
  */
-function matchSubpathMap(map: unknown, key: string): string[] | undefined {
-  const match = matchSubpathKey(map, key);
-  return match === undefined ? undefined : collectTargets(match.value, match.captured);
+function exportConditions(from: string, deps: TsResolveDeps): Set<string> | undefined {
+  const config = deps.tsconfigFor(from);
+  if (config === undefined || config === 'unknown') return undefined;
+  const { moduleResolution: resolution, module } = config;
+  const kind =
+    resolution === 'bundler' || (resolution === undefined && module === 'preserve')
+      ? 'bundler'
+      : resolution === 'node16' || resolution === 'nodenext' || (resolution === undefined && module !== undefined && NODE_MODULE_KINDS.has(module))
+        ? 'node'
+        : undefined;
+  if (kind === undefined || module === undefined) return undefined;
+  const ext = /\.[^./]*$/.exec(from)?.[0].toLowerCase();
+  let format: 'import' | 'require' | undefined;
+  if (ext === '.mts' || ext === '.mjs') format = 'import';
+  else if (ext === '.cts' || ext === '.cjs') format = 'require';
+  else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
+    if (kind === 'node' && NODE_MODULE_KINDS.has(module)) format = deps.nearestPackage(from)?.manifest.type === 'module' ? 'import' : 'require';
+    else if (kind === 'bundler' && module === 'commonjs') format = 'require';
+    else if (kind === 'bundler' && ESM_MODULE_KINDS.has(module)) format = 'import';
+  }
+  if (format === undefined) return undefined;
+  const conditions = new Set(['default', format, 'types', ...(config.customConditions ?? [])]);
+  if (kind === 'node') conditions.add('node');
+  return conditions;
+}
+
+/**
+ * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing, and so does a versioned `types@<range>` key, whose match depends on the compiler's version. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
+ */
+function pickTarget(
+  match: { value: unknown; captured: string | undefined } | undefined,
+  conditions: Set<string> | undefined,
+  resolve: (target: string) => string | undefined,
+): string | undefined {
+  if (match === undefined) return undefined;
+  const { value, captured } = match;
+  if (conditions === undefined) {
+    for (const target of collectTargets(value, captured) ?? []) {
+      const hit = resolve(target);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  }
+  const STOP = null;
+  const walk = (v: unknown): string | typeof STOP | undefined => {
+    if (typeof v === 'string') return resolve(captured === undefined ? v : v.split('*').join(captured));
+    if (v === null) return STOP;
+    const branches = Array.isArray(v) ? v.map((entry): [string, unknown] => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
+    for (const [condition, branch] of branches) {
+      if (condition.startsWith('types@') && conditions.has('types')) return STOP;
+      if (!conditions.has(condition)) continue;
+      const hit = walk(branch);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  };
+  return walk(value) ?? undefined;
 }
 
 /** The entry of a subpath map `key` selects: the exact key, else the `*` pattern with the longest prefix, with what its `*` captured. */
@@ -847,6 +903,13 @@ export function makeTsResolveDeps(
         }
         merged.paths = { base: dir, map };
       }
+      // tsc reads these two enum options case-insensitively; a value of another type is unset, as tsc then takes the default.
+      for (const field of ['moduleResolution', 'module'] as const) {
+        const value = options?.[field];
+        if (typeof value === 'string') merged[field] = value.toLowerCase();
+      }
+      const custom = options?.customConditions;
+      if (Array.isArray(custom)) merged.customConditions = custom.filter((c): c is string => typeof c === 'string');
       // `outDir` and `declarationDir` resolve from the config that sets them, like every path option; one outside the repository excludes nothing in it.
       for (const field of ['outDir', 'declarationDir'] as const) {
         const value = options?.[field];
@@ -887,6 +950,9 @@ export function makeTsResolveDeps(
   // `paths` resolve from the directory of the config that declares them unless a `baseUrl` is in effect (TypeScript 4.1+).
   const view = (config: LoadedConfig): TsPathConfig => ({
     ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+    ...(config.moduleResolution !== undefined ? { moduleResolution: config.moduleResolution } : {}),
+    ...(config.module !== undefined ? { module: config.module } : {}),
+    ...(config.customConditions !== undefined ? { customConditions: config.customConditions } : {}),
     ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
   });
   // Whether a referenced config whose options cannot be read may hold a file. tsc reads such a config without the bases it cannot read (a generated base absent from the commit), so it holds what the `files` and `include` of the configs in its chain it can read name, or by default what lies under its own directory; here its own directory always counts and every `exclude` is ignored, so the answer errs towards holding, which is towards silence. A referenced config that does not parse may hold anything.
