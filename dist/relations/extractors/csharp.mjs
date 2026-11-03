@@ -1721,8 +1721,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
     };
     /** The extension-method group for a call `value.Name(…)` at `at`: the extension keys of the enclosing
      *  namespaces innermost first, each followed by the namespaces the plain usings of its declarations
-     *  import (one set), then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
-     *  in-scope `Name` → ambiguous → silence), then the global namespace. Aliases import no
+     *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
+     *  in-scope `Name` → ambiguous → silence). Aliases import no
      *  extension methods, and `using static` is not modelled, so neither contributes. */
     const pushExtension = (name, enclosingNs, line, at) => {
         const candidates = [];
@@ -1743,9 +1743,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
             if (k >= 0)
                 addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, []));
         }
+        // The compilation unit is the last level, and its namespace is the global one: the global namespace's own static classes come before the namespaces its using directives import (C# spec §12.8.10.3, §7.8.1).
+        pushed.add(extensionKey('', name));
+        candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
         // A namespace both enclosing and imported only repeats a key already read.
         addSet(usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })));
-        candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
         out.push({ candidates, kind: 'import', line });
     };
     // Replay the descriptors in original emit order (static targets first, then alias-RHS embedded
@@ -1821,7 +1823,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 12,
+    rev: 13,
     declarations,
     uses,
 };
