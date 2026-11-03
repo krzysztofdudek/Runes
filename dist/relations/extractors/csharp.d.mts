@@ -18,11 +18,12 @@ interface UsingScope {
      *  project-wide (A12). The RHS FQN is the resolved alias target (C# resolves an alias RHS
      *  fully-qualified vs the global namespace, so the captured dotted text IS the target). */
     globalAliases: Map<string, string>;
-    /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target,  `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
+    /** alias local-name → every directive of that name in the file, one per namespace body (the nearest enclosing body holding a use decides which one the use sees); for each, `fqn` is the target, `body` is the directive's enclosing-namespace chain (innermost first, empty in the compilation unit), the namespace body whose lookup the alias belongs to; `rooted` is a `global::` target, read from the global namespace only; `outer` are the using directives of the namespace declarations around that body (`outerUsings`), which take part in the lookup at their own namespace. A use of the alias and an `S::` rewrite read the target as the directive does and see the alias only from inside that body. */
     aliasDecls: Map<string, Array<{
         fqn: string;
         body: string[];
         rooted: boolean;
+        outer: OuterUsings[];
         start: number;
         end: number;
     }>>;
@@ -35,6 +36,12 @@ interface UsingScope {
         fqn: string;
         line: number;
     }>;
+}
+/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings import, `aliases` the names its using aliases declare. */
+interface OuterUsings {
+    ns: string;
+    prefixes: string[];
+    aliases: string[];
 }
 /**
  * Collect the `global using Foo.Bar;` namespace prefixes a C# file declares (project-wide
@@ -102,13 +109,14 @@ export type CsharpRefDescriptor =
     enclosingNs: string[];
     at: number;
 }
-/** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). `nearest` marks the alias's own non-generic target, which may name a namespace as much as a type: inside a namespace body only its nearest reading is read, because a nearer namespace of that name, which no type key shows, would decide before any farther type (C# spec §7.8.1); a farther type keeps its edge on the lines that use the alias. */
+/** A named type written in the TARGET of a using alias directive (`using F = A.B.Foo;`, a dependency on that type whether or not the alias is used) or of a `using static` directive (`using static N.C;`, the type whose static members are imported), the container and each type argument of a generic one among them. C# resolves the target in the namespace body that holds the directive, nearest namespace first and the global namespace last, and no using directive or alias of that body takes part (usings of an outer compilation unit would, in C#; reading none of them is a deliberate conservatism) (C# spec §14.5.2), so the group is the enclosing-namespace readings, innermost first, then the name verbatim. The using directives of an enclosing namespace declaration (`outer`, absent when there are none) do take part, at their own namespace: after its reading, the types of the namespaces they import as one CS0104 set, and an alias they declare of the target's first name ends the group there (that alias is not read, a silence). `enclosingNs` is empty for a directive outside any namespace body (a global using, or one above a file-scoped namespace). `nearest` marks the alias's own non-generic target, which may name a namespace as much as a type: inside a namespace body only its nearest reading is read, because a nearer namespace of that name, which no type key shows, would decide before any farther type (C# spec §7.8.1); a farther type keeps its edge on the lines that use the alias. */
  | {
     kind: 'target';
     fqn: string;
     line: number;
     enclosingNs: string[];
     nearest?: boolean;
+    outer?: OuterUsings[];
 }
 /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
  | {
