@@ -80,7 +80,7 @@ export interface RustResolveDeps {
   /** The library tree of the in-repo path dependency the importing crate calls `name`, or
    *  undefined when `name` is not such a dependency. Absent → no dependency resolution. */
   dependencyFor?(fromFile: string, name: string): RustCrateTree | undefined;
-  /** Does crate-root file `rootFile` declare or `use` an item called `name`? With `asItem` the name must be an item of the root as a `use` path from the root names it: a module or other item the file defines, or a name a `use` of it brings in, never a crate bound with `extern crate`. Absent → yes. */
+  /** Does crate-root file `rootFile` declare or `use` an item called `name`? With `asItem` the name must be an item at the top level of the root as a `use` path from the root names it: a module or other item the file defines there, or a name a top-level `use` of it brings in, never a crate bound with `extern crate` and never a name defined inside an inline `mod`, a function body or an initializer. Absent → yes. */
   rootDeclares?(rootFile: string, name: string, asItem?: boolean): boolean;
 }
 
@@ -138,6 +138,11 @@ export function resolveRustPath(
 
   // External crate (std/core/alloc, third-party) — not a resolvable path.
   return undefined;
+}
+
+/** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
+export function rustTopLevelItemKey(name: string): string {
+  return `item:${name}`;
 }
 
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */

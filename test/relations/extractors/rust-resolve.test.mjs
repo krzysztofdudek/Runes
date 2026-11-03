@@ -1,12 +1,13 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/rust-resolve.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect, beforeEach, afterEach } from '../../helpers/expect.mjs';
 import path from 'node:path';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares } from '../../helpers/internal/relations.mjs';
+import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, rustTopLevelItemKey } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
+import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
 // The Rust resolver maps a `::`-path → a `.rs` file through the crate module tree.
 // The crate root is the nearest ancestor of the importing file containing a
@@ -278,7 +279,34 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(makeResolvePathToFile(ws)('crate::Main', 'src/bin/tool.rs', 'rust')).toBeUndefined();
   });
 
-  it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', () => {
+  // The pass's symbol table over every Rust file of the workspace as it stands now, built from the extractor's declarations as a consumer builds it: it is what tells which names a crate root binds at its top level, which an edition 2015 `use` path needs.
+  const tableNow = async () => {
+    const table = new SymbolTable();
+    for (const rel of readdirSync(ws, { recursive: true }).map((p) => p.split(path.sep).join('/')).filter((p) => p.endsWith('.rs')).sort()) {
+      const code = readFileSync(path.join(ws, rel), 'utf-8');
+      await withParsedFile(rel, code, (tree) => {
+        for (const d of rustExtractor.declarations(parsedFile(rel, code, tree, 'rust'))) table.declare('rust', d.symbolKey, rel);
+      });
+    }
+    return table;
+  };
+
+  it('reads a use path as relative to the crate root in edition 2015 only through the pass\'s symbol table, which says what the root binds', async () => {
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    put('src/lib.rs', 'mod shapes;\n');
+    put('src/shapes.rs', '');
+    put('src/api/client.rs', '');
+    // Without the table no name is known to be an item of the root, so the path stays silent; through the resolver it binds.
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'src/api/client.rs', 'rust')).toBeUndefined();
+    const table = await tableNow();
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'src/api/client.rs', 'rust', false, table)).toBe('src/shapes.rs');
+    const resolver = makeResolver({ ownerIndex: { ownerOf: (f) => path.posix.dirname(f) }, symbolTable: table, resolvePathToFile: makeResolvePathToFile(ws) });
+    expect(resolver.resolveFile({ kind: 'path', specifier: 'shapes::Circle' }, 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
+    // The same tables answer a crate:: path from the file's text, as before.
+    expect(makeResolvePathToFile(ws)('crate::shapes::Circle', 'src/api/client.rs', 'rust', false, table)).toBe('src/shapes.rs');
+  });
+
+  it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', async () => {
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('src/lib.rs', 'mod shapes;\nextern crate serde;\nmod std;\n');
     put('src/shapes.rs', '');
@@ -289,7 +317,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/local.rs', '');
     put('src/bin/shapes.rs', '');
     const edition = (value) => `[package]\nname = "app"\n${value}`;
-    const resolve = () => makeResolvePathToFile(ws);
+    const table = await tableNow();
+    const resolve = () => (spec, from, language) => makeResolvePathToFile(ws)(spec, from, language, false, table);
     // No edition: 2015. The root declares `shapes`, so the path binds its file from any module; a crate root is its own root.
     expect(resolve()('shapes::Circle', 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
     expect(resolve()('local::Thing', 'src/bin/tool.rs', 'rust')).toBe('src/bin/local.rs');
@@ -312,12 +341,13 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve()('shapes::Circle', 'tests/common/mod.rs', 'rust')).toBeUndefined();
   });
 
-  it('in edition 2015 binds the crate root for a use path that names an item the root defines or imports, and not for an extern crate or an undefined name', () => {
+  it('in edition 2015 binds the crate root for a use path that names an item the root defines or imports, and not for an extern crate or an undefined name', async () => {
     put('Cargo.toml', '[package]\nname = "app"\n');
     put('src/lib.rs', 'extern crate serde;\npub use shapes::Circle;\npub enum Error { NotFound }\nmod shapes;\n');
     put('src/shapes.rs', '');
     put('src/api/client.rs', '');
-    const resolve = makeResolvePathToFile(ws);
+    const table = await tableNow();
+    const resolve = (spec, from, language) => makeResolvePathToFile(ws)(spec, from, language, false, table);
     expect(resolve('Error', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
     expect(resolve('Error::NotFound', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
     expect(resolve('Circle', 'src/api/client.rs', 'rust')).toBe('src/lib.rs');
@@ -326,10 +356,10 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('Missing', 'src/api/client.rs', 'rust')).toBeUndefined();
     // The same root item is no `use` path from edition 2018 on.
     put('Cargo.toml', '[package]\nname = "app"\nedition = "2018"\n');
-    expect(makeResolvePathToFile(ws)('Error', 'src/api/client.rs', 'rust')).toBeUndefined();
+    expect(makeResolvePathToFile(ws)('Error', 'src/api/client.rs', 'rust', false, table)).toBeUndefined();
   });
 
-  it('lets a target that writes an edition of its own decide how its files read use paths, by its path or its name', () => {
+  it('lets a target that writes an edition of its own decide how its files read use paths, by its path or its name', async () => {
     const lib = 'mod shapes;\n';
     put('src/lib.rs', lib);
     put('src/shapes.rs', '');
@@ -340,9 +370,10 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/multi/ui.rs', '');
     put('tests/it.rs', 'mod helper;\n');
     put('tests/helper.rs', '');
+    let table = await tableNow();
     const resolve = (manifest, spec, from) => {
       put('Cargo.toml', manifest);
-      return makeResolvePathToFile(ws)(spec, from, 'rust');
+      return makeResolvePathToFile(ws)(spec, from, 'rust', false, table);
     };
     const pkg = (edition, rest = '') => `[package]\nname = "app"\nedition = "${edition}"\n${rest}`;
     // [lib].edition decides the library's files; the package's edition holds for the rest.
@@ -360,10 +391,12 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // A bin named like the package and given no path is rooted at src/main.rs.
     put('src/main.rs', 'mod shapes;\n');
     put('src/lib.rs', '');
+    table = await tableNow();
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBe('src/shapes.rs');
     expect(resolve(pkg('2018', '[[bin]]\nname = "other"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
     // A module of both the library and the binary is read in two editions when they differ, so it is not told; it is when they agree.
     put('src/lib.rs', 'mod shapes;\n');
+    table = await tableNow();
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
     expect(resolve(pkg('2015', '[[bin]]\nname = "app"\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
     expect(resolve(pkg('2018', '[lib]\nedition = "2015"\n[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
@@ -371,23 +404,25 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = 2015\n[[bin]]\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
   });
 
-  it('takes the edition from the workspace for `edition.workspace = true`, and treats a workspace that gives none as unknown', () => {
+  it('takes the edition from the workspace for `edition.workspace = true`, and treats a workspace that gives none as unknown', async () => {
     put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n[workspace.package]\nedition = "2015"\n');
     put('crates/a/Cargo.toml', '[package]\nname = "a"\nedition.workspace = true\n');
     put('crates/a/src/lib.rs', 'mod shapes;\n');
     put('crates/a/src/shapes.rs', '');
     put('crates/a/src/api/client.rs', '');
-    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust')).toBe('crates/a/src/shapes.rs');
+    let table = await tableNow();
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust', false, table)).toBe('crates/a/src/shapes.rs');
     put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n[workspace.package]\nedition = "2021"\n');
-    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust')).toBeUndefined();
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust', false, table)).toBeUndefined();
     put('Cargo.toml', '[workspace]\nmembers = ["crates/a"]\n');
-    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust')).toBeUndefined();
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'crates/a/src/api/client.rs', 'rust', false, table)).toBeUndefined();
     // A package at the repository root, with no ancestor to look in.
     put('Cargo.toml', '[package]\nname = "a"\nedition.workspace = true\n');
     put('src/lib.rs', 'mod shapes;\n');
     put('src/shapes.rs', '');
     put('src/api/client.rs', '');
-    expect(makeResolvePathToFile(ws)('shapes::Circle', 'src/api/client.rs', 'rust')).toBeUndefined();
+    table = await tableNow();
+    expect(makeResolvePathToFile(ws)('shapes::Circle', 'src/api/client.rs', 'rust', false, table)).toBeUndefined();
   });
 
   it('roots crate:: of a [[bin]] path outside src/ at that binary, for the root and the files below its directory (the ripgrep shape)', () => {
@@ -666,6 +701,7 @@ describe('parseCargoManifest / rustFileDeclares', () => {
     // `autotests` and `autobins` were not read, so every file in tests/ and src/bin/ was a crate root.
     expect(read('[package]\nname = "p"\nautotests = false\nautoexamples = true\nautobins = false\n[package.metadata]\nautobenches = false\n').undiscoveredDirs).toEqual(['tests', 'src/bin']);
     expect(read('package = { name = "p", autobenches = false, autoexamples = false }\n').undiscoveredDirs).toEqual(['benches', 'examples']);
+    { const m = parseCargoManifest('[package]\nname = "p"\nautobins = true\nautobins = true\nautotests = false\n[[bin]]\nname = "a"\n[[bin]]\npath = "b.rs"\n[[test]]\nname = "t"\n'); expect({ d: m.discoveredDirs, u: m.undiscoveredDirs, k: m.declaredDirs }).toEqual({ d: ['src/bin'], u: ['tests'], k: ['src/bin', 'tests'] }); }
     expect(read('package.autotests = false\r\n[package]\r\nautotests = "false"\r\n').undiscoveredDirs).toEqual(['tests']);
   });
 
@@ -935,19 +971,54 @@ path = "..\u002fmore"
     expect(rustFileDeclares('extern crate r#async as r#await ;', 'await')).toBe(true);
     expect(rustFileDeclares('extern crate self as facade;', 'facade')).toBe(true);
     expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
+    // Anywhere in the file: the top level is the parse tree's question, not this one's.
+    expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
   });
 
-  it('as an item of the root, takes a defined or imported name and never an `extern crate` or a name that only leads a longer path', () => {
-    expect(rustFileDeclares('pub enum Error {}', 'Error', true)).toBe(true);
-    expect(rustFileDeclares('mod shapes;', 'shapes', true)).toBe(true);
-    expect(rustFileDeclares('macro_rules! m { () => {} }', 'm', true)).toBe(true);
-    expect(rustFileDeclares('pub use a::{b::Error, c};', 'Error', true)).toBe(true);
-    expect(rustFileDeclares('use a::b as Error;', 'Error', true)).toBe(true);
-    expect(rustFileDeclares('extern crate serde;', 'serde', true)).toBe(false);
-    expect(rustFileDeclares('use serde::Deserialize;', 'serde', true)).toBe(false);
-    expect(rustFileDeclares('use a::Error as Other;', 'Error', true)).toBe(false);
-    expect(rustFileDeclares('use a::Error as Other;', 'Other', true)).toBe(true);
+  // The names the top level of `code` binds as items, as the Rust extractor reads them from the parse tree.
+  const itemsOf = (code) => withParsedFile('x.rs', code, (tree) => topLevelItemNames(tree.rootNode).map((x) => x.name));
+
+  it('as an item of the root, takes a name the top level defines or imports, from the parse tree, and never an `extern crate` or a name that only leads a longer path', async () => {
+    expect(await itemsOf('pub enum Error {}\nmod shapes;\nmacro_rules! m { () => {} }\npub(crate) union U { a: u8 }\ntype T = u8;\nconst C: u8 = 0;\nstatic S: u8 = 0;\npub const fn cf() {}\ntrait Tr {}')).toEqual(['Error', 'shapes', 'm', 'U', 'T', 'C', 'S', 'cf', 'Tr']);
+    expect(await itemsOf('pub use a::{b::Error, c};')).toEqual(['Error', 'c']);
+    expect(await itemsOf('use a::b as Error;\nuse h;\nuse x::y as _;\nuse a::Error as Other;')).toEqual(['Error', 'h', 'Other']);
+    expect(await itemsOf('use a::{self, f::{self as G}, *};\nuse a::b::*;\nuse {x, y::z};')).toEqual(['a', 'G', 'x', 'z']);
+    expect(await itemsOf('use r#gen::r#type;\npub mod r#async;')).toEqual(['type', 'async']);
+    expect(await itemsOf('extern crate serde;\nextern crate core as kernel;\nuse serde::Deserialize;')).toEqual(['Deserialize']);
+    expect(await itemsOf('const _: () = {};\nimpl S { fn Error() {} }\nunsafe impl Send for S { const Error: u8 = 0; }\npub trait T2 { type Error; }')).toEqual(['T2']);
   });
+
+  it('as an item of the root, reads nothing nested: an inline mod, a function body, an initializer block, a closure, a use in a block, a macro_rules! body', async () => {
+    expect(await itemsOf('pub mod m { pub struct Error; }')).toEqual(['m']);
+    expect(await itemsOf('fn f() { use a::Error; struct Local; }')).toEqual(['f']);
+    expect(await itemsOf('const _: () = { struct Error; };')).toEqual([]);
+    expect(await itemsOf('static S: u8 = { struct Error; 0 };')).toEqual(['S']);
+    expect(await itemsOf('static L: Lazy<u8> = Lazy::new(|| { struct Error; 0 });')).toEqual(['L']);
+    expect(await itemsOf('const _: () = { use a::Error; };')).toEqual([]);
+    expect(await itemsOf('macro_rules! m { () => { struct Error; } }')).toEqual(['m']);
+    // A brace or a keyword inside a literal or an attribute string is text.
+    expect(await itemsOf('fn f() { let s = br#"} " }"#; let c = \'}\'; let d = "}"; struct Error; }\nstruct After;')).toEqual(['f', 'After']);
+    expect(await itemsOf('const S: &str = "{ a \\" b";\nstruct Error;')).toEqual(['S', 'Error']);
+    expect(await itemsOf('fn f<\'a>(x: &\'a str) { struct Error; }')).toEqual(['f']);
+  });
+
+  it('as an item of the root, takes the items of an extern block and of the item macros whose expansion is known, and only at their own level', async () => {
+    expect(await itemsOf('#[cfg(feature = "fn")] extern "C" { fn foo(); static BAR: u8; type Opaque; }')).toEqual(['foo', 'BAR', 'Opaque']);
+    expect(await itemsOf('thread_local! { static COUNTER: Cell<u8> = Cell::new(0); pub static TL2: Cell<u8> = const { Cell::new(0) }; }\nthread_local!(static TL: u8 = 0);')).toEqual(['COUNTER', 'TL2', 'TL']);
+    expect(await itemsOf('lazy_static! { static ref TABLE: u8 = 0; static mut M: u8 = 0; }')).toEqual(['TABLE', 'M']);
+    expect(await itemsOf('bitflags! { #[derive(Debug)] pub struct Flags: u32 { const A = 1; } }\nbitflags::bitflags! { struct Other: u8 { const B = 2; } }')).toEqual(['Flags', 'Other']);
+    expect(await itemsOf('cfg_if! { if #[cfg(feature = "impl")] { mod imp; pub use self::imp::Exported; } else { mod imp2; use a::{b, c}; use d::*; fn helper() { struct No; } } }')).toEqual(['imp', 'Exported', 'imp2', 'helper']);
+    expect(await itemsOf('cfg_if::cfg_if! { if #[cfg(unix)] { cfg_if! { if #[cfg(x)] { pub union U { a: u8 } macro_rules! mm { () => {} } } } } }')).toEqual(['U', 'mm']);
+    // Another macro's expansion is not known, so its tokens define nothing; neither does a macro written without a body.
+    expect(await itemsOf('other_macro! { struct NotKnown; }\nbitflags!();\nthread_local!;')).toEqual([]);
+  });
+
+  it('declares each top-level item under its own key beside the declarations it always made, and the resolver asks only that key', async () => {
+    const code = 'pub struct Engine;\npub use a::Error;\nfn f() { struct Local; }';
+    const keys = await withParsedFile('src/lib.rs', code, (tree) => rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust')).map((d) => d.symbolKey));
+    expect(keys).toEqual(['Engine', 'f', rustTopLevelItemKey('Engine'), rustTopLevelItemKey('Error'), rustTopLevelItemKey('f')]);
+  });
+
 });
 
 describe('resolveRustPath — manifest and target edge forms (disk-backed)', () => {

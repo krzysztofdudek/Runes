@@ -376,7 +376,7 @@ export function makeResolver(deps) {
             // absent / ambiguous (2+ owners) → silence; resolved (one file, or one owner) → edge.
             return outcome.kind === 'resolved' ? { owner: outcome.owner, resolvedFile: outcome.resolvedFile } : undefined;
         }
-        const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage);
+        const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable);
         if (!file) {
             const fallback = jvmOutcome(hint, language, true, fromFile);
             if (fallback === undefined)
@@ -421,7 +421,7 @@ export function makeResolver(deps) {
         // so the path probe itself has no `ambiguous` outcome — only resolved or absent. The one
         // exception is Java's miss fallback into the shared JVM namespace, where a duplicate
         // declaration or a split package IS an ambiguity.
-        const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage);
+        const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable);
         if (!file) {
             const fallback = jvmOutcome(hint, language, true, fromFile);
             return fallback !== undefined ? classifyJvm(fallback) : { kind: 'absent' };
@@ -441,7 +441,7 @@ export function makeResolver(deps) {
                 return undefined;
             return files.size === 1 ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
         }
-        const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage);
+        const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable);
         if (file)
             return file;
         const fallback = jvmOutcome(hint, language, true, fromFile);
