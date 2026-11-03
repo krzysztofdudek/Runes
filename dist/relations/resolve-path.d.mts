@@ -51,7 +51,7 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
  *
  *  `undiscoveredDirs` are the directories among `src/bin`, `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autobins = false`, `autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
-export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, targetPaths?: readonly string[], undiscoveredDirs?: readonly string[], namedTargets?: readonly string[], inferMain?: boolean): {
+export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, targetPaths?: readonly string[], undiscoveredDirs?: readonly string[], namedTargets?: readonly string[], inferMain?: boolean, droppedInferred?: readonly string[], inferLib?: boolean): {
     srcDir: string;
     rootFiles: string[];
     fileIsRoot: boolean;
@@ -75,6 +75,8 @@ interface CargoManifest {
     declaredDirs: string[];
     /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name` and no `path`: Cargo roots it at `<dir>/<name>.rs` or `<dir>/<name>/main.rs`, whether or not auto-discovery is on. */
     namedTargets: string[];
+    /** `<dir>/<name>` for each `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that gives a `name`, with or without a `path`: Cargo leaves out an inferred target of the same kind and name (`seen_names`). */
+    declaredNames: string[];
     /** Whether a `[package]` table is written at all (a virtual workspace manifest has none, and no crate of its own). */
     hasPackage: boolean;
     /** `[package].edition` as written (`"2018"`), undefined when absent or inherited. */
@@ -87,6 +89,8 @@ interface CargoManifest {
     libEdition: string | undefined;
     /** Whether a `[lib]` table is written, in any spelling: Cargo then has a library even where `src/lib.rs` is missing, at `src/<name>.rs` in edition 2015. */
     libDeclared: boolean;
+    /** `[package].autolib` written as `false`: with no `[lib]` table Cargo then infers no library from `src/lib.rs`. */
+    autolibOff: boolean;
     /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
     packageName: string | undefined;
     /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
