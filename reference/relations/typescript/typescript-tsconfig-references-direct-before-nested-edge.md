@@ -8,7 +8,7 @@ cites: "TS Project References — tsserver checks every direct reference of a so
 
 ## Rule
 
-When the nearest tsconfig.json is solution-style, the referenced project that serves a file is the first, in the order of `references`, among the direct references that hold it; only when none of them does are their own references searched, level by level. A project nested under an earlier reference therefore loses to a later direct reference that holds the file.
+When the nearest tsconfig.json is solution-style, the referenced project that serves a file is the first, in the order of `references`, among the direct references that hold it; only when none of them does are their own references searched, the tree of each direct reference in turn (see `typescript-tsconfig-references-subtree-order-edge`). A project nested under an earlier reference therefore loses to a later direct reference that holds the file.
 
 ## Files
 

@@ -110,6 +110,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-tsconfig-references-paths-edge', () => runCase('typescript-tsconfig-references-paths-edge'));
   it('typescript-tsconfig-references-first-project-edge', () => runCase('typescript-tsconfig-references-first-project-edge'));
   it('typescript-tsconfig-references-direct-before-nested-edge', () => runCase('typescript-tsconfig-references-direct-before-nested-edge'));
+  it('typescript-tsconfig-references-subtree-order-edge', () => runCase('typescript-tsconfig-references-subtree-order-edge'));
   it('typescript-tsconfig-paths-multi-target-silence', () => runCase('typescript-tsconfig-paths-multi-target-silence'));
   it('typescript-tsconfig-alias-silence', () => runCase('typescript-tsconfig-alias-silence'));
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
