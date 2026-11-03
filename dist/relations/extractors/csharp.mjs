@@ -916,67 +916,70 @@ export function extractCsharpRefs(file) {
     for (const target of scope.staticTargets) {
         refs.push({ kind: 'static', fqn: target.fqn, line: target.line });
     }
-    // ── C#12 alias-RHS embedded named types (R7 + A6) ───────────────────────────────────────
-    // `using L = System.Collections.Generic.List<MyApp.Models.Customer>;` — the alias NAME `L`
-    // resolves to the closed generic on use (the container `List` is external), but the EMBEDDED
-    // named type arguments (`MyApp.Models.Customer`) are real dependencies the alias-on-use cannot
-    // surface as their own edge. The directive header is skipped by the main walk, so harvest the
-    // RHS's embedded named types here.
-    //
-    // C#12 lets the alias RHS be ANY type — a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`,
-    // a pointer `Mod.Header*`, a nullable value `Mod.Money?` — and each NAMED type embedded in the
-    // structural RHS is a real reference. So descend the RHS structural WRAPPERS (generic args,
-    // tuple elements, array/pointer/nullable element types) for their embedded named types. What is
-    // NEVER emitted: a plain top-level bare named RHS (`using X = N.Type;`) — that is the alias
-    // TARGET, surfaced via the alias map on USE (emitting it here would double-count the A3 edge),
-    // and the tuple element LABELS (they are not types).
+    /** Emit one named type written in a using directive's target as the directive reads it (a `target` descriptor): in the namespace body that holds the directive, nearest namespace first, no using directive or alias of that body taking part. A bare `Program` in a file of top-level statements names that file's own class and is not emitted, as in `pushRef`. */
+    const pushTarget = (name, directive, line) => {
+        if (namesOwnProgram(name))
+            return;
+        refs.push({ kind: 'target', fqn: name, line, enclosingNs: directiveBodyChain(file, directive) });
+    };
+    /**
+     * Emit every named type of a type written in a using directive's target, each read where the directive reads its target (C# spec §14.5.2): a bare, qualified or generic name is one `target` reference, a generic's type arguments are references of their own read the same way, and an array, pointer or nullable type and each tuple element are descended to their named types (C# 12 lets an alias name any type; the tuple element labels are not types). A name written after `global::` is rooted. A name written after a using alias (`S::A.B`) gives nothing: an alias of the same body never applies to a directive, and an alias of an outer body or an extern alias is not read (a silence); its type arguments still give theirs.
+     */
+    function emitDirectiveType(typeNode, directive) {
+        const line = typeNode.startPosition.row + 1;
+        switch (typeNode.type) {
+            case 'identifier':
+                pushTarget(typeNode.text, directive, line);
+                return;
+            case 'generic_name':
+                pushTarget(findChild(typeNode, 'identifier').text, directive, line);
+                emitDirectiveArguments(typeNode, directive);
+                return;
+            case 'qualified_name':
+            case 'alias_qualified_name': {
+                const parts = qualifiedNameParts(typeNode);
+                if (parts.alias === undefined) {
+                    if (typeNode.text.startsWith('global::'))
+                        pushRef(parts.name, typeNode, line, true);
+                    else
+                        pushTarget(parts.name, directive, line);
+                }
+                for (const g of parts.generics)
+                    emitDirectiveArguments(g, directive);
+                return;
+            }
+            case 'array_type':
+            case 'nullable_type':
+            case 'pointer_type':
+                emitDirectiveType(typeNode.childForFieldName('type'), directive);
+                return;
+            case 'tuple_type':
+                for (const el of typeNode.namedChildren) {
+                    if (el.type === 'tuple_element')
+                        emitDirectiveType(el.childForFieldName('type'), directive);
+                }
+                return;
+            default:
+                // predefined_type / function_pointer_type / unrecognized → no named type.
+                return;
+        }
+    }
+    /** The type arguments of one `generic_name` in a directive's target, each read as the directive reads its target. */
+    function emitDirectiveArguments(generic, directive) {
+        for (const arg of findChild(generic, 'type_argument_list').namedChildren)
+            emitDirectiveType(arg, directive);
+    }
+    // ── The using alias target and the named types embedded in it (R7 + A6) ─────────────────
+    // The alias TARGET: `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and each type argument gives its own; C# 12 lets the target be any type (a tuple `(int, Mod.Customer)`, an array `Mod.Order[]`, a pointer, a nullable value), and each named type embedded in it is a reference. Every one of them is read where the directive reads its target (`emitDirectiveType`): a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part.
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'using_directive')
             return undefined;
         const aliasName = node.childForFieldName('name');
         if (aliasName === null)
             return false; // not an alias directive
-        // The alias TARGET (185, D3 b): `using F = A.B.Foo;` gives the edge to its type whether or not any line uses F, as `using static` does. It is resolved in the namespace body that holds the directive (C# spec §14.5.2), so a directive below `namespace App;` or inside a namespace block reads `App.A.B.Foo` before `A.B.Foo`; a `global::` target (`global::A.B.Foo`, `global::Program`) is rooted, its qualifier stripped as `using static` strips it. A generic target (`using R = A.Repo<Order>;`) gives the edge to its container, the type arguments stripped as the alias map strips them, and leaves the type arguments to the walk below.
         const target = node.namedChildren.find((c) => c !== null && c.id !== aliasName.id);
-        const targetLine = node.startPosition.row + 1;
-        if (target !== undefined && target !== null && (target.type === 'identifier' || target.type === 'qualified_name' || target.type === 'alias_qualified_name' || target.type === 'generic_name')) {
-            const parts = qualifiedNameParts(target);
-            if (parts.alias === undefined) {
-                if (target.text.startsWith('global::')) {
-                    pushRef(parts.name, node, targetLine, true);
-                }
-                else if (!namesOwnProgram(parts.name)) {
-                    refs.push({ kind: 'target', fqn: parts.name, line: targetLine, enclosingNs: directiveBodyChain(file, node) });
-                }
-            }
-        }
-        // Find every type_argument_list anywhere in the RHS and emit each argument's named types
-        // (covers `List<Customer>`, and a generic nested inside a tuple/array element).
-        walk(node, (n) => {
-            if (n.type === 'type_argument_list') {
-                for (let i = 0; i < n.namedChildCount; i++)
-                    emitTypeNode(n.namedChild(i));
-                return false; // args handled; do not descend further into this list
-            }
-            // Tuple / array / pointer / nullable RHS — the element type(s) are embedded NAMED types.
-            // Emit a non-generic element directly (a generic element is covered by the
-            // type_argument_list walk above; `emitted` dedups, and a `<…>`-bearing element is skipped
-            // here so we never emit a full `Container<…>` verbatim key). The top-level alias TARGET is
-            // a bare named RHS with no wrapper, so it is never reached here.
-            if (n.type === 'tuple_element') {
-                const t = n.childForFieldName('type');
-                if (t !== null && !t.text.includes('<'))
-                    emitTypeNode(t);
-                return undefined;
-            }
-            if (n.type === 'array_type' || n.type === 'pointer_type' || n.type === 'nullable_type') {
-                const el = n.childForFieldName('type');
-                if (el !== null && !el.text.includes('<'))
-                    emitTypeNode(el);
-                return undefined;
-            }
-            return undefined;
-        });
+        if (target !== undefined && target !== null)
+            emitDirectiveType(target, node);
         return false;
     });
     walk(file.tree.rootNode, (node) => {
@@ -1579,7 +1582,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 7,
+    rev: 8,
     declarations,
     uses,
 };
