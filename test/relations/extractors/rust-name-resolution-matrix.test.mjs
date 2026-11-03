@@ -69,6 +69,9 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-autotests-off-test-module-edge', () => runCase('rust-autotests-off-test-module-edge'));
   it('rust-autobins-off-bin-module-edge', () => runCase('rust-autobins-off-bin-module-edge'));
   it('rust-autobins-off-undeclared-main-silence', () => runCase('rust-autobins-off-undeclared-main-silence'));
+  it('rust-edition-2015-declared-bin-main-silence', () => runCase('rust-edition-2015-declared-bin-main-silence'));
+  it('rust-edition-2018-declared-bin-main-edge', () => runCase('rust-edition-2018-declared-bin-main-edge'));
+  it('rust-edition-2015-autobins-true-main-edge', () => runCase('rust-edition-2015-autobins-true-main-edge'));
   it('rust-edition-2015-use-crate-root-relative-edge', () => runCase('rust-edition-2015-use-crate-root-relative-edge'));
   it('rust-edition-2015-use-crate-root-item-edge', () => runCase('rust-edition-2015-use-crate-root-item-edge'));
   it('rust-edition-2015-use-crate-root-item-inline-mod-silence', () => runCase('rust-edition-2015-use-crate-root-item-inline-mod-silence'));
