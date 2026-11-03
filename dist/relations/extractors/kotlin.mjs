@@ -1,4 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
+import { indexScopes, walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 import { kotlinView } from './kotlin-recover.mjs';
 import { isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
@@ -116,6 +117,13 @@ function walkView(view, visit) {
         walk(root, (node) => (node.type === 'ERROR' ? false : visit(node)));
     }
 }
+/** Walk every trustworthy root of a view like `walkView`, handing each node the scope its ancestors made (see `walkScoped`). */
+function walkViewScoped(view, initial, visit) {
+    for (const root of view.roots) {
+        walkScoped(root, initial, (node, scope) => (node.type === 'ERROR' ? false : visit(node, scope)));
+    }
+}
+const TOP_LEVEL = { local: false, chain: '' };
 /** Run `fn` over the recovered view of `file`, releasing any tree the recovery made. */
 function withView(file, fn) {
     const view = kotlinView(file.tree, file.content, file.newParser);
@@ -242,27 +250,44 @@ function kotlinTypeParameters(decl) {
     return out;
 }
 /** The candidate group for a simple name at `node` (see the file doc comment), or undefined. */
-function samePackageCandidates(scope, name, node) {
+function samePackageCandidates(scope, name, around) {
     const supertypeLists = [];
-    let child = node;
-    for (let a = node.parent; a !== null; child = a, a = a.parent) {
-        if (TYPE_PARAMETER_OWNERS.has(a.type) && kotlinTypeParameters(a).has(name))
+    for (let t = around.typeParameters; t !== null; t = t.outer)
+        if (t.names.has(name))
             return undefined;
-        if (SUPERTYPE_OWNERS.has(a.type) && (child.type === 'class_body' || child.type === 'enum_class_body'))
-            supertypeLists.push(supertypeNames(a));
-    }
+    for (let s = around.supertypes; s !== null; s = s.outer)
+        supertypeLists.push(s.names);
     return samePackageGroup(scope, name, supertypeLists);
+}
+const OUTSIDE = { typeParameters: null, supertypes: null, entering: null };
+/** The scope around every node the view's walkers visit, by node id. */
+function aroundScopes(view) {
+    return indexScopes(view.roots, OUTSIDE, (node, seen) => {
+        const names = TYPE_PARAMETER_OWNERS.has(node.type) ? kotlinTypeParameters(node) : undefined;
+        const declares = names !== undefined && names.size > 0;
+        const entering = SUPERTYPE_OWNERS.has(node.type) ? node : null;
+        if (!declares && entering === null)
+            return undefined;
+        return { typeParameters: names !== undefined && declares ? { names, outer: seen.typeParameters } : seen.typeParameters, supertypes: seen.supertypes, entering };
+    }, (node, inherited) => {
+        if (inherited.entering === null)
+            return inherited;
+        // The declaration's supertypes reach only what is inside its body.
+        const supertypes = node.type === 'class_body' || node.type === 'enum_class_body' ? { names: supertypeNames(inherited.entering), outer: inherited.supertypes } : inherited.supertypes;
+        return { typeParameters: inherited.typeParameters, supertypes, entering: null };
+    }, (node) => node.type === 'ERROR');
 }
 function usesOf(view) {
     const out = [];
     const seen = new Set();
     const scope = kotlinScope(view);
+    const scopes = scope === undefined ? new Map() : aroundScopes(view);
     // Same-package references (no import): one ordered candidate group per simple name and line.
     const seenGroups = new Set();
     const emitSamePackage = (name, node) => {
         if (scope === undefined || name === '')
             return;
-        const candidates = samePackageCandidates(scope, name, node);
+        const candidates = samePackageCandidates(scope, name, scopes.get(node.id));
         if (candidates === undefined)
             return;
         const line = node.startPosition.row + 1;
@@ -384,13 +409,6 @@ const LOCAL_SCOPE_TYPES = new Set([
     'catch_block',
     'finally_block',
 ]);
-function isLocal(node) {
-    for (let cur = node.parent; cur !== null; cur = cur.parent) {
-        if (LOCAL_SCOPE_TYPES.has(cur.type))
-            return true;
-    }
-    return false;
-}
 /** The JVM file-facade class name of a `.kt` file: the `@file:JvmName("…")` argument when
  *  present, else the file name (without `.kt`, non-identifier characters as `_`, first letter
  *  upper-cased) + `Kt`. Undefined for a script (`.kts`), which compiles to a script class. */
@@ -419,30 +437,6 @@ function facadeName(file, view) {
         return undefined;
     const safe = /^[0-9]/.test(base) ? `_${base}` : base;
     return `${safe[0].toUpperCase()}${safe.slice(1)}Kt`;
-}
-/** The enclosing-TYPE chain of `node`, read from its ancestor chain, outermost-first. A
- *  nested `class Inner` inside `class Outer` yields `["Outer"]`; deeper nesting yields
- *  `["Outer", "Mid"]`; a member inside a `companion object` yields `["Outer", "Companion"]`.
- *  Empty when the declaration is top-level (not nested in another type). Joined with the
- *  declaration's own simple name by the reflection separator `+` (Kotlin's JVM binary name
- *  is `Outer$Inner`; the analyzer's canonical key is `Outer+Inner` — same boundary), which
- *  is DISJOINT from the package `.` so a nested key lives in a string space no dot-only use
- *  candidate can match (separator isolation). This is what stops a nested `Inner` from being
- *  keyed as the bare top-level `<package>.Inner` and silencing — or mis-binding — a real
- *  top-level type of the same simple name in another node. */
-function enclosingTypeChain(node) {
-    const parts = [];
-    let cur = node.parent;
-    while (cur !== null) {
-        if (ENCLOSING_TYPE_TYPES.has(cur.type)) {
-            // A `companion object` has no `name` field — its canonical name is `Companion`.
-            const name = cur.type === 'companion_object' ? 'Companion' : cur.childForFieldName('name')?.text;
-            if (name !== undefined && name !== '')
-                parts.unshift(name);
-        }
-        cur = cur.parent;
-    }
-    return parts;
 }
 /**
  * The FULLY-QUALIFIED symbol keys this file DEFINES. Reads the file's `package_header`
@@ -480,20 +474,29 @@ function declarationsOf(file, view) {
     const pkg = packageOf(view);
     const qualify = (typeKey) => (pkg === '' ? typeKey : `${pkg}.${typeKey}`);
     let topLevelCallable = false;
-    walkView(view, (node) => {
-        if (!DECLARATION_TYPES.has(node.type))
-            return undefined;
-        if (isLocal(node))
-            return undefined;
+    walkViewScoped(view, TOP_LEVEL, (node, enclosing) => {
+        // What the children of this node sit in: a local scope (no FQN, not importable), and the enclosing-TYPE chain.
+        let below;
+        if (LOCAL_SCOPE_TYPES.has(node.type) && !enclosing.local)
+            below = { local: true, chain: enclosing.chain };
+        if (ENCLOSING_TYPE_TYPES.has(node.type)) {
+            // A `companion object` has no `name` field — its canonical name is `Companion`.
+            const typeName = node.type === 'companion_object' ? 'Companion' : node.childForFieldName('name')?.text;
+            if (typeName !== undefined && typeName !== '') {
+                const outer = below ?? enclosing;
+                below = { local: outer.local, chain: outer.chain === '' ? typeName : `${outer.chain}+${typeName}` };
+            }
+        }
+        if (!DECLARATION_TYPES.has(node.type) || enclosing.local)
+            return below;
         const name = declarationName(node);
         if (name === undefined || name === '')
-            return undefined;
-        const chain = enclosingTypeChain(node);
-        if (chain.length === 0 && (node.type === 'function_declaration' || node.type === 'property_declaration')) {
+            return below;
+        if (enclosing.chain === '' && (node.type === 'function_declaration' || node.type === 'property_declaration')) {
             topLevelCallable = true;
         }
-        add(qualify([...chain, name].join('+')), node.startPosition.row + 1);
-        return undefined;
+        add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), node.startPosition.row + 1);
+        return below;
     });
     // Declarations read only from a damaged declaration's leading tokens, and the markers for
     // what could not be read at all (see the file doc comment, PARSE RECOVERY).

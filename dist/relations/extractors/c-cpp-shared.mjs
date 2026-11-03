@@ -1,4 +1,4 @@
-import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
  * Shared include-extraction for C and C++.
@@ -219,44 +219,15 @@ function conditionValue(node) {
         return undefined; // `#ifdef`/`#elifdef` carry no condition → unknown
     return evalPreprocessorCondition(condition.text);
 }
-/**
- * Does `include` sit in a branch the compiler statically discards?
- *
- * Walk the ancestor chain from the include upward. At every conditional
- * (`preproc_if`/`preproc_elif`, and the `#ifdef` family, which is always unknown):
- *   - entered through its BODY (not its `alternative`) and its condition is a KNOWN ZERO
- *     (`#if 0`, `#if (0)`, `#if false`, `#elif 0 && X`) → dead;
- *   - entered through its `alternative` (the `#else`/`#elif`/`#elifdef` chain) and its
- *     condition is a KNOWN NON-ZERO (`#if 1`) → dead: once a group is taken every later
- *     group of the chain is skipped.
- * A nested conditional inside a dead outer one is still dead, because the climb continues
- * to the outer node. An unknown condition never condemns anything.
- */
-function isInDeadBranch(include) {
-    let child = include;
-    let parent = include.parent;
-    while (parent !== null) {
-        if (parent.type === 'preproc_if' || parent.type === 'preproc_elif') {
-            const alternative = parent.childForFieldName('alternative');
-            const enteredViaAlternative = alternative !== null && alternative.id === child.id;
-            const value = conditionValue(parent);
-            if (value !== undefined) {
-                if (!enteredViaAlternative && value === 0)
-                    return true;
-                if (enteredViaAlternative && value !== 0)
-                    return true;
-            }
-        }
-        child = parent;
-        parent = parent.parent;
-    }
-    return false;
+/** True when a child of the conditional `cond` is statically dead, entered as `node` is. */
+function entersDeadGroup(node, cond) {
+    return node.id === cond.alternativeId ? cond.value !== 0 : cond.value === 0;
 }
 /**
  * The 1-based line numbers that sit in a statically dead preprocessor group, computed from
  * the TEXT, not the tree. Used only when the tree contains an ERROR node: tree-sitter-c and
  * tree-sitter-cpp both turn `#if __has_include("x.h")` into an ERROR and flatten the rest of
- * the chain into plain siblings, so the ancestor walk above can no longer see that an
+ * the chain into plain siblings, so the walk through the conditionals can no longer see that an
  * include sits under a following `#elif 0`.
  *
  * Comments, string literals and character literals are blanked first (newlines kept), and
@@ -391,22 +362,29 @@ export function includeUses(file) {
         textDead ??= deadPreprocessorLines(file.content);
         return textDead.has(line);
     };
-    walk(file.tree.rootNode, (node) => {
+    // The scope is the conditional the node sits directly under (null for any other parent), so a group is known dead from the node that enters it and nothing below it is visited.
+    walkScoped(file.tree.rootNode, null, (node, cond) => {
+        if (cond !== null && entersDeadGroup(node, cond))
+            return false; // statically dead group → no real dependency
+        if (node.type === 'preproc_if' || node.type === 'preproc_elif') {
+            const value = conditionValue(node);
+            return value === undefined ? null : { alternativeId: node.childForFieldName('alternative')?.id, value };
+        }
         if (node.type !== 'preproc_include')
-            return undefined;
+            return cond === null ? undefined : null;
         const line = node.startPosition.row + 1;
-        if (isInDeadBranch(node) || deadByText(line))
-            return undefined; // statically dead group → no real dependency
+        if (deadByText(line))
+            return false;
         const header = includeHeaderName(node);
         if (header === undefined || header.name === '')
-            return undefined;
+            return false;
         const specifier = header.angle ? `<${header.name}>` : header.name;
         const dedupKey = `${specifier} ${line}`;
         if (seen.has(dedupKey))
-            return undefined;
+            return false;
         seen.add(dedupKey);
         out.push(single({ kind: 'path', specifier }, 'import', line));
-        return undefined;
+        return false;
     });
     return out;
 }

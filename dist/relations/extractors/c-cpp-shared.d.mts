@@ -20,7 +20,7 @@ export declare function evalPreprocessorCondition(expr: string): number | undefi
  * The 1-based line numbers that sit in a statically dead preprocessor group, computed from
  * the TEXT, not the tree. Used only when the tree contains an ERROR node: tree-sitter-c and
  * tree-sitter-cpp both turn `#if __has_include("x.h")` into an ERROR and flatten the rest of
- * the chain into plain siblings, so the ancestor walk above can no longer see that an
+ * the chain into plain siblings, so the walk through the conditionals can no longer see that an
  * include sits under a following `#elif 0`.
  *
  * Comments, string literals and character literals are blanked first (newlines kept), and

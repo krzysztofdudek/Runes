@@ -1,4 +1,4 @@
-import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
  * Rust dependency extractor.
@@ -170,22 +170,13 @@ function unraw(segment) {
 function unrawPath(specifier) {
     return specifier.split('::').map(unraw).join('::');
 }
-/** The enclosing INLINE modules of `node`, outermost first: every `mod_item` ancestor that
- *  has a body. `unpinned` is true when any of them carries a `#[path]` attribute, which
- *  relocates its directory, or has no readable name (a malformed tree) — the caller then
- *  emits nothing relative (silence over a guess). */
-function inlineModChain(node) {
+/** The enclosing inline modules as the names of the chain, outermost first. */
+function inlineModChain(scope) {
     const names = [];
-    let unpinned = false;
-    for (let p = node.parent; p !== null; p = p.parent) {
-        if (p.type !== 'mod_item' || p.childForFieldName('body') === null)
-            continue;
-        const name = p.childForFieldName('name')?.text ?? '';
-        names.unshift(unraw(name));
-        if (name === '' || modHasPathOverride(p))
-            unpinned = true;
-    }
-    return { names, unpinned };
+    for (let m = scope; m !== null; m = m.outer)
+        names.push(m.name);
+    names.reverse();
+    return { names, unpinned: scope?.unpinned ?? false };
 }
 /**
  * Rebase a `self`/`super`-rooted specifier emitted from inside the (non-empty) inline
@@ -225,6 +216,8 @@ function modHasPathOverride(modItem) {
 function uses(file) {
     const out = [];
     const seen = new Set();
+    // The inline modules around the node being visited, carried down the walk.
+    let mods = null;
     const emit = (raw, node) => {
         if (raw === undefined || raw === '')
             return;
@@ -232,7 +225,7 @@ function uses(file) {
         const root = specifier.split('::', 1)[0];
         if (root === 'self' || root === 'super') {
             // Relative to the module the node sits in: rebase across enclosing inline modules.
-            const chain = inlineModChain(node);
+            const chain = inlineModChain(mods);
             if (chain.names.length > 0) {
                 if (chain.unpinned)
                     return; // a #[path]-relocated (or nameless) inline module → silence
@@ -321,7 +314,8 @@ function uses(file) {
                 return;
         }
     };
-    walk(file.tree.rootNode, (node) => {
+    walkScoped(file.tree.rootNode, null, (node, scope) => {
+        mods = scope;
         if (node.type === 'use_declaration') {
             const arg = node.childForFieldName('argument');
             if (arg !== null)
@@ -338,7 +332,11 @@ function uses(file) {
                 if (name !== null)
                     emit(`self::${name.text}`, node);
             }
-            return undefined;
+            if (body === null)
+                return undefined;
+            // An inline module: what sits inside it is read relative to it.
+            const name = node.childForFieldName('name')?.text ?? '';
+            return { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope };
         }
         // `extern crate name [as alias];` → the bare crate name (never `self`); the resolver
         // binds it only to an in-repo path dependency.

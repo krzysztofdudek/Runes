@@ -1,6 +1,7 @@
 // The internal modules of @chrisdudek/runes/relations, for the tests that exercise helpers the stable surface does not export (docs/api.md). Not part of the package's API.
 export * from '../../../dist/relations/extractors/types.mjs';
 export * from '../../../dist/relations/extractors/c-cpp-shared.mjs';
+export * from '../../../dist/relations/extractors/scope-walk.mjs';
 export * from '../../../dist/relations/extractors/csharp.mjs';
 export * from '../../../dist/relations/extractors/go-resolve.mjs';
 export * from '../../../dist/relations/extractors/include-resolve.mjs';
