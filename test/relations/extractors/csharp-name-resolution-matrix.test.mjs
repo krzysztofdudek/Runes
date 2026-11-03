@@ -175,6 +175,11 @@ describe('MATRIX — one type declared across several files (owner-node ambiguit
   it('csharp-partial-class-multi-file-edge', () => runCase('csharp-partial-class-multi-file-edge'));
   it('csharp-partial-class-split-across-nodes-silence', () => runCase('csharp-partial-class-split-across-nodes-silence'));
   it('csharp-generic-arity-split-files-edge', () => runCase('csharp-generic-arity-split-files-edge'));
+  it('csharp-generic-arity-nearer-non-generic-edge', () => runCase('csharp-generic-arity-nearer-non-generic-edge'));
+  it('csharp-generic-arity-bare-name-nearer-generic-edge', () => runCase('csharp-generic-arity-bare-name-nearer-generic-edge'));
+  it('csharp-generic-arity-split-nodes-edge', () => runCase('csharp-generic-arity-split-nodes-edge'));
+  it('csharp-alias-target-generic-arity-edge', () => runCase('csharp-alias-target-generic-arity-edge'));
+  it('csharp-generic-arity-unbound-typeof-edge', () => runCase('csharp-generic-arity-unbound-typeof-edge'));
 });
 
 describe('MATRIX — generic base names', () => {
