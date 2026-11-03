@@ -2,7 +2,7 @@
  * MCP tools generated from the command table: one tool per public command, `<prefix><command>` (a subcommand or a dash joins with `_`: `grain_decide_steer`), one field per argument and per flag under the flag's own name, and the annotations from the table. A call is turned back into the argv the CLI would get, so the CLI's own parser reads it exactly as it reads a command line.
  */
 import { isAbsolute } from 'node:path';
-import { argSpec, commandFlags, pathFields, publicCommands, type CommandSpec, type CommandTable, type FlagKind } from '../cli/table.mjs';
+import { argSpec, commandFlags, pathFields, publicCommands, toolWord, type CommandSpec, type CommandTable, type FlagKind } from '../cli/table.mjs';
 
 /** A JSON-RPC "invalid params" refusal (-32602): the call's input does not fit the tool. */
 export class InvalidParams extends Error {
@@ -45,7 +45,7 @@ const DEFAULT_OMIT: readonly string[] = ['help'];
 
 /** A tool's name for a command. */
 export function toolName(prefix: string, command: string): string {
-  return prefix + command.replace(/[ -]/g, '_');
+  return prefix + toolWord(command);
 }
 
 export const prefixOf = (table: CommandTable, options: ToolOptions = {}): string => options.prefix ?? `${table.tool}_`;
@@ -93,6 +93,11 @@ export function buildTools(table: CommandTable, options: ToolOptions = {}): McpT
     const first = seen.get(name);
     if (first !== undefined) throw new Error(`commands "${first}" and "${command}" both give the MCP tool name "${name}"`);
     seen.set(name, command);
+  }
+  if (options.help !== undefined) {
+    const name = toolName(prefix, 'help');
+    const first = seen.get(name);
+    if (first !== undefined) throw new Error(`the help tool and command "${first}" both give the MCP tool name "${name}"`);
   }
   for (const command of publicCommands(table)) {
     const spec = table.commands[command] as CommandSpec;
