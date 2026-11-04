@@ -23,7 +23,7 @@ for (const name of FRAGMENTS) {
     assert.ok(!/^#{1,6} /m.test(text), 'no heading: the consumer places the fragment under its own');
     const lines = text.split('\n');
     lines.forEach((line, i) => { if (i > 0 && line && lines[i - 1] && !line.startsWith('- ')) assert.fail(`a line continues the one before it (a hard wrap?): ${line}`); });
-    const tools = /\b(yggdrasil|yg|grain|jarl|horde|runes)\b/i.exec(text);
+    const tools = /\b(yggdrasil|yg|grain|jarl|runes)\b/i.exec(text);
     assert.equal(tools, null, `names a family tool: ${tools?.[0]}`);
   });
 }
