@@ -1,6 +1,6 @@
 # Runes
 
-Runes is shared code for the Yggdrasil tool family (Yggdrasil, Grain, Jarl, Horde). It is not a family member for users: nobody installs Runes to do anything. Tools vendor it (Grain, Jarl, Horde) or install it from npm (Yggdrasil). Read `README.md` for the entry rule and the "never in Runes" list before adding anything.
+Runes is shared code for the Yggdrasil tool family (Yggdrasil, Grain, Jarl). It is not a family member for users: nobody installs Runes to do anything. Tools vendor it (Grain, Jarl) or install it from npm (Yggdrasil). Read `README.md` for the entry rule and the "never in Runes" list before adding anything.
 
 ## Check command
 
@@ -15,7 +15,7 @@ Runes is shared code for the Yggdrasil tool family (Yggdrasil, Grain, Jarl, Hord
 - One version covers every subpath. `package.json` `version`, `src/version.mts` `RUNES_VERSION` and the top `CHANGELOG.md` section move together (a test and the release workflow check it).
 - Zero runtime dependencies. `web-tree-sitter` is an optional peer dependency, for types only, and its version equals the runtime pin in `grammars/manifest.json` (a test checks it).
 - No executables ship in the package: no `bin`, no network at run time.
-- No exported identifier carries a family domain word (node as a graph node, aspect, horde, jarl, ticket, mission, loop). The guard enforces it; an exception goes into `guard.allow` with its reason, reviewed like code.
+- No exported identifier carries a family domain word (node as a graph node, aspect, jarl, ticket, mission, loop). The guard enforces it; an exception goes into `guard.allow` with its reason, reviewed like code.
 - `tools/vendor.mjs` is plain JavaScript with zero dependencies because consumers copy it verbatim. It runs on Node 22.
 - Tests are `node:test` files in `test/`, run against the built `dist/` through the package's own exports. The relation suites moved from Yggdrasil keep their vitest shape through `test/helpers/expect.mjs`; they parse through `test/helpers/tree-sitter.mjs`. Tests that need git create throwaway repositories under the OS temp dir with an explicit identity.
 - Never hard-wrap prose. A paragraph, list item or table row is one line in the file, however long; let the editor soft-wrap. This holds for Markdown, code comments and commit bodies alike.

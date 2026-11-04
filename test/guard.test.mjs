@@ -45,11 +45,11 @@ describe('rule: import', () => {
       "import { x } from '@chrisdudek/yg';",
       "import '@chrisdudek/grain/engine';",
       "export * from '../jarl/scripts/jarl.mjs';",
-      "const h = await import('../../Horde/horde.mjs');",
+      "const h = await import('../../Grain/grain.mjs');",
       "const y = require('./yggdrasil/index.js');",
     ].join('\n');
     assert.deepEqual(rules(src).filter((r) => r.startsWith('import:')), [
-      'import:@chrisdudek/yg', 'import:@chrisdudek/grain/engine', 'import:../jarl/scripts/jarl.mjs', 'import:../../Horde/horde.mjs', 'import:./yggdrasil/index.js',
+      'import:@chrisdudek/yg', 'import:@chrisdudek/grain/engine', 'import:../jarl/scripts/jarl.mjs', 'import:../../Grain/grain.mjs', 'import:./yggdrasil/index.js',
     ]);
   });
 
@@ -64,8 +64,8 @@ describe('rule: import', () => {
   });
 
   test('self and declared edges are free', () => {
-    const src = "import a from '../jarl/record.mjs';\nimport b from '@chrisdudek/yg';\nimport c from '@chrisdudek/horde';";
-    assert.deepEqual(rules(src, guardConfig({ self: 'jarl', edges: ['yggdrasil'] })), ['import:@chrisdudek/horde']);
+    const src = "import a from '../jarl/record.mjs';\nimport b from '@chrisdudek/yg';\nimport c from '@chrisdudek/grain';";
+    assert.deepEqual(rules(src, guardConfig({ self: 'jarl', edges: ['yggdrasil'] })), ['import:@chrisdudek/grain']);
   });
 });
 
@@ -75,19 +75,19 @@ describe('rule: spawn', () => {
       "spawn('yg', ['check']);",
       "cp.execSync(`grain survey`);",
       "execFile(process.execPath, [join(dir, 'jarl.mjs'), 'show']);",
-      "spawnSync('npx', ['horde', 'status']);",
+      "spawnSync('npx', ['jarl', 'status']);",
     ].join('\n');
-    assert.deepEqual(rules(src), ['spawn:yg', 'spawn:grain', 'spawn:jarl.mjs', 'spawn:horde']);
+    assert.deepEqual(rules(src), ['spawn:yg', 'spawn:grain', 'spawn:jarl.mjs', 'spawn:jarl']);
   });
 
   test('catches package and bin paths in any argument, shell operators, Worker, and tagged templates', () => {
     const src = [
       "execFileSync(process.execPath, ['node_modules/@chrisdudek/yg/dist/bin.js', 'check']);",
       "execSync('git status&&grain survey');",
-      "new Worker(new URL('../horde/worker.mjs', import.meta.url));",
+      "new Worker(new URL('../grain/worker.mjs', import.meta.url));",
       'await $`jarl show 1`;',
     ].join('\n');
-    assert.deepEqual(rules(src), ['spawn:node_modules/@chrisdudek/yg/dist/bin.js', 'spawn:grain', 'spawn:../horde/worker.mjs', 'spawn:jarl']);
+    assert.deepEqual(rules(src), ['spawn:node_modules/@chrisdudek/yg/dist/bin.js', 'spawn:grain', 'spawn:../grain/worker.mjs', 'spawn:jarl']);
   });
 
   test('ignores other commands and regex .exec', () => {
@@ -97,8 +97,8 @@ describe('rule: spawn', () => {
 
 describe('rule: state-path', () => {
   test('flags string literals naming a state directory as a path segment', () => {
-    const src = "const a = join(root, '.yggdrasil');\nconst b = `${root}/.jarl/log.md`;\nconst c = 'x/.horde/y';";
-    assert.deepEqual(rules(src), ['state-path:.yggdrasil', 'state-path:.jarl', 'state-path:.horde']);
+    const src = "const a = join(root, '.yggdrasil');\nconst b = `${root}/.jarl/log.md`;\nconst c = 'x/.grain/y';";
+    assert.deepEqual(rules(src), ['state-path:.yggdrasil', 'state-path:.jarl', 'state-path:.grain']);
   });
 
   test('ignores look-alikes and comments', () => {
@@ -200,7 +200,7 @@ describe('Windows sources and paths', () => {
   });
 
   test('a backslash path into a state directory is a state-path finding', () => {
-    assert.deepEqual(rules("const p = 'C:\\\\repo\\\\.jarl\\\\log.md';\nconst q = '.horde\\\\tickets';"), ['state-path:.jarl', 'state-path:.horde']);
+    assert.deepEqual(rules("const p = 'C:\\\\repo\\\\.jarl\\\\log.md';\nconst q = '.grain\\\\tickets';"), ['state-path:.jarl', 'state-path:.grain']);
   });
 
   test('an allow file saved with CRLF parses the same', () => {

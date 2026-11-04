@@ -16,7 +16,7 @@ This is what `@chrisdudek/runes` promises under semantic versioning from 1.0.0 o
 - Wording: error messages, tool and field descriptions, report lines. Codes (`code` in the error document, `ELOCKED`, `ELOCKBREAK`, `usage`) are stable; sentences are not.
 - The exact edges an extractor finds. An extractor fix changes what it reports for some source, in a minor or a patch release; the extractor's `rev` changes with it, so a consumer's cache keyed by `rev` drops what it computed before. The relation catalogue (`reference/relations/`) is the specification that fixes move towards.
 
-The Consumers column names the family tools that import each name on their `release/6.1.0` branches (sources and tests; a vendored copy counts), found by reading their imports. Every value export is imported by at least one tool: 1.0.0 promises only what a family tool imports today, and a 1.x minor adds a name, additively, when a tool adopts it.
+The Consumers column names the family tools that import each name on their `release/6.1.0` branches (sources and tests; a vendored copy counts), found by reading their imports. 1.0.0 promises only what a family tool imported when it was written, and a 1.x minor adds a name, additively, when a tool adopts it. Two value exports, `toolName` and `startMcpClient`, were imported only by Horde, which has since left the family; they stay exported and promised, and carry "—" until a tool imports them.
 
 A type marked "—" is imported by no tool and is kept because a kept export's signature reaches it: it is a parameter, a return value or a field of one, so without its name a TypeScript consumer could not write down what it passes to or gets back from a promised function (`TreeSitterRuntime` is what `ParserHostOptions.runtime` takes, `PrepareResult` what `ServerOptions.prepare` returns). Its fields are promised through that signature whether or not the name is exported, so exporting the name adds no promise. A type reached only through a removed name went with it (`InProcessExecutor`, `CallContext`, `GitEnvOptions`, `TempRepo`).
 
@@ -109,7 +109,7 @@ The command table: `defineTable` and the shape it takes (`CommandTable`, `Comman
 
 | Export | Kind | Consumers |
 |---|---|---|
-| `defineTable` | value | Grain, Horde, Jarl |
+| `defineTable` | value | Grain, Jarl |
 | `CommandTable` | type | — |
 | `CommandSpec` | type | — |
 | `FlagKind` | type | — |
@@ -122,17 +122,17 @@ The in-process executor is internal: `inProcess`, `InProcessExecutor`, `CallCont
 
 | Export | Kind | Consumers |
 |---|---|---|
-| `buildTools` | value | Grain, Horde, Jarl |
+| `buildTools` | value | Grain, Jarl |
 | `argvFor` | value | Grain, Jarl |
 | `answersJson` | value | Grain |
 | `commandForTool` | value | Jarl |
-| `toolName` | value | Horde |
+| `toolName` | value | — |
 | `InvalidParams` | value | Grain, Jarl |
 | `McpTool` | type | — |
 | `ToolOptions` | type | — |
-| `createServer` | value | Grain, Horde |
-| `serveStdio` | value | Grain, Horde, Jarl |
-| `spawnCli` | value | Grain, Horde |
+| `createServer` | value | Grain |
+| `serveStdio` | value | Grain, Jarl |
+| `spawnCli` | value | Grain |
 | `PROTOCOL_VERSION` | value | Grain, Jarl |
 | `PROTOCOL_VERSIONS` | value | Grain, Jarl |
 | `ServerOptions` | type | — |
@@ -169,16 +169,16 @@ The family guard, parity between table, usage and tools, `tools/list` measuremen
 | `GuardRule` | type | — |
 | `Token` | type | — |
 | `TokenType` | type | — |
-| `parityProblems` | value | Grain, Horde, Jarl |
-| `assertParity` | value | Grain, Horde, Jarl |
+| `parityProblems` | value | Grain, Jarl |
+| `assertParity` | value | Grain, Jarl |
 | `ParityOptions` | type | — |
 | `UsageOptions` | type | — |
-| `measureTools` | value | Grain, Horde, Jarl |
-| `formatToolsMeasure` | value | Grain, Horde, Jarl |
+| `measureTools` | value | Grain, Jarl |
+| `formatToolsMeasure` | value | Grain, Jarl |
 | `ToolsMeasure` | type | — |
 | `MeasureOptions` | type | — |
-| `startMcpClient` | value | Horde |
-| `listToolsOverStdio` | value | Grain, Horde, Jarl |
+| `startMcpClient` | value | — |
+| `listToolsOverStdio` | value | Grain, Jarl |
 | `McpTestClient` | type | — |
 | `ClientOptions` | type | — |
 | `checkRuntimePins` | value | Grain, Yggdrasil |

@@ -2,7 +2,7 @@
 
 Shared code for the Yggdrasil tool family.
 
-**Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain, Jarl and Horde commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
+**Runes is not a family member for users.** Nobody installs Runes to get work done, and it adds no edge between the family's tools. It is shared code, vendored or installed: Grain and Jarl commit a pinned copy of the parts they use, and Yggdrasil installs `@chrisdudek/runes` from npm at an exact version. For the maintainer it is one more repository with its own CI, its own semver and its own releases.
 
 Status: 1.0.0, the first release for npm (the 0.1.x tags were for vendoring only). Every subpath carries code: the relation extractors, the parser host and the grammar recipe moved in from Yggdrasil with the 460-case relation catalogue and their unit tests, and the command table, the MCP adapter, the test kit and the skill fragments. What 1.x keeps stable is in [docs/api.md](docs/api.md): only what a family tool imports today, so the file-system code and most of the CLI code ship as internal modules (below).
 
@@ -20,10 +20,10 @@ Code enters Runes only when both hold:
 | `@chrisdudek/runes/relations` | per-language relation extractors (11 languages), the symbol table, the three-state resolver, path resolution, repository layout; files are grouped by an injected owner lookup | Yggdrasil (npm), Grain (vendor) |
 | `@chrisdudek/runes/ast` | `walk`, `closest`, the parse cache; a parser host over an injected tree-sitter runtime and runtime identity | Yggdrasil, Grain |
 | `@chrisdudek/runes/grammars` | the grammar manifest (23 grammar pins, the `web-tree-sitter` runtime pin, the `tree-sitter-cli` pin), the patches, the build recipe verified by sha256, and the language table | Yggdrasil, Grain |
-| `@chrisdudek/runes/cli` | the command table (`defineTable`), the one source of a tool's CLI, MCP tools and parity tests | Jarl, Grain, Horde |
-| `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain, Horde |
+| `@chrisdudek/runes/cli` | the command table (`defineTable`), the one source of a tool's CLI, MCP tools and parity tests | Jarl, Grain |
+| `@chrisdudek/runes/mcp` | a stdio MCP server generated from a command table, run in process or through the CLI | Jarl, Grain |
 | `@chrisdudek/runes/testkit` | the family guard, the runtime pin check, the git test environment, CLI/usage/MCP parity, `tools/list` measurement and a stdio MCP test client | all |
-| `skills/` | shared skill fragments, kept in consumers' `SKILL.md` between markers | Jarl, Grain, Horde |
+| `skills/` | shared skill fragments, kept in consumers' `SKILL.md` between markers | Jarl, Grain |
 | `tools/vendor.mjs` | the vendoring tool and its gate | every vendoring consumer |
 
 ## Never in Runes
@@ -91,7 +91,7 @@ import { createServer, serveStdio, spawnCli, InvalidParams } from '@chrisdudek/r
 
 const server = createServer({
   table: TABLE, version: '1.0.0',
-  executor: spawnCli({ args: [cliScript] }),                                                                   // Grain and Horde style
+  executor: spawnCli({ args: [cliScript] }),                                                                   // Grain style
   tools: { help: USAGE },
   timeoutMs: (command) => (command === 'propose' ? 3_600_000 : 600_000),
   concurrency: { total: 4, perCommand: (command) => (command === 'propose' ? 1 : Infinity) },                // spawn only
@@ -100,7 +100,7 @@ const server = createServer({
 serveStdio(server);
 ```
 
-- **Tools**: one per public command, `<tool>_<command>` (`grain_decide_steer`), one field per argument and flag, and a `<tool>_help` tool with the usage text when `help` is given. A field says only what its name and type cannot: a path field is described as `An absolute path.`, every other field has no description of its own unless `fieldNote` gives one, because the flag's name is the field's name, its kind is the type, and the usage lives in the help tool once instead of in every tool. The annotations say only what differs from the MCP defaults: `readOnlyHint: true` on a command that does not write; on one that writes, `destructiveHint: false` unless the table marks it destructive and `idempotentHint: true` when the table marks it idempotent; `openWorldHint: false` on every tool. The schema has no `additionalProperties: false`: the server refuses an unknown field itself on every tool, the help tool included (-32602, naming the fields the tool takes), before `prepare` or the executor runs. `describe` shapes the tool's description. On the family's tables this keeps `tools/list` inside the 8 500-token budget: Horde's 81 tools measure about 8 000 tokens, Jarl's 38 about 7 000 and Grain's 27 about 5 300 (from 14 100, 9 600 and 7 600 before 1.0.0), with every field kept.
+- **Tools**: one per public command, `<tool>_<command>` (`grain_decide_steer`), one field per argument and flag, and a `<tool>_help` tool with the usage text when `help` is given. A field says only what its name and type cannot: a path field is described as `An absolute path.`, every other field has no description of its own unless `fieldNote` gives one, because the flag's name is the field's name, its kind is the type, and the usage lives in the help tool once instead of in every tool. The annotations say only what differs from the MCP defaults: `readOnlyHint: true` on a command that does not write; on one that writes, `destructiveHint: false` unless the table marks it destructive and `idempotentHint: true` when the table marks it idempotent; `openWorldHint: false` on every tool. The schema has no `additionalProperties: false`: the server refuses an unknown field itself on every tool, the help tool included (-32602, naming the fields the tool takes), before `prepare` or the executor runs. `describe` shapes the tool's description. On the family's tables this keeps `tools/list` inside the 8 500-token budget: Jarl's 38 tools measure about 7 000 tokens and Grain's 27 about 5 300 (from 14 100, 9 600 and 7 600 before 1.0.0), with every field kept.
 - **Input**: a call becomes the argv the CLI would get (flags inline, then `--`, then the arguments), so the CLI's parser reads it. Unknown fields, wrong types, a missing required argument, an argument after a gap, and a relative path in a field the table marks as a path are a JSON-RPC -32602 error, and nothing runs. `transformInput({ command, input })` rewrites the fields before that check (a repository-relative path made absolute, a container path translated, a "bare name or absolute path" field refused with `InvalidParams`), and `transformArgv({ command, argv, input })` rewrites the argv after it, so a consumer keeps its own path rules without forking the adapter. `prepare` may refuse with `InvalidParams` too.
 - **Executors**: `spawnCli({ command, args })` runs the CLI as a child in its own process group; a timeout, a cancel, stdin closing or SIGTERM/SIGINT/SIGHUP kill the whole tree (`taskkill /T /F` on Windows, where there are no process groups). The in-process executor is internal in 1.x (no family tool runs one: Jarl dispatches in process through its own message handler and `serveStdio`); a 1.x minor exports it, with the result and error types its `run` answers in, when a tool adopts it. Inside Runes it works like this: `inProcess(run)` hands `run` the parsed call and takes back `{ value, text, notes, exitCode }` or a thrown refusal. A synchronous `run` blocks the event loop while it runs: `ping`, `tools/list`, a cancel and the timeout all wait until it returns, so a timeout can only answer after the work has finished. Only an async `run` that awaits and honours `ctx.signal` gets the transport's promises (answers while it runs, a timeout or cancel that stops it). No in-process run can be killed: a timeout or cancel drops its answer, and the next call waits for it to end.
 - **Answers**: a JSON answer is exactly one text block, notes in `_meta` under `<tool>/<key>`, never in a second block; a refusal in JSON mode is the `<tool>-error/1` document as that block, or with `errorDocuments: false` the message text as that block, notes still in `_meta`. A non-zero exit or a refusal is `isError: true`.
@@ -141,9 +141,9 @@ A fragment states only what is true of every consumer that carries it; what diff
 `@chrisdudek/runes/testkit` exports `runGuard`, which scans source files and fails when code shipped by one tool:
 
 - **imports** another tool's package or module (`@chrisdudek/yg`, `../jarl/scripts/jarl.mjs`, ...);
-- **runs** another tool's executable through `spawn`, `exec`, `execFile`, `fork` or `execa` (`yg`, `grain`, `jarl`, `horde`, or a script of that name);
-- **builds a path** into another tool's state directory (`.yggdrasil/`, `.grain/`, `.jarl/`, `.horde/`) in a string literal;
-- **exports an identifier** carrying a family domain word (node as a graph node, aspect, horde, jarl, ticket, mission, loop).
+- **runs** another tool's executable through `spawn`, `exec`, `execFile`, `fork` or `execa` (`yg`, `grain`, `jarl`, or a script of that name);
+- **builds a path** into another tool's state directory (`.yggdrasil/`, `.grain/`, `.jarl/`) in a string literal;
+- **exports an identifier** carrying a family domain word (node as a graph node, aspect, jarl, ticket, mission, loop).
 
 It reads code shape, never prose: comments and words in messages do not count, and `node` next to `syntax`, `ast`, `tree`, `sitter`, `parse`, `parser` or `walk` is taken as a syntax node. A tool passes `self` and its declared dependency `edges`, and may narrow or empty the domain word list. Exceptions live in a `guard.allow` file at the repository root, one `<path> <rule> [<subject>]  # reason` per line, reviewed like code; an entry that silences nothing fails the guard.
 
