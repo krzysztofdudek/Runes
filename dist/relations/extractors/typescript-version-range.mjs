@@ -19,7 +19,6 @@ const HYPHEN = /^\s*([a-z0-9-+.*]+)\s+-\s+([a-z0-9-+.*]+)\s*$/i;
 const SIMPLE = /^([~^<>=]|<=|>=)?\s*([a-z0-9-+.*]+)$/i;
 const PRERELEASE_PART = /^(?:0|[1-9]\d*|[a-z-][a-z0-9-]*)$/i;
 const BUILD_PART = /^[a-z0-9-]+$/i;
-const NUMERIC = /^(?:0|[1-9]\d*)$/;
 function makeVersion(major, minor, patch, prerelease, build) {
     const parts = prerelease === undefined || prerelease === '' ? [] : prerelease.split('.');
     if (!parts.every((p) => PRERELEASE_PART.test(p)))
@@ -98,16 +97,12 @@ function parseComparator(operator, text, out) {
                         ? { operator: operator === '<=' ? '<' : '>=', operand: withPrerelease(increment(version, 'minor'), ['0']) }
                         : { operator, operand: version });
                 break;
-            case '=':
-            case undefined:
+            default:
                 if (isWildcard(minor) || isWildcard(patch)) {
                     out.push({ operator: '>=', operand: withPrerelease(version, ['0']) }, { operator: '<', operand: withPrerelease(increment(version, isWildcard(minor) ? 'major' : 'minor'), ['0']) });
                 }
                 else
                     out.push({ operator: '=', operand: version });
-                break;
-            default:
-                return false;
         }
     }
     else if (operator === '<' || operator === '>') {
@@ -138,32 +133,9 @@ function parseRange(text) {
     }
     return alternatives;
 }
-function comparePrerelease(left, right) {
-    if (left.length === 0)
-        return right.length === 0 ? 0 : 1;
-    if (right.length === 0)
-        return -1;
-    const length = Math.min(left.length, right.length);
-    for (let i = 0; i < length; i++) {
-        const a = left[i];
-        const b = right[i];
-        if (a === b)
-            continue;
-        const aNumeric = NUMERIC.test(a);
-        const bNumeric = NUMERIC.test(b);
-        if (aNumeric || bNumeric) {
-            if (aNumeric !== bNumeric)
-                return aNumeric ? -1 : 1;
-            if (+a !== +b)
-                return +a < +b ? -1 : 1;
-        }
-        else if (a !== b)
-            return a < b ? -1 : 1;
-    }
-    return left.length === right.length ? 0 : left.length < right.length ? -1 : 1;
-}
-function compare(a, b) {
-    return Math.sign(a.major - b.major) || Math.sign(a.minor - b.minor) || Math.sign(a.patch - b.patch) || comparePrerelease(a.prerelease, b.prerelease);
+/** The modelled version has no prerelease tag, so it follows every operand of the same major, minor and patch that has one. */
+function compare(version, operand) {
+    return Math.sign(version.major - operand.major) || Math.sign(version.minor - operand.minor) || Math.sign(version.patch - operand.patch) || (operand.prerelease.length > 0 ? 1 : 0);
 }
 function test(version, { operator, operand }) {
     const c = compare(version, operand);
