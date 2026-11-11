@@ -33,14 +33,28 @@ export type TargetHint = {
     shadow?: string[];
     /** C#: the key of a type whose body holds the reference. `symbolKey` is `<within>+<name>`, the nested type of that type as the reference names it. The resolver reads it in that type and, when the type declares none, among the nested types of its base classes declared in the repository, nearest first (C# spec §7.6.1). Absent = `symbolKey` is read as it stands. */
     within?: string;
+    /** C#, with `within`: the reference stands where a value's name does (the first name of a member access). C# reads every member of the type there, not its nested types alone (spec §12.8.4): when the type, in any part, or a base class of it in the repository declares a field, property, event or method of the reference's first name (a private one of a base class is not seen), the name is that member and the resolver ends the group in silence (`classify` answers `ambiguous`), unless a nested type of that name is found nearer. */
+    orMember?: boolean;
+    /** C#: a guard at the head of an extension-method group, never a binding, for a call whose receiver's first name the file does not declare. `types` are the keys of the types around the call, innermost first, and `name` that first name. The receiver is a value, and the extension readings after the guard are read, only when the nearest of those types that knows the name has it as a member that is no type (in another part, or from a base class in the repository); where the name is a nested type there, or no type around the call knows it, the call is a static call through a type and the resolver ends the group in silence. `call`, set where the receiver is that name alone, is the call as `instance` holds it: where the member is a field or a property whose written type has an instance method the call fits, the group ends in silence too. */
+    memberOnly?: {
+        types: string[];
+        name: string;
+        call?: {
+            method: string;
+            args: number;
+            typeArgs: number;
+        };
+    };
     /** C#: the two readings of an attribute `[Name]`, each an ordered group of its own: the name as written and, unless the written name already ends in `Attribute`, the name with that suffix. `symbolKey` is the written name. The resolver binds each group by itself and takes the reading that binds an attribute class, a class whose base classes reach `System.Attribute` (C# spec §23.3); see `makeResolver`. Absent = an ordinary reading. */
     attribute?: {
         written: TargetHint[];
         suffixed?: TargetHint[];
     };
-    /** C#: a guard at the head of an extension-method group, never a binding. `method` is the called name, `receivers` the ordered group of readings of each type the file writes for the call's receiver, and `self` the key of the enclosing type for a call on `this`. When a type one of them binds, a base class or an interface of it in the repository, or another part of it, declares an instance method of that name, the call is that method's (C# spec §12.8.10.3) and the resolver ends the group in silence (`classify` answers `ambiguous`); otherwise the guard is absent and the extension readings after it are read. */
+    /** C#: a guard at the head of an extension-method group, never a binding. `method` is the called name, `args` and `typeArgs` the number of its arguments and of its written type arguments, `receivers` the ordered group of readings of each type the file writes for the call's receiver, and `self` the key of the enclosing type for a call on `this`. When a type one of them binds, a base class or an interface of it in the repository, or another part of it, declares an instance method of that name whose parameter and type parameter counts the call fits, the call is that method's (C# spec §12.8.10.3) and the resolver ends the group in silence (`classify` answers `ambiguous`); otherwise the guard is absent and the extension readings after it are read. */
     instance?: {
         method: string;
+        args: number;
+        typeArgs: number;
         receivers: TargetHint[][];
         self?: string;
     };

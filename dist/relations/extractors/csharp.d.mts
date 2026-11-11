@@ -13,10 +13,18 @@ export declare function internalKey(symbolKey: string): string;
 export declare function baseListKey(typeKey: string): string;
 /** The marker key of an interface: `interface:<key>`, declared beside the type key of every interface declaration. A class inherits the nested types of its base class and of no interface it implements, and the base list of a class does not say which of its names is which. */
 export declare function interfaceKey(typeKey: string): string;
-/** The marker key of an instance method `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`, declared once however many overloads there are. A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
+/** The head of the keys that record the instance methods `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`. Each overload declares `method:<key>#<name>\t<shape>`, its shape (`methodShape`) as the value, listed under the head like a base record (`baseListKey`). A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
 export declare function methodKey(typeKey: string, name: string): string;
-/** The marker key of a private instance method (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches it. */
+/** The head of the keys that record the private instance methods (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches one. */
 export declare function privateMethodKey(typeKey: string, name: string): string;
+/** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers. */
+export declare function shapeTakes(shape: string, typeArguments: number, args: number): boolean;
+/** The head of the key that records the written type of the field or property `name` of the type `typeKey`: `member-type:<key>#<name>`, with a value like a base record's (`encodeBase`): the type's name and its readings where the member is declared. */
+export declare function memberTypeKey(typeKey: string, name: string): string;
+/** The marker key of a member `name` of the type `typeKey` that is no type (a field, a constant, a property, an event or a method, static ones included) and that a derived type can name: `member:<key>#<name>`. C# reads the members of the types around a simple name, inherited ones included, before any namespace (spec §12.8.4), so such a name is that member and no type of a namespace. A field or a property named as its own type (`Color Color`) declares none: where a type fits, C# reads that name as the type (spec §12.8.7.2). */
+export declare function memberKey(typeKey: string, name: string): string;
+/** The marker key of a private member (see `memberKey`), a class's or a struct's primary constructor parameter among them: `private-member:<key>#<name>`. Every part of the type itself sees it, and no derived type does. */
+export declare function privateMemberKey(typeKey: string, name: string): string;
 /** One base of a type as its declaration records it: the written name (type arguments as their arity, a `global::` qualifier stripped; empty for a name led by a using alias) and its readings in C# lookup order where the declaration stands, read with the usings and aliases of the declaring file alone. */
 export interface CsharpBase {
     name: string;
@@ -200,6 +208,8 @@ export type CsharpRefDescriptor =
  *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
  *  its using directives import where the call stands (`at`), then the global namespace, then the
  *  namespaces the compilation unit's using directives import as one set.
+ *  `args` and `typeArgs` count the call's arguments and its written type arguments: an instance method takes the call only when the counts fit it.
+ *  `member` is set where the receiver's first name is one the file does not declare, written inside a type: the call is an extension call only when that name is a member of one of `member.types` (the types around the call, innermost first), declared in another part or inherited, and a static call through a type otherwise; `direct` says the receiver is that name alone, so the member's own type is the receiver's.
  *  `on` holds the written type of the receiver where the file declares it (a parameter, a field, a property or a local with a type of its own; several when declarations of the name in one scope differ), each as the reference that type is, and `self` the key of the enclosing type for a call on `this`: an instance method of that name in such a type, or in a base of it, is what the call binds (C# spec §12.8.10.3), and the group then gives nothing. Both are absent where the receiver's type is not written (`var`, a call result, an inferred lambda parameter). */
  | {
     kind: 'ext';
@@ -207,8 +217,15 @@ export type CsharpRefDescriptor =
     line: number;
     enclosingNs: string[];
     at: number;
+    args: number;
+    typeArgs: number;
     on?: CsharpRefDescriptor[];
     self?: string;
+    member?: {
+        types: string[];
+        name: string;
+        direct: boolean;
+    };
 };
 /**
  * The pure, alias-UNRESOLVED extract of one C# file — the cacheable fact (design §14 Correction

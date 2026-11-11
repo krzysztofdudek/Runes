@@ -452,4 +452,11 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-extension-interface-method-other-file-edge', () => runCase('csharp-extension-interface-method-other-file-edge'));
   it('csharp-extension-inherited-method-on-this-edge', () => runCase('csharp-extension-inherited-method-on-this-edge'));
   it('csharp-extension-receiver-type-without-that-method-edge', () => runCase('csharp-extension-receiver-type-without-that-method-edge'));
+  it('csharp-partial-part-property-receiver-silence', () => runCase('csharp-partial-part-property-receiver-silence'));
+  it('csharp-inherited-property-receiver-edge', () => runCase('csharp-inherited-property-receiver-edge'));
+  it('csharp-extension-on-inherited-property-edge', () => runCase('csharp-extension-on-inherited-property-edge'));
+  it('csharp-private-base-member-hides-no-type-edge', () => runCase('csharp-private-base-member-hides-no-type-edge'));
+  it('csharp-derived-class-type-receiver-edge', () => runCase('csharp-derived-class-type-receiver-edge'));
+  it('csharp-extension-beside-instance-method-of-other-shape-edge', () => runCase('csharp-extension-beside-instance-method-of-other-shape-edge'));
+  it('csharp-member-named-as-its-type-receiver-edge', () => runCase('csharp-member-named-as-its-type-receiver-edge'));
 });

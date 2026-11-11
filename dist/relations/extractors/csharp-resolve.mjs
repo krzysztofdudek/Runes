@@ -1,4 +1,4 @@
-import { baseListKey, decodeBase, interfaceKey, methodKey, privateMethodKey } from './csharp.mjs';
+import { baseListKey, decodeBase, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -44,16 +44,22 @@ export function makeCsharpTypeLookup(table, bind) {
         const all = bases(typeKey).inside;
         return isInterface(typeKey) ? all : all.filter((b) => !isInterface(b));
     };
-    const nested = (typeKey, name) => {
+    /** The lookup of `name` in `typeKey` and then in its base classes, nearest first: the nested types of the first level that has one, or, with `members`, the word that a level before it has a member of that name that is no type. */
+    const find = (typeKey, name, members) => {
         const own = `${typeKey}+${name}`;
         if (table.has(LANGUAGE, own))
-            return [own];
+            return { keys: [own], member: false };
+        if (members && (table.has(LANGUAGE, memberKey(typeKey, name)) || table.has(LANGUAGE, privateMemberKey(typeKey, name))))
+            return { keys: [], member: true, owners: [typeKey] };
         const seen = new Set([typeKey]);
         let level = inherited(typeKey);
         while (level.length > 0) {
             const found = [...new Set(level.map((b) => `${b}+${name}`))].filter((k) => table.has(LANGUAGE, k));
             if (found.length > 0)
-                return found;
+                return { keys: found, member: false };
+            const owners = members ? level.filter((b) => table.has(LANGUAGE, memberKey(b, name))) : [];
+            if (owners.length > 0)
+                return { keys: [], member: true, owners };
             const next = [];
             for (const b of level) {
                 if (seen.has(b))
@@ -63,7 +69,12 @@ export function makeCsharpTypeLookup(table, bind) {
             }
             level = next.filter((b) => !seen.has(b));
         }
-        return [];
+        return { keys: [], member: false };
+    };
+    const nested = (typeKey, name) => find(typeKey, name, false).keys;
+    const simpleName = (typeKey, name) => {
+        const found = find(typeKey, name, true);
+        return found.member ? 'member' : found.keys.length > 0 ? 'type' : 'none';
     };
     const path = (typeKey, segments) => {
         let current = [typeKey];
@@ -93,8 +104,9 @@ export function makeCsharpTypeLookup(table, bind) {
         attributeMemo.set(typeKey, answer);
         return answer;
     };
-    const hasMethod = (typeKey, name, own) => {
-        if (own && table.has(LANGUAGE, privateMethodKey(typeKey, name)))
+    const hasMethod = (typeKey, call, own) => {
+        const takes = (head) => table.valuesOf(LANGUAGE, head).some(({ value }) => shapeTakes(value, call.typeArgs, call.args));
+        if (own && takes(privateMethodKey(typeKey, call.method)))
             return true;
         const seen = new Set();
         const pending = [typeKey];
@@ -103,11 +115,25 @@ export function makeCsharpTypeLookup(table, bind) {
             if (seen.has(key))
                 continue;
             seen.add(key);
-            if (table.has(LANGUAGE, methodKey(key, name)))
+            if (takes(methodKey(key, call.method)))
                 return true;
             pending.push(...bases(key).inside);
         }
         return false;
     };
-    return { bases, nested, path, attributeClass, hasMethod };
+    const memberTypes = (typeKey, name) => {
+        const keys = [];
+        for (const owner of find(typeKey, name, true).owners ?? []) {
+            for (const { value, files } of table.valuesOf(LANGUAGE, memberTypeKey(owner, name))) {
+                const written = decodeBase(value);
+                for (const file of files) {
+                    const key = bind(written.readings, file);
+                    if (key !== undefined && !keys.includes(key))
+                        keys.push(key);
+                }
+            }
+        }
+        return keys;
+    };
+    return { bases, nested, simpleName, path, attributeClass, hasMethod, memberTypes };
 }

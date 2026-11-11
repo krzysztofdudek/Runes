@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { baseListKey, decodeBase, interfaceKey, methodKey, privateMethodKey } from './csharp.mjs';
+import { baseListKey, decodeBase, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -13,12 +13,16 @@ export interface CsharpTypeLookup {
   bases(typeKey: string): CsharpBases;
   /** The keys of the nested type `name` of `typeKey`: the type's own, or else the one its nearest base class in the repository declares (C# spec §7.6.1: the nested types of a type's base classes are its members). An interface inherits those of its base interfaces. Empty when none. */
   nested(typeKey: string, name: string): string[];
+  /** What the simple name `name` is inside the type `typeKey`, where a value's name may stand: `member` when the type, in any part, declares a member of that name that is no type, or its nearest base class in the repository that knows the name declares one a derived type can see; `type` when a nested type of that name is found first (`nested`); `none` when neither the type nor a base class in the repository knows the name. */
+  simpleName(typeKey: string, name: string): 'member' | 'type' | 'none';
   /** `nested` along a dotted path: `segments[0]` in `typeKey`, the next in what that gave. */
   path(typeKey: string, segments: readonly string[]): string[];
   /** Whether the type `typeKey` is an attribute class: `yes` when its base classes, followed through the repository, reach `System.Attribute`; `no` when it is an interface, or every base of it lies in the repository and none reaches `System.Attribute` (a type that lists no base among them); `maybe` when a base leaves the repository under another name, which may or may not derive from it. */
   attributeClass(typeKey: string): 'yes' | 'no' | 'maybe';
-  /** True when a call `value.name(…)` on a value of the type `typeKey` finds an instance method: the type, in any part, or a base class or an interface of it in the repository, to any depth, declares one that is not private; with `own` (a call on `this` inside the type) a private one of the type itself counts too. */
-  hasMethod(typeKey: string, name: string, own: boolean): boolean;
+  /** True when a call `value.name(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, finds an instance method it fits by those counts (`shapeTakes`): the type, in any part, or a base class or an interface of it in the repository, to any depth, declares one that is not private; with `own` (a call on `this` inside the type) a private one of the type itself counts too. */
+  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number }, own: boolean): boolean;
+  /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
+  memberTypes(typeKey: string, name: string): string[];
 }
 
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
@@ -67,14 +71,18 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return isInterface(typeKey) ? all : all.filter((b) => !isInterface(b));
   };
 
-  const nested = (typeKey: string, name: string): string[] => {
+  /** The lookup of `name` in `typeKey` and then in its base classes, nearest first: the nested types of the first level that has one, or, with `members`, the word that a level before it has a member of that name that is no type. */
+  const find = (typeKey: string, name: string, members: boolean): { keys: string[]; member: boolean; owners?: string[] } => {
     const own = `${typeKey}+${name}`;
-    if (table.has(LANGUAGE, own)) return [own];
+    if (table.has(LANGUAGE, own)) return { keys: [own], member: false };
+    if (members && (table.has(LANGUAGE, memberKey(typeKey, name)) || table.has(LANGUAGE, privateMemberKey(typeKey, name)))) return { keys: [], member: true, owners: [typeKey] };
     const seen = new Set([typeKey]);
     let level = inherited(typeKey);
     while (level.length > 0) {
       const found = [...new Set(level.map((b) => `${b}+${name}`))].filter((k) => table.has(LANGUAGE, k));
-      if (found.length > 0) return found;
+      if (found.length > 0) return { keys: found, member: false };
+      const owners = members ? level.filter((b) => table.has(LANGUAGE, memberKey(b, name))) : [];
+      if (owners.length > 0) return { keys: [], member: true, owners };
       const next: string[] = [];
       for (const b of level) {
         if (seen.has(b)) continue;
@@ -83,7 +91,14 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
       }
       level = next.filter((b) => !seen.has(b));
     }
-    return [];
+    return { keys: [], member: false };
+  };
+
+  const nested = (typeKey: string, name: string): string[] => find(typeKey, name, false).keys;
+
+  const simpleName = (typeKey: string, name: string): 'member' | 'type' | 'none' => {
+    const found = find(typeKey, name, true);
+    return found.member ? 'member' : found.keys.length > 0 ? 'type' : 'none';
   };
 
   const path = (typeKey: string, segments: readonly string[]): string[] => {
@@ -112,19 +127,34 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return answer;
   };
 
-  const hasMethod = (typeKey: string, name: string, own: boolean): boolean => {
-    if (own && table.has(LANGUAGE, privateMethodKey(typeKey, name))) return true;
+  const hasMethod = (typeKey: string, call: { method: string; args: number; typeArgs: number }, own: boolean): boolean => {
+    const takes = (head: string): boolean => table.valuesOf(LANGUAGE, head).some(({ value }) => shapeTakes(value, call.typeArgs, call.args));
+    if (own && takes(privateMethodKey(typeKey, call.method))) return true;
     const seen = new Set<string>();
     const pending = [typeKey];
     while (pending.length > 0) {
       const key = pending.pop()!;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (table.has(LANGUAGE, methodKey(key, name))) return true;
+      if (takes(methodKey(key, call.method))) return true;
       pending.push(...bases(key).inside);
     }
     return false;
   };
 
-  return { bases, nested, path, attributeClass, hasMethod };
+  const memberTypes = (typeKey: string, name: string): string[] => {
+    const keys: string[] = [];
+    for (const owner of find(typeKey, name, true).owners ?? []) {
+      for (const { value, files } of table.valuesOf(LANGUAGE, memberTypeKey(owner, name))) {
+        const written = decodeBase(value);
+        for (const file of files) {
+          const key = bind(written.readings, file);
+          if (key !== undefined && !keys.includes(key)) keys.push(key);
+        }
+      }
+    }
+    return keys;
+  };
+
+  return { bases, nested, simpleName, path, attributeClass, hasMethod, memberTypes };
 }

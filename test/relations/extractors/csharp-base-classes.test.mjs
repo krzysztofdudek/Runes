@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodKey, privateMethodKey } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodKey, privateMethodKey, memberKey, privateMemberKey, memberTypeKey, shapeTakes } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -285,11 +285,40 @@ describe('csharp: an extension call gives way to an instance method of the recei
         'file class Local { public void Run() { } }',
       ].join('\n'),
     }, ({ keys }) => {
-      const declared = keys('src/a/Types.cs').filter((k) => k.includes('method:'));
+      const declared = keys('src/a/Types.cs').filter((k) => k.startsWith('method:') || k.startsWith('private-method:'));
       expect(declared).toEqual([
-        methodKey('App.Order', 'Save'), privateMethodKey('App.Order', 'Hidden'), methodKey('App.Order', 'Shared'), methodKey('App.Order', 'Inside'), privateMethodKey('App.Order', 'Secret'),
-        privateMethodKey('App.Order', 'Outer'), methodKey('App.Order+Line', 'Total'), methodKey('App.IOrder', 'Explicit'), methodKey('App.Money', 'Round'), privateMethodKey('App.Money', 'Trim'),
+        `${methodKey('App.Order', 'Save')}\t0:0:0`, `${methodKey('App.Order', 'Save')}\t0:1:1`, `${privateMethodKey('App.Order', 'Hidden')}\t0:0:0`, `${methodKey('App.Order', 'Shared')}\t0:0:0`, `${methodKey('App.Order', 'Inside')}\t0:0:0`,
+        `${privateMethodKey('App.Order', 'Secret')}\t0:0:0`, `${privateMethodKey('App.Order', 'Outer')}\t0:0:0`, `${methodKey('App.Order+Line', 'Total')}\t0:0:0`, `${methodKey('App.IOrder', 'Explicit')}\t0:0:0`,
+        `${methodKey('App.Money', 'Round')}\t0:0:0`, `${privateMethodKey('App.Money', 'Trim')}\t0:0:0`,
       ]);
+    });
+  });
+
+  it('records the shape of each overload, and a call fits a method by its counts', async () => {
+    await project({
+      'src/a/Types.cs': 'public class Bag {\n  public void Put(int a) { }\n  public void Put<T>(T a, int b = 0) { }\n  public void Put(string format, params object[] rest) { }\n  public void Put(int a, int b, int c) { }\n}\n',
+    }, ({ keys, table, resolver }) => {
+      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('method:'))).toEqual(['0:1:1', '1:1:2', '0:1:*', '0:3:3'].map((shape) => `method:Bag#Put\t${shape}`));
+      for (const [shape, typeArgs, args, fits] of [
+        ['0:1:1', 0, 1, true], ['0:1:1', 0, 0, false], ['0:1:1', 0, 2, false], ['0:1:1', 1, 1, false],
+        ['1:1:2', 0, 1, true], ['1:1:2', 1, 2, true], ['1:1:2', 2, 1, false], ['1:1:2', 0, 3, false],
+        ['0:1:*', 0, 1, true], ['0:1:*', 0, 9, true], ['0:1:*', 0, 0, false],
+      ]) expect(shapeTakes(shape, typeArgs, args), `${shape} ${typeArgs} ${args}`).toBe(fits);
+      const lookup = makeCsharpTypeLookup(table, (readings, fromFile) => readings.find((hint) => resolver.resolveFile(hint, fromFile, 'csharp') !== undefined)?.symbolKey);
+      expect(lookup.hasMethod('Bag', { method: 'Put', args: 4, typeArgs: 0 }, false)).toBe(true); // the params overload
+      expect(lookup.hasMethod('Bag', { method: 'Put', args: 0, typeArgs: 0 }, false)).toBe(false);
+      expect(lookup.hasMethod('Bag', { method: 'Put', args: 1, typeArgs: 2 }, false)).toBe(false);
+      expect(lookup.hasMethod('Bag', { method: 'Take', args: 1, typeArgs: 0 }, true)).toBe(false);
+    });
+  });
+
+  it('keeps the extension call where the instance method of that name cannot take the call', async () => {
+    await project({
+      'src/core/Config.cs': 'namespace App;\npublic interface IConfig { object Get(string key); }\npublic class Item { public bool Has(int kind, int index) => true; }\n',
+      'src/ext/Ext.cs': 'namespace App;\npublic static class Ext {\n  public static T Get<T>(this IConfig c, string key) => default;\n  public static bool Has(this Item i, int kind) => true;\n}\n',
+      'src/web/Use.cs': 'namespace App;\npublic class Use {\n  void Run(IConfig config, Item item) {\n    config.Get<int>("a");\n    config.Get("a");\n    item.Has(1);\n    item.Has(1, 2);\n    item?.Has(1);\n  }\n}\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['3->core', '4->ext', '6->ext', '8->ext']);
     });
   });
 
@@ -352,6 +381,131 @@ describe('csharp: an extension call gives way to an instance method of the recei
       expect(resolver.classify(guard, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
       expect(resolver.resolve(guard, 'src/web/Use.cs', 'csharp')).toBe(undefined);
       expect(resolver.resolveFile(guard, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+    });
+  });
+});
+
+describe('csharp: a member of the enclosing type, from another part or a base class, is no type receiver', () => {
+  it('declares each member that is no type, a private one apart, and none for an enum, a file-local type or an explicit implementation', async () => {
+    await project({
+      'src/a/Types.cs': [
+        'namespace App;',
+        'public class Order(Clock clock) : IOrder {',
+        '  public int Total, Count;',
+        '  const int Limit = 3;',
+        '  protected Settings Settings { get; }',
+        '  public event System.Action Changed;',
+        '  public event System.Action Custom { add { } remove { } }',
+        '  private protected int Shared;',
+        '  public static Order Empty;',
+        '  public void Save() { int local = 1; }',
+        '  public void Save(int retries) { }',
+        '  int IOrder.Explicit => 1;',
+        '  public int this[int i] => i;',
+        '  public class Line { }',
+        '}',
+        'public interface IOrder { int Explicit { get; } }',
+        'public record Money(decimal Amount) { decimal Rounded => Amount; public Kind Kind { get; } public Lib.Kind? Kind2, Kind; }',
+        'public struct Point(int x) { public int Y; }',
+        'public enum Kind { One }',
+        'file class Local { public int Value; }',
+      ].join('\n'),
+    }, ({ keys }) => {
+      const declared = keys('src/a/Types.cs').filter((k) => k.startsWith('member:') || k.startsWith('private-member:'));
+      expect(declared).toEqual([
+        privateMemberKey('App.Order', 'clock'), memberKey('App.Order', 'Total'), memberKey('App.Order', 'Count'), privateMemberKey('App.Order', 'Limit'),
+        memberKey('App.Order', 'Changed'), memberKey('App.Order', 'Custom'), memberKey('App.Order', 'Shared'), memberKey('App.Order', 'Empty'), memberKey('App.Order', 'Save'),
+        memberKey('App.IOrder', 'Explicit'), memberKey('App.Money', 'Amount'), privateMemberKey('App.Money', 'Rounded'), memberKey('App.Money', 'Kind2'), privateMemberKey('App.Point', 'x'), memberKey('App.Point', 'Y'),
+      ]); // `Kind Kind` and `Lib.Kind? Kind` are named as their own type and declare no member; `Kind2` beside it does
+      const typed = keys('src/a/Types.cs').filter((k) => k.startsWith('member-type:')).map((k) => [k.split('\t')[0], decodeBase(k.split('\t')[1]).name]);
+      expect(typed).toEqual([
+        [memberTypeKey('App.Order', 'Settings'), 'Settings'], [memberTypeKey('App.Order', 'Changed'), 'System.Action'], [memberTypeKey('App.Order', 'Empty'), 'Order'],
+        [memberTypeKey('App.Money', 'Kind'), 'Kind'], [memberTypeKey('App.Money', 'Kind2'), 'Lib.Kind'], [memberTypeKey('App.Money', 'Kind'), 'Lib.Kind'],
+      ]);
+    });
+  });
+
+  it('answers what a simple name is in a type: a member, a nested type found first, or nothing', async () => {
+    await project({
+      'src/a/Types.cs': [
+        'namespace App;',
+        'public class Root { protected int Shared; int Hidden; public class Nested { } public class Options { } }',
+        'public class Mid : Root, IMark { public int Options; }',
+        'public partial class Leaf : Mid { }',
+        'public partial class Leaf { int Own; public class Shared { } }',
+        'public interface IMark { int Marked { get; } }',
+        'public interface IDeep : IMark { }',
+      ].join('\n'),
+    }, ({ table, resolver }) => {
+      const lookup = makeCsharpTypeLookup(table, (readings, fromFile) => readings.find((hint) => resolver.resolveFile(hint, fromFile, 'csharp') !== undefined)?.symbolKey);
+      expect(lookup.simpleName('App.Leaf', 'Own')).toBe('member'); // private, of the type itself
+      expect(lookup.simpleName('App.Leaf', 'Shared')).toBe('type'); // its own nested type hides the inherited field
+      expect(lookup.simpleName('App.Mid', 'Shared')).toBe('member');
+      expect(lookup.simpleName('App.Leaf', 'Options')).toBe('member'); // the field of the nearer base hides the nested type of the farther
+      expect(lookup.simpleName('App.Leaf', 'Nested')).toBe('type');
+      expect(lookup.simpleName('App.Leaf', 'Hidden')).toBe('none'); // private in a base class
+      expect(lookup.simpleName('App.Leaf', 'Marked')).toBe('none'); // an interface hands a class nothing
+      expect(lookup.simpleName('App.IDeep', 'Marked')).toBe('member');
+      expect(lookup.simpleName('App.Leaf', 'Missing')).toBe('none');
+    });
+  });
+
+  it('keeps the type edge of a receiver unless a type around it has that member, and reads an extension call on such a member', async () => {
+    await project({
+      'src/core/Base.cs': 'namespace App;\npublic class Bag { }\npublic class Base { protected Bag Items; public class Tools { public static void Run() { } } }\n',
+      'src/lib/Statics.cs': 'namespace App;\npublic static class Items { public static void Sort() { } }\npublic static class Tools { public static void Run() { } }\npublic static class Free { public static void Go() { } }\n',
+      'src/ext/BagExt.cs': 'namespace App;\npublic static class BagExt { public static void Sort(this Bag b) { } public static void Run(this Bag b) { } public static void Go(this Bag b) { } }\n',
+      'src/web/Use.cs': 'namespace App;\npublic class Use : Base {\n  void A() { Items.Sort(); }\n  void B() { Tools.Run(); }\n  void C() { Free.Go(); }\n  class Inner { void D() { Items.Sort(); } }\n}\n',
+    }, ({ edges, files, resolver }) => {
+      // line 3: the inherited field, so the extension method; line 4: the inherited nested type, a static call; line 5: no member, the static class; line 6: the member of the outer type.
+      expect(edges('src/web/Use.cs')).toEqual(['2->core', '3->ext', '4->core', '5->lib', '6->ext']);
+      const uses = csharpUses(files.find((f) => f.path === 'src/web/Use.cs'));
+      const guard = (line) => uses.find((u) => u.line === line && u.candidates[0].memberOnly !== undefined).candidates[0];
+      expect(guard(6).memberOnly).toEqual({ types: ['App.Use+Inner', 'App.Use'], name: 'Items', call: { method: 'Sort', args: 0, typeArgs: 0 } });
+      expect(resolver.classify(guard(3), 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
+      expect(resolver.classify(guard(4), 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+      expect(resolver.classify(guard(5), 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+      expect(resolver.resolveFile(guard(3), 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      const receiver = uses.find((u) => u.line === 3 && u.candidates[0].orMember === true).candidates[0];
+      expect(receiver).toEqual({ kind: 'symbol', symbolKey: 'App.Use+Items', within: 'App.Use', orMember: true });
+      expect(resolver.classify(receiver, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    });
+  });
+
+  it('reads a type position past a member of the same name', async () => {
+    await project({
+      'src/core/Base.cs': 'namespace App.Core;\npublic class Base { protected int Color; }\n',
+      'src/model/Color.cs': 'namespace App;\npublic class Color { }\n',
+      'src/web/Use.cs': 'using App.Core;\nnamespace App;\npublic class Use : Base {\n  Color _c;\n}\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['3->core', '4->model']);
+    });
+  });
+});
+
+describe('csharp: what the large repositories showed', () => {
+  it('reads a member named as its own type as the type, so its enum values keep their edge', async () => {
+    await project({
+      'src/core/Item.cs': 'namespace App;\npublic class Item { public SourceKind SourceKind { get; set; } }\n',
+      'src/model/SourceKind.cs': 'namespace App;\npublic enum SourceKind { Library }\n',
+      'src/web/Audio.cs': 'namespace App;\npublic class Audio : Item {\n  bool M() => SourceKind == SourceKind.Library;\n}\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Audio.cs')).toEqual(['2->core', '3->model']);
+    });
+  });
+
+  it('ends an extension call on an inherited property whose written type has the method, and keeps one it has not', async () => {
+    await project({
+      'src/core/Base.cs': 'namespace App;\npublic interface IStore { object Find(int id); }\npublic class Base { protected IStore Store { get; } protected static IStore Shared; protected int[] Numbers; }\n',
+      'src/ext/StoreExt.cs': 'namespace App;\npublic static class StoreExt {\n  public static object Find(this IStore s, string id) => null;\n  public static void Flush(this IStore s) { }\n  public static void Sum(this int[] n) { }\n}\n',
+      'src/web/Use.cs': 'namespace App;\npublic class Use : Base {\n  void A() { Store.Find(1); }\n  void B() { Store.Flush(); }\n  void C() { Shared.Find(1); }\n  void D() { Numbers.Sum(); }\n  void E() { Store.Inner.Find(1); }\n}\n',
+    }, ({ edges, table, resolver }) => {
+      // line 3 and 5: IStore has Find(int), an instance method the call fits; line 4: no Flush there; line 6: no named type; line 7: the receiver is more than the member.
+      expect(edges('src/web/Use.cs')).toEqual(['2->core', '4->ext', '6->ext', '7->ext']);
+      const lookup = makeCsharpTypeLookup(table, (readings, fromFile) => readings.find((hint) => resolver.resolveFile(hint, fromFile, 'csharp') !== undefined)?.symbolKey);
+      expect(lookup.memberTypes('App.Use', 'Store')).toEqual(['App.IStore']);
+      expect(lookup.memberTypes('App.Use', 'Numbers')).toEqual([]);
+      expect(lookup.memberTypes('App.Use', 'Missing')).toEqual([]);
     });
   });
 });

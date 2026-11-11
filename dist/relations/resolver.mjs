@@ -242,7 +242,7 @@ export function makeResolver(deps) {
         if (hint.attribute !== undefined)
             return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
         // A guard binds nothing itself (see `endsGroup`).
-        if (hint.instance !== undefined)
+        if (hint.instance !== undefined || hint.memberOnly !== undefined)
             return new Set();
         let files;
         if (hint.set !== undefined) {
@@ -282,16 +282,32 @@ export function makeResolver(deps) {
     };
     let csharpLookup;
     const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
-    /** True when a C# guard hint ends its group: the receiver of the call it leads has an instance method of the called name (see `TargetHint.instance`). */
+    /** True when a C# hint ends its group in silence: a reading inside a type whose first name is a member of that type that is no type (`orMember`); a guard for a receiver that is no member of a type around its call (`memberOnly`); a guard whose call's receiver has an instance method of the called name (`instance`). */
     const endsGroup = (hint, fromFile) => {
+        if (hint.within !== undefined && hint.orMember === true) {
+            return csharp().simpleName(hint.within, hint.symbolKey.slice(hint.within.length + 1).split('.')[0]) === 'member';
+        }
+        if (hint.memberOnly !== undefined) {
+            const { types, name, call } = hint.memberOnly;
+            for (const type of types) {
+                const found = csharp().simpleName(type, name);
+                if (found === 'none')
+                    continue;
+                if (found === 'type')
+                    return true;
+                // A member: a value, whose written type may have the called method itself.
+                return call !== undefined && csharp().memberTypes(type, name).some((key) => csharp().hasMethod(key, call, false));
+            }
+            return true;
+        }
         const guard = hint.instance;
         if (guard === undefined)
             return false;
-        if (guard.self !== undefined && csharp().hasMethod(guard.self, guard.method, true))
+        if (guard.self !== undefined && csharp().hasMethod(guard.self, guard, true))
             return true;
         return guard.receivers.some((readings) => {
             const bound = bindCsharpType(readings, fromFile);
-            return bound !== undefined && csharp().hasMethod(bound.key, guard.method, false);
+            return bound !== undefined && csharp().hasMethod(bound.key, guard, false);
         });
     };
     /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */

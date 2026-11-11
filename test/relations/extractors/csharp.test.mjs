@@ -855,7 +855,7 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
 
   it('a dotted receiver emits ONE group of its prefixes, leftmost first', async () => {
     const { uses } = await run(['class C { void M(object o) { Shop.Core.Guard.NotNull(o); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['C+Shop', 'Shop', 'C+Shop.Core', 'Shop.Core', 'C+Shop.Core.Guard', 'Shop.Core.Guard']]); // each prefix after the nested reading of the enclosing type C
+    expect(groups(uses)).toEqual([['member#Shop', 'NotNull()'], ['C+Shop', 'Shop', 'C+Shop.Core', 'Shop.Core', 'C+Shop.Core.Guard', 'Shop.Core.Guard']]); // the call as an extension call should `Shop` be a member of C from elsewhere, then each prefix after the nested reading of the enclosing type C
   });
   it('a receiver inside nameof(…) emits nothing', async () => {
     const { uses } = await run(['class C { string M() => nameof(Guard.NotNull); }', ''].join('\n'));
@@ -865,9 +865,12 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
     const { uses } = await run(['using Shop.Infra;', 'class C { void M(object s) { s.AddInfra(); } }', ''].join('\n'));
     expect(groups(uses)).toEqual([['AddInfra()', 'Shop.Infra.AddInfra()']]);
   });
-  it('an unshadowed type-name receiver emits no extension group (a static call)', async () => {
+  it('an unshadowed type-name receiver emits an extension group only behind the guard that asks for a member of that name (a static call otherwise)', async () => {
     const { uses } = await run(['class C { void M() { Guard.Check(); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['C+Guard', 'Guard']]);
+    expect(groups(uses)).toEqual([['member#Guard', 'Check()'], ['C+Guard', 'Guard']]);
+    expect(uses[0].candidates[0].memberOnly).toEqual({ types: ['C'], name: 'Guard', call: { method: 'Check', args: 0, typeArgs: 0 } });
+    // Outside every type no member can be meant: no extension group at all.
+    expect(groups((await run('Guard.Check();\n')).uses)).toEqual([['Guard']]);
   });
   it('System.Object members, names the file declares as methods, and base.X() are never extension calls', async () => {
     const { uses } = await run(
@@ -1018,7 +1021,7 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
   });
   it('a file without top-level statements declares no implicit `Program`', async () => {
     const { declarations } = await run(['namespace App;', 'public class Startup { void Main() { } }', ''].join('\n'));
-    expect(keys(declarations)).toEqual([['App.Startup', 2], ['private-method:App.Startup#Main', 2]]); // the class and its one method, nothing for a `Program`
+    expect(keys(declarations)).toEqual([['App.Startup', 2], ['private-member:App.Startup#Main', 2], ['private-method:App.Startup#Main\t0:0:0', 2]]); // the class and its one method, nothing for a `Program`
   });
   it('a bare `Program` reference tries every explicit reading first and the implicit fallback last', async () => {
     const { uses } = await run(['namespace T;', 'class C { F<Program> f; }', ''].join('\n'));
@@ -1187,7 +1190,7 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
     const code = ['class C { void M() { global::Money.Parse(); Money.Parse(); } }', ''].join('\n');
     await withParsedFile('x.cs', code, (tree) => {
       const file = { path: 'x.cs', content: code, tree, language: 'csharp' };
-      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money'], ['Money', 'B.Money']] }))).toEqual([['Money'], ['C+Money']]); // the bare one keeps only the nested reading of C
+      expect(groups(csharpUses(file, { projectGlobalUsingAliases: [['Money', 'A.Money'], ['Money', 'B.Money']] }))).toEqual([['Money'], ['member#Money', 'Parse()'], ['C+Money']]); // the bare one keeps only the nested reading of C, after the extension call it would be on a member `Money`
     });
     const { uses } = await run(['global::Program.Main();', 'global::Other.Run();', ''].join('\n'));
     expect(groups(uses)).toEqual([['Other']]);

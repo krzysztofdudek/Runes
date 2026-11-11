@@ -289,13 +289,98 @@ export function baseListKey(typeKey) {
 export function interfaceKey(typeKey) {
     return `interface:${typeKey}`;
 }
-/** The marker key of an instance method `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`, declared once however many overloads there are. A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
+/** The head of the keys that record the instance methods `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`. Each overload declares `method:<key>#<name>\t<shape>`, its shape (`methodShape`) as the value, listed under the head like a base record (`baseListKey`). A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
 export function methodKey(typeKey, name) {
     return `method:${typeKey}#${name}`;
 }
-/** The marker key of a private instance method (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches it. */
+/** The head of the keys that record the private instance methods (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches one. */
 export function privateMethodKey(typeKey, name) {
     return `private-method:${typeKey}#${name}`;
+}
+/** How many type arguments and arguments a method takes, as far as its declaration says without its types: `<type parameters>:<required parameters>:<all parameters>`, the last `*` for a `params` list. */
+function methodShape(method) {
+    const list = method.childForFieldName('parameters');
+    let required = 0;
+    let all = 0;
+    let open = hasTokenChild(list, 'params');
+    for (const param of list.namedChildren) {
+        if (param.type !== 'parameter') {
+            open = true;
+            continue;
+        }
+        all++;
+        if (!hasTokenChild(param, '='))
+            required++;
+    }
+    return `${typeParameterNames(method).size}:${required}:${open ? '*' : all}`;
+}
+/** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers. */
+export function shapeTakes(shape, typeArguments, args) {
+    const [typeParameters, required, all] = shape.split(':');
+    if (typeArguments > 0 && Number(typeParameters) !== typeArguments)
+        return false;
+    return args >= Number(required) && (all === '*' || args <= Number(all));
+}
+/** The head of the key that records the written type of the field or property `name` of the type `typeKey`: `member-type:<key>#<name>`, with a value like a base record's (`encodeBase`): the type's name and its readings where the member is declared. */
+export function memberTypeKey(typeKey, name) {
+    return `member-type:${typeKey}#${name}`;
+}
+/** The last simple name of a written type (`Lib.Color` and `Color?` are `Color`), or undefined for a type that is no single name. A member named as its own type (`Color Color`) is read as the type wherever a type fits (C# spec §12.8.7.2). */
+function typeSimpleName(typeNode) {
+    if (typeNode === null)
+        return undefined;
+    switch (typeNode.type) {
+        case 'identifier':
+            return typeNode.text;
+        case 'nullable_type':
+            return typeSimpleName(typeNode.childForFieldName('type'));
+        case 'qualified_name':
+        case 'alias_qualified_name':
+            return typeSimpleName(typeNode.childForFieldName('name'));
+        default:
+            return undefined;
+    }
+}
+/** The written type of a field, event or property declaration, or null for any other member. */
+function memberTypeNode(member) {
+    if (member.type === 'property_declaration')
+        return member.childForFieldName('type');
+    if (member.type !== 'field_declaration' && member.type !== 'event_field_declaration')
+        return null;
+    return member.namedChildren.find((c) => c.type === 'variable_declaration')?.childForFieldName('type') ?? null;
+}
+/** The marker key of a member `name` of the type `typeKey` that is no type (a field, a constant, a property, an event or a method, static ones included) and that a derived type can name: `member:<key>#<name>`. C# reads the members of the types around a simple name, inherited ones included, before any namespace (spec §12.8.4), so such a name is that member and no type of a namespace. A field or a property named as its own type (`Color Color`) declares none: where a type fits, C# reads that name as the type (spec §12.8.7.2). */
+export function memberKey(typeKey, name) {
+    return `member:${typeKey}#${name}`;
+}
+/** The marker key of a private member (see `memberKey`), a class's or a struct's primary constructor parameter among them: `private-member:<key>#<name>`. Every part of the type itself sees it, and no derived type does. */
+export function privateMemberKey(typeKey, name) {
+    return `private-member:${typeKey}#${name}`;
+}
+/** The names a member declaration gives its type, with the declaration that says how far they are seen; none for a declaration that names no member a simple name can read (an explicit interface implementation, an indexer, an operator, a nested type, which has a key of its own). */
+function memberNames(node) {
+    switch (node.type) {
+        case 'method_declaration':
+        case 'property_declaration':
+        case 'event_declaration':
+            return node.namedChildren.some((c) => c.type === 'explicit_interface_specifier') ? [] : [node.childForFieldName('name').text];
+        case 'field_declaration':
+        case 'event_field_declaration': {
+            const names = [];
+            for (const declaration of node.namedChildren) {
+                if (declaration.type !== 'variable_declaration')
+                    continue;
+                for (const d of declaration.namedChildren) {
+                    const name = d.type === 'variable_declarator' ? d.childForFieldName('name') : null;
+                    if (name !== null && name.type === 'identifier')
+                        names.push(name.text);
+                }
+            }
+            return names;
+        }
+        default:
+            return [];
+    }
 }
 /** True when a member declaration is private: it says `private` without `protected`, or it carries no access modifier in a class, struct or record, where that is the default (a member of an interface is public by default). */
 function isPrivateMember(member, owner) {
@@ -477,17 +562,34 @@ function declarations(file) {
     const fileNs = fileScopedNamespace(file.tree.rootNode);
     const members = new Set();
     walkCs(file.tree.rootNode, (node, scope) => {
-        // An instance method of a type other files can name (see `methodKey`): a method directly in the type's body.
         const owner = scope.typeDecl;
-        if (node.type === 'method_declaration' && owner !== null && !owner.fileLocal && node.parent.parent.id === owner.node.id && !hasStaticModifier(node) && !node.namedChildren.some((c) => c.type === 'explicit_interface_specifier')) {
+        const line = node.startPosition.row + 1;
+        const declareOnce = (symbolKey) => {
+            if (members.has(symbolKey))
+                return;
+            members.add(symbolKey);
+            out.push({ symbolKey, line });
+        };
+        // The members of a type other files can name, declared directly in its body: each name that is no type (see `memberKey`), and each instance method (see `methodKey`).
+        if (owner !== null && !owner.fileLocal && owner.node.type !== 'enum_declaration' && node.parent.parent?.id === owner.node.id) {
             const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
             const typeKey = ns === '' ? scope.chain : `${ns}.${scope.chain}`;
-            const name = node.childForFieldName('name').text;
-            const symbolKey = isPrivateMember(node, owner.node) ? privateMethodKey(typeKey, name) : methodKey(typeKey, name);
-            if (!members.has(symbolKey)) {
-                members.add(symbolKey);
-                out.push({ symbolKey, line: node.startPosition.row + 1 });
+            const hidden = isPrivateMember(node, owner.node);
+            const sameAsType = typeSimpleName(memberTypeNode(node));
+            for (const name of memberNames(node)) {
+                if (name !== sameAsType)
+                    declareOnce(hidden ? privateMemberKey(typeKey, name) : memberKey(typeKey, name));
+                if (node.type === 'method_declaration' && !hasStaticModifier(node))
+                    declareOnce(`${hidden ? privateMethodKey(typeKey, name) : methodKey(typeKey, name)}\t${methodShape(node)}`);
             }
+        }
+        // The parameters of a primary constructor: a record's are its public properties, a class's or a struct's are seen by every part of the type and by no other.
+        if (node.type === 'parameter' && owner !== null && !owner.fileLocal && node.parent.parent.id === owner.node.id) {
+            const name = node.childForFieldName('name');
+            const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
+            const typeKey = ns === '' ? scope.chain : `${ns}.${scope.chain}`;
+            if (name !== null)
+                declareOnce(owner.node.type.startsWith('record') ? memberKey(typeKey, name.text) : privateMemberKey(typeKey, name.text));
             return undefined;
         }
         const extName = extensionMethodName(node, scope);
@@ -523,7 +625,9 @@ function declarations(file) {
     const { bases, ...extract } = extractCsharp(file, true);
     for (const base of bases) {
         const readings = base.ref === undefined ? [] : (assembleCsharpCandidates({ ...extract, refs: [base.ref] })[0]?.candidates ?? []);
-        out.push({ symbolKey: `${baseListKey(base.type)}\t${encodeBase({ name: base.ref?.kind === 'plain' ? base.ref.ref : '', readings: readings })}`, line: base.line });
+        // A base is listed under its type; the written type of a field or a property under its member (`memberTypeKey`), read the same way.
+        const head = base.member === undefined ? baseListKey(base.type) : memberTypeKey(base.type, base.member);
+        out.push({ symbolKey: `${head}\t${encodeBase({ name: base.ref?.kind === 'plain' ? base.ref.ref : '', readings: readings })}`, line: base.line });
     }
     // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
     const firstStatement = firstTopLevelStatement(file.tree.rootNode);
@@ -1126,7 +1230,16 @@ function extractCsharp(file, basesOnly) {
         const name = (nameNode.type === 'generic_name' ? findChild(nameNode, 'identifier') : nameNode).text;
         if (OBJECT_MEMBER_NAMES.has(name) || methodNames.has(name))
             return undefined;
-        return instanceLikeReceiver(receiver) ? { name, receiver } : undefined;
+        const args = inv.childForFieldName('arguments').namedChildren.filter((a) => a.type === 'argument').length;
+        const typeArgs = nameNode.type === 'generic_name' ? arityOf(findChild(nameNode, 'type_argument_list').text) : 0;
+        if (instanceLikeReceiver(receiver))
+            return { name, receiver, args, typeArgs };
+        // A first name the file does not declare reads as a type, unless a type around the call has a member of that name in another part or from a base class: then the receiver is a value after all, which only the resolver can tell.
+        let root = receiver;
+        while (root.type === 'member_access_expression')
+            root = root.childForFieldName('expression');
+        const types = root.type === 'identifier' && !isTypeParameterInScope(root.text, scopeOf(root)) ? enclosingTypes(root).types : undefined;
+        return types === undefined ? undefined : { name, receiver, args, typeArgs, member: { types, name: root.text, direct: root.id === receiver.id } };
     };
     // In a file of top-level statements, a bare `Program` (and `Program.X`) names that file's own implicit class: C# finds it in the global namespace before any using or any other project's type, so such a reference binds nothing else and is not emitted. A reference from inside a namespace block of the same file, where a nearer `Ns.Program` could win, is dropped too (silence, never a wrong edge).
     const ownsProgram = firstTopLevelStatement(file.tree.rootNode) !== undefined;
@@ -1440,6 +1553,17 @@ function extractCsharp(file, basesOnly) {
     if (basesOnly) {
         const bases = [];
         walkCs(file.tree.rootNode, (node, own) => {
+            // The written type of each field and property of a type other files can name, for the members that name a type of their own.
+            const holder = own.typeDecl;
+            const memberType = holder !== null && !holder.fileLocal && holder.node.type !== 'enum_declaration' && node.parent.parent?.id === holder.node.id ? memberTypeNode(node) : null;
+            if (memberType !== null) {
+                const ns = nsChain(node)[0];
+                const described = describeType(memberType);
+                if (described !== undefined)
+                    for (const member of memberNames(node))
+                        bases.push({ type: ns === undefined ? own.chain : `${ns}.${own.chain}`, ref: described, line: node.startPosition.row + 1, member });
+                return undefined;
+            }
             if (!BASE_LIST_OWNERS.has(node.type) || isFileLocalType(node, own))
                 return undefined;
             const type = declaredTypeKey(node, own, fileNs);
@@ -1718,7 +1842,10 @@ function extractCsharp(file, basesOnly) {
                     line: node.startPosition.row + 1,
                     enclosingNs: nsChain(node),
                     at: node.startIndex,
+                    args: call.args,
+                    typeArgs: call.typeArgs,
                     ...receiverType(call.receiver),
+                    ...(call.member === undefined ? {} : { member: call.member }),
                 });
             }
             return undefined;
@@ -2074,7 +2201,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
      *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
      */
-    const pushRef = (ref, enclosingNs, line, rooted, at, types = []) => {
+    const pushRef = (ref, enclosingNs, line, rooted, at, types = [], value = false) => {
         // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
         // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
         // candidate.
@@ -2089,7 +2216,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
             return false;
         }
         // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
-        const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: t }));
+        // Where the name stands as a value's would (`value`: the receiver of a member access), a member of that type that is no type is found there too, and ends the lookup (`orMember`).
+        const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: t, ...(value ? { orMember: true } : {}) }));
         // A nested type of a file-local type is found there, before any namespace: the group ends at it.
         const localNested = nestedReadings.findIndex((h) => isFileLocalReading(h.symbolKey));
         if (localNested >= 0)
@@ -2216,8 +2344,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
      *  in-scope `Name` → ambiguous → silence). Aliases import no
      *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
-    const pushExtension = (name, enclosingNs, line, at, guard) => {
-        const candidates = guard === undefined ? [] : [guard];
+    const pushExtension = (name, enclosingNs, line, at, guards) => {
+        const candidates = [...guards];
         const pushed = new Set();
         const addSet = (set) => {
             for (const m of set) {
@@ -2294,15 +2422,21 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 const rooted = r.rooted === true;
                 const before = out.length;
                 for (let i = 1; i <= r.chain.length; i++)
-                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types);
+                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types, true);
                 mergeGroupsFrom(before, r.line);
                 break;
             }
             case 'ext': {
                 // The receiver's written type, where the file gives one, leads the group as a guard: an instance method of that name there ends it (`instance`).
                 const receivers = (r.on ?? []).map(groupOf).filter((g) => g.length > 0);
-                const guarded = receivers.length > 0 || r.self !== undefined;
-                pushExtension(r.name, r.enclosingNs, r.line, r.at, guarded ? { kind: 'symbol', symbolKey: `instance#${r.name}()`, instance: { method: r.name, receivers, ...(r.self === undefined ? {} : { self: r.self }) } } : undefined);
+                const guards = [];
+                // A receiver the file does not declare is a value only as a member of a type around the call (`memberOnly`).
+                const call = { method: r.name, args: r.args, typeArgs: r.typeArgs };
+                if (r.member !== undefined)
+                    guards.push({ kind: 'symbol', symbolKey: `member#${r.member.name}`, memberOnly: { types: r.member.types, name: r.member.name, ...(r.member.direct ? { call } : {}) } });
+                if (receivers.length > 0 || r.self !== undefined)
+                    guards.push({ kind: 'symbol', symbolKey: `instance#${r.name}()`, instance: { ...call, receivers, ...(r.self === undefined ? {} : { self: r.self }) } });
+                pushExtension(r.name, r.enclosingNs, r.line, r.at, guards);
                 break;
             }
         }
@@ -2325,7 +2459,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 22,
+    rev: 23,
     declarations,
     uses,
 };
