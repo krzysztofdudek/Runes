@@ -1523,6 +1523,22 @@ describe('resolveTsPath — a package entry under outDir that is not in the repo
     expect(r('@acme/core/wrong', 'packages/app/a.ts')).toBeUndefined();
     expect(r('@acme/core/css', 'packages/app/a.ts')).toBeUndefined();
   });
+  it('reads .mjs, .d.mts, .cjs and .d.cts as a bundler writes them from a .ts or .tsx source, where the compiler\'s own source is not there', () => {
+    const dual = { exports: { '.': { import: { types: './dist/index.d.mts', default: './dist/index.mjs' }, require: { types: './dist/index.d.cts', default: './dist/index.cjs' } }, './view': { import: './dist/view.mjs', require: './dist/view.cjs' }, './both': { types: './dist/both.d.mts', default: './dist/both.mjs' }, './gone': './dist/gone.mjs' } };
+    const sources = { 'packages/core/src/view.tsx': '', 'packages/core/src/both.ts': '', 'packages/core/src/both.mts': '', 'packages/app/package.json': '{ "name": "app", "type": "module" }', 'packages/app/tsconfig.json': '{ "compilerOptions": { "module": "nodenext" } }' };
+    const r = project(pkg(dual, built, sources));
+    expect(r('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(r('@acme/core', 'packages/app/a.cts')).toBe('packages/core/src/index.ts');
+    expect(r('@acme/core/view', 'packages/app/a.ts')).toBe('packages/core/src/view.tsx');
+    expect(r('@acme/core/view', 'packages/app/a.cts')).toBe('packages/core/src/view.tsx');
+    // The compiler's own source wins where both are there.
+    expect(r('@acme/core/both', 'packages/app/a.ts')).toBe('packages/core/src/both.mts');
+    expect(r('@acme/core/gone', 'packages/app/a.ts')).toBeUndefined();
+    // Each field alone.
+    for (const manifest of [{ module: './dist/index.mjs' }, { types: './dist/index.d.mts' }, { main: './dist/index.cjs' }, { types: './dist/index.d.cts' }]) {
+      expect(project(pkg(manifest, built))('@acme/core', 'packages/app/a.ts'), JSON.stringify(manifest)).toBe('packages/core/src/index.ts');
+    }
+  });
   it('reads an entry with no extension as the file and then as the directory index', () => {
     expect(project(pkg({ main: './dist/index' }, built))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
     expect(project(pkg({ main: 'dist' }, built))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
@@ -1643,6 +1659,17 @@ describe('package-entry-missing', () => {
     expect(two.diagnostics.map((d) => d.code)).toEqual(['package-entry-missing']);
     expect(two.diagnostics[0].message).toContain('map it to different sources');
     expect(two.diagnostics[0].message).not.toContain('no tsconfig');
+  });
+  it('says nothing for a dual package whose .mjs and .d.mts entries a bundler builds from a .ts source', () => {
+    const dual = run({
+      ...base,
+      'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "import": { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" }, "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" } } } }',
+      'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }',
+      'packages/app/package.json': '{ "name": "app", "type": "module" }',
+      'packages/app/tsconfig.json': '{ "compilerOptions": { "module": "nodenext" } }',
+    }, ['@acme/core']);
+    expect(dual.hits).toEqual(['packages/core/src/index.ts']);
+    expect(dual.diagnostics).toEqual([]);
   });
   it('says nothing when the entry maps to its source, when a later entry binds, or when the package has no entry', () => {
     const mapped = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }', 'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }' }, ['@acme/core']);

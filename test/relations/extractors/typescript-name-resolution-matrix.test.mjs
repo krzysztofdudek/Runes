@@ -135,6 +135,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-unread-preset-own-preserve-edge', () => runCase('typescript-exports-unread-preset-own-preserve-edge'));
   it('typescript-package-entry-outdir-main-edge', () => runCase('typescript-package-entry-outdir-main-edge'));
   it('typescript-package-entry-outdir-exports-edge', () => runCase('typescript-package-entry-outdir-exports-edge'));
+  it('typescript-package-entry-outdir-bundler-dual-edge', () => runCase('typescript-package-entry-outdir-bundler-dual-edge'));
   it('typescript-package-entry-outdir-include-root-edge', () => runCase('typescript-package-entry-outdir-include-root-edge'));
   it('typescript-package-entry-outdir-configs-disagree-silence', () => runCase('typescript-package-entry-outdir-configs-disagree-silence'));
   it('typescript-package-entry-no-tsconfig-silence', () => runCase('typescript-package-entry-no-tsconfig-silence'));
