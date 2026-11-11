@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey, declaredModules, rustModuleKey, RUST_MODULES_KNOWN_KEY } from '../../helpers/internal/relations.mjs';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey, declaredModules, rustModuleKey, RUST_MODULES_KNOWN_KEY, pathModules } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
@@ -1884,5 +1884,40 @@ describe('declaredModules', () => {
     const r = await read('#![no_std]\n#![cfg_attr(docsrs, feature(doc_cfg))]\ncfg_if! {\n    if #[cfg(a)] {\n        macro_rules! m { () => {}; }\n        thread_local! { static T: u8 = 1; }\n        const A: u8 = make!(1);\n        fn f() -> ! { panic!() }\n        cfg_if! { if #[cfg(b)] { static B: bool = !true; } }\n    }\n}\nfn g() { println!("x"); }\nbitflags! { struct F: u8 {} }\nstruct S;');
     expect(paths(r)).toEqual([]);
     expect(r.known).toBe(true);
+  });
+});
+
+describe('pathModules', () => {
+  const read = (code) => withParsedFile('src/lib.rs', code, (tree) => pathModules(tree.rootNode).map((m) => `${m.path}@${m.line}`));
+
+  it('lists the normalized path of each path attribute on a top-level mod without a body', async () => {
+    expect(await read('#[path = "platform/linux.rs"]\nmod sys;\n#[path = "./imp/../a//b.rs"]\n/// doc\n#[cfg(unix)]\npub mod b;\n#[path = "../shared/util.rs"]\nmod util;\n#[path = "x/../../up.rs"]\nmod up;')).toEqual(['platform/linux.rs@2', 'a/b.rs@6', '../shared/util.rs@8', '../up.rs@10']);
+  });
+
+  it('leaves out an inline module, a mod inside one, a cfg_attr, and a path it cannot place', async () => {
+    expect(await read('#[path = "dir"]\nmod inline { }\nmod wrap {\n    #[path = "w.rs"]\n    mod w;\n}\n#[cfg_attr(unix, path = "u.rs")]\nmod u;\n#[path = "/abs/a.rs"]\nmod a;\n#[path = ""]\nmod e;\n#[path = "a\\\\b.rs"]\nmod w2;\n#[path = ".."]\nmod dots;\n#[path]\nmod bare;\n#[path = r"raw.rs"]\nmod raw;\n#[doc = "x"]\nmod plain;')).toEqual([]);
+  });
+});
+
+describe('resolveRustPath — a file loaded through a path attribute (injected deps)', () => {
+  const known = new Set(['src/lib.rs', 'src/platform/linux.rs', 'src/platform/epoll.rs', 'src/platform/linux/deep.rs', 'src/platform/mod.rs', 'src/other.rs']);
+  const exists = (p) => known.has(p);
+  const deps = (loaded) => ({ crateRootFor: (f) => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: f === 'src/lib.rs' }), rootDeclares: () => true, pathLoaded: () => loaded });
+
+  it('looks beside the file for what it names below itself, and keeps its items in the file', () => {
+    expect(resolveRustPath('self::epoll', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/epoll.rs');
+    expect(resolveRustPath('self::epoll', 'src/platform/linux.rs', exists, deps(false))).toBe('src/platform/linux.rs');
+    expect(resolveRustPath('self::Item', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/linux.rs');
+    expect(resolveRustPath('self', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/linux.rs');
+  });
+
+  it('still reads the directory named after the file where nothing beside it fits, and reads super as before', () => {
+    expect(resolveRustPath('self::deep', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/linux/deep.rs');
+    expect(resolveRustPath('super::Item', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/mod.rs');
+  });
+
+  it('changes nothing for a mod.rs or a crate root', () => {
+    expect(resolveRustPath('self::epoll', 'src/platform/mod.rs', exists, deps(true))).toBe('src/platform/epoll.rs');
+    expect(resolveRustPath('self::other', 'src/lib.rs', exists, deps(true))).toBe('src/other.rs');
   });
 });

@@ -68,6 +68,12 @@
  * `crate::serve` written in `src/bin/server.rs`). Without `moduleDeclared` (no table of the
  * pass) no file's modules are known and every fitting file is bound, as in 1.0.
  *
+ * PATH-LOADED FILES: a file that a `#[path]` attribute on a `mod` outside inline modules loads
+ * (`pathLoaded`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
+ * `self::x` lie beside it (`src/platform/epoll/mod.rs` for `src/platform/linux.rs`), not
+ * under a directory named after it. Its `super` is not followed from there: the module above
+ * it is the one that wrote the attribute, which its place on disk does not tell.
+ *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
  *   - A path rooted at an EXTERNAL crate (std, serde, tokio — any first segment that
@@ -121,6 +127,8 @@ export interface RustResolveDeps {
     externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
     /** Does `file` declare, without a body, the module at `modulePath` below its own module (`x`, or `outer/x` through its inline module `outer`)? True when it does; false when every module the file declares is known and this is none of them; undefined when that is not known (the file is not in the pass's table, did not parse to the end, or invokes a macro that could declare one). Absent → never known. */
     moduleDeclared?(file: string, modulePath: string): boolean | undefined;
+    /** Is `file` loaded through a `path` attribute on a `mod` that some file writes outside inline modules? Such a file owns its directory as a `mod.rs` does. Absent → no file is known to be. */
+    pathLoaded?(file: string): boolean;
 }
 export declare function resolveRustPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): string | undefined;
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
@@ -137,3 +145,7 @@ export declare function rustGlobKey(path: string): string;
 export declare function rustModuleKey(modulePath: string): string;
 /** The symbol key the Rust extractor declares for a file whose `rustModuleKey` declarations are all the modules it declares without a body: the file parsed to the end and invokes no macro, among its items, that could declare another. Without it a module the file does not list is not known to be absent. It can never be a Rust identifier. */
 export declare const RUST_MODULES_KNOWN_KEY = "mods:all";
+/** The symbol key under which the Rust extractor declares, for a file, a file its top level loads through a `path` attribute on a `mod` outside inline modules: `path` is the attribute's path, normalized, relative to the declaring file's directory (`platform/linux.rs`, `../shared/util.rs`). The `pathmod:` prefix can never be a Rust identifier. */
+export declare function rustPathModuleKey(path: string): string;
+/** The symbol key the Rust extractor declares beside each `rustPathModuleKey`, with the file name the path ends in (`linux.rs`): a table answers only whether a key is declared, so this is how the files that may load a given file through a `path` attribute are found. */
+export declare function rustPathModuleNameKey(fileName: string): string;

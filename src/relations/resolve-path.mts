@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
 import type { SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -95,6 +95,10 @@ export function makeResolvePathToFile(
         ...rustDeps,
         crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
         externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
+        pathLoaded: (file) => {
+          const nameKey = rustPathModuleNameKey(path.posix.basename(file));
+          return table.has('rust', nameKey) && table.filesFor('rust', nameKey).some((by) => declared(by, rustPathModuleKey(path.posix.relative(path.posix.dirname(by), file))));
+        },
         moduleDeclared: (file, modulePath) => (declared(file, rustModuleKey(modulePath)) ? true : declared(file, RUST_MODULES_KNOWN_KEY) ? false : undefined),
         rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))) || globBrings(rootFile, name),
       };

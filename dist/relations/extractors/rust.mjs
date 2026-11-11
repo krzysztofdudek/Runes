@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -580,6 +580,12 @@ function join(prefix, tail) {
  * that those are all of them, both read by `declaredModules`: this is what tells the resolver
  * that a file whose name fits a path is no module, because no `mod` declares it.
  *
+ * Every file the top level of the file loads through a `path` attribute on a `mod` is
+ * declared under `rustPathModuleKey(path)` (`pathmod:<path>`), and under
+ * `rustPathModuleNameKey(name)` (`pathmod-name:<file name>`) so that it can be found from the
+ * loaded file, both read by `pathModules`: a file loaded that way owns its directory as a
+ * `mod.rs` does, which is where the resolver then looks for its children.
+ *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
  * declaration nothing can switch off, `modfile?:<path>` for one under a `cfg`. This is what the
@@ -618,6 +624,10 @@ function declarations(file) {
         out.push({ symbolKey: rustModuleKey(path), line });
     if (modules.known)
         out.push({ symbolKey: RUST_MODULES_KNOWN_KEY, line: 1 });
+    for (const { path, line } of pathModules(root)) {
+        out.push({ symbolKey: rustPathModuleKey(path), line });
+        out.push({ symbolKey: rustPathModuleNameKey(path.slice(path.lastIndexOf('/') + 1)), line });
+    }
     return out;
 }
 /** The attributes that leave a `mod` where its name puts it: the compiler's own, which rewrite nothing. Any other attribute in front of a `mod` may be a macro that rewrites the item, and a `cfg_attr` there may apply one, or a `path`. A `cfg` moves nothing, but it may remove the item: see `conditional` in `plainModuleFiles`. */
@@ -735,6 +745,38 @@ function cfgIfInvokesMacro(body) {
     };
     const branches = (tree) => tree !== undefined && tree.namedChildren.some((c) => c !== null && braced(c) && items(c));
     return branches(body);
+}
+/**
+ * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
+ */
+export function pathModules(root) {
+    const out = [];
+    for (const node of root.namedChildren) {
+        if (node === null || node.type !== 'mod_item' || node.childForFieldName('body') !== null)
+            continue;
+        for (const item of attributesBefore(node)) {
+            const attr = item.namedChild(0);
+            const id = attr?.namedChild(0) ?? null;
+            const value = attr?.childForFieldName('value') ?? null;
+            if (id === null || id.type !== 'identifier' || id.text !== 'path' || value === null || value.type !== 'string_literal')
+                continue;
+            const text = value.text.slice(1, -1);
+            if (text === '' || text.startsWith('/') || text.includes('\\'))
+                continue;
+            const parts = [];
+            for (const part of text.split('/')) {
+                if (part === '' || part === '.')
+                    continue;
+                if (part === '..' && parts.length > 0 && parts[parts.length - 1] !== '..')
+                    parts.pop();
+                else
+                    parts.push(part);
+            }
+            if (parts.length > 0 && parts[parts.length - 1] !== '..')
+                out.push({ path: parts.join('/'), line: node.startPosition.row + 1 });
+        }
+    }
+    return out;
 }
 /** The attributes written in front of `item`. They parse as preceding `attribute_item` siblings; comments may stand between them. */
 function attributesBefore(item) {
@@ -1026,7 +1068,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 17,
+    rev: 18,
     declarations,
     uses,
 };

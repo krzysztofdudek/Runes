@@ -272,6 +272,13 @@ describe('MATRIX — a file is a module only when a mod declares it', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — the children of a file loaded through a path attribute', () => {
+  it('rust-file-module-children-under-own-directory-edge', () => runCase('rust-file-module-children-under-own-directory-edge'));
+  it('rust-path-loaded-file-children-beside-it-edge', () => runCase('rust-path-loaded-file-children-beside-it-edge'));
+  it('rust-path-loaded-file-relative-path-forms-edge', () => runCase('rust-path-loaded-file-relative-path-forms-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one
