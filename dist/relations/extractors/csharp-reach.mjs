@@ -37,6 +37,8 @@ function globToRegExp(glob) {
     }
     return new RegExp(`^${re}$`, 'i');
 }
+/** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
+const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
 /** The names an item's `Include` attribute lists (`;`-separated), trimmed and not empty. */
 function includes(attrText) {
     const value = attributes(attrText).get('include');
@@ -47,7 +49,7 @@ function conditional(text, index, attrText) {
     if (attributes(attrText).has('condition'))
         return true;
     const open = [];
-    const tags = /<(\/?)(ItemGroup|Target|Choose|When|Otherwise)\b([^>]*?)(\/?)>/gi;
+    const tags = new RegExp(`<(\\/?)(ItemGroup|Target|Choose|When|Otherwise)\\b${ATTRS}(\\/?)>`, 'gi');
     let m;
     while ((m = tags.exec(text)) !== null && m.index < index) {
         if (m[4] === '/')
@@ -195,7 +197,7 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const hit = factsCache.get(projectDir);
         if (hit !== undefined)
             return hit;
-        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], friends: new Set(), everyFriend: false };
+        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
         /** A friend's name as written, its properties read as this project's names; an unknown property names every project. */
         const addFriend = (raw) => {
             const own = projectFilesIn(projectDir);
@@ -278,12 +280,15 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                     for (const dir of projectDirsNamed(id))
                         facts.refs.add(dir);
             }
-            const compiles = /<Compile\b([^>]*?)\/?>/gi;
+            const compiles = new RegExp(`<Compile\\b${ATTRS}\\/?>`, 'gi');
             while ((m = compiles.exec(text)) !== null) {
                 for (const item of includes(m[1])) {
                     for (const r of resolveItemPaths(item, declDir, projectDir)) {
-                        if (r.kind !== 'path')
+                        if (r.kind !== 'path') {
                             facts.open = true;
+                            if (r.kind === 'unresolved')
+                                facts.keepsAll = true;
+                        }
                         else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix))
                             facts.links.push(globToRegExp(r.path));
                         else
@@ -383,10 +388,10 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         }
         return [...new Set(linkIndex.filter(([dir, re]) => dir !== own && re.test(file)).map(([dir]) => dir))];
     };
-    /** True when the file's own project compiles it: no `Compile Remove` of the project takes it out, or a `Compile Include` of the project names it again. */
+    /** True when the file's own project compiles it: no `Compile Remove` of the project takes it out, a `Compile Include` of the project names it again, or one the reader cannot place might. */
     const compiledByOwn = (file, own) => {
         const facts = factsOf(own);
-        return !facts.removed.some((re) => re.test(file)) || facts.kept.some((re) => re.test(file));
+        return facts.keepsAll || !facts.removed.some((re) => re.test(file)) || facts.kept.some((re) => re.test(file));
     };
     /** The projects whose compilation holds the file: its own project unless that project removes it, and every project that links it. Undefined when the graph knows nothing of the file: it is not one of the files the graph was built for, or it lies under no project file and no project links it. */
     const compilations = new Map();
