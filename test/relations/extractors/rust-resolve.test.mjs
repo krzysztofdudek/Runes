@@ -962,6 +962,36 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     });
   });
 
+  it('reads a self:: or super:: path through a name the module\'s file binds with extern crate as that crate', async () => {
+    put('util/Cargo.toml', '[package]\nname = "util"\nedition = "2021"\n');
+    put('util/src/lib.rs', 'pub struct Marker;\n');
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[dependencies]\nutil = { path = "util" }\n');
+    put('src/lib.rs', 'extern crate util as u;\nmod a;\n#[path = "sub/q.rs"]\nmod q;\n');
+    put('src/a.rs', 'extern crate util as w;\nmod b;\n');
+    put('src/a/b.rs', '');
+    put('src/a/w.rs', '');
+    put('src/sub/q.rs', 'extern crate util as z;\n');
+    put('shared/Cargo.toml', '[package]\nname = "two"\nedition = "2021"\n[dependencies]\nutil = { path = "../util" }\n');
+    put('shared/src/lib.rs', 'extern crate util as u;\nmod a;\n');
+    put('shared/src/main.rs', 'extern crate util as u;\nmod a;\nfn main() {}\n');
+    put('shared/src/a.rs', '');
+    const table = await tableNow();
+    const resolve = (spec, from) => makeResolvePathToFile(ws)(spec, from, 'rust', false, table);
+    // The crate root, a file module, its child climbing to it, a child climbing to the root, and a file loaded through a path attribute.
+    expect(resolve('self::u::Marker', 'src/lib.rs')).toBe('util/src/lib.rs');
+    expect(resolve('self::w::Marker', 'src/a.rs')).toBe('util/src/lib.rs');
+    expect(resolve('super::w::Marker', 'src/a/b.rs')).toBe('util/src/lib.rs');
+    expect(resolve('super::u::Marker', 'src/a.rs')).toBe('util/src/lib.rs');
+    expect(resolve('super::super::u', 'src/a/b.rs')).toBe('util/src/lib.rs');
+    expect(resolve('self::z::Marker', 'src/sub/q.rs')).toBe('util/src/lib.rs');
+    // A name no extern crate of that module binds is read as before.
+    expect(resolve('self::b', 'src/a.rs')).toBe('src/a/b.rs');
+    // Two roots that both certainly compile the file: which root super:: reaches cannot be told, so its extern crate is not read.
+    expect(resolve('super::u::Marker', 'shared/src/a.rs')).toBeUndefined();
+    // Without the pass's table no extern crate is known, and the leftover file that fits the name is bound, as in 1.0.
+    expect(makeResolvePathToFile(ws)('self::w::Marker', 'src/a.rs', 'rust')).toBe('src/a/w.rs');
+  });
+
   it('reads the files of a src/bin/ directory without main.rs as modules of the binary that declares them, and of no crate when none or several do', async () => {
     put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n');
     put('src/lib.rs', 'pub struct LibThing;\n');

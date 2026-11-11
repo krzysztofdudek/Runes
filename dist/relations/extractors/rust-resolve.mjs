@@ -195,8 +195,20 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir))
         return undefined;
     const crateRoot = rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared);
+    const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && deps.pathLoaded?.(fromPosix) === true;
+    // A name the module's file binds with `extern crate` (`extern crate util as u;` then `self::u::X`, or `super::u::X` from a child) is that crate. A module of the same name beside it would be a second definition, which Rust refuses.
+    const first = tail[0];
+    if (first !== undefined && deps.externCrateFor !== undefined) {
+        const atCrateRoot = path.posix.normalize(moduleDir) === path.posix.normalize(srcDir);
+        const files = pathLoaded ? [fromPosix] : atCrateRoot ? (crate.rootsShared === true ? [] : (crate.rootFiles ?? [])) : [moduleDir + '.rs', joinUnder(moduleDir, 'mod.rs')];
+        for (const file of files) {
+            const bound = file !== undefined && exists(file) ? deps.externCrateFor(fromFile, file, first) : undefined;
+            if (bound !== undefined)
+                return resolveFromModuleDir(bound.srcDir, tail.slice(1), exists, rootContext(bound.srcDir, bound.rootFiles, declaresOf(deps)), moduleCheckOf(deps));
+        }
+    }
     // A file loaded through a `path` attribute owns its directory, so what it names below itself lies beside it; the file itself holds its items. Where nothing beside it fits, the directory named after it is still read: the same file may be a module by its name as well.
-    if (!climbed && baseName !== 'mod' && !isRoot && deps.pathLoaded?.(fromPosix) === true) {
+    if (pathLoaded) {
         const beside = resolveFromModuleDir(fromDir, tail, exists, crateRoot, moduleCheckOf(deps), fromPosix);
         if (beside !== fromPosix)
             return beside;

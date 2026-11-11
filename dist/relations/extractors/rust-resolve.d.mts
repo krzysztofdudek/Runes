@@ -40,7 +40,8 @@
  * Written in the crate root it makes `b` name the crate `a` in every module of that crate
  * (`externCrateFor`). Written anywhere else it binds `b` in that scope only; the extractor,
  * which sees the scopes, emits a `use` path there that starts with `b` as
- * `extern::a::as::b::…`, and the declaration itself as `extern::a`. `extern` is a keyword, so
+ * `extern::a::as::b::…`, and the declaration itself as `extern::a`. A `self::` or `super::` path
+ * whose next name the file of the module it reaches binds that way names the crate too. `extern` is a keyword, so
  * no path of the source starts with it. An edition 2015 `use` path is relative to the crate
  * root, so there only the root's declarations count.
  *
