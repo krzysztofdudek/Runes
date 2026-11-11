@@ -28,6 +28,31 @@ const SETTINGS = [
   { module: 'none', moduleResolution: 'bundler' },
   { module: 'preserve' },
 ];
+// A tsconfig that leaves `module`, `moduleResolution` or both unset: the compiler takes its defaults, `module` from `target` and the resolution from `module`. The rows the compiler does not resolve (Classic, which reads no `exports`) are not compared.
+const DEFAULTED_SETTINGS = [
+  {},
+  { module: 'esnext' },
+  { module: 'commonjs' },
+  { module: 'es2015' },
+  { module: 'es2020' },
+  { module: 'es2022' },
+  { module: 'amd' },
+  { module: 'umd' },
+  { module: 'system' },
+  { module: 'none' },
+  { target: 'es3' },
+  { target: 'es5' },
+  { target: 'es2015' },
+  { target: 'es2020' },
+  { target: 'es2022' },
+  { target: 'esnext' },
+  { target: 'es5', module: 'esnext' },
+  { target: 'esnext', module: 'commonjs' },
+  { moduleResolution: 'bundler' },
+  { moduleResolution: 'bundler', target: 'es5' },
+  { moduleResolution: 'node16' },
+  { moduleResolution: 'nodenext' },
+];
 // A call form is read the same in every file kind; the forms below it are import types, which are only written in TypeScript.
 const CALL_FORMS = {
   static: "import { v } from 'lib';\nexport const x = v;",
@@ -85,10 +110,10 @@ function fixture(ext, packageType) {
   return root;
 }
 
-function compilerTarget(root, ext, code, setting) {
+function compilerTarget(root, ext, code, setting, pinTarget = true) {
   const file = path.join(root, `app/use.${ext}`);
   writeFileSync(file, code);
-  const options = ts.convertCompilerOptionsFromJson({ ...setting, allowJs: true, jsx: 'preserve', noEmit: true, noLib: true, skipLibCheck: true, types: [], target: 'esnext' }, root).options;
+  const options = ts.convertCompilerOptionsFromJson({ ...(pinTarget ? { target: 'esnext' } : {}), ...setting, allowJs: true, jsx: 'preserve', noEmit: true, noLib: true, skipLibCheck: true, types: [] }, root).options;
   const program = ts.createProgram([file], options, ts.createCompilerHost(options, true));
   const source = program.getSourceFile(file);
   let found;
@@ -117,13 +142,13 @@ async function runesTarget(root, ext, code, setting) {
 }
 
 /** Every row the compiler resolves, against Runes; returns the rows compared and the rows that differ. */
-async function compare(settings, extensions, forms) {
+async function compare(settings, extensions, forms, pinTarget = true) {
   const mismatches = [];
   let compared = 0;
   for (const setting of settings) for (const ext of extensions) for (const packageType of packageTypesOf(ext)) {
     const root = fixture(ext, packageType);
     for (const [name, code] of Object.entries(forms)) {
-      const compiler = compilerTarget(root, ext, code, setting);
+      const compiler = compilerTarget(root, ext, code, setting, pinTarget);
       if (compiler === undefined) continue;
       compared++;
       const runes = await runesTarget(root, ext, code, setting);
@@ -144,6 +169,13 @@ describe('the conditions Runes enters are the ones the compiler enters', () => {
     const { compared, mismatches } = await compare(SETTINGS, ['ts', 'tsx', 'cts', 'mts'], TYPE_FORMS);
     // 13 module kinds x 8 (file kind, package type) rows x 25 forms.
     expect(compared).toBeGreaterThanOrEqual(Math.floor(13 * 8 * Object.keys(TYPE_FORMS).length * 0.95));
+    expect(mismatches).toEqual([]);
+  });
+  it('for a tsconfig that leaves module, moduleResolution or both to the compiler\'s defaults, in every file kind, package type and form', async () => {
+    const forms = { ...CALL_FORMS, importEquals: TYPE_FORMS.importEquals, typeofImport: TYPE_FORMS.typeofImport, importType: TYPE_FORMS.importType };
+    const { compared, mismatches } = await compare(DEFAULTED_SETTINGS, EXTENSIONS, forms, false);
+    // {} alone gives 16 (file kind, package type) rows x 3 call forms, less the 8 require() rows of TypeScript files, plus 8 TypeScript rows x 3 type forms.
+    expect(compared).toBeGreaterThanOrEqual(64 * 10);
     expect(mismatches).toEqual([]);
   });
 });
