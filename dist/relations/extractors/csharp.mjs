@@ -115,6 +115,8 @@ const TYPE_DECLARATION_TYPES = new Set([
     'record_struct_declaration',
     'enum_declaration',
 ]);
+/** The declarations that publish a type key: the type declarations and the delegate, which declares a type (C# spec §21) but has no body, so it never holds a member or a nested type and takes no part in the scopes the walk carries. */
+const TYPE_KEY_DECLARATION_TYPES = new Set([...TYPE_DECLARATION_TYPES, 'delegate_declaration']);
 /**
  * The file-scoped namespace FQN (`namespace Foo.Bar;`), or '' if the file has none.
  *
@@ -247,7 +249,7 @@ function hasFileModifier(node) {
  *  type. A type unreachable across files because an enclosing type is `file`-local must also be
  *  withheld from the cross-file index — a nested type of a `file` type cannot escape the file. */
 function isFileLocalType(node, scope) {
-    return scope.fileLocal || (TYPE_DECLARATION_TYPES.has(node.type) && hasFileModifier(node));
+    return scope.fileLocal || (TYPE_KEY_DECLARATION_TYPES.has(node.type) && hasFileModifier(node));
 }
 /**
  * The symbol key of an EXTENSION METHOD named `name` declared in namespace `ns`: `<ns>.<name>()`
@@ -411,7 +413,7 @@ function declarations(file) {
                 out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
             return undefined;
         }
-        if (!TYPE_DECLARATION_TYPES.has(node.type))
+        if (!TYPE_KEY_DECLARATION_TYPES.has(node.type))
             return undefined;
         const nameField = node.childForFieldName('name');
         if (nameField === null || nameField.text === '')
@@ -1969,7 +1971,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 17,
+    rev: 18,
     declarations,
     uses,
 };

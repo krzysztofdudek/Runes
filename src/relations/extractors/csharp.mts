@@ -127,6 +127,9 @@ const TYPE_DECLARATION_TYPES = new Set([
   'enum_declaration',
 ]);
 
+/** The declarations that publish a type key: the type declarations and the delegate, which declares a type (C# spec §21) but has no body, so it never holds a member or a nested type and takes no part in the scopes the walk carries. */
+const TYPE_KEY_DECLARATION_TYPES = new Set([...TYPE_DECLARATION_TYPES, 'delegate_declaration']);
+
 /**
  * The file-scoped namespace FQN (`namespace Foo.Bar;`), or '' if the file has none.
  *
@@ -302,7 +305,7 @@ function hasFileModifier(node: Node): boolean {
  *  type. A type unreachable across files because an enclosing type is `file`-local must also be
  *  withheld from the cross-file index — a nested type of a `file` type cannot escape the file. */
 function isFileLocalType(node: Node, scope: CsScope): boolean {
-  return scope.fileLocal || (TYPE_DECLARATION_TYPES.has(node.type) && hasFileModifier(node));
+  return scope.fileLocal || (TYPE_KEY_DECLARATION_TYPES.has(node.type) && hasFileModifier(node));
 }
 
 /**
@@ -470,7 +473,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       if (assemblyOnlyExtension(node, scope.typeDecl!)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
       return undefined;
     }
-    if (!TYPE_DECLARATION_TYPES.has(node.type)) return undefined;
+    if (!TYPE_KEY_DECLARATION_TYPES.has(node.type)) return undefined;
     const nameField = node.childForFieldName('name');
     if (nameField === null || nameField.text === '') return undefined;
     // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN.
@@ -2109,7 +2112,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 17,
+  rev: 18,
   declarations,
   uses,
 };
