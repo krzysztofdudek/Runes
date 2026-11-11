@@ -1,4 +1,4 @@
-import { baseListKey, decodeBase, interfaceKey } from './csharp.mjs';
+import { baseListKey, decodeBase, interfaceKey, methodKey, privateMethodKey } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -93,5 +93,21 @@ export function makeCsharpTypeLookup(table, bind) {
         attributeMemo.set(typeKey, answer);
         return answer;
     };
-    return { bases, nested, path, attributeClass };
+    const hasMethod = (typeKey, name, own) => {
+        if (own && table.has(LANGUAGE, privateMethodKey(typeKey, name)))
+            return true;
+        const seen = new Set();
+        const pending = [typeKey];
+        while (pending.length > 0) {
+            const key = pending.pop();
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            if (table.has(LANGUAGE, methodKey(key, name)))
+                return true;
+            pending.push(...bases(key).inside);
+        }
+        return false;
+    };
+    return { bases, nested, path, attributeClass, hasMethod };
 }

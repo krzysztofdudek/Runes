@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodKey, privateMethodKey } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -258,6 +258,100 @@ describe('csharp: an attribute is the reading that binds an attribute class', ()
         [['Lib.Use+Mark', undefined], ['Lib.Mark', undefined], ['Mark', undefined], ['Lib.Use+MarkAttribute', undefined]],
         [['Lib.Mark', undefined]],
       ]);
+    });
+  });
+});
+
+describe('csharp: an extension call gives way to an instance method of the receiver', () => {
+  it('declares each instance method once, a private one apart, and none for a static, explicit or extension method or a file-local type', async () => {
+    await project({
+      'src/a/Types.cs': [
+        'namespace App;',
+        'public class Order : IOrder {',
+        '  public void Save() { }',
+        '  public void Save(int retries) { }',
+        '  void Hidden() { }',
+        '  private protected void Shared() { }',
+        '  internal void Inside() { }',
+        '  private void Secret() { }',
+        '  public static void Create() { }',
+        '  void IOrder.Explicit() { }',
+        '  void Outer() { void Local() { } }',
+        '  public class Line { public void Total() { } }',
+        '}',
+        'public interface IOrder { void Explicit(); }',
+        'public struct Money { public void Round() { } void Trim() { } }',
+        'public static class Ext { public static void Extra(this Order o) { } }',
+        'file class Local { public void Run() { } }',
+      ].join('\n'),
+    }, ({ keys }) => {
+      const declared = keys('src/a/Types.cs').filter((k) => k.includes('method:'));
+      expect(declared).toEqual([
+        methodKey('App.Order', 'Save'), privateMethodKey('App.Order', 'Hidden'), methodKey('App.Order', 'Shared'), methodKey('App.Order', 'Inside'), privateMethodKey('App.Order', 'Secret'),
+        privateMethodKey('App.Order', 'Outer'), methodKey('App.Order+Line', 'Total'), methodKey('App.IOrder', 'Explicit'), methodKey('App.Money', 'Round'), privateMethodKey('App.Money', 'Trim'),
+      ]);
+    });
+  });
+
+  it('writes the receiver type the file declares on the call, and none where no type is written', async () => {
+    await project({
+      'src/a/Use.cs': [
+        'namespace App;',
+        'public class Use(Primary primary) {',
+        '  private readonly Field _field;',
+        '  public Prop Prop { get; set; }',
+        '  private Generic<int>? _generic;',
+        '  private S::Aliased _aliased;',
+        '  private int[] _numbers;',
+        '  public void Run(Param param, T generic) {',
+        '    Local local = null; var inferred = Make();',
+        '    param.A(); _field.B(); Prop.C(); local.D(); _generic.E(); primary.F(); this.G(); this._field.H(); _aliased.I();',
+        '    inferred.J(); Make().K(); _numbers.L(); param.Inner.M(); this.Run2().N(); this.missing.O();',
+        '    foreach (Item item in Items()) item.P();',
+        '    foreach (var each in Items()) each.Q();',
+        '    System.Func<Param, int> f = p => p.R();',
+        '    if (param is Param typed) typed.S();',
+        '    try { } catch (Error error) { error.T(); }',
+        '    { Local shadow = null; shadow.U(); } { Other shadow = null; shadow.V(); }',
+        '    { var param2 = 1; Local twice = null; Other twice2 = null; }',
+        '  }',
+        '  void Same() { Local x = null, y = null; x.W(); }',
+        '  void Lambda() { System.Action<Param> a = (Param q) => q.X(); }',
+        '}',
+      ].join('\n'),
+    }, ({ files }) => {
+      const ext = new Map(extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map((r) => [r.name, [r.on?.map((d) => d.kind === 'plain' ? d.ref : `${d.aliasName}::${d.tail}`), r.self]]));
+      expect(Object.fromEntries(ext)).toEqual({
+        A: [['Param'], undefined], B: [['Field'], undefined], C: [['Prop'], undefined], D: [['Local'], undefined], E: [['Generic`1'], undefined], F: [['Primary'], undefined],
+        G: [undefined, 'App.Use'], Run2: [undefined, 'App.Use'], H: [['Field'], undefined], I: [['S::Aliased'], undefined],
+        J: [undefined, undefined], K: [undefined, undefined], L: [undefined, undefined], M: [undefined, undefined], N: [undefined, undefined], O: [undefined, undefined],
+        P: [['Item'], undefined], Q: [undefined, undefined], R: [undefined, undefined], S: [undefined, undefined], T: [undefined, undefined],
+        U: [['Local'], undefined], V: [['Other'], undefined], W: [['Local'], undefined], X: [['Param'], undefined],
+      });
+    });
+  });
+
+  it('reads every written type where one scope declares the receiver name twice, and leaves a type parameter unknown', async () => {
+    await project({
+      'src/a/Use.cs': 'namespace App;\npublic class Use<T> {\n  void Run(T item) {\n    if (true) { } \n    for (First x = null;;) { x.A(); }\n    for (Second x = null;;) { x.A(); }\n    item.B();\n  }\n}\n',
+    }, ({ files }) => {
+      const ext = extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map((r) => [r.name, r.on?.map((d) => d.ref)]);
+      expect(ext).toEqual([['A', ['First', 'Second']], ['A', ['First', 'Second']], ['B', undefined]]);
+    });
+  });
+
+  it('ends the group only where a written receiver type has the method, and a private one counts for `this` alone', async () => {
+    await project({
+      'src/core/Order.cs': 'namespace App;\npublic class Order { void Secret() { } public void Open() { } }\npublic class Other { }\n',
+      'src/ext/Ext.cs': 'namespace App;\npublic static class Ext {\n  public static void Secret(this Other o) { }\n  public static void Open(this Other o) { }\n}\n',
+      'src/web/Use.cs': 'namespace App;\npublic class Use {\n  void Run(Order order, Other other, Missing missing) {\n    order.Secret();\n    order.Open();\n    other.Open();\n    missing.Open();\n  }\n}\n',
+    }, ({ files, edges, resolver }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['3->core', '4->ext', '6->ext', '7->ext']);
+      const guard = csharpUses(files.find((f) => f.path === 'src/web/Use.cs')).find((u) => u.line === 5).candidates[0];
+      expect(guard.symbolKey).toBe('instance#Open()');
+      expect(resolver.classify(guard, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+      expect(resolver.resolve(guard, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      expect(resolver.resolveFile(guard, 'src/web/Use.cs', 'csharp')).toBe(undefined);
     });
   });
 });

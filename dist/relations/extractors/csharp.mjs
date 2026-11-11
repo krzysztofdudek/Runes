@@ -289,6 +289,21 @@ export function baseListKey(typeKey) {
 export function interfaceKey(typeKey) {
     return `interface:${typeKey}`;
 }
+/** The marker key of an instance method `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`, declared once however many overloads there are. A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
+export function methodKey(typeKey, name) {
+    return `method:${typeKey}#${name}`;
+}
+/** The marker key of a private instance method (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches it. */
+export function privateMethodKey(typeKey, name) {
+    return `private-method:${typeKey}#${name}`;
+}
+/** True when a member declaration is private: it says `private` without `protected`, or it carries no access modifier in a class, struct or record, where that is the default (a member of an interface is public by default). */
+function isPrivateMember(member, owner) {
+    const mods = accessModifiers(member);
+    if (mods.has('private'))
+        return !mods.has('protected');
+    return !mods.has('public') && !mods.has('internal') && !mods.has('protected') && owner.type !== 'interface_declaration';
+}
 /** The value of a base record (see `baseListKey`). A CS0104 set many readings share is written once. */
 export function encodeBase(base) {
     const sets = [];
@@ -460,7 +475,21 @@ function fileLocalTypeKeys(root, fileNs) {
 function declarations(file) {
     const out = [];
     const fileNs = fileScopedNamespace(file.tree.rootNode);
+    const members = new Set();
     walkCs(file.tree.rootNode, (node, scope) => {
+        // An instance method of a type other files can name (see `methodKey`): a method directly in the type's body.
+        const owner = scope.typeDecl;
+        if (node.type === 'method_declaration' && owner !== null && !owner.fileLocal && node.parent.parent.id === owner.node.id && !hasStaticModifier(node) && !node.namedChildren.some((c) => c.type === 'explicit_interface_specifier')) {
+            const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
+            const typeKey = ns === '' ? scope.chain : `${ns}.${scope.chain}`;
+            const name = node.childForFieldName('name').text;
+            const symbolKey = isPrivateMember(node, owner.node) ? privateMethodKey(typeKey, name) : methodKey(typeKey, name);
+            if (!members.has(symbolKey)) {
+                members.add(symbolKey);
+                out.push({ symbolKey, line: node.startPosition.row + 1 });
+            }
+            return undefined;
+        }
         const extName = extensionMethodName(node, scope);
         if (extName !== undefined) {
             const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
@@ -953,7 +982,10 @@ function extractCsharp(file, basesOnly) {
     };
     // A node id is recorded here once its TYPE reference has been emitted, so a later, broader
     // walk visit (e.g. the generic outermost-qualified_name pass) never re-emits the same node.
-    const emitted = new Set();
+    const emittedIds = new Set();
+    // While `capturing`, a type node is read without being recorded: the reference it gives is taken aside (`describeType`) and the walk still emits the node in its own place.
+    let capturing = false;
+    const emitted = { has: (id) => !capturing && emittedIds.has(id), add: (id) => void (capturing || emittedIds.add(id)) };
     // Every value/member name this file declares (M16 shadow guard) and the names of the ordinary
     // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
     const { declaredNames, methodNames } = basesOnly ? { declaredNames: new Set(), methodNames: new Set() } : collectDeclaredNames(file.tree.rootNode);
@@ -973,6 +1005,104 @@ function extractCsharp(file, basesOnly) {
     };
     /** The method name of an extension-method-shaped call `value.Name(…)` / `value?.Name(…)`, or
      *  undefined when the call cannot be an in-repo extension-method call worth resolving. */
+    /** The reference the written type `typeNode` is, taken aside from the walk, or undefined when it names no type of its own (a predefined type, an array, a tuple, a type parameter). A nullable `T?` is its `T`. */
+    const describeType = (typeNode) => {
+        const named = typeNode.type === 'nullable_type' ? typeNode.childForFieldName('type') : typeNode;
+        if (!NAMESPACE_NODE_TYPES.has(named.type))
+            return undefined;
+        const before = refs.length;
+        capturing = true;
+        emitTypeNode(named);
+        capturing = false;
+        const described = refs[before];
+        refs.length = before;
+        return described;
+    };
+    let typedNames;
+    const SCOPE_NODES = new Set(['block', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
+    const declaredTypes = () => {
+        if (typedNames !== undefined)
+            return typedNames;
+        const index = new Map();
+        const add = (name, type, within, member = false) => {
+            const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member };
+            const list = index.get(name);
+            if (list === undefined)
+                index.set(name, [entry]);
+            else
+                list.push(entry);
+        };
+        const around = (node) => {
+            let cur = node.parent;
+            while (!SCOPE_NODES.has(cur.type))
+                cur = cur.parent;
+            return cur;
+        };
+        walkCs(file.tree.rootNode, (node, own) => {
+            if (node.type === 'variable_declaration') {
+                const holder = node.parent;
+                const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && own.typeDecl !== null;
+                const within = member ? own.typeDecl.node : around(node);
+                for (const d of node.namedChildren) {
+                    const name = d.type === 'variable_declarator' ? d.childForFieldName('name') : null;
+                    if (name !== null && name.type === 'identifier')
+                        add(name.text, node.childForFieldName('type'), within, member);
+                }
+            }
+            else if (node.type === 'parameter') {
+                const name = node.childForFieldName('name');
+                // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
+                if (name !== null)
+                    add(name.text, node.childForFieldName('type'), node.parent.parent);
+            }
+            else if (node.type === 'property_declaration' && own.typeDecl !== null) {
+                add(node.childForFieldName('name').text, node.childForFieldName('type'), own.typeDecl.node, true);
+            }
+            else if (node.type === 'implicit_parameter' || node.type === 'single_variable_designation') {
+                add(node.text, null, around(node));
+            }
+            else if (node.type === 'foreach_statement') {
+                const left = node.childForFieldName('left');
+                if (left.type === 'identifier')
+                    add(left.text, node.childForFieldName('type'), node);
+            }
+            else if (node.type === 'catch_declaration' || node.type === 'from_clause' || node.type === 'let_clause' || node.type === 'join_clause' || node.type === 'join_into_clause') {
+                for (let i = 0; i < node.childCount; i++) {
+                    if (node.fieldNameForChild(i) === 'name' && node.child(i).type === 'identifier')
+                        add(node.child(i).text, null, around(node));
+                }
+            }
+            return undefined;
+        });
+        typedNames = index;
+        return index;
+    };
+    /** What the file says of the type of a call's receiver (see the `ext` descriptor): the enclosing type for `this`, the written types of the nearest declarations of a name for an identifier or `this.name`, or nothing where no type is written. */
+    const receiverType = (receiver) => {
+        if (receiver.type === 'this') {
+            const self = enclosingTypes(receiver).types?.[0];
+            return self === undefined ? {} : { self };
+        }
+        const viaThis = receiver.type === 'member_access_expression' && receiver.childForFieldName('expression').type === 'this';
+        const nameNode = viaThis ? receiver.childForFieldName('name') : receiver;
+        if (nameNode.type !== 'identifier')
+            return {};
+        const at = receiver.startIndex;
+        const inScope = (declaredTypes().get(nameNode.text) ?? []).filter((e) => at >= e.start && at < e.end && (!viaThis || e.member));
+        if (inScope.length === 0)
+            return {};
+        // The nearest scope that declares the name decides; where it declares the name more than once, every written type counts, and one without a written type leaves the receiver unknown.
+        const size = Math.min(...inScope.map((e) => e.end - e.start));
+        const nearest = inScope.filter((e) => e.end - e.start === size);
+        const on = [];
+        for (const e of nearest) {
+            const described = e.type === null ? undefined : describeType(e.type);
+            if (described === undefined)
+                return {};
+            on.push(described);
+        }
+        return { on };
+    };
     const extensionCall = (inv) => {
         const fn = inv.childForFieldName('function');
         let nameNode;
@@ -996,7 +1126,7 @@ function extractCsharp(file, basesOnly) {
         const name = (nameNode.type === 'generic_name' ? findChild(nameNode, 'identifier') : nameNode).text;
         if (OBJECT_MEMBER_NAMES.has(name) || methodNames.has(name))
             return undefined;
-        return instanceLikeReceiver(receiver) ? name : undefined;
+        return instanceLikeReceiver(receiver) ? { name, receiver } : undefined;
     };
     // In a file of top-level statements, a bare `Program` (and `Program.X`) names that file's own implicit class: C# finds it in the global namespace before any using or any other project's type, so such a reference binds nothing else and is not emitted. A reference from inside a namespace block of the same file, where a nearer `Ns.Program` could win, is dropped too (silence, never a wrong edge).
     const ownsProgram = firstTopLevelStatement(file.tree.rootNode) !== undefined;
@@ -1584,10 +1714,11 @@ function extractCsharp(file, basesOnly) {
             if (call !== undefined && !insideNameof(node)) {
                 refs.push({
                     kind: 'ext',
-                    name: call,
+                    name: call.name,
                     line: node.startPosition.row + 1,
                     enclosingNs: nsChain(node),
                     at: node.startIndex,
+                    ...receiverType(call.receiver),
                 });
             }
             return undefined;
@@ -2085,8 +2216,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
      *  in-scope `Name` → ambiguous → silence). Aliases import no
      *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
-    const pushExtension = (name, enclosingNs, line, at) => {
-        const candidates = [];
+    const pushExtension = (name, enclosingNs, line, at, guard) => {
+        const candidates = guard === undefined ? [] : [guard];
         const pushed = new Set();
         const addSet = (set) => {
             for (const m of set) {
@@ -2111,9 +2242,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
         addSet([...usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })), ...compilationUnitStatics.map((t) => ({ symbolKey: classExtensionKey(t, name) }))]);
         out.push({ candidates, kind: 'import', line });
     };
+    /** The ordered group of readings one reference gives, taken aside instead of pushed (empty when it gives none). */
+    const groupOf = (r) => {
+        const before = out.length;
+        replay(r);
+        return out.splice(before)[0]?.candidates ?? [];
+    };
     // Replay the descriptors in original emit order (static targets first, then alias-RHS embedded
     // types, then the main walk) — the order is load-bearing for the downstream reason order.
-    for (const r of refs) {
+    const replay = (r) => {
         switch (r.kind) {
             case 'target': {
                 // A named type of a using alias or `using static` target, read where the directive reads it (`typeReadings`). A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
@@ -2161,11 +2298,17 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 mergeGroupsFrom(before, r.line);
                 break;
             }
-            case 'ext':
-                pushExtension(r.name, r.enclosingNs, r.line, r.at);
+            case 'ext': {
+                // The receiver's written type, where the file gives one, leads the group as a guard: an instance method of that name there ends it (`instance`).
+                const receivers = (r.on ?? []).map(groupOf).filter((g) => g.length > 0);
+                const guarded = receivers.length > 0 || r.self !== undefined;
+                pushExtension(r.name, r.enclosingNs, r.line, r.at, guarded ? { kind: 'symbol', symbolKey: `instance#${r.name}()`, instance: { method: r.name, receivers, ...(r.self === undefined ? {} : { self: r.self }) } } : undefined);
                 break;
+            }
         }
-    }
+    };
+    for (const r of refs)
+        replay(r);
     return out;
 }
 /** The C# `uses()` — the delegating composition of the pure extract and the live assemble. The
@@ -2182,7 +2325,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 21,
+    rev: 22,
     declarations,
     uses,
 };

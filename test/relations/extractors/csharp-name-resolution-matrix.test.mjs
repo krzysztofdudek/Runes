@@ -448,4 +448,8 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-attribute-written-outside-base-silence', () => runCase('csharp-attribute-written-outside-base-silence'));
   it('csharp-attribute-written-with-suffix-outside-base-edge', () => runCase('csharp-attribute-written-with-suffix-outside-base-edge'));
   it('csharp-attribute-both-readings-attribute-classes-silence', () => runCase('csharp-attribute-both-readings-attribute-classes-silence'));
+  it('csharp-extension-instance-method-other-file-edge', () => runCase('csharp-extension-instance-method-other-file-edge'));
+  it('csharp-extension-interface-method-other-file-edge', () => runCase('csharp-extension-interface-method-other-file-edge'));
+  it('csharp-extension-inherited-method-on-this-edge', () => runCase('csharp-extension-inherited-method-on-this-edge'));
+  it('csharp-extension-receiver-type-without-that-method-edge', () => runCase('csharp-extension-receiver-type-without-that-method-edge'));
 });

@@ -31,6 +31,8 @@ export type TargetHint =
       within?: string;
       /** C#: the two readings of an attribute `[Name]`, each an ordered group of its own: the name as written and, unless the written name already ends in `Attribute`, the name with that suffix. `symbolKey` is the written name. The resolver binds each group by itself and takes the reading that binds an attribute class, a class whose base classes reach `System.Attribute` (C# spec §23.3); see `makeResolver`. Absent = an ordinary reading. */
       attribute?: { written: TargetHint[]; suffixed?: TargetHint[] };
+      /** C#: a guard at the head of an extension-method group, never a binding. `method` is the called name, `receivers` the ordered group of readings of each type the file writes for the call's receiver, and `self` the key of the enclosing type for a call on `this`. When a type one of them binds, a base class or an interface of it in the repository, or another part of it, declares an instance method of that name, the call is that method's (C# spec §12.8.10.3) and the resolver ends the group in silence (`classify` answers `ambiguous`); otherwise the guard is absent and the extension readings after it are read. */
+      instance?: { method: string; receivers: TargetHint[][]; self?: string };
       /** Ruby only: a lexical nesting candidate `N::A::B` carries its first-segment name
        *  `N::A`. When `N::A` has an in-repo definition but the candidate itself has none, Ruby
        *  has already committed to `N::A` and will not look further out, so the reference is

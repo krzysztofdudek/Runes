@@ -319,6 +319,8 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     fromFile: string,
   ): Set<string> => {
     if (hint.attribute !== undefined) return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
+    // A guard binds nothing itself (see `endsGroup`).
+    if (hint.instance !== undefined) return new Set();
     let files: Set<string>;
     if (hint.set !== undefined) {
       files = new Set<string>();
@@ -352,6 +354,17 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
   let csharpLookup: CsharpTypeLookup | undefined;
   const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
+
+  /** True when a C# guard hint ends its group: the receiver of the call it leads has an instance method of the called name (see `TargetHint.instance`). */
+  const endsGroup = (hint: Extract<TargetHint, { kind: 'symbol' }>, fromFile: string): boolean => {
+    const guard = hint.instance;
+    if (guard === undefined) return false;
+    if (guard.self !== undefined && csharp().hasMethod(guard.self, guard.method, true)) return true;
+    return guard.receivers.some((readings) => {
+      const bound = bindCsharpType(readings, fromFile);
+      return bound !== undefined && csharp().hasMethod(bound.key, guard.method, false);
+    });
+  };
 
   /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
   const attributeBinding = (attribute: { written: TargetHint[]; suffixed?: TargetHint[] }, fromFile: string): { key: string; files: Set<string> } | undefined => {
@@ -514,6 +527,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
         const forced = rubyGate(hint, undefined, deps.symbolTable);
         if (forced !== undefined) return { kind: forced };
       }
+      if (language === 'csharp' && endsGroup(hint, fromFile)) return { kind: 'ambiguous' };
       // Symbol axis: collect the distinct files this hint maps to — the union across its `set`
       // members (CS0104 / co-definition), each honoring `nestedOnly` (R4), or the lone
       // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owners is a real

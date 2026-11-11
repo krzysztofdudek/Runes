@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { baseListKey, decodeBase, interfaceKey } from './csharp.mjs';
+import { baseListKey, decodeBase, interfaceKey, methodKey, privateMethodKey } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -17,6 +17,8 @@ export interface CsharpTypeLookup {
   path(typeKey: string, segments: readonly string[]): string[];
   /** Whether the type `typeKey` is an attribute class: `yes` when its base classes, followed through the repository, reach `System.Attribute`; `no` when it is an interface, or every base of it lies in the repository and none reaches `System.Attribute` (a type that lists no base among them); `maybe` when a base leaves the repository under another name, which may or may not derive from it. */
   attributeClass(typeKey: string): 'yes' | 'no' | 'maybe';
+  /** True when a call `value.name(…)` on a value of the type `typeKey` finds an instance method: the type, in any part, or a base class or an interface of it in the repository, to any depth, declares one that is not private; with `own` (a call on `this` inside the type) a private one of the type itself counts too. */
+  hasMethod(typeKey: string, name: string, own: boolean): boolean;
 }
 
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
@@ -110,5 +112,19 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return answer;
   };
 
-  return { bases, nested, path, attributeClass };
+  const hasMethod = (typeKey: string, name: string, own: boolean): boolean => {
+    if (own && table.has(LANGUAGE, privateMethodKey(typeKey, name))) return true;
+    const seen = new Set<string>();
+    const pending = [typeKey];
+    while (pending.length > 0) {
+      const key = pending.pop()!;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (table.has(LANGUAGE, methodKey(key, name))) return true;
+      pending.push(...bases(key).inside);
+    }
+    return false;
+  };
+
+  return { bases, nested, path, attributeClass, hasMethod };
 }

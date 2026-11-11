@@ -13,6 +13,10 @@ export declare function internalKey(symbolKey: string): string;
 export declare function baseListKey(typeKey: string): string;
 /** The marker key of an interface: `interface:<key>`, declared beside the type key of every interface declaration. A class inherits the nested types of its base class and of no interface it implements, and the base list of a class does not say which of its names is which. */
 export declare function interfaceKey(typeKey: string): string;
+/** The marker key of an instance method `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`, declared once however many overloads there are. A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
+export declare function methodKey(typeKey: string, name: string): string;
+/** The marker key of a private instance method (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches it. */
+export declare function privateMethodKey(typeKey: string, name: string): string;
 /** One base of a type as its declaration records it: the written name (type arguments as their arity, a `global::` qualifier stripped; empty for a name led by a using alias) and its readings in C# lookup order where the declaration stands, read with the usings and aliases of the declaring file alone. */
 export interface CsharpBase {
     name: string;
@@ -195,13 +199,16 @@ export type CsharpRefDescriptor =
 /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
  *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
  *  its using directives import where the call stands (`at`), then the global namespace, then the
- *  namespaces the compilation unit's using directives import as one set. */
+ *  namespaces the compilation unit's using directives import as one set.
+ *  `on` holds the written type of the receiver where the file declares it (a parameter, a field, a property or a local with a type of its own; several when declarations of the name in one scope differ), each as the reference that type is, and `self` the key of the enclosing type for a call on `this`: an instance method of that name in such a type, or in a base of it, is what the call binds (C# spec §12.8.10.3), and the group then gives nothing. Both are absent where the receiver's type is not written (`var`, a call result, an inferred lambda parameter). */
  | {
     kind: 'ext';
     name: string;
     line: number;
     enclosingNs: string[];
     at: number;
+    on?: CsharpRefDescriptor[];
+    self?: string;
 };
 /**
  * The pure, alias-UNRESOLVED extract of one C# file — the cacheable fact (design §14 Correction
