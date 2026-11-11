@@ -104,16 +104,20 @@ const PACKAGE_TYPES = [undefined, 'module', 'commonjs'];
 // The package type reads only for a file whose extension does not say its format.
 const packageTypesOf = (ext) => (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx' ? PACKAGE_TYPES : [undefined]);
 
-function fixture(ext, packageType, requireFirst = false) {
+const IMPORT_FIRST = { import: './esm.d.ts', require: './cjs.d.ts' };
+const REQUIRE_FIRST = { require: './cjs.d.ts', import: './esm.d.ts' };
+// The string targets of an exports entry, in declaration order.
+const targetsOf = (entry) => (typeof entry === 'string' ? [entry] : Object.values(entry).flatMap(targetsOf));
+
+function fixture(ext, packageType, entry = IMPORT_FIRST) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'runes-conditions-'));
   roots.push(root);
   const put = (rel, text) => {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     writeFileSync(path.join(root, rel), text);
   };
-  put('lib/package.json', JSON.stringify({ name: 'lib', exports: { '.': requireFirst ? { require: './cjs.d.ts', import: './esm.d.ts' } : { import: './esm.d.ts', require: './cjs.d.ts' } } }));
-  put('lib/esm.d.ts', 'export declare const v: number;\nexport type T = number;\n');
-  put('lib/cjs.d.ts', 'export declare const v: number;\nexport type T = number;\n');
+  put('lib/package.json', JSON.stringify({ name: 'lib', exports: { '.': entry } }));
+  for (const target of targetsOf(entry)) put(path.join('lib', target), 'export declare const v: number;\nexport type T = number;\n');
   put('app/package.json', JSON.stringify({ name: 'app', ...(packageType === undefined ? {} : { type: packageType }), dependencies: { lib: 'file:../lib' } }));
   mkdirSync(path.join(root, 'app/node_modules'), { recursive: true });
   symlinkSync(path.join(root, 'lib'), path.join(root, 'app/node_modules/lib'), 'dir');
@@ -171,7 +175,11 @@ async function compare(settings, extensions, forms, pinTarget = true) {
 // A preset the app's tsconfig extends, installed under node_modules as a package manager leaves it. The compiler always reads it. Runes reads it when it is given the disk, and not when the path is excluded, which is how a consumer that resolves the files of a commit sees every installed package.
 const PRESET = 'app/node_modules/@preset/base/tsconfig.json';
 // What the app's own tsconfig sets over the preset.
-const OWN_OPTIONS = [{}, { moduleResolution: 'bundler' }, { moduleResolution: 'nodenext' }, { module: 'commonjs' }, { module: 'esnext' }, { module: 'nodenext' }, { module: 'preserve' }, { module: 'esnext', moduleResolution: 'bundler' }];
+const OWN_OPTIONS = [{}, { moduleResolution: 'bundler' }, { moduleResolution: 'nodenext' }, { moduleResolution: 'node16' }, { module: 'commonjs' }, { module: 'esnext' }, { module: 'nodenext' }, { module: 'node16' }, { module: 'node20' }, { module: 'preserve' }, { module: 'esnext', moduleResolution: 'bundler' }];
+// What a preset may set: every module kind with the resolution it implies or is given, and the settings it may leave to the compiler's defaults.
+const PRESETS = [...SETTINGS, { module: 'commonjs' }, { module: 'esnext' }, { target: 'es5' }, { moduleResolution: 'node16' }, {}];
+// The option errors by which the compiler rejects a pairing of `module` and `moduleResolution`: Bundler with a module that is not commonjs, preserve or es2015 and later (5095), a Node module with another resolution (5109), a Node resolution with a module that is not a Node one (5110). A project that compiles holds none of them, so a preset that makes one with the app's own options is not a preset the app can extend.
+const REJECTED_PAIRING = new Set([5095, 5109, 5110]);
 // The rows whose branch the file kind or the call form fixes, whatever the preset sets.
 const fixedByKindOrForm = (ext, form) => {
   // A require() call and import x = require() read require in every file; a .mts or .mjs file imports, also through import(); a .cts or .cjs file requires, except through import(), which the compiler rewrites or not by the module setting.
@@ -180,6 +188,7 @@ const fixedByKindOrForm = (ext, form) => {
   return (ext === 'cts' || ext === 'cjs') && form !== 'dynamic';
 };
 
+/** What the compiler resolves `lib` to in `app/use.<ext>` through the app's tsconfig, and whether it accepts the pairing of module settings the config chain gives. */
 function compilerTargetThroughConfig(root, ext, code) {
   const file = path.join(root, `app/use.${ext}`);
   writeFileSync(file, code);
@@ -193,7 +202,7 @@ function compilerTargetThroughConfig(root, ext, code) {
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return found === undefined ? undefined : path.basename(found);
+  return { target: found === undefined ? undefined : path.basename(found), accepted: !program.getOptionsDiagnostics().some((d) => REJECTED_PAIRING.has(d.code)) };
 }
 
 async function runesTargetThroughConfig(root, ext, code, seesPreset) {
@@ -235,47 +244,94 @@ describe('the conditions Runes enters are the ones the compiler enters', () => {
     expect(compared).toBe((DEFAULTED_SETTINGS.length - 4) * 64);
     expect(mismatches).toEqual([]);
   });
-  it('for a tsconfig that extends an installed preset: the compiler\'s answer with the preset read, and without it the branch the file kind or the call form fixes, else the first listed target', async () => {
-    const forms = { ...CALL_FORMS, importEquals: TYPE_FORMS.importEquals, importType: TYPE_FORMS.importType };
-    const presets = [...SETTINGS, { module: 'commonjs' }, { module: 'esnext' }, { target: 'es5' }, {}];
+  // One exports entry under every own option set, file kind, package type and form; `fixed` counts the rows whose branch the file kind or the call form fixes. With the preset read Runes gives the compiler's answer for every preset, a rejected pairing included. With the preset not read, the readings are the answers of the presets the compiler accepts: where they name one file Runes binds it, and where they differ it binds the first target in declaration order that one of them names.
+  async function compareUnderPresets(entry, forms) {
     const mismatches = [];
-    let compared = 0;
-    let fixed = 0;
-    for (const requireFirst of [false, true]) for (const own of OWN_OPTIONS) for (const ext of EXTENSIONS) for (const packageType of packageTypesOf(ext)) {
-      const root = fixture(ext, packageType, requireFirst);
+    const count = { compared: 0, fixed: 0, decided: 0, open: 0 };
+    const order = targetsOf(entry).map((target) => path.basename(target));
+    for (const own of OWN_OPTIONS) for (const ext of EXTENSIONS) for (const packageType of packageTypesOf(ext)) {
+      const root = fixture(ext, packageType, entry);
       mkdirSync(path.join(root, path.dirname(PRESET)), { recursive: true });
       writeFileSync(path.join(root, 'app/node_modules/@preset/base/package.json'), '{ "name": "@preset/base" }');
       writeFileSync(path.join(root, 'app/tsconfig.json'), JSON.stringify({ extends: '@preset/base/tsconfig.json', compilerOptions: own }));
       for (const [name, code] of Object.entries(forms)) {
         if (!isTypeScriptFile(ext) && (name === 'importEquals' || name === 'importType')) continue;
-        const where = `${requireFirst ? 'require first' : 'import first'}, own ${JSON.stringify(own)}, ${name} in .${ext}${packageType === undefined ? '' : ` (type ${packageType})`}`;
-        const answers = new Set();
-        let unseen;
-        for (const preset of presets) {
+        const where = `${JSON.stringify(entry)}, own ${JSON.stringify(own)}, ${name} in .${ext}${packageType === undefined ? '' : ` (type ${packageType})`}`;
+        const readings = new Set();
+        let read = false;
+        for (const preset of PRESETS) {
           writeFileSync(path.join(root, PRESET), JSON.stringify({ compilerOptions: preset }));
           const compiler = compilerTargetThroughConfig(root, ext, code);
-          if (compiler === undefined) continue;
-          compared++;
-          answers.add(compiler);
+          if (compiler.target === undefined) continue;
+          read = true;
+          count.compared++;
+          if (compiler.accepted) readings.add(compiler.target);
           const seen = await runesTargetThroughConfig(root, ext, code, true);
-          if (seen !== compiler) mismatches.push(`preset ${JSON.stringify(preset)} read, ${where}: compiler ${compiler}, Runes ${seen}`);
-          unseen ??= { value: await runesTargetThroughConfig(root, ext, code, false) };
+          if (seen !== compiler.target) mismatches.push(`preset ${JSON.stringify(preset)} read, ${where}: compiler ${compiler.target}, Runes ${seen}`);
         }
-        if (unseen === undefined) continue;
-        const first = requireFirst ? 'cjs.d.ts' : 'esm.d.ts';
-        if (fixedByKindOrForm(ext, name)) {
-          fixed++;
-          // Every preset gives the compiler one answer here, and Runes gives it without reading the preset.
-          if (answers.size !== 1 || !answers.has(unseen.value)) mismatches.push(`preset not read, ${where}: compiler ${[...answers].join(' or ')}, Runes ${unseen.value}`);
-        } else if (answers.size === 1 ? unseen.value !== first && !answers.has(unseen.value) : unseen.value !== first) {
-          // The answer depends on the preset (or Runes cannot know that it does not): the reading from before conditions were read.
-          mismatches.push(`preset not read, ${where}: the first listed target is ${first}, Runes ${unseen.value}`);
+        if (!read || readings.size === 0) continue;
+        const unseen = await runesTargetThroughConfig(root, ext, code, false);
+        if (fixedByKindOrForm(ext, name)) count.fixed++;
+        if (readings.size === 1) {
+          count.decided++;
+          if (!readings.has(unseen)) mismatches.push(`preset not read, ${where}: every preset the compiler accepts gives ${[...readings][0]}, Runes ${unseen}`);
+        } else {
+          count.open++;
+          const first = order.find((target) => readings.has(target));
+          if (unseen !== first) mismatches.push(`preset not read, ${where}: the readings are ${[...readings].join(' or ')}, the first of them listed is ${first}, Runes ${unseen}`);
         }
       }
     }
+    return { mismatches, count };
+  }
+  const PRESET_FORMS = { ...CALL_FORMS, importEquals: TYPE_FORMS.importEquals, importType: TYPE_FORMS.importType };
+  it('for a tsconfig that extends an installed preset, over a package with an import and a require branch: the compiler\'s answer with the preset read; without it, the one answer of the presets the compiler accepts, else the first listed target', async () => {
+    const mismatches = [];
+    const count = { compared: 0, fixed: 0, decided: 0, open: 0 };
+    for (const entry of [IMPORT_FIRST, REQUIRE_FIRST]) {
+      const result = await compareUnderPresets(entry, PRESET_FORMS);
+      mismatches.push(...result.mismatches);
+      for (const key of Object.keys(count)) count[key] += result.count[key];
+    }
     expect(mismatches).toEqual([]);
-    // 2 orders x 8 own option sets x 24 rows that the file kind or the call form fixes.
-    expect(fixed).toBe(384);
-    expect(compared).toBeGreaterThanOrEqual(10000);
+    // 2 orders x 11 own option sets x 56 rows (file kind, package type, form), each under 18 presets. Of the 56, the file kind or the call form fixes the branch in 24; the other 32 stay open only where the config sets no module and no Node resolution ({} and moduleResolution bundler), and everywhere else the config's own setting decides them.
+    expect(count).toEqual({ compared: 2 * 11 * 56 * 18, fixed: 2 * 11 * 24, decided: 2 * (11 * 24 + 9 * 32), open: 2 * 2 * 32 });
+  });
+  it('for a tsconfig that extends an installed preset, over a package whose entry holds a node key: the same, with node read together with the branch each resolution enters', async () => {
+    const mismatches = [];
+    const count = { compared: 0, fixed: 0, decided: 0, open: 0 };
+    for (const entry of [
+      { node: './a.d.ts', default: './b.d.ts' },
+      { default: './b.d.ts', node: './a.d.ts' },
+      { node: { import: './a.d.ts', require: './b.d.ts' }, default: './c.d.ts' },
+      { node: { import: './a.d.ts' }, default: './b.d.ts' },
+      { node: { require: './b.d.ts' }, import: './a.d.ts', default: './c.d.ts' },
+      { require: './c.d.ts', node: './a.d.ts', import: './b.d.ts' },
+      { import: { node: './a.d.ts', default: './b.d.ts' }, require: './c.d.ts' },
+    ]) {
+      const result = await compareUnderPresets(entry, { static: CALL_FORMS.static, dynamic: CALL_FORMS.dynamic, require: CALL_FORMS.require, importEquals: TYPE_FORMS.importEquals });
+      mismatches.push(...result.mismatches);
+      for (const key of Object.keys(count)) count[key] += result.count[key];
+    }
+    expect(mismatches).toEqual([]);
+    // 7 entries x 11 own option sets x 48 rows, each under 18 presets. The rows that stay open are those of a config that sets no module and no Node resolution, where the presets the compiler accepts name different files.
+    expect(count).toEqual({ compared: 7 * 11 * 48 * 18, fixed: 7 * 11 * 22, decided: 3396, open: 300 });
+  });
+  it('for two layouts seen in the field: a CommonJS app over @tsconfig/node20 that sets module nodenext, and an app over @tsconfig/strictest that sets module preserve', async () => {
+    const layouts = [
+      { preset: { lib: ['es2023'], module: 'node16', target: 'es2022', strict: true, esModuleInterop: true, skipLibCheck: true, moduleResolution: 'node16' }, own: { module: 'nodenext' }, entry: IMPORT_FIRST, binds: 'cjs.d.ts' },
+      { preset: { strict: true, noUncheckedIndexedAccess: true, skipLibCheck: true }, own: { module: 'preserve' }, entry: { node: './node.d.ts', default: './default.d.ts' }, binds: 'default.d.ts' },
+    ];
+    for (const { preset, own, entry, binds } of layouts) {
+      const root = fixture('ts', undefined, entry);
+      mkdirSync(path.join(root, path.dirname(PRESET)), { recursive: true });
+      writeFileSync(path.join(root, 'app/node_modules/@preset/base/package.json'), '{ "name": "@preset/base" }');
+      writeFileSync(path.join(root, PRESET), JSON.stringify({ compilerOptions: preset }));
+      writeFileSync(path.join(root, 'app/tsconfig.json'), JSON.stringify({ extends: '@preset/base/tsconfig.json', compilerOptions: own }));
+      const compiler = compilerTargetThroughConfig(root, 'ts', CALL_FORMS.static);
+      expect(compiler, JSON.stringify(own)).toEqual({ target: binds, accepted: true });
+      expect(await runesTargetThroughConfig(root, 'ts', CALL_FORMS.static, true), JSON.stringify(own)).toBe(binds);
+      expect(await runesTargetThroughConfig(root, 'ts', CALL_FORMS.static, false), JSON.stringify(own)).toBe(binds);
+    }
   });
 });

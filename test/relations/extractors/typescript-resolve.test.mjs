@@ -281,8 +281,8 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
     const preset = (options, bases = '@tsconfig/node18/tsconfig.json', extra = {}) => project({ ...lib, 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': JSON.stringify({ extends: bases, compilerOptions: options }), ...extra });
     for (const options of [{}, { strict: true }, { target: 'es2022' }, { module: 'esnext' }, { module: 'commonjs' }, { moduleResolution: 'bundler' }, { moduleResolution: 'nodenext' }]) {
       const r = preset(options);
-      // The format of a .ts file depends on the preset unless the config's own module fixes it under every resolution.
-      if (options.module === undefined) {
+      // With neither a module nor a Node resolution of its own, the format of a .ts file and the fate of an import() depend on the preset: the first listed target.
+      if (options.module === undefined && options.moduleResolution !== 'nodenext') {
         expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
         expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
         expect(r('lib', 'app/a.cts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
@@ -294,17 +294,35 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
       expect(r('lib', 'app/a.mts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
       expect(r('lib', 'app/a.ts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
     }
-    // What the config sets itself is known. With both settings everything is; with a module alone, whatever every resolution agrees on.
+    // What the config sets itself is known, and with both settings everything is.
     expect(preset({ module: 'esnext', moduleResolution: 'bundler' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
-    expect(preset({ module: 'esnext' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
-    expect(preset({ module: 'commonjs' })('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
-    expect(preset({ module: 'nodenext' })('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
     const typed = (type) => ({ 'app/package.json': JSON.stringify({ name: 'app', type }) });
-    // A Node resolution reads the package type and Bundler does not: where they agree the branch is known, where they differ it is the first target.
-    expect(preset({ module: 'nodenext' }, undefined, typed('module'))('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
-    expect(preset({ module: 'nodenext' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
-    expect(preset({ module: 'commonjs' }, undefined, typed('module'))('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
-    expect(preset({ module: 'commonjs' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    // The same package with `import` listed first: which one binds says a condition was entered, not that it was listed first.
+    const importFirst = { 'lib/package.json': '{ "name": "lib", "exports": { ".": { "import": "./esm/index.ts", "require": "./cjs/index.cts" } } }' };
+    // A module the config sets fixes the resolution, since the compiler accepts a Node module only with a Node resolution and any other module only with Bundler. A Node module: the package type decides a .ts file, and an import() stays an import.
+    for (const module of ['node16', 'node18', 'node20', 'nodenext']) {
+      expect(preset({ module }, undefined, importFirst)('lib', 'app/a.ts'), module).toBe('lib/cjs/index.cts');
+      expect(preset({ module }, undefined, typed('module'))('lib', 'app/a.ts'), module).toBe('lib/esm/index.ts');
+      expect(preset({ module })('lib', 'app/a.ts', 'import'), module).toBe('lib/esm/index.ts');
+    }
+    // Any other module: Bundler, which does not read the package type; commonjs requires, also through an import(), and an ES module or preserve imports.
+    expect(preset({ module: 'commonjs' }, undefined, { ...importFirst, ...typed('module') })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'commonjs' }, undefined, importFirst)('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'esnext' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'es2015' })('lib', 'app/a.cts', 'import')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'preserve' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'preserve' })('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    // A Node resolution the config sets means a Node module: the package type decides, and an import() stays an import.
+    for (const moduleResolution of ['node16', 'nodenext']) {
+      expect(preset({ moduleResolution }, undefined, importFirst)('lib', 'app/a.ts'), moduleResolution).toBe('lib/cjs/index.cts');
+      expect(preset({ moduleResolution }, undefined, typed('module'))('lib', 'app/a.ts'), moduleResolution).toBe('lib/esm/index.ts');
+      expect(preset({ moduleResolution })('lib', 'app/a.cts', 'import'), moduleResolution).toBe('lib/esm/index.ts');
+    }
+    // Bundler alone leaves the module open between commonjs, an ES kind and preserve: an import() in a .cts file is rewritten under the first two only.
+    expect(preset({ moduleResolution: 'bundler' }, undefined, importFirst)('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    expect(preset({ moduleResolution: 'bundler' })('lib', 'app/a.cts', 'import')).toBe('lib/cjs/index.cts');
+    // A module only Node10 and Classic take, or one that is no module kind, decides nothing: the first target that names a file, whatever the file kind.
+    expect(preset({ module: 'amd' })('lib', 'app/a.mts')).toBe('lib/cjs/index.cts');
     expect(preset({ module: 'bogus' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
     // Among several bases a later one wins: a readable base after the preset decides, the preset after a readable base does not.
     const base = { 'base.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }' };
@@ -320,26 +338,36 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
     expect(r('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
     expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
   });
-  it('under an unread preset a key that may or may not be entered binds only when passing it over gives the same file', () => {
-    const files = (exportsMap, options = {}) => project({
+  it('under an unread preset a lookup binds the file every reading names, and where they differ the first listed target that one of them names', () => {
+    const files = (exportsMap, options = {}, type) => project({
       'lib/package.json': JSON.stringify({ name: 'lib', exports: exportsMap }),
-      'lib/a.ts': '', 'lib/b.ts': '',
-      'app/package.json': '{ "name": "app" }',
+      'lib/a.ts': '', 'lib/b.ts': '', 'lib/c.ts': '',
+      'app/package.json': JSON.stringify({ name: 'app', type }),
       'app/tsconfig.json': JSON.stringify({ extends: '@tsconfig/node18/tsconfig.json', compilerOptions: options }),
     });
     // `node` is entered under a Node resolution and not under Bundler; a custom key by whatever the preset lists.
-    expect(files({ '.': { node: './a.ts', default: './b.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts'); // differ: the first target
+    expect(files({ '.': { node: './a.ts', default: './b.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts'); // differ: the first listed
     expect(files({ '.': { default: './b.ts', node: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts');
     expect(files({ '.': { node: './a.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts');
     expect(files({ '.': { node: './missing.ts', default: './b.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts');
-    expect(files({ '.': { custom: './b.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts'); // differ: the first target
-    expect(files({ '.': { custom: null, default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts'); // differ: the first target that names a file
+    expect(files({ '.': { custom: './b.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts'); // differ: the first listed
+    expect(files({ '.': { custom: null, default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts'); // differ: nothing or a file, so the file
     expect(files({ '.': { import: { custom: './b.ts', default: './a.ts' }, default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts');
     // The config's own customConditions are known, so a key outside them is passed over.
     expect(files({ '.': { custom: './b.ts', default: './a.ts' } }, { customConditions: ['other'] })('lib', 'app/x.mts')).toBe('lib/a.ts');
     expect(files({ '.': { other: './b.ts', default: './a.ts' } }, { customConditions: ['other'] })('lib', 'app/x.mts')).toBe('lib/b.ts');
     // A standard key is never a custom one: `require` is passed over in a file that imports.
     expect(files({ '.': { require: './b.ts', 'types@>=99': './b.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts');
+    // Where the readings differ, a target none of them reaches is not the answer, though it is listed first: a require() never enters `import`.
+    expect(files({ '.': { node: { import: './a.ts', require: './b.ts' }, default: './c.ts' } })('lib', 'app/x.ts', 'require')).toBe('lib/b.ts');
+    expect(files({ '.': { import: './a.ts', node: './b.ts', default: './c.ts' } })('lib', 'app/x.cts')).toBe('lib/b.ts');
+    expect(files({ '.': { import: './missing.ts', require: './missing.ts' } })('lib', 'app/x.ts')).toBeUndefined();
+    // A Node module of the config's own enters `node` in every reading, and this CommonJS package requires: `import` under it is passed over.
+    expect(files({ '.': { node: { import: './a.ts' }, default: './b.ts' } }, { module: 'nodenext' })('lib', 'app/x.ts')).toBe('lib/b.ts');
+    // The branch and `node` are read together. In an ES package a Node resolution imports, so no reading enters `node` and `require` at once, and all three that remain (Node importing, Bundler importing, Bundler requiring) name one file.
+    expect(files({ '.': { node: { require: './c.ts', default: './a.ts' }, default: './a.ts' } }, {}, 'module')('lib', 'app/x.ts')).toBe('lib/a.ts');
+    // In a CommonJS package the Node reading does enter both, so the readings differ: the first listed target one of them names.
+    expect(files({ '.': { node: { require: './c.ts', default: './a.ts' }, default: './a.ts' } })('lib', 'app/x.ts')).toBe('lib/c.ts');
   });
   it('under a Node resolution with a module that is not a Node one, the package type decides, then the module', () => {
     const typed = (type) => ({ 'app/package.json': JSON.stringify({ name: 'app', type }) });
