@@ -321,6 +321,7 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
   it('csharp-extension-referenced-project-edge', () => runCase('csharp-extension-referenced-project-edge'));
   it('csharp-transitive-project-reference-edge', () => runCase('csharp-transitive-project-reference-edge'));
   it('csharp-hintpath-reference-edge', () => runCase('csharp-hintpath-reference-edge'));
+  it('csharp-reference-condition-raw-greater-than-edge', () => runCase('csharp-reference-condition-raw-greater-than-edge'));
   it('csharp-project-reference-without-output-assembly-edge', () => runCase('csharp-project-reference-without-output-assembly-edge'));
   it('csharp-project-reference-without-output-assembly-element-edge', () => runCase('csharp-project-reference-without-output-assembly-element-edge'));
   it('csharp-project-reference-without-output-assembly-conditional-silence', () => runCase('csharp-project-reference-without-output-assembly-conditional-silence'));
