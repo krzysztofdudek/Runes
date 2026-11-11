@@ -12,6 +12,10 @@ export interface SymbolSetMember {
  * A condition under which a C# reading binds nothing (`TargetHint.unless`).
  *
  * `instance-method`: the reading is an extension method of a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments. `receivers` are the ordered groups of readings of each type the file writes for the call's receiver, `self` the key of the enclosing type for a call on `this`, and `from` the keys of the types whose bodies hold the call, innermost first. The condition holds when a type a group binds (or `self`) has an instance method of that name that the call fits by those counts and that the calling code can reach: one the type declares in any part, or one of its base classes in the repository, to any depth (for an interface, of its base interfaces). A protected method is reached from the type that declares it and from the types derived from it, a private one from that type alone. The interfaces a class implements are not read: member lookup in a class does not read them (C# spec §12.5), and an explicit implementation is reached through the interface alone. C# turns to extension methods only when no instance method applies (§12.8.10.3).
+ *
+ * `member`: the reading is a type read for the receiver of a member access whose first name is `name`, written inside the types `types` (their keys, innermost first; only the types that can hold a member their file does not show, a `partial` type or one that lists a base). C# reads every member of the types around a simple name before any namespace (§12.8.4). The condition holds when the nearest of `types` that knows the name has it as a member that is no type: a field, property, event or method the type declares in any part, or one of a base class in the repository that a derived type can see. A nested type of that name found first leaves the reading standing.
+ *
+ * `no-member`: the reading is an extension method of a call whose receiver's first name `name` the file does not declare, so the receiver is a value only as such a member. The condition holds when the nearest of `types` that knows the name has it as a nested type, or none of them knows it: the call is then a static call through a type. With `call` (the receiver is that name alone), it also holds when the member is a field or a property whose written type has an instance method the call fits, as `instance-method` reads it.
  */
 export type CsharpCondition = {
     kind: 'instance-method';
@@ -21,6 +25,20 @@ export type CsharpCondition = {
     receivers: TargetHint[][];
     self?: string;
     from: string[];
+} | {
+    kind: 'member';
+    types: string[];
+    name: string;
+} | {
+    kind: 'no-member';
+    types: string[];
+    name: string;
+    call?: {
+        method: string;
+        args: number;
+        typeArgs: number;
+        from: string[];
+    };
 };
 export type TargetHint = {
     kind: 'path';
@@ -47,18 +65,6 @@ export type TargetHint = {
     shadow?: string[];
     /** C#: the key of a type whose body holds the reference. `symbolKey` is `<within>+<name>`, the nested type of that type as the reference names it. The resolver reads it in that type and, when the type declares none, among the nested types of its base classes declared in the repository, nearest first (C# spec §7.6.1). Absent = `symbolKey` is read as it stands. */
     within?: string;
-    /** C#, with `within`: the reference stands where a value's name does (the first name of a member access). C# reads every member of the type there, not its nested types alone (spec §12.8.4): when the type, in any part, or a base class of it in the repository declares a field, property, event or method of the reference's first name (a private one of a base class is not seen), the name is that member and the resolver ends the group in silence (`classify` answers `ambiguous`), unless a nested type of that name is found nearer. */
-    orMember?: boolean;
-    /** C#: a guard at the head of an extension-method group, never a binding, for a call whose receiver's first name the file does not declare. `types` are the keys of the types around the call, innermost first, and `name` that first name. The receiver is a value, and the extension readings after the guard are read, only when the nearest of those types that knows the name has it as a member that is no type (in another part, or from a base class in the repository); where the name is a nested type there, or no type around the call knows it, the call is a static call through a type and the resolver ends the group in silence. `call`, set where the receiver is that name alone, is the call as `instance` holds it: where the member is a field or a property whose written type has an instance method the call fits, the group ends in silence too. */
-    memberOnly?: {
-        types: string[];
-        name: string;
-        call?: {
-            method: string;
-            args: number;
-            typeArgs: number;
-        };
-    };
     /** C#: the two readings of an attribute `[Name]`, each an ordered group of its own: the name as written and, unless the written name already ends in `Attribute`, the name with that suffix. `symbolKey` is the written name. The resolver binds each group by itself and takes the reading that binds an attribute class, a class whose base classes reach `System.Attribute` (C# spec §23.3); see `makeResolver`. Absent = an ordinary reading. */
     attribute?: {
         written: TargetHint[];

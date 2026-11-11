@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodsKey, decodeMethods, memberKey, privateMemberKey, memberTypeKey, shapeTakes } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodsKey, decodeMethods, membersKey, decodeMembers, shapeTakes } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -405,17 +405,18 @@ describe('csharp: an extension call gives way to an instance method of the recei
 });
 
 describe('csharp: a member of the enclosing type, from another part or a base class, is no type receiver', () => {
-  it('declares each member that is no type, a private one apart, and none for an enum, a file-local type or an explicit implementation', async () => {
+  it('lists the members of a type that are no types, with the written type of a field or a property, and none where no other code can read them', async () => {
     await project({
       'src/a/Types.cs': [
         'namespace App;',
-        'public class Order(Clock clock) : IOrder {',
+        'public partial class Order(Clock clock) : IOrder {',
         '  public int Total, Count;',
         '  const int Limit = 3;',
         '  protected Settings Settings { get; }',
+        '  protected AppSettings Options { get; }',
         '  public event System.Action Changed;',
         '  public event System.Action Custom { add { } remove { } }',
-        '  private protected int Shared;',
+        '  private protected Lib.Bag<int>? Shared;',
         '  public static Order Empty;',
         '  public void Save() { int local = 1; }',
         '  public void Save(int retries) { }',
@@ -425,22 +426,32 @@ describe('csharp: a member of the enclosing type, from another part or a base cl
         '}',
         'public interface IOrder { int Explicit { get; } }',
         'public record Money(decimal Amount) { decimal Rounded => Amount; public Kind Kind { get; } public Lib.Kind? Kind2, Kind; }',
+        'public class Plain(int seed) { int _hidden; public T Value<T>() => default; }',
+        'public class Generic<T> { public T Item; public S::Thing Aliased; public global::Lib.Root Rooted; }',
         'public struct Point(int x) { public int Y; }',
+        'public sealed class Closed { public int Field; }',
+        'public static class Helpers { public static int Count; }',
+        'public sealed partial class Split { public int Kept; int _own; }',
         'public enum Kind { One }',
         'file class Local { public int Value; }',
       ].join('\n'),
     }, ({ keys }) => {
-      const declared = keys('src/a/Types.cs').filter((k) => k.startsWith('member:') || k.startsWith('private-member:'));
-      expect(declared).toEqual([
-        privateMemberKey('App.Order', 'clock'), memberKey('App.Order', 'Total'), memberKey('App.Order', 'Count'), privateMemberKey('App.Order', 'Limit'),
-        memberKey('App.Order', 'Changed'), memberKey('App.Order', 'Custom'), memberKey('App.Order', 'Shared'), memberKey('App.Order', 'Empty'), memberKey('App.Order', 'Save'),
-        memberKey('App.IOrder', 'Explicit'), memberKey('App.Money', 'Amount'), privateMemberKey('App.Money', 'Rounded'), memberKey('App.Money', 'Kind2'), privateMemberKey('App.Point', 'x'), memberKey('App.Point', 'Y'),
-      ]); // `Kind Kind` and `Lib.Kind? Kind` are named as their own type and declare no member; `Kind2` beside it does
-      const typed = keys('src/a/Types.cs').filter((k) => k.startsWith('member-type:')).map((k) => [k.split('\t')[0], decodeWritten(k.split('\t')[1]).name]);
-      expect(typed).toEqual([
-        [memberTypeKey('App.Order', 'Settings'), 'Settings'], [memberTypeKey('App.Order', 'Changed'), 'System.Action'], [memberTypeKey('App.Order', 'Empty'), 'Order'],
-        [memberTypeKey('App.Money', 'Kind'), 'Kind'], [memberTypeKey('App.Money', 'Kind2'), 'Lib.Kind'], [memberTypeKey('App.Money', 'Kind'), 'Lib.Kind'],
-      ]);
+      const listed = Object.fromEntries(keys('src/a/Types.cs').filter((k) => k.startsWith('members:')).map((k) => k.slice('members:'.length).split('\t')));
+      const at = (text) => keys('src/a/Types.cs').join('\n').match(new RegExp(`=(\\d+):${text}`))[1];
+      expect(listed).toEqual({
+        // A partial class lists its private members and its primary constructor parameter: another part reads them. `Settings Settings` is named as its own type and is not listed.
+        'App.Order': `-clock Total Count -Limit Options=${at('AppSettings')}:AppSettings Changed=${at('System.Action')}:System.Action Custom Shared=${at('Lib.Bag`1')}:Lib.Bag\`1 Empty=${at('Order')}:Order Save`,
+        'App.IOrder': 'Explicit',
+        // A record's primary constructor parameter is its public property; its private member is not listed, the record is not partial.
+        'App.Money': `Amount Kind2=${at('Lib.Kind')}:Lib.Kind`,
+        'App.Plain': 'Value',
+        'App.Generic`1': `Item Aliased=${at('S::Thing')}:S::Thing Rooted=${at('global::Lib.Root')}:global::Lib.Root`,
+        // A sealed class, a static class and a struct hand nothing down; a partial one still has other parts.
+        'App.Split': 'Kept -_own',
+      });
+      expect(decodeMembers(listed['App.Order']).slice(0, 2)).toEqual([{ name: 'clock', hidden: true }, { name: 'Total', hidden: false }]);
+      expect(decodeMembers('Options=12:AppSettings')).toEqual([{ name: 'Options', hidden: false, type: { at: 12, name: 'AppSettings' } }]);
+      expect(membersKey('App.Order')).toBe('members:App.Order');
     });
   });
 
@@ -479,15 +490,18 @@ describe('csharp: a member of the enclosing type, from another part or a base cl
       // line 3: the inherited field, so the extension method; line 4: the inherited nested type, a static call; line 5: no member, the static class; line 6: the member of the outer type.
       expect(edges('src/web/Use.cs')).toEqual(['2->core', '3->ext', '4->core', '5->lib', '6->ext']);
       const uses = csharpUses(files.find((f) => f.path === 'src/web/Use.cs'));
-      const guard = (line) => uses.find((u) => u.line === line && u.candidates[0].memberOnly !== undefined).candidates[0];
-      expect(guard(6).memberOnly).toEqual({ types: ['App.Use+Inner', 'App.Use'], name: 'Items', call: { method: 'Sort', args: 0, typeArgs: 0 } });
-      expect(resolver.classify(guard(3), 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
-      expect(resolver.classify(guard(4), 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
-      expect(resolver.classify(guard(5), 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
-      expect(resolver.resolveFile(guard(3), 'src/web/Use.cs', 'csharp')).toBe(undefined);
-      const receiver = uses.find((u) => u.line === 3 && u.candidates[0].orMember === true).candidates[0];
-      expect(receiver).toEqual({ kind: 'symbol', symbolKey: 'App.Use+Items', within: 'App.Use', orMember: true });
-      expect(resolver.classify(receiver, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+      const ext = (line) => uses.find((u) => u.line === line && u.candidates[0].symbolKey.endsWith('()')).candidates;
+      expect(ext(6)[0].unless).toEqual([{ kind: 'no-member', types: ['App.Use'], name: 'Items', call: { method: 'Sort', args: 0, typeArgs: 0, from: ['App.Use+Inner', 'App.Use'] } }]);
+      // No reading answers ambiguous: an extension reading of a static call is absent, and so is each type reading of a receiver that is a member.
+      for (const line of [4, 5]) for (const c of ext(line)) expect(resolver.classify(c, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
+      expect(resolver.classify(ext(3)[0], 'src/web/Use.cs', 'csharp').kind).toBe('resolved');
+      const receiver = uses.find((u) => u.line === 3 && u.candidates[0].within === 'App.Use').candidates;
+      expect(receiver[0]).toEqual({ kind: 'symbol', symbolKey: 'App.Use+Items', within: 'App.Use', unless: [{ kind: 'member', types: ['App.Use'], name: 'Items' }] });
+      for (const c of receiver) {
+        expect(c.unless).toBe(receiver[0].unless);
+        expect(resolver.classify(c, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
+        expect(resolver.resolveFile(c, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      }
     });
   });
 

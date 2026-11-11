@@ -27,9 +27,14 @@ export interface ResolverDeps {
  *                  the binding: emit one edge, stop the group.
  *  - `ambiguous` — the hint names a key that WOULD bind here but has ≥2 definitions (a real
  *                  unresolvable ambiguity, symbol axis only). Stop the group with silence;
- *                  do NOT fall through to a farther candidate.
+ *                  do NOT fall through to a farther candidate. It means that and nothing else:
+ *                  no other reason for silence answers `ambiguous`, so a consumer may count it
+ *                  as "declared in more than one place".
  *  - `absent`    — the hint resolves to no in-repository definition, or to an UNMAPPED file (a
- *                  non-event). Continue to the next, farther candidate.
+ *                  non-event), or one of its conditions holds (a C# reading with `unless`: the
+ *                  language reads the name as something else there, and every reading of the
+ *                  group that depends on the condition carries it). Continue to the next,
+ *                  farther candidate.
  */
 export type Classification = {
     kind: 'resolved';

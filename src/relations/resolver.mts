@@ -29,9 +29,14 @@ export interface ResolverDeps {
  *                  the binding: emit one edge, stop the group.
  *  - `ambiguous` — the hint names a key that WOULD bind here but has ≥2 definitions (a real
  *                  unresolvable ambiguity, symbol axis only). Stop the group with silence;
- *                  do NOT fall through to a farther candidate.
+ *                  do NOT fall through to a farther candidate. It means that and nothing else:
+ *                  no other reason for silence answers `ambiguous`, so a consumer may count it
+ *                  as "declared in more than one place".
  *  - `absent`    — the hint resolves to no in-repository definition, or to an UNMAPPED file (a
- *                  non-event). Continue to the next, farther candidate.
+ *                  non-event), or one of its conditions holds (a C# reading with `unless`: the
+ *                  language reads the name as something else there, and every reading of the
+ *                  group that depends on the condition carries it). Continue to the next,
+ *                  farther candidate.
  */
 export type Classification =
   | { kind: 'resolved'; owner: string; resolvedFile: string }
@@ -319,8 +324,8 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     fromFile: string,
   ): Set<string> => {
     if (hint.attribute !== undefined) return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
-    // A guard binds nothing itself (see `endsGroup`), and neither does a reading one of whose conditions holds.
-    if (hint.memberOnly !== undefined || (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile)))) return new Set();
+    // A reading one of whose conditions holds binds nothing.
+    if (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile))) return new Set();
     let files: Set<string>;
     if (hint.set !== undefined) {
       files = new Set<string>();
@@ -355,25 +360,6 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   let csharpLookup: CsharpTypeLookup | undefined;
   const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
 
-  /** True when a C# hint ends its group in silence: a reading inside a type whose first name is a member of that type that is no type (`orMember`); a guard for a receiver that is no member of a type around its call (`memberOnly`). */
-  const endsGroup = (hint: Extract<TargetHint, { kind: 'symbol' }>, fromFile: string): boolean => {
-    if (hint.within !== undefined && hint.orMember === true) {
-      return csharp().simpleName(hint.within, hint.symbolKey.slice(hint.within.length + 1).split('.')[0]) === 'member';
-    }
-    if (hint.memberOnly !== undefined) {
-      const { types, name, call } = hint.memberOnly;
-      for (const type of types) {
-        const found = csharp().simpleName(type, name);
-        if (found === 'none') continue;
-        if (found === 'type') return true;
-        // A member: a value, whose written type may have the called method itself.
-        return call !== undefined && csharp().memberTypes(type, name).some((key) => csharp().hasMethod(key, call, types));
-      }
-      return true;
-    }
-    return false;
-  };
-
   /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
   const held = new WeakMap<CsharpCondition, Map<string, boolean>>();
   const holds = (condition: CsharpCondition, fromFile: string): boolean => {
@@ -381,14 +367,30 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     if (byFile === undefined) held.set(condition, (byFile = new Map()));
     let answer = byFile.get(fromFile);
     if (answer === undefined) {
-      answer = (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from))
+      answer = conditionHolds(condition, fromFile);
+      byFile.set(fromFile, answer);
+    }
+    return answer;
+  };
+  const conditionHolds = (condition: CsharpCondition, fromFile: string): boolean => {
+    if (condition.kind === 'instance-method') {
+      return (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from))
         || condition.receivers.some((readings) => {
           const bound = bindCsharpType(readings, fromFile);
           return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from);
         });
-      byFile.set(fromFile, answer);
     }
-    return answer;
+    // The nearest type around the name that knows it decides what the name is there.
+    for (const type of condition.types) {
+      const found = csharp().simpleName(type, condition.name);
+      if (found === 'none') continue;
+      if (condition.kind === 'member') return found === 'member';
+      if (found === 'type') return true;
+      // A member: a value, whose written type may have the called method itself.
+      const call = condition.call;
+      return call !== undefined && csharp().memberTypes(type, condition.name).some((key) => csharp().hasMethod(key, call, call.from));
+    }
+    return condition.kind === 'no-member';
   };
 
   /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
@@ -552,7 +554,6 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
         const forced = rubyGate(hint, undefined, deps.symbolTable);
         if (forced !== undefined) return { kind: forced };
       }
-      if (language === 'csharp' && endsGroup(hint, fromFile)) return { kind: 'ambiguous' };
       // Symbol axis: collect the distinct files this hint maps to — the union across its `set`
       // members (CS0104 / co-definition), each honoring `nestedOnly` (R4), or the lone
       // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owners is a real

@@ -241,8 +241,8 @@ export function makeResolver(deps) {
     const hintFiles = (hint, language, fromFile) => {
         if (hint.attribute !== undefined)
             return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
-        // A guard binds nothing itself (see `endsGroup`), and neither does a reading one of whose conditions holds.
-        if (hint.memberOnly !== undefined || (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile))))
+        // A reading one of whose conditions holds binds nothing.
+        if (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile)))
             return new Set();
         let files;
         if (hint.set !== undefined) {
@@ -282,26 +282,6 @@ export function makeResolver(deps) {
     };
     let csharpLookup;
     const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
-    /** True when a C# hint ends its group in silence: a reading inside a type whose first name is a member of that type that is no type (`orMember`); a guard for a receiver that is no member of a type around its call (`memberOnly`). */
-    const endsGroup = (hint, fromFile) => {
-        if (hint.within !== undefined && hint.orMember === true) {
-            return csharp().simpleName(hint.within, hint.symbolKey.slice(hint.within.length + 1).split('.')[0]) === 'member';
-        }
-        if (hint.memberOnly !== undefined) {
-            const { types, name, call } = hint.memberOnly;
-            for (const type of types) {
-                const found = csharp().simpleName(type, name);
-                if (found === 'none')
-                    continue;
-                if (found === 'type')
-                    return true;
-                // A member: a value, whose written type may have the called method itself.
-                return call !== undefined && csharp().memberTypes(type, name).some((key) => csharp().hasMethod(key, call, types));
-            }
-            return true;
-        }
-        return false;
-    };
     /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
     const held = new WeakMap();
     const holds = (condition, fromFile) => {
@@ -310,14 +290,33 @@ export function makeResolver(deps) {
             held.set(condition, (byFile = new Map()));
         let answer = byFile.get(fromFile);
         if (answer === undefined) {
-            answer = (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from))
+            answer = conditionHolds(condition, fromFile);
+            byFile.set(fromFile, answer);
+        }
+        return answer;
+    };
+    const conditionHolds = (condition, fromFile) => {
+        if (condition.kind === 'instance-method') {
+            return (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from))
                 || condition.receivers.some((readings) => {
                     const bound = bindCsharpType(readings, fromFile);
                     return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from);
                 });
-            byFile.set(fromFile, answer);
         }
-        return answer;
+        // The nearest type around the name that knows it decides what the name is there.
+        for (const type of condition.types) {
+            const found = csharp().simpleName(type, condition.name);
+            if (found === 'none')
+                continue;
+            if (condition.kind === 'member')
+                return found === 'member';
+            if (found === 'type')
+                return true;
+            // A member: a value, whose written type may have the called method itself.
+            const call = condition.call;
+            return call !== undefined && csharp().memberTypes(type, condition.name).some((key) => csharp().hasMethod(key, call, call.from));
+        }
+        return condition.kind === 'no-member';
     };
     /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
     const attributeBinding = (attribute, fromFile) => {
@@ -498,8 +497,6 @@ export function makeResolver(deps) {
                 if (forced !== undefined)
                     return { kind: forced };
             }
-            if (language === 'csharp' && endsGroup(hint, fromFile))
-                return { kind: 'ambiguous' };
             // Symbol axis: collect the distinct files this hint maps to — the union across its `set`
             // members (CS0104 / co-definition), each honoring `nestedOnly` (R4), or the lone
             // `symbolKey`'s verbatim + guarded `+`-splits. Files spanning ≥2 owners is a real

@@ -176,8 +176,7 @@ describe('csharp extractor — a using static imports nested types and extension
 
   it('declares each extension method under its namespace and under its class, and the global namespace\'s class as the bare class name', async () => {
     const { declarations } = await run('namespace N { public static class E { public static void M(this int x) { } } }\npublic static class G { public static void K(this int x) { } }\n');
-    expect(declarations.map((d) => d.symbolKey).filter((k) => !k.startsWith('member:'))).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()']);
-    expect(declarations.map((d) => d.symbolKey).filter((k) => k.startsWith('member:'))).toEqual(['member:N.E#M', 'member:G#K']); // each is a member of its class by name too
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()']);
   });
 });
 

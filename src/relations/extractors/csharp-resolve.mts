@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, memberKey, memberTypeKey, methodsKey, decodeMethods, type CsharpMethod, privateMemberKey, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -59,11 +59,11 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return usingsByFile.get(file) ?? NO_USINGS;
   };
 
-  /** The keys of the types the written type of a record names, one per file that declares the record, undefined where that file's reading binds no one type. */
-  const boundIn = (value: string, files: readonly string[], holder: string, inBody: boolean): Array<{ name: string; key: string | undefined }> => {
+  /** The keys of the types the base a record writes names, one per file that declares the record, undefined where that file's reading binds no one type. */
+  const boundIn = (value: string, files: readonly string[], holder: string): Array<{ name: string; key: string | undefined }> => {
     const written = decodeWritten(value);
     const name = written.name.startsWith('global::') ? written.name.slice('global::'.length) : written.name;
-    return files.map((file) => ({ name, key: bind(writtenReadings(written, holder, inBody, usingsOf(file)), file) }));
+    return files.map((file) => ({ name, key: bind(writtenReadings(written, holder, false, usingsOf(file)), file) }));
   };
 
   const bases = (typeKey: string): CsharpBases => {
@@ -73,7 +73,7 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     // Set before the bases are bound: a base list that names its own type through itself ends here.
     memo.set(typeKey, result);
     for (const { value, files } of table.valuesOf(LANGUAGE, baseListKey(typeKey))) {
-      for (const { name, key } of boundIn(value, files, typeKey, false)) {
+      for (const { name, key } of boundIn(value, files, typeKey)) {
         if (key === undefined) {
           if (!result.outside.includes(name)) result.outside.push(name);
         } else if (!result.inside.includes(key)) result.inside.push(key);
@@ -90,17 +90,35 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return isInterface(typeKey) ? all : all.filter((b) => !isInterface(b));
   };
 
+  /** The members of the type `typeKey` that are no types, by name, over every part: whether one a derived type can see is among them, and the written type of each field or property with the file that writes it. */
+  interface Listed { hidden: boolean; types: Array<{ written: CsharpWritten; file: string }> }
+  const membersMemo = new Map<string, Map<string, Listed>>();
+  const membersOf = (typeKey: string): Map<string, Listed> => {
+    let byName = membersMemo.get(typeKey);
+    if (byName !== undefined) return byName;
+    membersMemo.set(typeKey, (byName = new Map()));
+    for (const { value, files } of table.valuesOf(LANGUAGE, membersKey(typeKey))) {
+      for (const member of decodeMembers(value)) {
+        let listed = byName.get(member.name);
+        if (listed === undefined) byName.set(member.name, (listed = { hidden: true, types: [] }));
+        if (!member.hidden) listed.hidden = false;
+        if (member.type !== undefined) for (const file of files) listed.types.push({ written: member.type, file });
+      }
+    }
+    return byName;
+  };
+
   /** The lookup of `name` in `typeKey` and then in its base classes, nearest first: the nested types of the first level that has one, or, with `members`, the word that a level before it has a member of that name that is no type. */
   const find = (typeKey: string, name: string, members: boolean): { keys: string[]; member: boolean; owners?: string[] } => {
     const own = `${typeKey}+${name}`;
     if (table.has(LANGUAGE, own)) return { keys: [own], member: false };
-    if (members && (table.has(LANGUAGE, memberKey(typeKey, name)) || table.has(LANGUAGE, privateMemberKey(typeKey, name)))) return { keys: [], member: true, owners: [typeKey] };
+    if (members && membersOf(typeKey).has(name)) return { keys: [], member: true, owners: [typeKey] };
     const seen = new Set([typeKey]);
     let level = inherited(typeKey);
     while (level.length > 0) {
       const found = [...new Set(level.map((b) => `${b}+${name}`))].filter((k) => table.has(LANGUAGE, k));
       if (found.length > 0) return { keys: found, member: false };
-      const owners = members ? level.filter((b) => table.has(LANGUAGE, memberKey(b, name))) : [];
+      const owners = members ? level.filter((b) => membersOf(b).get(name)?.hidden === false) : [];
       if (owners.length > 0) return { keys: [], member: true, owners };
       const next: string[] = [];
       for (const b of level) {
@@ -179,10 +197,9 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
   const memberTypes = (typeKey: string, name: string): string[] => {
     const keys: string[] = [];
     for (const owner of find(typeKey, name, true).owners ?? []) {
-      for (const { value, files } of table.valuesOf(LANGUAGE, memberTypeKey(owner, name))) {
-        for (const { key } of boundIn(value, files, owner, true)) {
-          if (key !== undefined && !keys.includes(key)) keys.push(key);
-        }
+      for (const { written, file } of membersOf(owner).get(name)!.types) {
+        const key = bind(writtenReadings(written, owner, true, usingsOf(file)), file);
+        if (key !== undefined && !keys.includes(key)) keys.push(key);
       }
     }
     return keys;
