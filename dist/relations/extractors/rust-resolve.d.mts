@@ -65,6 +65,12 @@ export interface RustCrateRoot {
     lib?: RustCrateTree | null;
     /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
     crateRelativeUses?: boolean;
+    /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or several are and each reads `crate::` and `super::` as its own root. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
+    unrooted?: boolean;
+    /** True when every one of `rootFiles` is a crate that certainly compiles the file: each declares it through a chain of plain `mod` declarations that no `cfg` can remove. `crate::` then means a different root in each, so a root item binds none of them. Absent or false → `rootFiles` are in probe order and the first existing one that holds a name binds it; a root known to compile the file stands first, and one that may compile it under a `cfg` after it. */
+    rootsShared?: boolean;
+    /** The crate-root files whose top-level items an edition 2015 `use` path of the file may name, in probe order: the roots known to compile the file when all of them are edition 2015, and the roots Cargo infers for its tree when those are. Absent → `rootFiles`. */
+    crateRelativeRoots?: string[];
 }
 export interface RustResolveDeps {
     /**
@@ -82,3 +88,5 @@ export interface RustResolveDeps {
 export declare function resolveRustPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): string | undefined;
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
 export declare function rustTopLevelItemKey(name: string): string;
+/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
+export declare function rustModuleFileKey(modulePath: string, conditional?: boolean): string;
