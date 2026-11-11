@@ -2283,12 +2283,10 @@ export function assembleCsharpCandidates(extract, options = {}) {
         }
         return undefined;
     };
-    /** Where the reading `key` leads through a type this file keeps to itself and on to names that type does not declare itself: the longest such type its first names spell, and the names after it. Those names are members the type inherits, if anything: a nested type of a base class. Undefined when the reading names a file-local type itself, or leads through none. */
+    /** The longest type this file keeps to itself that the first names of the reading `key` spell, with the names after it (none when the reading names the type itself), or undefined when the reading leads through no such type. Names after it are members the type inherits, if anything: a nested type of a base class. */
     const throughFileLocal = (key) => {
-        if (fileLocalKeyOf(key) !== undefined)
-            return undefined;
         const segments = key.split('.');
-        for (let end = segments.length - 1; end >= 1; end--) {
+        for (let end = segments.length; end >= 1; end--) {
             const type = fileLocalKeyOf(segments.slice(0, end).join('.'));
             if (type !== undefined)
                 return { type, rest: segments.slice(end) };
@@ -2571,12 +2569,14 @@ export function assembleCsharpCandidates(extract, options = {}) {
             if (ended)
                 return;
             if (hint.kind === 'symbol') {
-                if (isFileLocalReading(hint.symbolKey)) {
+                const through = throughFileLocal(hint.symbolKey);
+                if (through !== undefined) {
                     // The lookup ends at the type the file keeps to itself. Where the reading names that type, the caller may ask which it is (`ends`); where it leads through the type to a name the type does not declare, that name is read in the type, which finds what its base classes hand down (`Worker.Options` through `file class Worker : WorkerBase`).
-                    if (ends !== undefined)
-                        ends.type = fileLocalKeyOf(hint.symbolKey);
-                    const through = throughFileLocal(hint.symbolKey);
-                    if (through !== undefined) {
+                    if (through.rest.length === 0) {
+                        if (ends !== undefined)
+                            ends.type = through.type;
+                    }
+                    else {
                         candidates.push({ kind: 'symbol', symbolKey: `${through.type}+${through.rest.join('.')}`, within: fileTypeRef(through.type) });
                         steps?.push(step);
                     }

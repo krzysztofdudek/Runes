@@ -970,6 +970,16 @@ describe('csharp: a file type is read as a type of its file in three more places
     });
   });
 
+  it('a receiver whose type is written after a using alias is read through the alias, as before', async () => {
+    await project({
+      ...core,
+      'src/web/Use.cs': 'using S = App;\nnamespace Web;\npublic class Use {\n  bool A(S::Order o) => o.Validate();\n  bool B(S::Order o) => o.Other();\n}\n',
+      'src/ext/More.cs': 'namespace Web;\npublic static class More { public static bool Validate(this object o) => false; public static bool Other(this object o) => false; }\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Use.cs').filter((e) => e.endsWith('->ext'))).toEqual(['5->ext']);
+    });
+  });
+
   it('a nearer type of the same name than the file type is the receiver\'s type', async () => {
     await project({
       ...core,
