@@ -4,7 +4,8 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
+import { declarationCount } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -57,15 +58,40 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return rustDeps;
         let deps = rustDepsByTable.get(table);
         if (deps === undefined) {
-            const declared = (file, key) => table.has('rust', key) && table.filesFor('rust', key).includes(file);
+            // Whether `file` declares `key`, in constant time: nearly every file declares some keys (`mods:all`), so a search of the key's list would make a pass grow with the square of its files. The set of a key is made again when the key has gained files since.
+            const filesOf = new Map();
+            const declared = (file, key) => {
+                const count = table.defCount('rust', key);
+                if (count === 0)
+                    return false;
+                let known = filesOf.get(key);
+                if (known === undefined || known.count !== count) {
+                    known = { count, files: new Set(table.filesFor('rust', key)) };
+                    filesOf.set(key, known);
+                }
+                return known.files.has(file);
+            };
             const declaresModule = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
-            // Whether exactly one module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines). The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used.
+            // Whether a module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines), and no second one does through a glob as certain as its own. The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used, unless a `cfg` may remove all but one of their globs (`#[cfg(unix)] pub use unix::*;` beside `#[cfg(windows)] pub use windows::*;`), where on any one target at most one may be there.
+            // The answer for a root and a name, kept while the table has taken no declaration since: the files of a name every file brings in with a `use` are many, and the question is asked again for each path that ends in the name. The answer reads the name's files and the root's glob keys, so any declaration renews it.
+            const globAnswers = new Map();
             const globBrings = (rootFile, name) => {
                 const key = rustTopLevelItemKey(name);
                 if (!table.has('rust', key))
                     return false;
+                const declarations = declarationCount(table);
+                const memo = `${rootFile}\0${name}`;
+                const known = globAnswers.get(memo);
+                if (known !== undefined && known.declarations === declarations)
+                    return known.brings;
+                const brings = globModulesBring(rootFile, key);
+                globAnswers.set(memo, { declarations, brings });
+                return brings;
+            };
+            const globModulesBring = (rootFile, key) => {
                 const dir = path.posix.dirname(rootFile) === '.' ? '' : path.posix.dirname(rootFile);
-                const modules = new Set();
+                // Module path → whether a glob that nothing can switch off brings it in.
+                const modules = new Map();
                 for (const file of table.filesFor('rust', key)) {
                     const below = file === rootFile || !file.endsWith('.rs') ? undefined : dir === '' ? file : file.startsWith(`${dir}/`) ? file.slice(dir.length + 1) : undefined;
                     if (below === undefined)
@@ -74,18 +100,21 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
                     if (names[names.length - 1] === 'mod')
                         names.pop();
                     const modulePath = names.join('::');
-                    if (modulePath !== '' && [modulePath, `self::${modulePath}`, `crate::${modulePath}`].some((spelling) => declared(rootFile, rustGlobKey(spelling))))
-                        modules.add(modulePath);
+                    if (modulePath === '')
+                        continue;
+                    const spellings = [modulePath, `self::${modulePath}`, `crate::${modulePath}`].filter((spelling) => declared(rootFile, rustGlobKey(spelling)));
+                    if (spellings.length > 0)
+                        modules.set(modulePath, (modules.get(modulePath) ?? false) || spellings.some((spelling) => !declared(rootFile, rustConditionalGlobKey(spelling))));
                 }
-                return modules.size === 1;
+                return modules.size === 1 || (modules.size > 1 && [...modules.values()].filter(Boolean).length <= 1);
             };
             deps = {
                 ...rustDeps,
                 crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
                 externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
-                pathLoaded: (file) => {
+                pathLoaders: (file) => {
                     const nameKey = rustPathModuleNameKey(path.posix.basename(file));
-                    return table.has('rust', nameKey) && table.filesFor('rust', nameKey).some((by) => declared(by, rustPathModuleKey(path.posix.relative(path.posix.dirname(by), file))));
+                    return table.has('rust', nameKey) ? table.filesFor('rust', nameKey).filter((by) => declared(by, rustPathModuleKey(path.posix.relative(path.posix.dirname(by), file)))) : [];
                 },
                 moduleDeclared: (file, modulePath) => (declared(file, rustModuleKey(modulePath)) ? true : declared(file, RUST_MODULES_KNOWN_KEY) ? false : undefined),
                 rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))) || globBrings(rootFile, name),
@@ -315,8 +344,8 @@ function makeRustResolveDeps(plain, exists) {
         const compiling = severalRoots && declaresModule !== undefined ? rootsCompiling(rel, target.srcDir, existingRoots, at, declaresModule) : { certain: [], conditional: [] };
         const reached = [...compiling.certain, ...compiling.conditional];
         if (target.byDeclaration === true) {
-            // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the one binary known to declare them, under a `cfg` or not; with none known, or several, `crate::` names no root that can be told.
-            const unrooted = reached.length !== 1;
+            // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the binaries known to declare them, probed as the roots of one tree are: the one that certainly compiles them, then those that compile them under a `cfg`. With none known, or two or more that certainly compile them, `crate::` names no root that can be told; a binary under a `cfg` is never one of the two.
+            const unrooted = reached.length === 0 || compiling.certain.length > 1;
             return { srcDir: at(target.srcDir), crateName, rootFiles: unrooted ? [] : reached.map(at), fileIsRoot: false, lib: lib ?? null, crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, reached), ...(unrooted ? { unrooted } : {}) };
         }
         // Two or more roots that certainly compile the file: `crate::` is a different root in each, so a root item binds none. Otherwise the roots are probed in order: the one that certainly compiles the file, then those that compile it under a `cfg`, which proves nothing about the others, then the rest in their usual order, since one of them may compile the file too.

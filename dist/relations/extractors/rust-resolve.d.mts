@@ -22,7 +22,8 @@
  *
  * EDITION: in edition 2015 (also what Cargo assumes when `[package]` gives no edition) a `use` path
  * is relative to the crate root, so `use a::b;` names the module `a` the root declares
- * (`crateRelativeUses`), before any path dependency of that name. From edition 2018 on the same path names an external crate.
+ * (`crateRelativeUses`), before any path dependency of that name; a crate is in reach there only through an
+ * `extern crate` a root writes, the package's own library included. From edition 2018 on the same path names an external crate.
  *
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because
@@ -39,7 +40,8 @@
  * Written in the crate root it makes `b` name the crate `a` in every module of that crate
  * (`externCrateFor`). Written anywhere else it binds `b` in that scope only; the extractor,
  * which sees the scopes, emits a `use` path there that starts with `b` as
- * `extern::a::as::b::…`, and the declaration itself as `extern::a`. `extern` is a keyword, so
+ * `extern::a::as::b::…`, and the declaration itself as `extern::a`. A `self::` or `super::` path
+ * whose next name the file of the module it reaches binds that way names the crate too. `extern` is a keyword, so
  * no path of the source starts with it. An edition 2015 `use` path is relative to the crate
  * root, so there only the root's declarations count.
  *
@@ -69,10 +71,11 @@
  * pass) no file's modules are known and every fitting file is bound, as in 1.0.
  *
  * PATH-LOADED FILES: a file that a `#[path]` attribute on a `mod` outside inline modules loads
- * (`pathLoaded`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
+ * (`pathLoaders`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
  * `self::x` lie beside it (`src/platform/epoll/mod.rs` for `src/platform/linux.rs`), not
- * under a directory named after it. Its `super` is not followed from there: the module above
- * it is the one that wrote the attribute, which its place on disk does not tell.
+ * under a directory named after it. Its `super` is the module of the file that loads it,
+ * whatever their places on disk: `super::x` there is `self::x` read from that file. Two files
+ * that load it make its parent a module that cannot be told, so such a path names nothing.
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
@@ -104,7 +107,7 @@ export interface RustCrateRoot {
     lib?: RustCrateTree | null;
     /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
     crateRelativeUses?: boolean;
-    /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or several are and each reads `crate::` and `super::` as its own root. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
+    /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or two or more certainly compile it (each through a chain of plain `mod` declarations no `cfg` can remove) and each reads `crate::` and `super::` as its own root. Binaries that declare it only under a `cfg` stand after the one that certainly compiles it in `rootFiles`, as the roots of one tree do. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
     unrooted?: boolean;
     /** True when every one of `rootFiles` is a crate that certainly compiles the file: each declares it through a chain of plain `mod` declarations that no `cfg` can remove. `crate::` then means a different root in each, so a root item binds none of them. Absent or false → `rootFiles` are in probe order and the first existing one that holds a name binds it; a root known to compile the file stands first, and one that may compile it under a `cfg` after it. */
     rootsShared?: boolean;
@@ -127,8 +130,8 @@ export interface RustResolveDeps {
     externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
     /** Does `file` declare, without a body, the module at `modulePath` below its own module (`x`, or `outer/x` through its inline module `outer`)? True when it does; false when every module the file declares is known and this is none of them; undefined when that is not known (the file is not in the pass's table, did not parse to the end, or invokes a macro that could declare one). Absent → never known. */
     moduleDeclared?(file: string, modulePath: string): boolean | undefined;
-    /** Is `file` loaded through a `path` attribute on a `mod` that some file writes outside inline modules? Such a file owns its directory as a `mod.rs` does. Absent → no file is known to be. */
-    pathLoaded?(file: string): boolean;
+    /** The files that load `file` through a `path` attribute on a `mod` they write outside inline modules; empty when none is known to. Such a file owns its directory as a `mod.rs` does, and its parent module is the module of the file that loads it. Absent → no file is known to be loaded that way. */
+    pathLoaders?(file: string): string[];
 }
 export declare function resolveRustPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): string | undefined;
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
@@ -141,6 +144,8 @@ export declare function rustExternBindingKey(name: string, crate: string): strin
 export declare function rustModuleFileKey(modulePath: string, conditional?: boolean): string;
 /** The symbol key under which the Rust extractor declares, for a file, a module whose names a top-level glob `use` of the file brings into the file's own module: `path` is the glob's path as written, without the `::*` and with `r#` stripped (`types`, `self::types`, `crate::a::b`). In a crate root, where `self` and `crate` are the same module and a bare first name is a module the root declares, the three spellings name the module at that path below the root. The `glob:` prefix can never be a Rust identifier. */
 export declare function rustGlobKey(path: string): string;
+/** The symbol key the Rust extractor declares beside `rustGlobKey(path)` when a `cfg` in front of the glob's `use` may remove it (`#[cfg(unix)] pub use unix::*;`). Two globs that bring the same name in are ambiguous only when nothing can switch either off. The `glob?:` prefix can never be a Rust identifier. */
+export declare function rustConditionalGlobKey(path: string): string;
 /** The symbol key under which the Rust extractor declares, for a file, a module the file declares without a body (`mod x;`), whatever stands in front of it and also in a `cfg_if!` branch. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). It says that the name is a module with a file of its own, not where that file is. The `mod:` prefix can never be a Rust identifier. */
 export declare function rustModuleKey(modulePath: string): string;
 /** The symbol key the Rust extractor declares for a file whose `rustModuleKey` declarations are all the modules it declares without a body: the file parsed to the end and invokes no macro, among its items, that could declare another. Without it a module the file does not list is not known to be absent. It can never be a Rust identifier. */

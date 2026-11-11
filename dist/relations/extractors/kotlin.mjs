@@ -518,7 +518,7 @@ function declarationsOf(file, view) {
 }
 export const kotlinExtractor = {
     languages: new Set(['kotlin']),
-    rev: 6,
+    rev: 7,
     declarations,
     uses,
 };
