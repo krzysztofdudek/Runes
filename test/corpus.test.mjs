@@ -1,7 +1,7 @@
 // scripts/corpus.mjs end to end over a throwaway repository fetched through a file:// URL: a golden is made, an edge change makes the gate fail naming the file, the line and the target, an entry in the explanations makes it pass, and a fetch that fails or an entry that does not parse fails the run instead of being skipped. The real corpus never runs here; it runs from npm run corpus.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -280,6 +280,45 @@ describe('the corpus gate', () => {
       manifest([fixture()]);
     });
   }
+
+  test('two runs at once over one cache each write their report to a place of their own, and each report names the Runes tree it ran on', async () => {
+    // Two Runes trees, each a git checkout whose dist is this one's: one clean, one with a change it has not committed.
+    const tree = (name, dirty) => {
+      const dir = join(tmp, name);
+      mkdirSync(dir);
+      git(dir, 'init', '-q');
+      symlinkSync(join(dirname(SCRIPT), '..', 'dist'), join(dir, 'dist'));
+      put(dir, 'README.md', `${name}\n`);
+      git(dir, 'add', '.');
+      git(dir, 'commit', '-q', '-m', name);
+      if (dirty) put(dir, 'README.md', `${name}, changed\n`);
+      return { dir, head: git(dir, 'rev-parse', 'HEAD') };
+    };
+    const trees = [tree('runes-a', false), tree('runes-b', true)];
+    // A golden of 150 edges the fixture does not have: more unexplained changes than a run prints, so each run writes its report.
+    const goldens = join(work, 'goldens-reports');
+    put(goldens, 'fixture.edges', `# runes corpus golden: fixture at ${commit}\napp/main.js:1\tlib/util.js\napp/main.js:2\tlib/other.js\n${Array.from({ length: 150 }, (_, i) => `gone/f${String(i).padStart(3, '0')}.js:1\tlib/util.js\n`).join('')}`);
+    const run = (t) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [SCRIPT, 'verify', '--manifest', join(work, 'manifest.json'), '--goldens', goldens, '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache'), '--runes', t.dir], { env: ENV });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { out += d; });
+      child.on('close', (code) => resolve({ code, out }));
+    });
+    const runs = await Promise.all(trees.map(run));
+    const files = runs.map((r) => {
+      assert.equal(r.code, 1, r.out);
+      const m = /\.\.\. and 50 more; the whole list is in (.+)\n/.exec(r.out);
+      assert.ok(m, r.out);
+      return m[1];
+    });
+    assert.notEqual(files[0], files[1]);
+    const [clean, dirty] = files.map((f) => readFileSync(f, 'utf8').split('\n'));
+    assert.deepEqual(clean.slice(0, 2), [`# runes corpus verify report: fixture at ${commit}`, `# runes tree: ${trees[0].dir} at ${trees[0].head}`]);
+    assert.deepEqual(dirty.slice(0, 2), [`# runes corpus verify report: fixture at ${commit}`, `# runes tree: ${trees[1].dir} at ${trees[1].head}, with uncommitted changes`]);
+    for (const lines of [clean, dirty]) assert.equal(lines.filter((l) => l.startsWith('- gone/')).length, 150);
+    assert.match(runs[1].out, new RegExp(`^corpus verify: 1 repositories, Runes .* at ${trees[1].head}, with uncommitted changes, cache `, 'm'));
+  });
 
   test('a golden made at another commit than the pin fails verify and is replaced by update', () => {
     writeFileSync(goldenFile(), `# runes corpus golden: fixture at ${'0'.repeat(40)}\n`);
