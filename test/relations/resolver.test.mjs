@@ -442,6 +442,30 @@ describe('resolver — the C# reach filter', () => {
     expect(mk(st, reach).classify(set, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'one' });
   });
 
+  it('drops a definer in another project whose declarations of the name are all internal, unless its project names the caller as a friend', () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'N.T', 'src/one/T.cs');
+    st.declare('csharp', 'N.T', 'src/two/T.cs'); st.declare('csharp', 'internal:N.T', 'src/two/T.cs');
+    const withFriends = (friend) => Object.assign(reachBy({}), { internalsVisible: (from, target) => target !== 'src/two/T.cs' || friend });
+    expect(mk(st, withFriends(false)).classify(hint, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'one', resolvedFile: 'src/one/T.cs' });
+    expect(mk(st, withFriends(true)).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    // Without the member nothing is read as internal, and a caller of the same compilation sees the internal one.
+    expect(mk(st, reachBy({})).classify(hint, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
+    const sameAsTwo = Object.assign(reachBy({ 'src/two/B.cs>src/two/T.cs': 'same' }), { internalsVisible: () => false });
+    expect(mk(st, sameAsTwo).classify(hint, 'src/two/B.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'two' });
+  });
+
+  it('keeps a definer that declares one of the keys a hint reads without the internal marker', () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'N.Outer', 'src/two/T.cs');
+    st.declare('csharp', 'N.Outer+T', 'src/two/T.cs');
+    st.declare('csharp', 'N.Outer.T', 'src/two/T.cs'); st.declare('csharp', 'internal:N.Outer.T', 'src/two/T.cs');
+    const closed = Object.assign(reachBy({}), { internalsVisible: () => false });
+    expect(mk(st, closed).classify({ kind: 'symbol', symbolKey: 'N.Outer.T' }, 'src/app/A.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'two' });
+    st.declare('csharp', 'internal:N.Outer+T', 'src/two/T.cs');
+    expect(mk(st, closed).classify({ kind: 'symbol', symbolKey: 'N.Outer.T' }, 'src/app/A.cs', 'csharp')).toEqual({ kind: 'absent' });
+  });
+
   it('never consults the predicate for another language', () => {
     const st = new SymbolTable(); st.declare('kotlin', 'N.T', 'src/lib/T.kt');
     const asked = [];

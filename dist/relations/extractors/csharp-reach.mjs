@@ -75,8 +75,10 @@ function stem(p) {
 export function buildCsharpReachability(projectRoot, csFiles, options) {
     const source = options?.files ?? diskFileView(projectRoot, false);
     const loc = makeProjectLocator(source);
+    const files = [...csFiles];
+    const known = new Set(files);
     const projectOf = new Map();
-    for (const f of csFiles) {
+    for (const f of files) {
         const dir = loc.projectDirOf(f);
         if (dir !== null)
             projectOf.set(f, dir);
@@ -193,7 +195,22 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const hit = factsCache.get(projectDir);
         if (hit !== undefined)
             return hit;
-        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [] };
+        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], friends: new Set(), everyFriend: false };
+        /** A friend's name as written, its properties read as this project's names; an unknown property names every project. */
+        const addFriend = (raw) => {
+            const own = projectFilesIn(projectDir);
+            let written = [raw.split(',')[0].trim()];
+            for (const [prop, values] of [['MSBuildProjectName', own.map(stem)], ['AssemblyName', own.flatMap(namesOfProject)]]) {
+                const re = new RegExp(`\\$\\(${prop}\\)`, 'gi');
+                written = written.flatMap((w) => (w.search(re) === -1 ? [w] : values.map((v) => w.replace(re, v))));
+            }
+            for (const w of written) {
+                if (/[$%@]\(/.test(w))
+                    facts.everyFriend = true;
+                else if (w !== '')
+                    facts.friends.add(w.toLowerCase());
+            }
+        };
         factsCache.set(projectDir, facts);
         const queue = [];
         const queued = new Set();
@@ -267,10 +284,8 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                     for (const r of resolveItemPaths(item, declDir, projectDir)) {
                         if (r.kind !== 'path')
                             facts.open = true;
-                        else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix)) {
-                            facts.open = true;
+                        else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix))
                             facts.links.push(globToRegExp(r.path));
-                        }
                         else
                             facts.kept.push(globToRegExp(r.path));
                     }
@@ -284,6 +299,20 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                     if (r.kind === 'path')
                         facts.removed.push(globToRegExp(r.path));
                 }
+            }
+            const friends = /<InternalsVisibleTo\b([^>]*?)\/?>/gi;
+            while ((m = friends.exec(text)) !== null)
+                for (const name of includes(m[1]))
+                    addFriend(name);
+            const assemblyAttributes = /<AssemblyAttribute\b([^>]*?)(?:\/>|>([\s\S]*?)<\/AssemblyAttribute>)/gi;
+            while ((m = assemblyAttributes.exec(text)) !== null) {
+                if (!includes(m[1]).some((n) => /(?:^|\.)InternalsVisibleTo(?:Attribute)?$/i.test(n)))
+                    continue;
+                const parameter = m[2] === undefined ? undefined : /<_Parameter1\b[^>]*>([^<]*)<\/_Parameter1>/i.exec(m[2])?.[1];
+                if (parameter === undefined)
+                    facts.everyFriend = true;
+                else
+                    addFriend(parameter);
             }
             const imports = /<Import\b([^>]*?)\/?>/gi;
             while ((m = imports.exec(text)) !== null) {
@@ -359,26 +388,102 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const facts = factsOf(own);
         return !facts.removed.some((re) => re.test(file)) || facts.kept.some((re) => re.test(file));
     };
-    return (fromFile, targetFile) => {
-        const from = projectOf.get(fromFile);
-        const target = projectOf.get(targetFile);
-        if (from === undefined || target === undefined)
+    /** The projects whose compilation holds the file: its own project unless that project removes it, and every project that links it. Undefined when the graph knows nothing of the file: it is not one of the files the graph was built for, or it lies under no project file and no project links it. */
+    const compilations = new Map();
+    const compilationsOf = (file) => {
+        if (compilations.has(file))
+            return compilations.get(file);
+        let out;
+        if (known.has(file)) {
+            const own = projectOf.get(file);
+            const linkers = linkersOf(file, own);
+            if (own === undefined)
+                out = linkers.length === 0 ? undefined : linkers;
+            else
+                out = compiledByOwn(file, own) ? [own, ...linkers] : linkers;
+        }
+        compilations.set(file, out);
+        return out;
+    };
+    /** The names the assembly of a project directory answers to (see `namesOfProject`), read once. */
+    const assemblyNames = new Map();
+    const assemblyNamesIn = (dir) => {
+        let hit = assemblyNames.get(dir);
+        if (hit === undefined)
+            assemblyNames.set(dir, (hit = projectFilesIn(dir).flatMap(namesOfProject)));
+        return hit;
+    };
+    /** The C# files a compilation holds, its own and the ones it links. */
+    const filesOfCompilation = new Map();
+    const compiledFiles = (dir) => {
+        let hit = filesOfCompilation.get(dir);
+        if (hit === undefined)
+            filesOfCompilation.set(dir, (hit = files.filter((f) => compilationsOf(f)?.includes(dir) === true)));
+        return hit;
+    };
+    /** Whether the project grants its internals to one of `names`: its MSBuild items, then the assembly attributes of the C# files it compiles. */
+    const sourceFriends = new Map();
+    const grants = (dir, names) => {
+        const facts = factsOf(dir);
+        if (facts.everyFriend || names.some((n) => facts.friends.has(n)))
+            return true;
+        let found = sourceFriends.get(dir);
+        if (found === undefined) {
+            found = { friends: new Set(), everyFriend: false };
+            sourceFriends.set(dir, found);
+            for (const f of compiledFiles(dir)) {
+                const text = source.read(f);
+                if (text === undefined || !text.includes('InternalsVisibleTo'))
+                    continue;
+                const attributeLists = /\[\s*assembly\s*:([^\]]*)\]/g;
+                let m;
+                while ((m = attributeLists.exec(text)) !== null) {
+                    const grantsIn = /\bInternalsVisibleTo(?:Attribute)?\s*\(([^)]*)\)/g;
+                    let g;
+                    while ((g = grantsIn.exec(m[1])) !== null) {
+                        const literal = /^\s*@?"([^"]*)"\s*$/.exec(g[1]);
+                        if (literal === null)
+                            found.everyFriend = true;
+                        else
+                            found.friends.add(literal[1].split(',')[0].trim().toLowerCase());
+                    }
+                }
+            }
+        }
+        return found.everyFriend || names.some((n) => found.friends.has(n));
+    };
+    const reach = ((fromFile, targetFile) => {
+        const callers = compilationsOf(fromFile);
+        const targets = compilationsOf(targetFile);
+        // A file in no compilation (removed by its project, linked by none): as a target it declares nothing anyone sees; as a caller its references bind nowhere, which the graph cannot say anything about.
+        if (callers === undefined || targets === undefined || callers.length === 0)
             return 'unknown';
-        // A file its project removes, and no other project links, is code of no compilation: as a target it declares nothing anyone sees; as a caller its references bind nowhere, which the graph cannot say anything about.
-        if (!compiledByOwn(fromFile, from) && linkersOf(fromFile, from).length === 0)
-            return 'unknown';
-        if (!compiledByOwn(targetFile, target) && linkersOf(targetFile, target).length === 0)
+        if (targets.length === 0)
             return 'unreachable';
-        if (from === target)
+        if (callers.some((c) => targets.includes(c)))
             return 'same';
         let open = false;
-        for (const root of [from, ...linkersOf(fromFile, from)]) {
+        for (const root of callers) {
             const closure = closureOf(root);
-            if (closure.reaches.has(target))
+            if (targets.some((t) => closure.reaches.has(t)))
                 return 'reachable';
             if (closure.open)
                 open = true;
         }
         return open ? 'unknown' : 'unreachable';
+    });
+    reach.internalsVisible = (fromFile, targetFile) => {
+        const callers = compilationsOf(fromFile);
+        const targets = compilationsOf(targetFile);
+        if (callers === undefined || targets === undefined || callers.length === 0 || targets.length === 0)
+            return true;
+        if (callers.some((c) => targets.includes(c)))
+            return true;
+        const reached = targets.filter((t) => callers.some((c) => closureOf(c).reaches.has(t)));
+        if (reached.length === 0)
+            return true;
+        const names = [...new Set(callers.flatMap(assemblyNamesIn))];
+        return reached.some((t) => grants(t, names));
     };
+    return reach;
 }

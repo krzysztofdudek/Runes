@@ -323,6 +323,52 @@ function extensionKey(ns: string, name: string): string {
  */
 export const IMPLICIT_PROGRAM_KEY = '<Program>$';
 
+/**
+ * The marker key of a declaration only its own assembly sees: `internal:<key>`, declared beside `<key>` by the same file. A type whose effective accessibility stops at its assembly (`internal`, `private`, `private protected`, a top-level type with no access modifier, which C# makes internal, or a type nested in one of those), and an extension method that is not public or whose static class is not, carry it; a resolver given the reference graph drops such a definer for a caller of another compilation unless the defining project grants that caller its internals (`InternalsVisibleTo`). The colon puts the key in a string space no C# name can produce. A `partial` type part without an access modifier is not marked: another part may make it public.
+ */
+export function internalKey(symbolKey: string): string {
+  return `internal:${symbolKey}`;
+}
+
+/** The access modifiers a declaration node carries. */
+function accessModifiers(node: Node): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (c !== null && c.type === 'modifier' && /^(?:public|internal|protected|private|partial)$/.test(c.text)) out.add(c.text);
+  }
+  return out;
+}
+
+/** The nearest type declaration around `node`, or null at the top level. */
+function enclosingTypeDeclaration(node: Node): Node | null {
+  for (let p = node.parent; p !== null; p = p.parent) if (TYPE_DECLARATION_TYPES.has(p.type)) return p;
+  return null;
+}
+
+/** True when the type declaration `node` is seen by its own assembly only: it, or a type around it, is `internal`, `private`, `private protected`, or has no access modifier where the default is internal (a top-level type) or private (a type nested in a class, struct or record). A `partial` part without one says nothing, so it is never counted. */
+function assemblyOnlyType(node: Node): boolean {
+  for (let d: Node | null = node; d !== null; d = enclosingTypeDeclaration(d)) {
+    const mods = accessModifiers(d);
+    if (mods.has('public') || (mods.has('protected') && !mods.has('private'))) continue;
+    if (mods.has('internal') || mods.has('private')) return true;
+    if (mods.has('partial')) return false;
+    const outer = enclosingTypeDeclaration(d);
+    if (outer === null) return true;
+    if (outer.type !== 'interface_declaration') return true;
+  }
+  return false;
+}
+
+/** True when an extension method is seen by its own assembly only: the method is not public (or protected), or its static class is seen by its assembly only. A method of the misread C# 14 block form is judged by its class alone. */
+function assemblyOnlyExtension(node: Node, owner: Node): boolean {
+  if (node.type === 'method_declaration') {
+    const mods = accessModifiers(node);
+    if (!mods.has('public') && !(mods.has('protected') && !mods.has('private'))) return true;
+  }
+  return assemblyOnlyType(owner);
+}
+
 /** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
 function firstTopLevelStatement(root: Node): Node | undefined {
   return root.namedChildren.find((c): c is Node => c?.type === 'global_statement');
@@ -424,7 +470,9 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     const extName = extensionMethodName(node, scope);
     if (extName !== undefined) {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
-      out.push({ symbolKey: extensionKey(ns, extName), line: node.startPosition.row + 1 });
+      const symbolKey = extensionKey(ns, extName);
+      out.push({ symbolKey, line: node.startPosition.row + 1 });
+      if (assemblyOnlyExtension(node, scope.typeDecl!.node)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
       return undefined;
     }
     if (!TYPE_DECLARATION_TYPES.has(node.type)) return undefined;
@@ -438,6 +486,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
     const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
     out.push({ symbolKey, line: node.startPosition.row + 1 });
+    if (assemblyOnlyType(node)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
     return undefined;
   });
 
@@ -2065,7 +2114,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 16,
+  rev: 17,
   declarations,
   uses,
 };

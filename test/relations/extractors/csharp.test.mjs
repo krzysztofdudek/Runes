@@ -1009,7 +1009,7 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
   });
   it('a `Program` inside a namespace is another type: the implicit fallback key is still declared', async () => {
     const { declarations } = await run(['System.Console.WriteLine(1);', 'namespace App { class Program { } }', ''].join('\n'));
-    expect(keys(declarations)).toEqual([['App.Program', 2], ['<Program>$', 1]]);
+    expect(keys(declarations)).toEqual([['App.Program', 2], ['internal:App.Program', 2], ['<Program>$', 1]]);
   });
   it('a file without top-level statements declares no implicit `Program`', async () => {
     const { declarations } = await run(['namespace App;', 'public class Startup { void Main() { } }', ''].join('\n'));
@@ -1271,13 +1271,55 @@ describe('csharp — a generic attribute behind a qualifier, and an attribute af
   });
 });
 
+describe('csharp — a declaration only its own assembly sees carries the internal marker', () => {
+  const marked = async (lines) => {
+    const { declarations } = await run([...lines, ''].join('\n'));
+    return declarations.filter((d) => d.symbolKey.startsWith('internal:')).map((d) => d.symbolKey.slice('internal:'.length));
+  };
+
+  it('marks an internal, private, private protected or modifier-less top-level type, and not a public or protected one', async () => {
+    expect(await marked([
+      'namespace N;',
+      'public class Pub { }',
+      'internal class Int { }',
+      'class Bare { }',
+      'file class Local { }',
+      'public class Outer {',
+      '  public class PubIn { }',
+      '  protected class ProtIn { }',
+      '  protected internal class ProtIntIn { }',
+      '  private protected class PrivProtIn { }',
+      '  private class PrivIn { }',
+      '  class BareIn { }',
+      '  public interface IOpen { class InInterface { } }',
+      '}',
+      'internal class Closed { public class PubInClosed { } }',
+      'public struct S { enum E { A } }',
+      'public record R { public record struct RS; }',
+    ])).toEqual(['N.Int', 'N.Bare', 'N.Outer+PrivProtIn', 'N.Outer+PrivIn', 'N.Outer+BareIn', 'N.Closed', 'N.Closed+PubInClosed', 'N.S+E']);
+  });
+
+  it('does not mark a partial part without an access modifier, nor a type nested in one: another part may make it public', async () => {
+    expect(await marked(['namespace N;', 'partial class P { public class Inner { } }', 'internal partial class Q { }', 'public partial class R { class Hidden { } }'])).toEqual(['N.Q', 'N.R+Hidden']);
+  });
+
+  it('marks an extension method that is not public, or whose static class only its assembly sees', async () => {
+    expect(await marked([
+      'namespace N;',
+      'public static class Open { public static void A(this int x) { } internal static void B(this int x) { } static void C(this int x) { } }',
+      'internal static class Shut { public static void D(this int x) { } }',
+      'static class Bare { public static void E(this int x) { } }',
+    ])).toEqual(['N.B()', 'N.C()', 'N.Shut', 'N.D()', 'N.Bare', 'N.E()']);
+  });
+});
+
 describe('csharp — the generic arity is part of every type key', () => {
   const groups = (uses) =>
     uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
 
   it('a generic type declares its arity, and so does every generic type around a nested one', async () => {
     const { declarations } = await run(['namespace N;', 'class Plain { }', 'class One<T> { class Inner { } }', 'class Two<TK, TV> { class Deep<X> { } }', ''].join('\n'));
-    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.Plain', 'N.One`1', 'N.One`1+Inner', 'N.Two`2', 'N.Two`2+Deep`1']);
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.Plain', 'internal:N.Plain', 'N.One`1', 'internal:N.One`1', 'N.One`1+Inner', 'internal:N.One`1+Inner', 'N.Two`2', 'internal:N.Two`2', 'N.Two`2+Deep`1', 'internal:N.Two`2+Deep`1']);
   });
   it('a use counts its type arguments at their own level: nested generics, tuples, arrays and unbound names', async () => {
     const { uses } = await run(['class C { Map<List<int>, (int, string)> a; Fn<int[,], Dictionary<int, int>> b; object M() => typeof(Pair<,>) ?? typeof(Box<>); }', ''].join('\n'));

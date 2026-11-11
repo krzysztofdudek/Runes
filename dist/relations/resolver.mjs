@@ -1,5 +1,5 @@
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
-import { IMPLICIT_PROGRAM_KEY } from './extractors/csharp.mjs';
+import { IMPLICIT_PROGRAM_KEY, internalKey } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
 /**
  * The ordered first-unique-match-wins walk over a detected reference's candidate group:
@@ -161,14 +161,17 @@ function incompletenessMarkers(bindingKey) {
     return markers;
 }
 /**
- * The C# reference filter: the definers a file can see. A definer in a project the file's project cannot reach is dropped (the compiler never binds it); when `preferOwn` and a definer lies in the file's own project, only those stay, because a type of the compilation wins over a type of the same name in a referenced assembly (warning CS0436, not an ambiguity). Extension methods are not types: they are not given that preference.
+ * The C# reference filter: the definers a file can see. A definer in a project the file's project cannot reach is dropped (the compiler never binds it), and so is a definer in a reachable project whose declarations of the name are all internal to its assembly (`assemblyOnly`), unless that project names the caller's as a friend; when `preferOwn` and a definer lies in the file's own project, only those stay, because a type of the compilation wins over a type of the same name in a referenced assembly (warning CS0436, not an ambiguity). Extension methods are not types: they are not given that preference.
  */
-function withinReach(files, fromFile, reach, preferOwn) {
+function withinReach(files, fromFile, reach, preferOwn, assemblyOnly) {
     const seen = new Map();
     for (const f of files) {
         const r = reach(fromFile, f);
-        if (r !== 'unreachable')
-            seen.set(f, r);
+        if (r === 'unreachable')
+            continue;
+        if (r === 'reachable' && reach.internalsVisible !== undefined && assemblyOnly(f) && !reach.internalsVisible(fromFile, f))
+            continue;
+        seen.set(f, r);
     }
     const same = preferOwn ? [...seen].filter(([, r]) => r === 'same').map(([f]) => f) : [];
     return new Set(same.length > 0 ? same : seen.keys());
@@ -190,22 +193,26 @@ export function makeResolver(deps) {
     };
     /** True when the repository declares one of `shadow`'s names, as a type or as a namespace a key lies in: a nearer name C#'s lookup stops at, so a reading behind it binds nothing. */
     const shadowed = (language, shadow) => shadow !== undefined && shadow.some((name) => deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name));
-    /** The distinct defining files of one symbol-set member, honoring `nestedOnly` (R4): a
-     *  `nestedOnly` member contributes ONLY its guarded `+`-split files, never the verbatim
-     *  dotted reading. A plain member contributes the verbatim key + all guarded splits. */
-    const memberFiles = (language, key, nestedOnly, shadow) => {
+    /** The declared keys one symbol-set member reads, honoring `nestedOnly` (R4): a
+     *  `nestedOnly` member reads ONLY its guarded `+`-split keys, never the verbatim
+     *  dotted reading. A plain member reads the verbatim key + all guarded splits. */
+    const memberKeys = (language, key, nestedOnly, shadow) => {
         // A reading behind a nearer namespace or type the lookup stops at binds nothing.
         if (shadowed(language, shadow))
-            return new Set();
-        if (!nestedOnly)
-            return symbolFiles(language, key);
+            return [];
+        return nestedOnly ? nestedOnlySplitKeys(deps.symbolTable, language, key) : nestedSplitKeys(deps.symbolTable, language, key);
+    };
+    /** The distinct defining files of one symbol-set member: the files of every key it reads. */
+    const memberFiles = (language, key, nestedOnly, shadow) => {
         const files = new Set();
-        for (const splitKey of nestedOnlySplitKeys(deps.symbolTable, language, key)) {
-            for (const f of deps.symbolTable.filesFor(language, splitKey))
+        for (const k of memberKeys(language, key, nestedOnly, shadow)) {
+            for (const f of deps.symbolTable.filesFor(language, k))
                 files.add(f);
         }
         return files;
     };
+    /** True when every declaration `file` gives of `keys` is internal to its assembly (the extractor's `internal:<key>` marker beside it). */
+    const assemblyOnlyIn = (language, keys, file) => keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || deps.symbolTable.filesFor(language, internalKey(k)).includes(file));
     /** The distinct files a symbol HINT maps to: the union across its `set` members (each honoring
      *  its own `nestedOnly`) when a set is present, else the single `symbolKey` honoring the hint's
      *  own `nestedOnly`. ≥2 distinct files anywhere = a real ambiguity (CS0104 / co-definition). */
@@ -223,14 +230,17 @@ export function makeResolver(deps) {
         }
         if (language !== 'csharp' || deps.reach === undefined)
             return files;
+        const keys = hint.set !== undefined
+            ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
+            : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow);
         if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
             // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
             const both = new Set([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
             if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown'))
-                return withinReach(both, fromFile, deps.reach, true);
+                return withinReach(both, fromFile, deps.reach, true, (f) => assemblyOnlyIn(language, ['Program', IMPLICIT_PROGRAM_KEY], f));
         }
         // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
-        return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'));
+        return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
     };
     /**
      * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import

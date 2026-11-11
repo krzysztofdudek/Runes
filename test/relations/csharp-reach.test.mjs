@@ -388,9 +388,92 @@ describe('buildCsharpReachability — files a project takes out of its compilati
   });
 });
 
+describe('buildCsharpReachability — internals and friend assemblies', () => {
+  const layout = (lib, extra = {}) => reachOf({
+    'src/Lib/Lib.csproj': lib, 'src/Lib/Order.cs': '',
+    'src/Web/Web.csproj': withItems(projectRef('../Lib/Lib.csproj')), 'src/Web/Api.cs': '',
+    'src/Web.Tests/Web.Tests.csproj': withItems(projectRef('../Lib/Lib.csproj')), 'src/Web.Tests/t.cs': '',
+    ...extra,
+  });
+
+  it('answers that a project sees its own internals and no other project sees them without a grant', () => {
+    const reach = layout(PROJECT, { 'src/Lib/Inner.cs': '' });
+    expect(reach.internalsVisible('src/Lib/Inner.cs', 'src/Lib/Order.cs')).toBe(true);
+    expect(reach.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(false);
+    expect(reach.internalsVisible('src/Web.Tests/t.cs', 'src/Lib/Order.cs')).toBe(false);
+  });
+
+  it('reads InternalsVisibleTo items, with the project name and assembly name properties read as the project\'s names', () => {
+    for (const [item, props] of [
+      ['<InternalsVisibleTo Include="Web.Tests" />', undefined],
+      ['<InternalsVisibleTo Include="web.tests" Key="0024000004800000" />', undefined],
+      ['<InternalsVisibleTo Include="Web.Tests, PublicKey=0024000004800000" />', undefined],
+      ['', withItems('<InternalsVisibleTo Include="Web.$(MSBuildProjectName)" />')],
+    ]) {
+      const extra = props === undefined ? {} : { 'src/Directory.Build.props': props };
+      const lib = props === undefined ? withItems(item) : PROJECT;
+      const reach = layout(lib, { ...extra, 'src/Tests.Lib/Web.Lib.csproj': withItems(projectRef('../Lib/Lib.csproj')), 'src/Tests.Lib/x.cs': '' });
+      if (props === undefined) {
+        expect(reach.internalsVisible('src/Web.Tests/t.cs', 'src/Lib/Order.cs'), item).toBe(true);
+        expect(reach.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs'), item).toBe(false);
+      } else {
+        expect(reach.internalsVisible('src/Tests.Lib/x.cs', 'src/Lib/Order.cs')).toBe(true);
+        expect(reach.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(false);
+      }
+    }
+    const named = layout(['<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>Acme.Lib</AssemblyName></PropertyGroup>', '<ItemGroup><InternalsVisibleTo Include="$(AssemblyName).Tests" /></ItemGroup></Project>'].join(''), {
+      'src/Acme/Acme.Lib.Tests.csproj': withItems(projectRef('../Lib/Lib.csproj')), 'src/Acme/x.cs': '',
+    });
+    expect(named.internalsVisible('src/Acme/x.cs', 'src/Lib/Order.cs')).toBe(true);
+    expect(named.internalsVisible('src/Web.Tests/t.cs', 'src/Lib/Order.cs')).toBe(false);
+  });
+
+  it('names the caller by its assembly name as well as its project file', () => {
+    const reach = layout(withItems('<InternalsVisibleTo Include="Acme.Web" />'), {
+      'src/Web/Web.csproj': '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>Acme.Web</AssemblyName></PropertyGroup><ItemGroup><ProjectReference Include="../Lib/Lib.csproj" /></ItemGroup></Project>',
+    });
+    expect(reach.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(true);
+  });
+
+  it('reads an AssemblyAttribute item of InternalsVisibleTo, and one with no parameter it can read as naming every project', () => {
+    const one = layout(withItems('<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo"><_Parameter1>Web.Tests</_Parameter1></AssemblyAttribute>', '<AssemblyAttribute Include="Other.Attribute" />'));
+    expect(one.internalsVisible('src/Web.Tests/t.cs', 'src/Lib/Order.cs')).toBe(true);
+    expect(one.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(false);
+    const any = layout(withItems('<AssemblyAttribute Include="InternalsVisibleToAttribute" />'));
+    expect(any.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(true);
+  });
+
+  it('reads the assembly attributes of the files the project compiles, a linked one included, and a grant it cannot name as naming every project', () => {
+    const attr = layout(PROJECT, { 'src/Lib/Properties/AssemblyInfo.cs': 'using System.Runtime.CompilerServices;\n[assembly: InternalsVisibleTo("Web.Tests, PublicKey=00240000")]\n[assembly: System.Runtime.CompilerServices.InternalsVisibleToAttribute(@"Other")]' });
+    expect(attr.internalsVisible('src/Web.Tests/t.cs', 'src/Lib/Order.cs')).toBe(true);
+    expect(attr.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(false);
+    const linked = layout(withItems('<Compile Include="../Common/Friends.cs" />'), { 'src/Common/Friends.cs': '[assembly: InternalsVisibleTo("Web")]' });
+    expect(linked.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(true);
+    expect(linked.internalsVisible('src/Web.Tests/t.cs', 'src/Lib/Order.cs')).toBe(false);
+    const removed = layout(withItems('<Compile Remove="Old/**" />'), { 'src/Lib/Old/Friends.cs': '[assembly: InternalsVisibleTo("Web")]' });
+    expect(removed.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(false);
+    const constant = layout(PROJECT, { 'src/Lib/Friends.cs': '[assembly: InternalsVisibleTo(Names.Tests)]' });
+    expect(constant.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(true);
+    const property = layout(withItems('<InternalsVisibleTo Include="$(TestPrefix).Web" />'));
+    expect(property.internalsVisible('src/Web/Api.cs', 'src/Lib/Order.cs')).toBe(true);
+  });
+
+  it('answers visible when the graph cannot say: a file it does not know, a file in no compilation, or a target reached only through an open project', () => {
+    const reach = layout(withItems('<Compile Remove="Old/**" />'), {
+      'src/Lib/Old/Gone.cs': '', 'loose/x.cs': '',
+      'src/Open/Open.csproj': withItems(projectRef('$(Mystery)/X.csproj')), 'src/Open/o.cs': '',
+    });
+    expect(reach.internalsVisible('loose/x.cs', 'src/Lib/Order.cs')).toBe(true);
+    expect(reach.internalsVisible('src/Web/Api.cs', 'loose/x.cs')).toBe(true);
+    expect(reach.internalsVisible('src/Lib/Old/Gone.cs', 'src/Web/Api.cs')).toBe(true);
+    expect(reach.internalsVisible('src/Web/Api.cs', 'src/Lib/Old/Gone.cs')).toBe(true);
+    expect(reach.internalsVisible('src/Open/o.cs', 'src/Lib/Order.cs')).toBe(true);
+  });
+});
+
 describe('buildCsharpReachability — open projects', () => {
-  it('reads a project as open for a Compile item outside its directory, or one that needs an unknown property', () => {
-    for (const item of ['<Compile Include="..\\Shared\\*.cs" Link="s.cs" />', '<Compile Include="$(GenDir)/g.cs" />', '<Compile Include="C:\\gen\\g.cs" />']) {
+  it('reads a project as open for a Compile item that needs an unknown property or leaves the repository', () => {
+    for (const item of ['<Compile Include="$(GenDir)/g.cs" />', '<Compile Include="C:\\gen\\g.cs" />']) {
       const reach = reachOf({
         'a/A.csproj': withItems(item), 'a/x.cs': '',
         'b/B.csproj': PROJECT, 'b/z.cs': '',
@@ -415,9 +498,45 @@ describe('buildCsharpReachability — open projects', () => {
       'src/Other/Other.csproj': PROJECT, 'src/Other/o.cs': '',
     });
     expect(reach('src/Lib/Feature.cs', 'src/Legacy/Helper.cs')).toBe('reachable');
-    // The linking project is open, so the linked file is an unknown to everything else, as before.
-    expect(reach('src/Lib/Feature.cs', 'src/Other/o.cs')).toBe('unknown');
+    // The link adds the linked files to Lib.NetFx and nothing else, so the graph stays closed.
+    expect(reach('src/Lib/Feature.cs', 'src/Other/o.cs')).toBe('unreachable');
     expect(reach('src/Other/o.cs', 'src/Legacy/Helper.cs')).toBe('unreachable');
+  });
+
+  it('keeps a project closed for a linked file, which is code of the project that links it', () => {
+    const reach = reachOf({
+      'src/Bus/Bus.csproj': withItems('<Compile Include="..\\Shared\\Tracing.cs" Link="Tracing.cs" />'), 'src/Bus/b.cs': '',
+      'src/Shared/Tracing.cs': '', 'src/Shared/Unlinked.cs': '',
+      'src/Api/Api.csproj': withItems(projectRef('../Bus/Bus.csproj')), 'src/Api/Program.cs': '',
+      'src/Catalog/Catalog.csproj': withItems(projectRef('../Bus/Bus.csproj')), 'src/Catalog/Extensions.cs': '',
+    });
+    expect(reach('src/Api/Program.cs', 'src/Catalog/Extensions.cs')).toBe('unreachable');
+    expect(reach('src/Api/Program.cs', 'src/Bus/b.cs')).toBe('reachable');
+    expect(reach('src/Api/Program.cs', 'src/Shared/Tracing.cs')).toBe('reachable');
+    expect(reach('src/Bus/b.cs', 'src/Shared/Tracing.cs')).toBe('same');
+    expect(reach('src/Shared/Tracing.cs', 'src/Bus/b.cs')).toBe('same');
+    expect(reach('src/Shared/Tracing.cs', 'src/Api/Program.cs')).toBe('unreachable');
+    expect(reach('src/Catalog/Extensions.cs', 'src/Shared/Tracing.cs')).toBe('reachable');
+    // A file under no project that no project links is still unknown.
+    expect(reach('src/Api/Program.cs', 'src/Shared/Unlinked.cs')).toBe('unknown');
+    expect(reach('src/Shared/Unlinked.cs', 'src/Api/Program.cs')).toBe('unknown');
+  });
+
+  it('reads two projects that link one file as one compilation for that file, and a link of a file another project removes', () => {
+    const reach = reachOf({
+      'src/A/A.csproj': withItems('<Compile Include="../Shared/**/*.cs" />'), 'src/A/a.cs': '',
+      'src/B/B.csproj': withItems('<Compile Include="../Shared/**" />'), 'src/B/b.cs': '',
+      'src/Shared/Deep/s.cs': '',
+      'src/Old/Old.csproj': withItems('<Compile Remove="Moved.cs" />'), 'src/Old/Moved.cs': '',
+      'src/New/New.csproj': withItems('<Compile Include="..\\Old\\Moved.cs" />'), 'src/New/n.cs': '',
+      'src/C/C.csproj': withItems(projectRef('../Old/Old.csproj')), 'src/C/c.cs': '',
+    });
+    expect(reach('src/A/a.cs', 'src/Shared/Deep/s.cs')).toBe('same');
+    expect(reach('src/B/b.cs', 'src/Shared/Deep/s.cs')).toBe('same');
+    expect(reach('src/A/a.cs', 'src/B/b.cs')).toBe('unreachable');
+    expect(reach('src/New/n.cs', 'src/Old/Moved.cs')).toBe('same');
+    expect(reach('src/C/c.cs', 'src/Old/Moved.cs')).toBe('unreachable');
+    expect(reach('src/Old/Moved.cs', 'src/New/n.cs')).toBe('same');
   });
 
   it('reads a project at the repository root as open for a Compile item that leaves the root', () => {
