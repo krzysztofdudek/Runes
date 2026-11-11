@@ -370,3 +370,30 @@ describe('MATRIX — C# rooted using directives inside a namespace block', () =>
   it('csharp-using-rooted-block-global-edge', () => runCase('csharp-using-rooted-block-global-edge'));
   it('csharp-using-rooted-block-beside-namespace-edge', () => runCase('csharp-using-rooted-block-beside-namespace-edge'));
 });
+
+describe('MATRIX — C# delegate declarations are types', () => {
+  it('csharp-delegate-declared-edge', () => runCase('csharp-delegate-declared-edge'));
+  it('csharp-delegate-nested-edge', () => runCase('csharp-delegate-nested-edge'));
+  it('csharp-delegate-enclosing-namespace-hides-imported-class-silence', () => runCase('csharp-delegate-enclosing-namespace-hides-imported-class-silence'));
+  it('csharp-delegate-generic-arity-edge', () => runCase('csharp-delegate-generic-arity-edge'));
+  it('csharp-delegate-file-local-not-published-edge', () => runCase('csharp-delegate-file-local-not-published-edge'));
+});
+
+describe('MATRIX — C# type positions in patterns', () => {
+  it('csharp-pattern-qualified-not-or-switch-edge', () => runCase('csharp-pattern-qualified-not-or-switch-edge'));
+  it('csharp-pattern-qualified-type-edge', () => runCase('csharp-pattern-qualified-type-edge'));
+  it('csharp-pattern-array-type-edge', () => runCase('csharp-pattern-array-type-edge'));
+  it('csharp-pattern-generic-type-edge', () => runCase('csharp-pattern-generic-type-edge'));
+  it('csharp-pattern-constant-of-nearer-type-silence', () => runCase('csharp-pattern-constant-of-nearer-type-silence'));
+  it('csharp-pattern-switch-constants-of-nearer-type-edge', () => runCase('csharp-pattern-switch-constants-of-nearer-type-edge'));
+  it('csharp-pattern-constant-through-block-using-edge', () => runCase('csharp-pattern-constant-through-block-using-edge'));
+  it('csharp-pattern-nested-type-through-type-edge', () => runCase('csharp-pattern-nested-type-through-type-edge'));
+});
+
+describe('MATRIX — C# ref types, query range variable types and function pointer types', () => {
+  it('csharp-ref-return-type-edge', () => runCase('csharp-ref-return-type-edge'));
+  it('csharp-ref-local-type-edge', () => runCase('csharp-ref-local-type-edge'));
+  it('csharp-ref-and-query-types-edge', () => runCase('csharp-ref-and-query-types-edge'));
+  it('csharp-query-range-variable-type-edge', () => runCase('csharp-query-range-variable-type-edge'));
+  it('csharp-function-pointer-type-edge', () => runCase('csharp-function-pointer-type-edge'));
+});
