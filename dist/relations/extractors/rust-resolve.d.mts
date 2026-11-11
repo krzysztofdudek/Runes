@@ -22,7 +22,8 @@
  *
  * EDITION: in edition 2015 (also what Cargo assumes when `[package]` gives no edition) a `use` path
  * is relative to the crate root, so `use a::b;` names the module `a` the root declares
- * (`crateRelativeUses`), before any path dependency of that name. From edition 2018 on the same path names an external crate.
+ * (`crateRelativeUses`), before any path dependency of that name; a crate is in reach there only through an
+ * `extern crate` a root writes, the package's own library included. From edition 2018 on the same path names an external crate.
  *
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because

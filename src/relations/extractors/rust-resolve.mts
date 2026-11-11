@@ -24,7 +24,8 @@ import path from 'node:path';
  *
  * EDITION: in edition 2015 (also what Cargo assumes when `[package]` gives no edition) a `use` path
  * is relative to the crate root, so `use a::b;` names the module `a` the root declares
- * (`crateRelativeUses`), before any path dependency of that name. From edition 2018 on the same path names an external crate.
+ * (`crateRelativeUses`), before any path dependency of that name; a crate is in reach there only through an
+ * `extern crate` a root writes, the package's own library included. From edition 2018 on the same path names an external crate.
  *
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because
@@ -209,8 +210,7 @@ function resolveBare(segments: string[], fromFile: string, exists: (repoRelPosix
   const declaresItem = (f: string, name: string): boolean => (deps.rootDeclares?.(f, name, true) ?? true);
 
   if (crate.crateRelativeUses === true && deps.externCrateFor !== undefined) {
-    // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The package's own crate name aside, the first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, or a module or an item of its own. A path dependency that no root binds is not in reach of a `use`; the reserved crates stay external.
-    if (own !== undefined) return into(own);
+    // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, the package's own library included, or a module or an item of its own. A crate that no root binds is not in reach of a `use`, a path dependency or the package's own library alike; the reserved crates stay external.
     const roots = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
     for (const file of roots) {
       if (!exists(file)) continue;

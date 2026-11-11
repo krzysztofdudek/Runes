@@ -8,17 +8,17 @@ cites: "The Cargo Book — The Manifest Format (`[package]` `name`; the `[lib]` 
 
 ## Rule
 
-`[package]` and `[lib]` can be written as inline tables: `package = { name = "text-util" }` is the same table as `[package]` holding that name, and `lib = { name = "kit_api", path = "api/lib.rs" }` the same as the `[lib]` table. So the crate names and the library path they give resolve as the table forms do. A dependency on `crates/kit` is called `kit_api` in code, the name of its library: `kit_api::Client` binds `crates/kit/api/lib.rs` (node `api`) from the package `app` and from kit's own test, while `kit::Client` names no crate (line 2), and kit's `src/lib.rs` (node `src`) is a decoy. In `crates/util`, whose name `text-util` is written inline, `text_util::slug` from its test binds its library `crates/util/src/lib.rs` (node `src`).
+`[package]` and `[lib]` can be written as inline tables: `package = { name = "text-util" }` is the same table as `[package]` holding that name, and `lib = { name = "kit_api", path = "api/lib.rs" }` the same as the `[lib]` table, and an `edition` written there is the package's edition, here 2021, which puts the package's own library in scope of its tests without `extern crate`. So the crate names and the library path they give resolve as the table forms do. A dependency on `crates/kit` is called `kit_api` in code, the name of its library: `kit_api::Client` binds `crates/kit/api/lib.rs` (node `api`) from the package `app` and from kit's own test, while `kit::Client` names no crate (line 2), and kit's `src/lib.rs` (node `src`) is a decoy. In `crates/util`, whose name `text-util` is written inline, `text_util::slug` from its test binds its library `crates/util/src/lib.rs` (node `src`).
 
 ## Files
 
 ```toml path=crates/kit/Cargo.toml
-package = { name = "kit", version = "0.1.0" }
+package = { name = "kit", version = "0.1.0", edition = "2021" }
 lib = { name = "kit_api", path = "api/lib.rs" }
 ```
 
 ```toml path=crates/util/Cargo.toml
-package = { name = "text-util" }
+package = { name = "text-util", edition = "2021" }
 ```
 
 ```toml path=crates/app/Cargo.toml

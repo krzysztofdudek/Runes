@@ -57,9 +57,7 @@ function resolveBare(segments, fromFile, exists, deps, crate) {
     const own = crate.crateName !== undefined && root === crate.crateName && crate.lib !== null ? (crate.lib ?? { srcDir: crate.srcDir, rootFiles: crate.rootFiles ?? [] }) : undefined;
     const declaresItem = (f, name) => (deps.rootDeclares?.(f, name, true) ?? true);
     if (crate.crateRelativeUses === true && deps.externCrateFor !== undefined) {
-        // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The package's own crate name aside, the first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, or a module or an item of its own. A path dependency that no root binds is not in reach of a `use`; the reserved crates stay external.
-        if (own !== undefined)
-            return into(own);
+        // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, the package's own library included, or a module or an item of its own. A crate that no root binds is not in reach of a `use`, a path dependency or the package's own library alike; the reserved crates stay external.
         const roots = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
         for (const file of roots) {
             if (!exists(file))
