@@ -8,7 +8,7 @@ export type DepKind = 'import' | 'call' | 'extends' | 'implements' | 'type-ref' 
 export interface SymbolSetMember { symbolKey: string; nestedOnly?: boolean; shadow?: string[] }
 
 export type TargetHint =
-  | { kind: 'path'; specifier: string; isPackage?: boolean }
+  | { kind: 'path'; specifier: string; isPackage?: boolean; callForm?: 'require' | 'import' }
   | {
       kind: 'symbol';
       /** The candidate's OWN display key — what `groupContaining`/`symbolKeys` read, and what

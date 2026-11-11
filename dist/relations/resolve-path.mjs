@@ -68,9 +68,9 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => probe.isFile(repoRelPosix);
     const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
-    return (specifier, fromFile, language, isPackage = false, symbolTable = undefined) => {
+    return (specifier, fromFile, language, isPackage = false, symbolTable = undefined, callForm = undefined) => {
         if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
-            return resolveTsPath(specifier, fromFile, isFile, tsDeps);
+            return resolveTsPath(specifier, fromFile, isFile, tsDeps, callForm);
         }
         if (language === 'python') {
             return python(specifier, fromFile);

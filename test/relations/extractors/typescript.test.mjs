@@ -47,10 +47,10 @@ describe('typescript extractor — uses()', () => {
   it('detects require() and import-equals-require', async () => {
     const { uses } = await run(`const a = require('./a');\nimport b = require('./b');`);
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a', callForm: 'require' }] }),
     );
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b', callForm: 'require' }] }),
     );
   });
   it('detects literal dynamic import, skips non-literal', async () => {
@@ -58,7 +58,7 @@ describe('typescript extractor — uses()', () => {
       "const d = import('./d');\nconst e = import(`./x-${v}`);\nconst f = import(v);",
     );
     expect(uses.filter((u) => u.candidates[0].kind === 'path')).toHaveLength(1);
-    expect(uses[0].candidates[0]).toEqual({ kind: 'path', specifier: './d' });
+    expect(uses[0].candidates[0]).toEqual({ kind: 'path', specifier: './d', callForm: 'import' });
   });
   it('detects a no-substitution template-literal dynamic import() and require(), still skips interpolated', async () => {
     // A backtick specifier with no `${…}` is static and statically resolvable — TS/esbuild/Node
@@ -68,12 +68,70 @@ describe('typescript extractor — uses()', () => {
       'const a = import(`./a`);\nconst b = require(`./b`);\nconst c = import(`./x-${v}`);',
     );
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a', callForm: 'import' }] }),
     );
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b', callForm: 'require' }] }),
     );
     expect(uses.filter((u) => u.candidates[0].kind === 'path')).toHaveLength(2);
+  });
+  it('carries no call form on an import or export statement, and one per call when both forms name a specifier on a line', async () => {
+    const { uses } = await run(`import a from './a';\nexport * from './b';\nconst c = [require('./c'), import('./c')];`);
+    expect(uses.map((u) => [u.candidates[0], u.line])).toEqual([
+      [{ kind: 'path', specifier: './a' }, 1],
+      [{ kind: 'path', specifier: './b' }, 2],
+      [{ kind: 'path', specifier: './c', callForm: 'require' }, 3],
+      [{ kind: 'path', specifier: './c', callForm: 'import' }, 3],
+    ]);
+  });
+  it('marks no call form on an import type, which is read by the format of its file like an import statement', async () => {
+    const typed = [
+      "type M = typeof import('./m');",
+      "let v: import('./t').T;",
+      "type A = import('./a').T | null;",
+      "type B = Array<import('./b').T>;",
+      "const w = {} as import('./w').T;",
+      "const s = x satisfies import('./s').T;",
+      "const f = vi.fn<() => typeof import('./f')>();",
+      "function g<T extends import('./g1').T = import('./g2').T>() {}",
+      "let a = <import('./cast').T>x;",
+      "function p(x: unknown): x is import('./p').T { return true; }",
+      "function q(x: unknown): asserts x is import('./q').T {}",
+      "class C extends B<import('./c').T> {}",
+      "const D = class extends B<import('./d').T> {};",
+      "export default class extends B<import('./e').T> {}",
+      "class F implements I<import('./i').T> {}",
+      "h<import('./h1').T>();",
+      "h<import('./h2').T>`x`;",
+      "new H<import('./h3').T>();",
+      "type K = keyof import('./k').T;",
+      "type P = (import('./par').T);",
+      "type Q = (import('./parr').T)[];",
+      "type L = `x${import('./l').T}`;",
+      "type R = readonly import('./r').T[];",
+      "type S = import('./cond').T extends infer U ? U : never;",
+    ];
+    // One statement a file: the grammar's recovery from a type it cannot read can run on into the next statement.
+    for (const line of typed) {
+      const { uses } = await run(line);
+      const forms = uses.map((u) => u.candidates[0].callForm);
+      expect(forms.length, line).toBe(line.split('import(').length - 1);
+      expect(forms.filter((f) => f !== undefined), line).toEqual([]);
+    }
+    const { uses } = await run(["const d = import('./value');", "const e = (await import('./value2')) as import('./e2').T;", "import type R2 = require('./r2');"].join('\n'));
+    const form = new Map(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm]));
+    expect(form.get('./value')).toBe('import');
+    expect(form.get('./value2')).toBe('import');
+    expect(form.get('./e2')).toBeUndefined();
+    expect(form.get('./r2')).toBe('require');
+  });
+  it('keeps the import call form on an import() in the heritage clause of a class or interface, which holds expressions', async () => {
+    const { uses } = await run("class C implements import('./a').B {}\ninterface I extends import('./b').B {}\nconst x = foo(import('./c'), [import('./d')]);");
+    const form = new Map(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm]));
+    expect(form.get('./a')).toBe('import');
+    expect(form.get('./b')).toBe('import');
+    expect(form.get('./c')).toBe('import');
+    expect(form.get('./d')).toBe('import');
   });
   it('javascript: detects require + import, no crash on no-type-syntax', async () => {
     const { uses } = await run(`import x from './x';\nconst y = require('./y');`, '.js', 'javascript');
@@ -250,7 +308,7 @@ describe('typescript extractor — one type-only rule, new forms, grammar recove
         [{ kind: 'path', specifier: './a' }, 1],
         [{ kind: 'path', specifier: './b' }, 2],
         [{ kind: 'path', specifier: './star' }, 5],
-        [{ kind: 'path', specifier: './c' }, 6],
+        [{ kind: 'path', specifier: './c', callForm: 'require' }, 6],
       ]),
     );
     expect(uses).toHaveLength(4);

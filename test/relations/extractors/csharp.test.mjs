@@ -1338,3 +1338,74 @@ describe('csharp — the generic arity is part of every type key', () => {
     expect(keys).toContain('Lib.Box`1');
   });
 });
+
+describe('csharp — a type named in a pattern or after `is`', () => {
+  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a dotted name in a constant pattern is read as the type it spells, a generic segment and a `global::` lead included', async () => {
+    const { uses } = await run(['class C { bool A(object o) => o is Lib.Order; bool B(object o) => o is Lib.Box<int>.Item; bool D(object o) => o is global::Lib.Credit; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).toContain('Lib.Order');
+    expect(keys).toContain('Lib.Box`1.Item');
+    expect(keys).toContain('Lib.Credit');
+  });
+  it('a dotted constant reads its first name before the dotted name, so a type bound there ends the lookup', async () => {
+    const { uses } = await run('namespace App.Core;\nclass C { bool A(int n) => n is Limits.Max; }\n');
+    const group = uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : []))).find((g) => g.includes('Limits.Max'));
+    expect(group.indexOf('App.Core.Limits')).toBeGreaterThanOrEqual(0);
+    expect(group.indexOf('App.Core.Limits')).toBeLessThan(group.indexOf('Limits.Max'));
+  });
+  it('a dotted name led by a value this file declares is no type', async () => {
+    const { uses } = await run(['class C { Mode Config; bool A(object o) => o is Config.Limit; bool B(object o) => o is Lib.Limit; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).not.toContain('Config.Limit');
+    expect(keys).toContain('Lib.Limit');
+  });
+  it('a generic name, a nullable type and an array type after `is` give the generic with its arity, each type argument and the element type', async () => {
+    const { uses } = await run(['class C { bool A(object o) => o is Box<Item>; bool B(object o) => o is Note?; bool D(object o) => o is Card[]; bool E(object o) => o is Lib::Slip; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).toContain('Box`1');
+    expect(keys).toContain('Item');
+    expect(keys).toContain('Note');
+    expect(keys).toContain('Card');
+  });
+});
+
+describe('csharp — a type under `ref`, in a query clause or in a function pointer', () => {
+  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a ref return, a ref property, a ref indexer, a ref local and a ref local function name their type; `ref var` names none', async () => {
+    const { uses } = await run([
+      'class C {',
+      '  ref Lib.Order A() => throw null;',
+      '  ref readonly Box<Item> P => throw null;',
+      '  ref Card this[int i] => throw null;',
+      '  void M() { ref Line l = ref G(); ref var v = ref G(); ref Slip F() => throw null; }',
+      '}',
+      '',
+    ].join('\n'));
+    const keys = keysOf(uses);
+    for (const k of ['Lib.Order', 'Box`1', 'Item', 'Card', 'Line', 'Slip']) expect(keys).toContain(k);
+    expect(keys).not.toContain('var');
+  });
+  it('the explicit type of a from clause and of a join clause is a reference; an implicit one is not', async () => {
+    const { uses } = await run([
+      'class C { object Q(object xs, object ys) =>',
+      '  from Lib.Row r in xs',
+      '  join Cell c in ys on r equals c',
+      '  from Box<Tag> t in xs',
+      '  from u in xs',
+      '  join w in ys on u equals w',
+      '  select r;',
+      '}',
+      '',
+    ].join('\n'));
+    const keys = keysOf(uses);
+    for (const k of ['Lib.Row', 'Cell', 'Box`1', 'Tag']) expect(keys).toContain(k);
+  });
+  it('a function pointer type names each parameter type and its return type', async () => {
+    const { uses } = await run('unsafe class C { delegate*<Order, ref Lib.Item, Box<Tag>, Result> a; delegate* unmanaged[Cdecl]<int, void> b; }\n');
+    const keys = keysOf(uses);
+    for (const k of ['Order', 'Lib.Item', 'Box`1', 'Tag', 'Result']) expect(keys).toContain(k);
+  });
+});
