@@ -95,9 +95,9 @@ export function makeResolvePathToFile(
         ...rustDeps,
         crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
         externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
-        pathLoaded: (file) => {
+        pathLoaders: (file) => {
           const nameKey = rustPathModuleNameKey(path.posix.basename(file));
-          return table.has('rust', nameKey) && table.filesFor('rust', nameKey).some((by) => declared(by, rustPathModuleKey(path.posix.relative(path.posix.dirname(by), file))));
+          return table.has('rust', nameKey) ? table.filesFor('rust', nameKey).filter((by) => declared(by, rustPathModuleKey(path.posix.relative(path.posix.dirname(by), file)))) : [];
         },
         moduleDeclared: (file, modulePath) => (declared(file, rustModuleKey(modulePath)) ? true : declared(file, RUST_MODULES_KNOWN_KEY) ? false : undefined),
         rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))) || globBrings(rootFile, name),

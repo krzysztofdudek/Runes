@@ -1961,7 +1961,7 @@ describe('pathModules', () => {
 describe('resolveRustPath — a file loaded through a path attribute (injected deps)', () => {
   const known = new Set(['src/lib.rs', 'src/platform/linux.rs', 'src/platform/epoll.rs', 'src/platform/linux/deep.rs', 'src/platform/mod.rs', 'src/other.rs']);
   const exists = (p) => known.has(p);
-  const deps = (loaded) => ({ crateRootFor: (f) => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: f === 'src/lib.rs' }), rootDeclares: () => true, pathLoaded: () => loaded });
+  const deps = (loaded, loaders = { 'src/platform/linux.rs': ['src/lib.rs'], 'src/platform/mod.rs': ['src/lib.rs'], 'src/lib.rs': ['src/other.rs'] }) => ({ crateRootFor: (f) => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: f === 'src/lib.rs' }), rootDeclares: () => true, pathLoaders: (f) => (loaded ? (loaders[f] ?? []) : []) });
 
   it('looks beside the file for what it names below itself, and keeps its items in the file', () => {
     expect(resolveRustPath('self::epoll', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/epoll.rs');
@@ -1970,9 +1970,21 @@ describe('resolveRustPath — a file loaded through a path attribute (injected d
     expect(resolveRustPath('self', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/linux.rs');
   });
 
-  it('still reads the directory named after the file where nothing beside it fits, and reads super as before', () => {
+  it('still reads the directory named after the file where nothing beside it fits', () => {
     expect(resolveRustPath('self::deep', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/linux/deep.rs');
-    expect(resolveRustPath('super::Item', 'src/platform/linux.rs', exists, deps(true))).toBe('src/platform/mod.rs');
+  });
+
+  it('reads super as the module of the file that loads it, not the directory above it', () => {
+    expect(resolveRustPath('super::Item', 'src/platform/linux.rs', exists, deps(false))).toBe('src/platform/mod.rs');
+    expect(resolveRustPath('super::Item', 'src/platform/linux.rs', exists, deps(true))).toBe('src/lib.rs');
+    expect(resolveRustPath('self::super::other', 'src/platform/linux.rs', exists, deps(true))).toBe('src/other.rs');
+    expect(resolveRustPath('super', 'src/platform/linux.rs', exists, deps(true))).toBe('src/lib.rs');
+    // A loader that is a module of its own: super climbs on from it.
+    const chained = { 'src/platform/epoll.rs': ['src/platform/linux.rs'], 'src/platform/linux.rs': ['src/lib.rs'] };
+    expect(resolveRustPath('super::super::other::Thing', 'src/platform/epoll.rs', exists, deps(true, chained))).toBe('src/other.rs');
+    expect(resolveRustPath('super::super::super::Thing', 'src/platform/epoll.rs', exists, deps(true, chained))).toBeUndefined();
+    // Two loaders leave the parent untold.
+    expect(resolveRustPath('super::Item', 'src/platform/linux.rs', exists, deps(true, { 'src/platform/linux.rs': ['src/lib.rs', 'src/other.rs'] }))).toBeUndefined();
   });
 
   it('changes nothing for a mod.rs or a crate root', () => {

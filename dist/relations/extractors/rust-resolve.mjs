@@ -160,6 +160,18 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     const fromPosix = toPosix(fromFile);
     const fromDir = path.posix.dirname(fromPosix);
     const baseName = path.posix.basename(fromPosix, '.rs');
+    const loaders = deps.pathLoaders?.(fromPosix) ?? [];
+    // A file loaded through a `path` attribute is a child of the module of the file that loads it, wherever the two lie: its first `super` is that file's `self`. Two loaders leave the parent untold. Each step spends one `super`, so the walk ends.
+    const lead = segments.findIndex((s) => s !== 'self' && s !== 'super');
+    const supers = segments.slice(0, lead === -1 ? segments.length : lead).filter((s) => s === 'super').length;
+    if (supers > 0 && loaders.length > 0 && crate.fileIsRoot !== true) {
+        if (loaders.length > 1)
+            return undefined;
+        const rest = segments.slice(lead === -1 ? segments.length : lead);
+        const climb = [...new Array(supers - 1).fill('super'), ...rest];
+        const next = climb[0] === 'super' ? climb : ['self', ...climb];
+        return resolveRelative(next[0], next, loaders[0], exists, deps);
+    }
     // The module directory of the importing file: for `mod.rs` and for a crate ROOT file
     // (`src/lib.rs`, `src/main.rs`, `src/bin/x.rs`, `tests/it.rs`, …) it is the file's own
     // directory; for `foo.rs` it is `<dir>/foo` (the dir that would hold foo's submodules).
@@ -195,7 +207,7 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir))
         return undefined;
     const crateRoot = rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared);
-    const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && deps.pathLoaded?.(fromPosix) === true;
+    const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && loaders.length > 0;
     // A name the module's file binds with `extern crate` (`extern crate util as u;` then `self::u::X`, or `super::u::X` from a child) is that crate. A module of the same name beside it would be a second definition, which Rust refuses.
     const first = tail[0];
     if (first !== undefined && deps.externCrateFor !== undefined) {

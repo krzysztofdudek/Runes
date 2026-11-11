@@ -73,10 +73,11 @@ import path from 'node:path';
  * pass) no file's modules are known and every fitting file is bound, as in 1.0.
  *
  * PATH-LOADED FILES: a file that a `#[path]` attribute on a `mod` outside inline modules loads
- * (`pathLoaded`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
+ * (`pathLoaders`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
  * `self::x` lie beside it (`src/platform/epoll/mod.rs` for `src/platform/linux.rs`), not
- * under a directory named after it. Its `super` is not followed from there: the module above
- * it is the one that wrote the attribute, which its place on disk does not tell.
+ * under a directory named after it. Its `super` is the module of the file that loads it,
+ * whatever their places on disk: `super::x` there is `self::x` read from that file. Two files
+ * that load it make its parent a module that cannot be told, so such a path names nothing.
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
@@ -133,8 +134,8 @@ export interface RustResolveDeps {
   externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
   /** Does `file` declare, without a body, the module at `modulePath` below its own module (`x`, or `outer/x` through its inline module `outer`)? True when it does; false when every module the file declares is known and this is none of them; undefined when that is not known (the file is not in the pass's table, did not parse to the end, or invokes a macro that could declare one). Absent → never known. */
   moduleDeclared?(file: string, modulePath: string): boolean | undefined;
-  /** Is `file` loaded through a `path` attribute on a `mod` that some file writes outside inline modules? Such a file owns its directory as a `mod.rs` does. Absent → no file is known to be. */
-  pathLoaded?(file: string): boolean;
+  /** The files that load `file` through a `path` attribute on a `mod` they write outside inline modules; empty when none is known to. Such a file owns its directory as a `mod.rs` does, and its parent module is the module of the file that loads it. Absent → no file is known to be loaded that way. */
+  pathLoaders?(file: string): string[];
 }
 
 /** The crate-root lookup context handed to `resolveFromModuleDir`: when the module being
@@ -336,6 +337,18 @@ function resolveRelative(
   const fromPosix = toPosix(fromFile);
   const fromDir = path.posix.dirname(fromPosix);
   const baseName = path.posix.basename(fromPosix, '.rs');
+  const loaders = deps.pathLoaders?.(fromPosix) ?? [];
+
+  // A file loaded through a `path` attribute is a child of the module of the file that loads it, wherever the two lie: its first `super` is that file's `self`. Two loaders leave the parent untold. Each step spends one `super`, so the walk ends.
+  const lead = segments.findIndex((s) => s !== 'self' && s !== 'super');
+  const supers = segments.slice(0, lead === -1 ? segments.length : lead).filter((s) => s === 'super').length;
+  if (supers > 0 && loaders.length > 0 && crate.fileIsRoot !== true) {
+    if (loaders.length > 1) return undefined;
+    const rest = segments.slice(lead === -1 ? segments.length : lead);
+    const climb = [...new Array<string>(supers - 1).fill('super'), ...rest];
+    const next = climb[0] === 'super' ? climb : ['self', ...climb];
+    return resolveRelative(next[0]!, next, loaders[0]!, exists, deps);
+  }
 
   // The module directory of the importing file: for `mod.rs` and for a crate ROOT file
   // (`src/lib.rs`, `src/main.rs`, `src/bin/x.rs`, `tests/it.rs`, …) it is the file's own
@@ -371,7 +384,7 @@ function resolveRelative(
   // A module of a crate that cannot be told reaches the crate root by climbing out of the tree's first level, and which crate's root that is, is not known; below it the path is the same in every crate.
   if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir)) return undefined;
   const crateRoot = rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared);
-  const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && deps.pathLoaded?.(fromPosix) === true;
+  const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && loaders.length > 0;
   // A name the module's file binds with `extern crate` (`extern crate util as u;` then `self::u::X`, or `super::u::X` from a child) is that crate. A module of the same name beside it would be a second definition, which Rust refuses.
   const first = tail[0];
   if (first !== undefined && deps.externCrateFor !== undefined) {

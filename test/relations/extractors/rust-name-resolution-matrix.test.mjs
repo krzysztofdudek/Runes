@@ -285,6 +285,7 @@ describe('MATRIX — the children of a file loaded through a path attribute', ()
   it('rust-file-module-children-under-own-directory-edge', () => runCase('rust-file-module-children-under-own-directory-edge'));
   it('rust-path-loaded-file-children-beside-it-edge', () => runCase('rust-path-loaded-file-children-beside-it-edge'));
   it('rust-path-loaded-file-relative-path-forms-edge', () => runCase('rust-path-loaded-file-relative-path-forms-edge'));
+  it('rust-path-loaded-file-super-is-declaring-module-edge', () => runCase('rust-path-loaded-file-super-is-declaring-module-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
