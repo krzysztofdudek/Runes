@@ -662,6 +662,44 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve2015('config::Cfg', 'src/bin/loose/mod.rs', 'rust', false, table)).toBeUndefined();
   });
 
+  it('roots the build script at the file [package] build names, at build.rs by default, and nowhere with build = false', () => {
+    put('src/lib.rs', 'mod util;\n');
+    put('src/util/mod.rs', '');
+    put('build.rs', 'mod gen;\nfn main() {}\n');
+    put('gen.rs', '');
+    put('tools/build.rs', 'mod util;\nfn main() {}\n');
+    put('tools/util.rs', '');
+    put('tools/deep/mod.rs', '');
+    put('tools/deep/x.rs', '');
+    const resolveWith = (build, spec, from) => {
+      put('Cargo.toml', `[package]\nname = "kit"\nedition = "2021"\n${build}`);
+      return makeResolvePathToFile(ws)(spec, from, 'rust');
+    };
+    // No `build` key, or `build = true`: build.rs at the package root, whose modules lie beside it. The files of the package root below it stay out of its tree.
+    expect(resolveWith('', 'self::gen', 'build.rs')).toBe('gen.rs');
+    expect(resolveWith('build = true\n', 'self::gen', 'build.rs')).toBe('gen.rs');
+    expect(resolveWith('build = "build.rs"\n', 'crate::gen', 'build.rs')).toBe('gen.rs');
+    expect(resolveWith('', 'crate::util', 'tools/deep/x.rs')).toBe('src/util/mod.rs');
+    // A named script roots its own crate: the files beside it and below it read `crate::` in its directory, never in the library's.
+    expect(resolveWith('build = "tools/build.rs"\n', 'self::util', 'tools/build.rs')).toBe('tools/util.rs');
+    expect(resolveWith('build = "tools/build.rs"\n', 'crate::util', 'tools/build.rs')).toBe('tools/util.rs');
+    expect(resolveWith('build = "tools/build.rs"\n', 'crate::util', 'tools/deep/x.rs')).toBe('tools/util.rs');
+    expect(resolveWith('build = "./tools/../tools/build.rs"\n', 'crate::util', 'tools/build.rs')).toBe('tools/util.rs');
+    expect(resolveWith('build = { }\n', 'self::gen', 'build.rs')).toBe('gen.rs');
+    // Then build.rs at the package root is no script, and no root of any crate.
+    expect(resolveWith('build = "tools/build.rs"\n', 'self::gen', 'build.rs')).toBe('build.rs');
+    expect(resolveWith('build = false\n', 'self::gen', 'build.rs')).toBe('build.rs');
+    expect(resolveWith('build = false\n', 'crate::gen', 'build.rs')).toBeUndefined();
+    // A path out of the package names no script.
+    expect(resolveWith('build = "../tools/build.rs"\n', 'crate::util', 'tools/build.rs')).toBe('src/util/mod.rs');
+    // `package` written as an inline table says the same.
+    put('Cargo.toml', 'package = { name = "kit", edition = "2021", build = "tools/build.rs" }\n');
+    expect(makeResolvePathToFile(ws)('crate::util', 'tools/build.rs', 'rust')).toBe('tools/util.rs');
+    expect(parseCargoManifest('[package]\nbuild = "x.rs"\n').build).toBe('x.rs');
+    expect(parseCargoManifest('[package]\nbuild = false\n').build).toBe(false);
+    expect(parseCargoManifest('[package]\nbuild = true\n').build).toBeUndefined();
+  });
+
   it('roots crate:: of a [[test]], [[example]] or [[bench]] path at that target, also below tests/ where no main.rs is (the zed shape)', () => {
     // Issue 173: those paths were ignored, so such a target's root was a module of the default tree and its modules resolved under src/ or under tests/.
     put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/integration/suite.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\nname = "perf"\npath = "perf/bench_main.rs"\n');

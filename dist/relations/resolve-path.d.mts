@@ -50,10 +50,12 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *
  *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare its directory, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller to pick the roots that declare it.
  *
+ *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
+ *
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
  *
  *  `undiscoveredDirs` are the directories among `src/bin`, `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autobins = false`, `autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
-export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, targetPaths?: readonly string[], undiscoveredDirs?: readonly string[], namedTargets?: readonly string[], inferMain?: boolean, droppedInferred?: readonly string[], inferLib?: boolean, binFiles?: readonly string[]): {
+export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, targetPaths?: readonly string[], undiscoveredDirs?: readonly string[], namedTargets?: readonly string[], inferMain?: boolean, droppedInferred?: readonly string[], inferLib?: boolean, binFiles?: readonly string[], buildScript?: string): {
     srcDir: string;
     rootFiles: string[];
     fileIsRoot: boolean;
@@ -94,6 +96,8 @@ interface CargoManifest {
     libDeclared: boolean;
     /** `[package].autolib` written as `false`: with no `[lib]` table Cargo then infers no library from `src/lib.rs`. */
     autolibOff: boolean;
+    /** `[package].build` as written: the build script's path, `false` for none; undefined when absent, written `true` or not readable, where Cargo looks for `build.rs`. */
+    build: string | false | undefined;
     /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
     packageName: string | undefined;
     /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
