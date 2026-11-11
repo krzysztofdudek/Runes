@@ -188,6 +188,8 @@ function makeRustResolveDeps(
   const packageDirByDir = new Map<string, string | null>();
   // Cache: crate-root file → its text with comments stripped ('' when unreadable).
   const rootTextByFile = new Map<string, string>();
+  // Cache: crate-root file → the modules it declares at its top level.
+  const modulesByFile = new Map<string, Set<string>>();
 
   function manifestAt(dir: string): CargoManifest | undefined {
     if (!manifestByDir.has(dir)) {
@@ -282,14 +284,26 @@ function makeRustResolveDeps(
     // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
     const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
     const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib);
+    // Cargo compiles a file once per crate that declares it (`mod x;` from a crate root down), so with several roots in the tree the file's crates are those whose root declares the first module segment below the tree's directory: a root item named in the file is that root's, and when none or several do, no item binds (see `resolveFromModuleDir`).
+    const existingRoots = target.rootFiles.filter((f) => exists(at(f)));
+    const owningRoots = existingRoots.length > 1 && !target.fileIsRoot ? rootsDeclaring(rel, target.srcDir, existingRoots, at) : undefined;
     return {
       srcDir: at(target.srcDir),
       crateName,
-      rootFiles: target.rootFiles.map(at),
+      rootFiles: (owningRoots ?? target.rootFiles).map(at),
       fileIsRoot: target.fileIsRoot,
       lib: lib ?? null,
-      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, target.rootFiles.filter((f) => exists(at(f)))),
+      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, owningRoots?.length === 1 ? owningRoots : existingRoots),
     };
+  }
+
+  /** The roots among `roots` that declare the module `file` lies in, below the tree directory `srcDir` (all package-relative, `at` makes a path repository-relative): all of them when `file` lies outside that directory, which tells nothing, and otherwise those that declare it: one root owns it, several are the crates it belongs to, none means no crate compiles it. */
+  function rootsDeclaring(file: string, srcDir: string, roots: string[], at: (sub: string) => string): string[] {
+    const below = srcDir === '' ? file : file.startsWith(`${srcDir}/`) ? file.slice(srcDir.length + 1) : undefined;
+    if (below === undefined) return roots;
+    const first = below.split('/')[0].replace(/\.rs$/, '');
+    const declaring = roots.filter((r) => topLevelModules(at(r)).has(first));
+    return declaring;
   }
 
   /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
@@ -369,6 +383,24 @@ function makeRustResolveDeps(
       if (tree !== undefined) return tree;
     }
     return undefined;
+  }
+
+  /** The names of the modules the file declares at its top level, `mod x;` and `mod x { … }`, never one inside another module's braces. */
+  function topLevelModules(rootFile: string): Set<string> {
+    let names = modulesByFile.get(rootFile);
+    if (names === undefined) {
+      names = new Set();
+      const raw = plain.read(rootFile);
+      const text = raw === undefined ? '' : stripRustComments(raw).replace(/"(?:[^"\\]|\\.)*"/g, '""');
+      let depth = 0;
+      for (const m of text.matchAll(/\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])|([{}])/g)) {
+        if (m[1] !== undefined && depth === 0) names.add(m[1]);
+        const brace = m[2] === '{' || m[3] === '{' ? 1 : m[3] === '}' ? -1 : 0;
+        depth = Math.max(0, depth + brace);
+      }
+      modulesByFile.set(rootFile, names);
+    }
+    return names;
   }
 
   function rootDeclares(rootFile: string, name: string, asItem = false): boolean {
@@ -467,7 +499,9 @@ export function rustTargetFor(
     const libTree = deepestTree(libRoots, 'src');
     if (libTree !== undefined) return libTree;
   }
-  return { srcDir: 'src', rootFiles: [...(inferLib && libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots], fileIsRoot: false };
+  // A declared target whose path lies directly in `src/` (`[[bin]] path = "src/cli.rs"`) roots a crate over the same tree as the library and `src/main.rs`.
+  const inSrc = targets.filter((t) => path.posix.dirname(t) === 'src');
+  return { srcDir: 'src', rootFiles: [...new Set([...(inferLib && libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots, ...inSrc])], fileIsRoot: false };
 }
 
 /** The parts of a Cargo.toml the Rust resolver needs. */

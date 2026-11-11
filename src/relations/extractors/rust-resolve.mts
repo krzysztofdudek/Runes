@@ -237,8 +237,9 @@ function resolveRelative(
  * Also the empty tail resolves to the module dir itself (`<dir>/mod.rs` is not used
  * here because `dir` already IS the module dir; the self/super caller handles that).
  * When the module dir IS the crate root (`root.dir`), the crate root module's file is the
- * crate root file: the empty tail binds the first existing `root.files` entry, and an item
- * tail binds the first root file that declares the item's name (`root.declares`).
+ * crate root file: the empty tail binds the one existing `root.files` entry, and an item
+ * tail binds that root file when it declares the item's name (`root.declares`); with more than
+ * one root file (a module that several crates declare) neither binds.
  * The FIRST existing candidate wins. Any miss → undefined (silence).
  */
 function resolveFromModuleDir(
@@ -254,7 +255,7 @@ function resolveFromModuleDir(
     for (const cand of [joinUnder(moduleDir, 'mod.rs'), moduleDir + '.rs']) {
       if (cand !== undefined && exists(cand)) return cand;
     }
-    if (atRoot) return root.files.find((f) => exists(f));
+    if (atRoot) return soleRootFile(root, exists);
     return undefined;
   }
 
@@ -277,8 +278,17 @@ function resolveFromModuleDir(
   // The crate root module's items live in the crate root file — bound only when that file
   // really declares (or `use`s) the first item name, so a crate-root-namespace name defined
   // elsewhere (a `#[macro_export]` macro) is never pinned on the root file.
-  if (atRoot) return root.files.find((f) => exists(f) && root.declares(f, segs[0]));
+  if (atRoot) {
+    const only = soleRootFile(root, exists);
+    return only !== undefined && root.declares(only, segs[0]) ? only : undefined;
+  }
   return undefined;
+}
+
+/** The one crate-root file of `root` that exists. Several roots in the context are the crates a module belongs to when more than one declares it, and which of them a root item is cannot be told, so none is bound. */
+function soleRootFile(root: RootContext, exists: (repoRelPosix: string) => boolean): string | undefined {
+  const live = root.files.filter((f) => exists(f));
+  return live.length === 1 ? live[0] : undefined;
 }
 
 /** Is `dir` within (or equal to) the crate `src` root? Guards `super::` climbing

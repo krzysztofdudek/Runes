@@ -269,7 +269,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // Declared by its path, or by a bin named like the package, it is the root again.
     expect(resolve('[[bin]]\nname = "x"\npath = "src/main.rs"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
     expect(resolve('[[bin]]\nname = "app"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
-    expect(resolve('[[bin]]\nname = "app"\n', 'crate::Main', 'src/bin/tool.rs')).toBe('src/main.rs');
+    expect(resolve('[[bin]]\nname = "app"\n', 'crate::Main', 'src/cli.rs')).toBe('src/main.rs');
     // With discovery on it is a root with nothing declared.
     put('Cargo.toml', '[package]\nname = "app"\n');
     expect(makeResolvePathToFile(ws)('self::cli::Args', 'src/main.rs', 'rust')).toBe('src/cli.rs');
@@ -451,7 +451,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBe('src/shapes.rs');
     expect(resolve(pkg('2018', '[[bin]]\nname = "other"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
     // A module of both the library and the binary is read in two editions when they differ, so it is not told; it is when they agree.
-    put('src/lib.rs', 'mod shapes;\n');
+    put('src/lib.rs', 'mod shapes;\nmod api;\n');
+    put('src/main.rs', 'mod shapes;\nmod api;\n');
     table = await tableNow();
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
     expect(resolve(pkg('2015', '[[bin]]\nname = "app"\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
@@ -525,7 +526,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // In the same directory as the binary, outside src/.
     put('same/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "crates/core/lib.rs"\n[[bin]]\nname = "app"\npath = "crates/core/main.rs"\n');
     put('same/crates/core/lib.rs', 'pub mod util;\npub struct Item;\n');
-    put('same/crates/core/main.rs', 'struct Bin;\nfn main() {}\n');
+    put('same/crates/core/main.rs', 'mod tool;\nstruct Bin;\nfn main() {}\n');
+    put('same/crates/core/tool.rs', '');
     put('same/crates/core/other.rs', '');
     // Below the binary's directory: the library's deeper directory holds its files.
     put('below/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib/lib.rs"\n[[bin]]\nname = "app"\npath = "main.rs"\n');
@@ -538,7 +540,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::LibOnly', 'root/foo.rs', 'rust')).toBe('root/lib.rs');
     expect(resolve('crate::foo', 'root/lib.rs', 'rust')).toBe('root/foo.rs');
     expect(resolve('crate::Item', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/lib.rs');
-    expect(resolve('crate::Bin', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/main.rs');
+    expect(resolve('crate::Bin', 'same/crates/core/tool.rs', 'rust')).toBe('same/crates/core/main.rs');
+    expect(resolve('crate::Bin', 'same/crates/core/util.rs', 'rust')).toBeUndefined();
     expect(resolve('crate::other', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/other.rs');
     expect(resolve('crate::Item', 'below/lib/util.rs', 'rust')).toBe('below/lib/lib.rs');
     expect(resolve('crate::util', 'below/lib/lib.rs', 'rust')).toBe('below/lib/util.rs');
@@ -574,7 +577,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('b/lib.rs', 'pub struct Config;\n');
     put('b/src/main.rs', 'struct Config;\nfn main() {}\n');
     put('c/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "src/core.rs"\n');
-    put('c/src/core.rs', 'pub struct Config;\n');
+    put('c/src/core.rs', 'pub mod cli;\npub struct Config;\n');
     put('c/src/main.rs', 'struct Config;\nfn main() {}\n');
     const resolve = makeResolvePathToFile(ws);
     expect(resolve('crate::Config', 'a/src/cli.rs', 'rust')).toBe('a/src/main.rs');
@@ -588,6 +591,35 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('app::Config', 'a/src/cli.rs', 'rust')).toBe('a/lib/lib.rs');
     // A [lib] path inside src/ is probed first, as src/lib.rs is.
     expect(resolve('crate::Config', 'c/src/cli.rs', 'rust')).toBe('c/src/core.rs');
+  });
+
+  it('binds a crate:: root item to the one root that declares the module, and to none when several roots or no root do', () => {
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[[bin]]\nname = "cli"\npath = "src/cli.rs"\n');
+    put('src/lib.rs', '// mod comment;\npub mod lib_only;\npub mod nested_in_lib {\n    pub mod inside;\n}\nmod both;\nmod r#raw;\npub const TEXT: &str = "mod in_string { mod x; }";\npub struct Opts;\npub struct LibOpts;\n');
+    put('src/main.rs', 'mod main_only;\nmod both;\nstruct Opts;\nstruct MainOpts;\nfn main() {}\n');
+    put('src/cli.rs', 'mod cli_only;\nmod both;\nmod inside;\nstruct Opts;\nstruct CliOpts;\nfn main() {}\n');
+    for (const f of ['lib_only', 'main_only', 'cli_only', 'both', 'orphan', 'raw', 'in_string']) put(`src/${f}/mod.rs`, '');
+    put('src/nested_in_lib/inside.rs', '');
+    put('src/inside.rs', '');
+    put('tools/stray.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    expect(resolve('crate::Opts', 'src/lib_only/mod.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'src/main_only/mod.rs', 'rust')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/cli_only/mod.rs', 'rust')).toBe('src/cli.rs');
+    // A root item the declaring root lacks is no item of another root.
+    expect(resolve('crate::MainOpts', 'src/lib_only/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::MainOpts', 'src/main_only/mod.rs', 'rust')).toBe('src/main.rs');
+    // A module of several crates, or of none, binds no root item; its module paths still resolve.
+    expect(resolve('crate::Opts', 'src/both/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::Opts', 'src/orphan/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::Opts', 'tools/stray.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::lib_only', 'src/both/mod.rs', 'rust')).toBe('src/lib_only/mod.rs');
+    // Only a module declared at the top of a root counts: not one in an inline module, a comment or a string; a raw identifier does.
+    expect(resolve('crate::Opts', 'src/raw/mod.rs', 'rust')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'src/in_string/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::Opts', 'src/inside.rs', 'rust')).toBe('src/cli.rs');
+    // The module's file itself is its crate's root only when it is one.
+    expect(resolve('crate::Opts', 'src/cli.rs', 'rust')).toBe('src/cli.rs');
   });
 
   it('roots crate:: of a [[test]], [[example]] or [[bench]] path at that target, also below tests/ where no main.rs is (the zed shape)', () => {
