@@ -2004,6 +2004,24 @@ describe('resolveRustPath — a file loaded through a path attribute (injected d
     expect(resolveRustPath('super::Item', 'src/platform/linux.rs', exists, deps(true, { 'src/platform/linux.rs': ['src/lib.rs', 'src/other.rs'] }))).toBeUndefined();
   });
 
+  it('reads super from the module that declares the file by name first, and from the file that loads it where that names nothing', () => {
+    const files = new Set(['src/lib.rs', 'src/x/mod.rs', 'src/x/f.rs', 'src/deep/mod.rs', 'src/deep/g.rs']);
+    const on = (p) => files.has(p);
+    const declares = { 'src/x/mod.rs': ['f'], 'src/lib.rs': ['x', 'deep'], 'src/deep/mod.rs': ['g'] };
+    const loaded = { 'src/x/f.rs': ['src/deep/g.rs'], 'src/x/mod.rs': ['src/deep/g.rs'] };
+    const deps = (byName) => ({
+      crateRootFor: (f) => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: f === 'src/lib.rs' }),
+      rootDeclares: (root, name) => name !== 'Gone',
+      pathLoaders: (f) => loaded[f] ?? [],
+      moduleDeclared: (file, modulePath) => (byName ? (declares[file] ?? []).includes(modulePath) : false),
+    });
+    expect(resolveRustPath('super::Item', 'src/x/f.rs', on, deps(true))).toBe('src/x/mod.rs');
+    expect(resolveRustPath('super::super::Gone', 'src/x/f.rs', on, deps(true))).toBe('src/deep/mod.rs');
+    expect(resolveRustPath('super::Thing', 'src/x/mod.rs', on, deps(true))).toBe('src/lib.rs');
+    // Declared by no module by name: the file that loads it is its one parent.
+    expect(resolveRustPath('super::Item', 'src/x/f.rs', on, deps(false))).toBe('src/deep/g.rs');
+  });
+
   it('changes nothing for a mod.rs or a crate root', () => {
     expect(resolveRustPath('self::epoll', 'src/platform/mod.rs', exists, deps(true))).toBe('src/platform/epoll.rs');
     expect(resolveRustPath('self::other', 'src/lib.rs', exists, deps(true))).toBe('src/other.rs');

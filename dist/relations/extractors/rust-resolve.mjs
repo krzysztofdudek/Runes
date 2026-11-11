@@ -160,22 +160,43 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     const crate = deps.crateRootFor(fromFile);
     if (crate === undefined)
         return undefined;
-    const srcDir = crate.srcDir;
     const fromPosix = toPosix(fromFile);
-    const fromDir = path.posix.dirname(fromPosix);
-    const baseName = path.posix.basename(fromPosix, '.rs');
     const loaders = deps.pathLoaders?.(fromPosix) ?? [];
-    // A file loaded through a `path` attribute is a child of the module of the file that loads it, wherever the two lie: its first `super` is that file's `self`. Two loaders leave the parent untold. Each step spends one `super`, so the walk ends.
+    // A file loaded through a `path` attribute is a child of the module of the file that loads it, wherever the two lie: its first `super` is that file's `self`. The same file may also be a module by its name, declared by the module above its place, which is then its parent as well: that parent is read first, as it was before loaders were known, and the loader only where it names nothing. Two loaders leave the parent untold. Each step spends one `super`, so the walk ends.
     const lead = segments.findIndex((s) => s !== 'self' && s !== 'super');
     const supers = segments.slice(0, lead === -1 ? segments.length : lead).filter((s) => s === 'super').length;
     if (supers > 0 && loaders.length > 0 && crate.fileIsRoot !== true) {
-        if (loaders.length > 1)
-            return undefined;
-        const rest = segments.slice(lead === -1 ? segments.length : lead);
-        const climb = [...new Array(supers - 1).fill('super'), ...rest];
-        const next = climb[0] === 'super' ? climb : ['self', ...climb];
-        return resolveRelative(next[0], next, loaders[0], exists, deps);
+        const viaLoader = () => {
+            if (loaders.length > 1)
+                return undefined;
+            const rest = segments.slice(lead === -1 ? segments.length : lead);
+            const climb = [...new Array(supers - 1).fill('super'), ...rest];
+            const next = climb[0] === 'super' ? climb : ['self', ...climb];
+            return resolveRelative(next[0], next, loaders[0], exists, deps);
+        };
+        if (!declaredByName(fromPosix, crate, exists, deps))
+            return viaLoader();
+        return resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders) ?? viaLoader();
     }
+    return resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders);
+}
+/** Whether the module above the place of `file` declares it by its name (`mod util;` in `src/lib.rs` for `src/util.rs`): the crate's root files where that module is the crate root, else its `<dir>.rs` or `<dir>/mod.rs`. */
+function declaredByName(file, crate, exists, deps) {
+    if (deps.moduleDeclared === undefined)
+        return false;
+    const dir = path.posix.dirname(file);
+    const baseName = path.posix.basename(file, '.rs');
+    const name = baseName === 'mod' ? path.posix.basename(dir) : baseName;
+    const above = baseName === 'mod' ? path.posix.dirname(dir) : dir;
+    const files = path.posix.normalize(above) === path.posix.normalize(crate.srcDir) ? (crate.rootFiles ?? []) : [above + '.rs', joinUnder(above, 'mod.rs')];
+    return files.some((f) => f !== undefined && exists(f) && deps.moduleDeclared(f, name) === true);
+}
+/** `resolveRelative` by the place of `fromPosix` on disk, a file loaded through a `path` attribute (`loaders`) owning the directory it lies in. */
+function resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders) {
+    const fromFile = fromPosix;
+    const srcDir = crate.srcDir;
+    const fromDir = path.posix.dirname(fromPosix);
+    const baseName = path.posix.basename(fromPosix, '.rs');
     // The module directory of the importing file: for `mod.rs` and for a crate ROOT file
     // (`src/lib.rs`, `src/main.rs`, `src/bin/x.rs`, `tests/it.rs`, …) it is the file's own
     // directory; for `foo.rs` it is `<dir>/foo` (the dir that would hold foo's submodules).
