@@ -231,19 +231,12 @@ function rebaseForInlineMods(specifier: string, names: readonly string[]): strin
   return [...new Array<string>(supers - names.length).fill('super'), ...rest].join('::');
 }
 
-/** True when `modItem` is preceded by a `#[path = "…"]` attribute that overrides its
- *  conventional file location. Attributes parse as preceding `attribute_item` siblings. */
+/** True when a `#[path = "…"]` attribute in front of `modItem` overrides its conventional file location. Attributes parse as preceding `attribute_item` siblings; doc comments, comments and other attributes may stand between the attribute and the `mod`, in any order. */
 function modHasPathOverride(modItem: Node): boolean {
-  let sib: Node | null = modItem.previousNamedSibling;
-  while (sib !== null && sib.type === 'attribute_item') {
-    const attr = sib.namedChild(0); // attribute
-    if (attr !== null && attr.type === 'attribute') {
-      const id = attr.namedChild(0);
-      if (id !== null && id.type === 'identifier' && id.text === 'path') return true;
-    }
-    sib = sib.previousNamedSibling;
-  }
-  return false;
+  return attributesBefore(modItem).some((item) => {
+    const id = item.namedChild(0)?.namedChild(0) ?? null;
+    return id !== null && id.type === 'identifier' && id.text === 'path';
+  });
 }
 
 function uses(file: ParsedFile): DetectedDep[] {
@@ -851,7 +844,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 14,
+  rev: 15,
   declarations,
   uses,
 };

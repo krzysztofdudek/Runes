@@ -374,3 +374,15 @@ describe('rust extractor — a use path that starts with ::', () => {
     expect(specs(uses)).toEqual([]);
   });
 });
+
+describe('rust extractor — a path attribute and what stands between it and its mod', () => {
+  it('skips the mod behind a doc comment, a line comment, a block comment and another attribute', async () => {
+    const { uses } = await run('#[path = "a.rs"]\n/// doc\nmod a;\n#[path = "b.rs"]\n// line\n/* block */\n#[allow(dead_code)]\nmod b;\n/// doc only\nmod c;\n#[cfg(unix)]\n/** block doc */\nmod d;');
+    expect(specs(uses)).toEqual(['self::c', 'self::d']);
+  });
+
+  it('silences what an inline module holds when a comment follows its path attribute', async () => {
+    const { uses } = await run('#[path = "elsewhere"]\n/// doc\nmod outer {\n    mod inner;\n    use self::inner::X;\n}');
+    expect(specs(uses)).toEqual([]);
+  });
+});

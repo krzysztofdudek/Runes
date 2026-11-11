@@ -251,6 +251,11 @@ describe('MATRIX — a use path that starts with ::', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a path attribute that comments or other attributes separate from its mod', () => {
+  it('rust-mod-path-attribute-before-doc-comment-silence', () => runCase('rust-mod-path-attribute-before-doc-comment-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one
