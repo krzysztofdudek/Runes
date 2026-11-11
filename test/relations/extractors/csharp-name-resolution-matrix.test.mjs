@@ -327,6 +327,9 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
   it('csharp-private-assets-reference-not-passed-on-edge', () => runCase('csharp-private-assets-reference-not-passed-on-edge'));
   it('csharp-private-assets-reference-own-project-edge', () => runCase('csharp-private-assets-reference-own-project-edge'));
   it('csharp-assembly-reference-sees-assembly-only-edge', () => runCase('csharp-assembly-reference-sees-assembly-only-edge'));
+  it('csharp-project-reference-without-output-assembly-not-followed-edge', () => runCase('csharp-project-reference-without-output-assembly-not-followed-edge'));
+  it('csharp-project-reference-without-output-assembly-through-edge', () => runCase('csharp-project-reference-without-output-assembly-through-edge'));
+  it('csharp-assembly-reference-not-passed-on-edge', () => runCase('csharp-assembly-reference-not-passed-on-edge'));
   it('csharp-directory-build-props-reference-edge', () => runCase('csharp-directory-build-props-reference-edge'));
   it('csharp-unresolved-msbuild-property-reaches-everything-edge', () => runCase('csharp-unresolved-msbuild-property-reaches-everything-edge'));
   it('csharp-project-reference-directory-case-edge', () => runCase('csharp-project-reference-directory-case-edge'));
