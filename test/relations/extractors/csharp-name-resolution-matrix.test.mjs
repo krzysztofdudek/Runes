@@ -462,6 +462,7 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-private-base-member-hides-no-type-edge', () => runCase('csharp-private-base-member-hides-no-type-edge'));
   it('csharp-derived-class-type-receiver-edge', () => runCase('csharp-derived-class-type-receiver-edge'));
   it('csharp-extension-beside-instance-method-of-other-shape-edge', () => runCase('csharp-extension-beside-instance-method-of-other-shape-edge'));
+  it('csharp-this-field-of-other-part-instance-method-silence', () => runCase('csharp-this-field-of-other-part-instance-method-silence'));
   it('csharp-extension-argument-type-beside-instance-method-edge', () => runCase('csharp-extension-argument-type-beside-instance-method-edge'));
   it('csharp-extension-enum-argument-beside-instance-overloads-edge', () => runCase('csharp-extension-enum-argument-beside-instance-overloads-edge'));
   it('csharp-extension-other-argument-count-silence', () => runCase('csharp-extension-other-argument-count-silence'));

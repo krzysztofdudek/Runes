@@ -1545,6 +1545,15 @@ export function extractCsharpRefs(file) {
             return undefined;
         const args = inv.childForFieldName('arguments').namedChildren.filter((a) => a.type === 'argument').length;
         const typeArgs = nameNode.type === 'generic_name' ? arityOf(findChild(nameNode, 'type_argument_list').text) : 0;
+        // `this.<name>` with a name this file declares as no member: a member of another part of the type, or an inherited one, whose written type only the resolver can read.
+        if (receiver.type === 'member_access_expression' && receiver.childForFieldName('expression').type === 'this') {
+            const member = receiver.childForFieldName('name');
+            const at = receiver.startIndex;
+            const own = enclosingTypes(receiver).types?.[0];
+            if (member.type === 'identifier' && own !== undefined && openTypes.has(own) && !(typedNames.get(member.text) ?? []).some((e) => e.member && at >= e.start && at < e.end)) {
+                return { name, receiver, args, typeArgs, member: { types: listPlace([own]), name: member.text, direct: true, own: true } };
+            }
+        }
         if (instanceLikeReceiver(receiver))
             return { name, receiver, args, typeArgs };
         // A first name the file does not declare reads as a type, unless a type around the call has a member of that name in another part or from a base class: then the receiver is a value after all, which only the resolver can tell.
@@ -2787,7 +2796,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 const unless = [];
                 // A receiver the file does not declare is a value only as a member of a type around the call.
                 if (r.member !== undefined)
-                    unless.push({ kind: 'no-member', types: holders, name: r.member.name, ...(r.member.direct ? { call } : {}) });
+                    unless.push({ kind: 'no-member', types: holders, name: r.member.name, ...(r.member.direct ? { call } : {}), ...(r.member.own === true ? { own: true } : {}) });
                 if (receivers.length > 0 || r.self !== undefined)
                     unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
                 pushExtension(r.name, r.enclosingNs, r.line, r.at, unless, { args: call.args, typeArgs: call.typeArgs });
@@ -2813,7 +2822,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 33,
+    rev: 34,
     declarations,
     uses,
 };

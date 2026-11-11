@@ -412,12 +412,13 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       const found = csharp().simpleName(type, condition.name, fromFile);
       if (found === 'none') continue;
       if (condition.kind === 'member') return found === 'member';
-      if (found === 'type') return true;
+      // A nested type of that name: the call is a static call through it, unless the receiver is written `this.<name>`, which names no type.
+      if (found === 'type') return condition.own !== true;
       // A member: a value, whose written type may have the called method itself.
       const call = condition.call;
       return call !== undefined && csharp().memberTypes(type, condition.name, fromFile).some((key) => csharp().hasMethod(key, call, call.from, fromFile));
     }
-    return condition.kind === 'no-member';
+    return condition.kind === 'no-member' && condition.own !== true;
   };
 
   /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */

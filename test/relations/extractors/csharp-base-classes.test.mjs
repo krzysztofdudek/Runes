@@ -903,6 +903,55 @@ describe('csharp: an instance method takes a call only when its parameters can t
   });
 });
 
+describe('csharp: a call on this.<name> reads the member another part or a base declares', () => {
+  const shared = {
+    'src/core/IConfig.cs': 'namespace App;\npublic interface IConfig { object Get(string key); }\npublic interface IPlain { }\n',
+    'src/ext/E.cs': 'namespace App;\npublic static class E {\n  public static object Get(this IConfig c, string key) => null;\n  public static object Get(this IPlain c, string key) => null;\n}\n',
+  };
+
+  it('gives no extension edge where the member\'s written type has an instance method the call fits, in another part or in a base class', async () => {
+    await project({
+      ...shared,
+      'src/core/Page.cs': 'namespace App;\npublic partial class Page { private readonly IConfig _config; }\npublic class PageBase { protected IConfig Inherited; }\n',
+      'src/web/Page.Render.cs': 'namespace App;\npublic partial class Page {\n  object A(string key) => this._config.Get(key);\n}\npublic class Derived : PageBase {\n  object B(string key) => this.Inherited.Get(key);\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Page.Render.cs')).toEqual(['5->core']); // the base class, and no extension edge
+      const member = extractCsharpRefs(files.find((f) => f.path === 'src/web/Page.Render.cs')).refs.filter((r) => r.kind === 'ext').map((r) => r.member);
+      expect(member.map((m) => [m.name, m.direct, m.own])).toEqual([['_config', true, true], ['Inherited', true, true]]);
+    });
+  });
+
+  it('keeps the extension edge where the member\'s type has no such method, where no type of the repository declares the member, and where a nested type has the name', async () => {
+    await project({
+      ...shared,
+      'src/core/Page.cs': 'namespace App;\npublic partial class Page { private readonly IPlain _plain; public class Nested { } }\n',
+      'src/web/Page.Render.cs': [
+        'namespace App;',
+        'public partial class Page {',
+        '  object A(string key) => this._plain.Get(key);',
+        '  object B(string key) => this.Nested.Get(key);',
+        '}',
+        'public class Framed : System.Exception {',
+        '  object C(string key) => this.Data.Get(key);',
+        '}',
+        '',
+      ].join('\n'),
+    }, ({ edges }) => {
+      expect(edges('src/web/Page.Render.cs')).toEqual(['3->ext', '4->ext', '7->ext']);
+    });
+  });
+
+  it('reads a member the file itself declares, and a call inside a type that can hold no unseen member, as before', async () => {
+    await project({
+      ...shared,
+      'src/web/Use.cs': 'namespace App;\npublic partial class Use {\n  private readonly IConfig _config;\n  object A(string key) => this._config.Get(key);\n}\npublic sealed class Closed {\n  object B(string key) => this.Missing.Get(key);\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['3->core', '7->ext']); // the field's type, and the one call whose receiver nothing declares
+      expect(extractCsharpRefs(files.find((f) => f.path === 'src/web/Use.cs')).refs.filter((r) => r.kind === 'ext').map((r) => r.member)).toEqual([undefined, undefined]);
+    });
+  });
+});
+
 describe('csharp: the lists an extract names by place', () => {
   it('writes the types that can hold an unseen member once, for every receiver and call of one type body', async () => {
     await project({
