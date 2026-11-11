@@ -99,6 +99,37 @@ describe('a node with very many children is read in time linear in their number'
     assert.equal(declarations.length, 0);
   });
 
+  // Kotlin recovery reads a damaged file one top-level declaration at a time. A file of many damaged declarations re-reads each of them; a file whose first declaration never closes its bracket is one declaration as long as the file, on which the grammar's own error recovery re-reads its input a number of times that grows with the square of its length.
+  describe('malformed Kotlin of 80 000 characters, each line damaged', () => {
+    const KOTLIN_SIZE = 80_000;
+    const kotlinLines = (line) => (scale) => {
+      let code = '';
+      for (let i = 0; code.length < KOTLIN_SIZE * scale; i++) code += line(i);
+      return code;
+    };
+    const marked = (key) => [{ symbolKey: key, line: 1 }, { symbolKey: '*', line: 1 }, { symbolKey: 'AKt', line: 1 }];
+
+    it('a function whose body is a stray parenthesis on every line declares each function', async () => {
+      const make = kotlinLines((i) => `fun f${i}() = )\n`);
+      const { uses, declarations } = await readsLinearly(relations.kotlinExtractor, 'A.kt', 'kotlin', make);
+      const lines = make(1).split('\n').length - 1;
+      assert.deepEqual(uses, []);
+      assert.deepEqual(declarations, [...Array.from({ length: lines }, (_, i) => ({ symbolKey: `f${i}`, line: i + 1 })), { symbolKey: 'AKt', line: 1 }]);
+    });
+
+    it('an annotated function whose parameter list never closes', async () => {
+      const { uses, declarations } = await readsLinearly(relations.kotlinExtractor, 'A.kt', 'kotlin', kotlinLines(() => '@A.B fun f(\n'));
+      assert.deepEqual(uses, []);
+      assert.deepEqual(declarations, marked('f'));
+    });
+
+    it('a property of a generic type whose initializer never closes', async () => {
+      const { uses, declarations } = await readsLinearly(relations.kotlinExtractor, 'A.kt', 'kotlin', kotlinLines(() => 'val x: A.B<C> = (\n'));
+      assert.deepEqual(uses, []);
+      assert.deepEqual(declarations, marked('x'));
+    });
+  });
+
   it('a Python file of 20 000 decorated top-level functions declares each of them', async () => {
     const count = 20_000;
     const make = (scale) => {
