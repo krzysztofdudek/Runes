@@ -160,7 +160,7 @@ interface CsScope {
   /** The enclosing-TYPE chain of the types whose BODY holds the node, joined by `+` as `chain` is. A member of a type, a nested type included, is in scope in that type's body only, never in its attributes, its base list or its constraint clauses (C# spec §7.7.1), so a type's own header is read with the chain of the types around the type, not with its own name. */
   readonly bodyChain: string;
   /** The nearest type declaration around the node, or null. */
-  readonly typeDecl: { readonly node: Node; readonly nested: boolean; readonly fileLocal: boolean } | null;
+  readonly typeDecl: { readonly node: Node; readonly nested: boolean; readonly fileLocal: boolean; readonly seen: TypeSeen } | null;
   /** True when a type around the node carries the C#11 `file` modifier: a type nested in one cannot escape the file either. */
   readonly fileLocal: boolean;
   /** The type parameters in scope for the node. */
@@ -218,7 +218,7 @@ function csBelow(node: Node, own: CsScope): CsScope | undefined {
     const name = declaredTypeName(node);
     if (name !== '') chain = chain === '' ? name : `${chain}+${name}`;
     fileLocal = own.fileLocal || hasFileModifier(node);
-    typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
+    typeDecl = { node, nested: own.typeDecl !== null, fileLocal, seen: typeSeen(node, own.typeDecl) };
     extBelow = false;
     changed = true;
   }
@@ -340,33 +340,28 @@ function accessModifiers(node: Node): Set<string> {
   return out;
 }
 
-/** The nearest type declaration around `node`, or null at the top level. */
-function enclosingTypeDeclaration(node: Node): Node | null {
-  for (let p = node.parent; p !== null; p = p.parent) if (TYPE_DECLARATION_TYPES.has(p.type)) return p;
-  return null;
-}
+/** How far a type is seen: by other assemblies (`open`), by its own assembly only (`assembly`), or not known from this part (`unknown`: a `partial` part without an access modifier, or a type nested in one). */
+type TypeSeen = 'open' | 'assembly' | 'unknown';
 
-/** True when the type declaration `node` is seen by its own assembly only: it, or a type around it, is `internal`, `private`, `private protected`, or has no access modifier where the default is internal (a top-level type) or private (a type nested in a class, struct or record). A `partial` part without one says nothing, so it is never counted. */
-function assemblyOnlyType(node: Node): boolean {
-  for (let d: Node | null = node; d !== null; d = enclosingTypeDeclaration(d)) {
-    const mods = accessModifiers(d);
-    if (mods.has('public') || (mods.has('protected') && !mods.has('private'))) continue;
-    if (mods.has('internal') || mods.has('private')) return true;
-    if (mods.has('partial')) return false;
-    const outer = enclosingTypeDeclaration(d);
-    if (outer === null) return true;
-    if (outer.type !== 'interface_declaration') return true;
-  }
-  return false;
+/** How far the type declaration `node` is seen, given the type declaration around it (`outer`, null at the top level). It is seen by its own assembly only when it, or a type around it, is `internal`, `private` or `private protected`, or has no access modifier where the default is internal (a top-level type) or private (a type nested in a class, struct or record); a type nested in an interface is public by default. */
+function typeSeen(node: Node, outer: CsScope['typeDecl']): TypeSeen {
+  if (outer !== null && outer.seen === 'assembly') return 'assembly';
+  const mods = accessModifiers(node);
+  let own: TypeSeen;
+  if (mods.has('public') || (mods.has('protected') && !mods.has('private'))) own = 'open';
+  else if (mods.has('internal') || mods.has('private')) own = 'assembly';
+  else if (mods.has('partial')) own = 'unknown';
+  else own = outer !== null && outer.node.type === 'interface_declaration' ? 'open' : 'assembly';
+  return own === 'open' && outer !== null && outer.seen === 'unknown' ? 'unknown' : own;
 }
 
 /** True when an extension method is seen by its own assembly only: the method is not public (or protected), or its static class is seen by its assembly only. A method of the misread C# 14 block form is judged by its class alone. */
-function assemblyOnlyExtension(node: Node, owner: Node): boolean {
+function assemblyOnlyExtension(node: Node, owner: NonNullable<CsScope['typeDecl']>): boolean {
   if (node.type === 'method_declaration') {
     const mods = accessModifiers(node);
     if (!mods.has('public') && !(mods.has('protected') && !mods.has('private'))) return true;
   }
-  return assemblyOnlyType(owner);
+  return owner.seen === 'assembly';
 }
 
 /** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
@@ -472,7 +467,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
       const symbolKey = extensionKey(ns, extName);
       out.push({ symbolKey, line: node.startPosition.row + 1 });
-      if (assemblyOnlyExtension(node, scope.typeDecl!.node)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
+      if (assemblyOnlyExtension(node, scope.typeDecl!)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
       return undefined;
     }
     if (!TYPE_DECLARATION_TYPES.has(node.type)) return undefined;
@@ -486,7 +481,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
     const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
     out.push({ symbolKey, line: node.startPosition.row + 1 });
-    if (assemblyOnlyType(node)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
+    if (typeSeen(node, scope.typeDecl) === 'assembly') out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
     return undefined;
   });
 

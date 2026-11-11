@@ -161,7 +161,7 @@ function csBelow(node, own) {
         if (name !== '')
             chain = chain === '' ? name : `${chain}+${name}`;
         fileLocal = own.fileLocal || hasFileModifier(node);
-        typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
+        typeDecl = { node, nested: own.typeDecl !== null, fileLocal, seen: typeSeen(node, own.typeDecl) };
         extBelow = false;
         changed = true;
     }
@@ -281,30 +281,21 @@ function accessModifiers(node) {
     }
     return out;
 }
-/** The nearest type declaration around `node`, or null at the top level. */
-function enclosingTypeDeclaration(node) {
-    for (let p = node.parent; p !== null; p = p.parent)
-        if (TYPE_DECLARATION_TYPES.has(p.type))
-            return p;
-    return null;
-}
-/** True when the type declaration `node` is seen by its own assembly only: it, or a type around it, is `internal`, `private`, `private protected`, or has no access modifier where the default is internal (a top-level type) or private (a type nested in a class, struct or record). A `partial` part without one says nothing, so it is never counted. */
-function assemblyOnlyType(node) {
-    for (let d = node; d !== null; d = enclosingTypeDeclaration(d)) {
-        const mods = accessModifiers(d);
-        if (mods.has('public') || (mods.has('protected') && !mods.has('private')))
-            continue;
-        if (mods.has('internal') || mods.has('private'))
-            return true;
-        if (mods.has('partial'))
-            return false;
-        const outer = enclosingTypeDeclaration(d);
-        if (outer === null)
-            return true;
-        if (outer.type !== 'interface_declaration')
-            return true;
-    }
-    return false;
+/** How far the type declaration `node` is seen, given the type declaration around it (`outer`, null at the top level). It is seen by its own assembly only when it, or a type around it, is `internal`, `private` or `private protected`, or has no access modifier where the default is internal (a top-level type) or private (a type nested in a class, struct or record); a type nested in an interface is public by default. */
+function typeSeen(node, outer) {
+    if (outer !== null && outer.seen === 'assembly')
+        return 'assembly';
+    const mods = accessModifiers(node);
+    let own;
+    if (mods.has('public') || (mods.has('protected') && !mods.has('private')))
+        own = 'open';
+    else if (mods.has('internal') || mods.has('private'))
+        own = 'assembly';
+    else if (mods.has('partial'))
+        own = 'unknown';
+    else
+        own = outer !== null && outer.node.type === 'interface_declaration' ? 'open' : 'assembly';
+    return own === 'open' && outer !== null && outer.seen === 'unknown' ? 'unknown' : own;
 }
 /** True when an extension method is seen by its own assembly only: the method is not public (or protected), or its static class is seen by its assembly only. A method of the misread C# 14 block form is judged by its class alone. */
 function assemblyOnlyExtension(node, owner) {
@@ -313,7 +304,7 @@ function assemblyOnlyExtension(node, owner) {
         if (!mods.has('public') && !(mods.has('protected') && !mods.has('private')))
             return true;
     }
-    return assemblyOnlyType(owner);
+    return owner.seen === 'assembly';
 }
 /** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
 function firstTopLevelStatement(root) {
@@ -416,7 +407,7 @@ function declarations(file) {
             const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
             const symbolKey = extensionKey(ns, extName);
             out.push({ symbolKey, line: node.startPosition.row + 1 });
-            if (assemblyOnlyExtension(node, scope.typeDecl.node))
+            if (assemblyOnlyExtension(node, scope.typeDecl))
                 out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
             return undefined;
         }
@@ -434,7 +425,7 @@ function declarations(file) {
         const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
         const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
         out.push({ symbolKey, line: node.startPosition.row + 1 });
-        if (assemblyOnlyType(node))
+        if (typeSeen(node, scope.typeDecl) === 'assembly')
             out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
         return undefined;
     });
