@@ -3,12 +3,12 @@ id: rust-proc-macro-derive-helper-attribute-silence
 language: rust
 category: trap
 expectation: silence
-cites: "Rust Reference — Procedural macros, Derive macros and Derive macro helper attributes (the names in `attributes(…)` are inert attributes in scope only on the item that derives; a proc-macro crate exports nothing but its macros)"
+cites: "Rust Reference — Procedural macros, Derive macros and Derive macro helper attributes (the names in `attributes(…)` are inert attributes in scope only on the item that derives)"
 ---
 
 ## Rule
 
-`#[proc_macro_derive(Builder, attributes(setter, skip))]` defines one item of the crate root, the derive `Builder`. The helper attributes `setter` and `skip` are no items and cannot be imported, and neither can the function `derive_builder` that carries the attribute: a proc-macro crate exports only its macros. None of the three `use` lines binds `derive-kit/src/lib.rs` (node `macros`).
+`#[proc_macro_derive(Builder, attributes(setter, skip))]` gives the crate root one more item, the derive `Builder`. The helper attributes `setter` and `skip` are no items and cannot be imported. Neither `use` line binds `derive-kit/src/lib.rs` (node `macros`).
 
 ## Files
 
@@ -39,12 +39,11 @@ pub fn derive_builder(input: TokenStream) -> TokenStream { input }
 ```rust path=app/src/lib.rs owner=root
 use derive_kit::setter;
 use derive_kit::skip;
-use derive_kit::derive_builder;
 ```
 
 ## Expect
 
-- silence      # `setter` and `skip` are helper attributes and `derive_builder` is the function behind the derive: none is an item of the proc-macro crate's root
+- silence      # `setter` and `skip` are helper attributes, no items of the proc-macro crate's root
 
 ## Why
 

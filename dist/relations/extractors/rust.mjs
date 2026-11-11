@@ -555,7 +555,9 @@ export function topLevelItemNames(root) {
         if (node === null)
             continue;
         if (NAMED_ITEMS.has(node.type)) {
-            add((node.type === 'function_item' ? deriveMacroName(node) : undefined) ?? node.childForFieldName('name')?.text, node);
+            add(node.childForFieldName('name')?.text, node);
+            if (node.type === 'function_item')
+                add(deriveMacroName(node), node);
         }
         else if (node.type === 'foreign_mod_item') {
             for (const item of node.childForFieldName('body')?.namedChildren ?? []) {
@@ -596,7 +598,7 @@ function deriveMacroName(fn) {
         if (attr === null || id === null || id.type !== 'identifier' || id.text !== 'proc_macro_derive')
             continue;
         const first = attr.childForFieldName('arguments')?.namedChild(0) ?? null;
-        return first !== null && first.type === 'identifier' ? first.text : '';
+        return first !== null && first.type === 'identifier' ? first.text : undefined;
     }
     return undefined;
 }
@@ -696,7 +698,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 10,
+    rev: 11,
     declarations,
     uses,
 };

@@ -1573,13 +1573,13 @@ path = "..\u002fmore"
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
   });
 
-  it('takes the derive a `proc_macro_derive` function defines as the item, in place of the function\'s own name, and no helper attribute', async () => {
-    expect(await itemsOf('#[proc_macro_derive(Builder)]\npub fn builder(input: TokenStream) -> TokenStream { input }')).toEqual(['Builder']);
-    expect(await itemsOf('/// Doc.\n#[proc_macro_derive(r#Builder, attributes(setter, skip))]\n#[allow(dead_code)]\npub fn derive_builder(input: TokenStream) -> TokenStream { input }')).toEqual(['Builder']);
+  it('takes the derive a `proc_macro_derive` function defines as one more item beside the function, and no helper attribute', async () => {
+    expect(await itemsOf('#[proc_macro_derive(Builder)]\npub fn builder(input: TokenStream) -> TokenStream { input }')).toEqual(['builder', 'Builder']);
+    expect(await itemsOf('/// Doc.\n#[proc_macro_derive(r#Builder, attributes(setter, skip))]\n#[allow(dead_code)]\npub fn derive_builder(input: TokenStream) -> TokenStream { input }')).toEqual(['derive_builder', 'Builder']);
     // The other kinds of procedural macro are named by their function.
     expect(await itemsOf('#[proc_macro]\npub fn make(input: TokenStream) -> TokenStream { input }\n#[proc_macro_attribute]\npub fn route(a: TokenStream, b: TokenStream) -> TokenStream { b }')).toEqual(['make', 'route']);
-    // An attribute with no name to read binds nothing; one on another kind of item is not read.
-    expect(await itemsOf('#[proc_macro_derive()]\npub fn a(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive]\npub fn b(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive("C")]\npub fn c(input: TokenStream) -> TokenStream { input }')).toEqual([]);
+    // An attribute with no name to read adds nothing; one on another kind of item is not read.
+    expect(await itemsOf('#[proc_macro_derive()]\npub fn a(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive]\npub fn b(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive("C")]\npub fn c(input: TokenStream) -> TokenStream { input }')).toEqual(['a', 'b', 'c']);
     expect(await itemsOf('#[proc_macro_derive(Builder)]\nstruct S;\n#[some::proc_macro_derive(X)]\nfn plain() {}')).toEqual(['S', 'plain']);
   });
 
