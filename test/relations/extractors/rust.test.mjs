@@ -313,3 +313,50 @@ describe('rust extractor — declarations()', () => {
     expect(declarations[0]?.line).toBe(2);
   });
 });
+
+describe('rust extractor — a use path that starts with a name in scope', () => {
+  it('emits what a declared module stands for in front of the path as written', async () => {
+    const { uses } = await run('mod shapes;\npub use shapes::Circle;\nuse shapes::{self, deep::Arc};\nuse shapes::*;');
+    expect(specs(uses)).toEqual(['self::shapes', 'use::2::self::shapes::shapes::Circle', 'use::2::self::shapes::shapes', 'use::2::self::shapes::shapes::deep::Arc', 'use::2::self::shapes::shapes']);
+  });
+
+  it('follows the name another use bound: a path, a group member, an alias, a self member, and a chain of them', async () => {
+    const { uses } = await run('use crate::a;\nuse crate::g::{b, c as d, e::{self}};\nuse a::X;\nuse b::X;\nuse d::X;\nuse e::X;\nuse a::n;\nuse n::Y;');
+    expect(specs(uses).slice(4)).toEqual([
+      'use::2::crate::a::a::X', 'use::3::crate::g::b::b::X', 'use::3::crate::g::c::d::X', 'use::3::crate::g::e::e::X', 'use::2::crate::a::a::n', 'use::3::crate::a::n::n::Y',
+    ]);
+  });
+
+  it('leaves a path alone when nothing in scope binds its first name, when only the path itself does, or when two uses disagree', async () => {
+    const { uses } = await run('use tokio;\nuse tokio::sync::Mutex;\nuse own::own;\n#[cfg(unix)]\nuse crate::unix as sys;\n#[cfg(windows)]\nuse crate::windows as sys;\nuse sys::Handle;\nuse crate::k as _;');
+    expect(specs(uses)).toEqual(['tokio', 'tokio::sync::Mutex', 'own::own', 'crate::unix', 'crate::windows', 'sys::Handle', 'crate::k']);
+  });
+
+  it('takes two uses that bind the name to the same path as one', async () => {
+    const { uses } = await run('use crate::m::v;\nuse crate::m::v;\nuse v::X;');
+    expect(specs(uses)).toContain('use::3::crate::m::v::v::X');
+  });
+
+  it('gives up on a ring of names', async () => {
+    const { uses } = await run('use b::x as a;\nuse a::y as b;');
+    expect(specs(uses)).toEqual(['b::x', 'a::y']);
+  });
+
+  it('reads the names of the blocks and the module around a use, and none of an outer module', async () => {
+    const { uses } = await run('use crate::shapes as sh;\nmod top;\nfn f() {\n    use crate::other as o;\n    {\n        use o::A;\n        use sh::B;\n        use top::C;\n    }\n}\nimpl T { fn g() { use sh::D; } }\nmod inner {\n    use sh::E;\n    mod deep;\n    fn h() { use deep::F; mod blocked; use blocked::G; }\n}');
+    expect(specs(uses)).toEqual([
+      'crate::shapes', 'self::top', 'crate::other', 'use::2::crate::other::o::A', 'use::2::crate::shapes::sh::B', 'use::2::self::top::top::C', 'use::2::crate::shapes::sh::D',
+      'sh::E', 'self::inner::deep', 'use::3::self::inner::deep::deep::F', 'self::inner::blocked', 'blocked::G',
+    ]);
+  });
+
+  it('emits the path as written under an inline module whose directory a path attribute moved', async () => {
+    const { uses } = await run('#[path = "elsewhere"]\nmod outer {\n    mod m;\n    use m::X;\n    use crate::k;\n    use k::Y;\n}');
+    expect(specs(uses)).toEqual(['m::X', 'crate::k', 'use::2::crate::k::k::Y']);
+  });
+
+  it('prefers the crate an extern crate of the same scope binds', async () => {
+    const { uses } = await run('extern crate core_lib as cl;\nmod cl;\nuse cl::Engine;');
+    expect(specs(uses)).toEqual(['extern::core_lib', 'self::cl', 'extern::core_lib::as::cl::Engine']);
+  });
+});

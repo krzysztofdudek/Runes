@@ -28,6 +28,16 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
         const named = crateNamed(name, fromFile, deps, crate);
         return named === undefined ? undefined : resolveFromModuleDir(named.srcDir, segments.slice(aliased ? 4 : 2), exists, rootContext(named.srcDir, named.rootFiles, declares));
     }
+    // A `use` path whose first name is in scope where it is written (`use::<n>::<the n segments that name stands for>::<the path as written>`). From edition 2018 that name is what the path starts at; in edition 2015 a `use` path starts at the crate root whatever is in scope, so it is read as written.
+    if (root === 'use') {
+        const lead = Number(segments[1]);
+        const written = segments.slice(2 + lead);
+        if (!Number.isInteger(lead) || lead < 1 || written.length === 0)
+            return undefined;
+        if (crate.crateRelativeUses === true)
+            return resolveBare(written, fromFile, exists, deps, crate);
+        return resolveRustPath([...segments.slice(2, 2 + lead), ...written.slice(1)].join('::'), fromFile, exists, deps);
+    }
     return resolveBare(segments, fromFile, exists, deps, crate);
 }
 /** The library tree the crate name `name` stands for in the package of `fromFile`: the package's own library (2018+ path clarity addresses it from any of its targets), else an in-repo path dependency. */

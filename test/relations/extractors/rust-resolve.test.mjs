@@ -1802,3 +1802,19 @@ describe('resolveRustPath — crate-root lookup without a declares check (inject
     expect(resolveRustPath('crate::Anything', 'src/a.rs', (p) => known.has(p), deps)).toBe('src/lib.rs');
   });
 });
+
+describe('resolveRustPath — a use path that starts with a name in scope (injected deps)', () => {
+  const known = new Set(['src/lib.rs', 'src/shapes.rs', 'src/api.rs']);
+  const exists = (p) => known.has(p);
+  const deps = (crateRelativeUses) => ({ crateRootFor: () => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: false, crateRelativeUses }), rootDeclares: (f, name) => name === 'shapes' });
+
+  it('reads the name in scope from edition 2018 on, and the path as written in edition 2015', () => {
+    expect(resolveRustPath('use::2::crate::shapes::sh::Circle', 'src/api.rs', exists, deps(false))).toBe('src/shapes.rs');
+    expect(resolveRustPath('use::2::crate::shapes::sh::Circle', 'src/api.rs', exists, deps(true))).toBeUndefined();
+    expect(resolveRustPath('use::2::crate::other::shapes::Circle', 'src/api.rs', exists, deps(true))).toBe('src/shapes.rs');
+  });
+
+  it('gives no file for a form it cannot read', () => {
+    for (const bad of ['use', 'use::x::crate::shapes::sh', 'use::0::sh::Circle', 'use::2::crate::shapes', 'use::1.5::crate::sh']) expect(resolveRustPath(bad, 'src/api.rs', exists, deps(false))).toBeUndefined();
+  });
+});

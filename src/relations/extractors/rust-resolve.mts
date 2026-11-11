@@ -40,6 +40,13 @@ import path from 'node:path';
  * no path of the source starts with it. An edition 2015 `use` path is relative to the crate
  * root, so there only the root's declarations count.
  *
+ * NAMES IN SCOPE: from edition 2018 a `use` path may start with a name in scope of the module
+ * that writes it: a module it declares, or a name another `use` there brought in. Such a name
+ * is found before a crate of the same name. The extractor, which sees the scopes, emits such a
+ * path as `use::<n>::<the n segments the name stands for>::<the path as written>`
+ * (`use::2::self::shapes::shapes::Circle` for `mod shapes; use shapes::Circle;`). `use` is a
+ * keyword, so no path of the source starts with it. In edition 2015 the path is read as written.
+ *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
  * from `[workspace.dependencies]`) resolves inside that crate's library tree. Registry
@@ -147,6 +154,15 @@ export function resolveRustPath(
     if (aliased && crate.crateRelativeUses === true) return resolveBare(segments.slice(3), fromFile, exists, deps, crate);
     const named = crateNamed(name, fromFile, deps, crate);
     return named === undefined ? undefined : resolveFromModuleDir(named.srcDir, segments.slice(aliased ? 4 : 2), exists, rootContext(named.srcDir, named.rootFiles, declares));
+  }
+
+  // A `use` path whose first name is in scope where it is written (`use::<n>::<the n segments that name stands for>::<the path as written>`). From edition 2018 that name is what the path starts at; in edition 2015 a `use` path starts at the crate root whatever is in scope, so it is read as written.
+  if (root === 'use') {
+    const lead = Number(segments[1]);
+    const written = segments.slice(2 + lead);
+    if (!Number.isInteger(lead) || lead < 1 || written.length === 0) return undefined;
+    if (crate.crateRelativeUses === true) return resolveBare(written, fromFile, exists, deps, crate);
+    return resolveRustPath([...segments.slice(2, 2 + lead), ...written.slice(1)].join('::'), fromFile, exists, deps);
   }
 
   return resolveBare(segments, fromFile, exists, deps, crate);

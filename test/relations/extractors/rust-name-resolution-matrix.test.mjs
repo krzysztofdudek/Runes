@@ -227,6 +227,16 @@ describe('MATRIX — what a crate root binds', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a use path that starts with a name in scope (edition 2018 on)', () => {
+  it('rust-edition-2018-use-crate-not-local-name-edge', () => runCase('rust-edition-2018-use-crate-not-local-name-edge'));
+  it('rust-edition-2018-use-imported-module-edge', () => runCase('rust-edition-2018-use-imported-module-edge'));
+  it('rust-edition-2018-use-imported-module-in-function-body-edge', () => runCase('rust-edition-2018-use-imported-module-in-function-body-edge'));
+  it('rust-edition-2018-use-local-module-edge', () => runCase('rust-edition-2018-use-local-module-edge'));
+  it('rust-edition-2018-use-local-module-over-crate-edge', () => runCase('rust-edition-2018-use-local-module-over-crate-edge'));
+  it('rust-path-dependency-root-glob-reexport-edge', () => runCase('rust-path-dependency-root-glob-reexport-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one

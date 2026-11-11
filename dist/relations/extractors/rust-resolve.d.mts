@@ -38,6 +38,13 @@
  * no path of the source starts with it. An edition 2015 `use` path is relative to the crate
  * root, so there only the root's declarations count.
  *
+ * NAMES IN SCOPE: from edition 2018 a `use` path may start with a name in scope of the module
+ * that writes it: a module it declares, or a name another `use` there brought in. Such a name
+ * is found before a crate of the same name. The extractor, which sees the scopes, emits such a
+ * path as `use::<n>::<the n segments the name stands for>::<the path as written>`
+ * (`use::2::self::shapes::shapes::Circle` for `mod shapes; use shapes::Circle;`). `use` is a
+ * keyword, so no path of the source starts with it. In edition 2015 the path is read as written.
+ *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
  * from `[workspace.dependencies]`) resolves inside that crate's library tree. Registry
