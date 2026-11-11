@@ -448,6 +448,28 @@ function extensionMethodName(node: Node, scope: CsScope): string | undefined {
   return first?.type === 'parameter' && isThisParameter(first) ? name : undefined;
 }
 
+/** The key a type declaration `node` declares, read in `scope` of a file whose file-scoped namespace is `fileNs` (see `declarations`), or undefined for one that has no name. */
+function declaredTypeKey(node: Node, scope: CsScope, fileNs: string): string | undefined {
+  const nameField = node.childForFieldName('name');
+  if (nameField === null || nameField.text === '') return undefined;
+  const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
+  const own = declaredTypeName(node);
+  const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
+  return ns === '' ? typeKey : `${ns}.${typeKey}`;
+}
+
+/** The keys of the types the file declares but keeps to itself: the C#11 `file` types and the types nested in them. Inside the file they are found by their names like any other type, and, found at a lookup level, they remove the public types of that level (the C# 11 file-local types proposal, Lookup). */
+function fileLocalTypeKeys(root: Node, fileNs: string): string[] {
+  const keys: string[] = [];
+  walkCs(root, (node, scope) => {
+    if (!TYPE_KEY_DECLARATION_TYPES.has(node.type) || !isFileLocalType(node, scope)) return undefined;
+    const key = declaredTypeKey(node, scope, fileNs);
+    if (key !== undefined) keys.push(key);
+    return undefined;
+  });
+  return keys;
+}
+
 /**
  * The FULLY-QUALIFIED symbol keys this file DEFINES. The namespace for each type is the
  * file-scoped namespace (if any) joined with the block-namespace ancestor chain. The TYPE
@@ -485,15 +507,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       return undefined;
     }
     if (!TYPE_KEY_DECLARATION_TYPES.has(node.type)) return undefined;
-    const nameField = node.childForFieldName('name');
-    if (nameField === null || nameField.text === '') return undefined;
+    const symbolKey = declaredTypeKey(node, scope, fileNs);
+    if (symbolKey === undefined) return undefined;
     // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN.
     if (isFileLocalType(node, scope)) return undefined;
-    const blockNs = blockNamespace(scope);
-    const ns = [fileNs, blockNs].filter((p) => p !== '').join('.');
-    const own = declaredTypeName(node);
-    const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
-    const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
     out.push({ symbolKey, line: node.startPosition.row + 1 });
     if (typeSeen(node, scope.typeDecl) === 'assembly') out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
     return undefined;
@@ -948,6 +965,8 @@ export interface CsharpExtract {
    *  alias-RHS embedded-types walk, then the main walk). Replaying them in order reproduces the
    *  exact `DetectedDep[]` order — load-bearing for the downstream violation-reason order. */
   refs: CsharpRefDescriptor[];
+  /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
+  fileLocalTypes: string[];
 }
 
 /** Receiver node types that name a TYPE, never an instance (`base.X()`, `string.Join()`,
@@ -1737,7 +1756,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return undefined;
   });
 
-  return { fileNs, scope, refs };
+  return { fileNs, scope, refs, fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs) };
 }
 
 /**
@@ -1756,6 +1775,21 @@ export function assembleCsharpCandidates(
 ): DetectedDep[] {
   const out: DetectedDep[] = [];
   const { scope, refs } = extract;
+
+  /** True when the reading `key` names a type this file keeps to itself, or a member of one (C#11 file-local types). Such a type is found at its lookup level, where it removes the public types of that level, so a candidate group ends there. A dotted key is read with each dot after a type boundary as the `+` of a nested type. */
+  const fileLocal = new Set(extract.fileLocalTypes);
+  const isFileLocalReading = (key: string): boolean => {
+    if (fileLocal.size === 0) return false;
+    const segments = key.split('.');
+    for (let end = 1; end <= segments.length; end++) {
+      for (let dots = 1; dots <= end; dots++) {
+        const head = segments.slice(0, dots).join('.');
+        const rest = segments.slice(dots, end);
+        if (fileLocal.has(rest.length === 0 ? head : `${head}+${rest.join('+')}`)) return true;
+      }
+    }
+    return false;
+  };
 
   // Project-wide `global using` aliases (A12): a `global using Alias = N.Type;` declared in ANY
   // file is usable in EVERY file. Merge the aggregated set BELOW this file's own aliases — a
@@ -1978,6 +2012,7 @@ export function assembleCsharpCandidates(
     // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
     // candidate.
     if (rooted) {
+      if (isFileLocalReading(ref)) return;
       const candidates: TargetHint[] = [{ kind: 'symbol', symbolKey: ref }];
       // `global::Program` names the global `Program`, which may be the implicit class of a file of top-level statements (the fallback after an explicit one).
       if (ref === 'Program') candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
@@ -1987,6 +2022,9 @@ export function assembleCsharpCandidates(
 
     // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
     const nestedReadings: TargetHint[] = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}` }));
+    // A nested type of a file-local type is found there, before any namespace: the group ends at it.
+    const localNested = nestedReadings.findIndex((h) => isFileLocalReading((h as SymbolHint).symbolKey));
+    if (localNested >= 0) nestedReadings.length = localNested;
 
     const lead = ref.split('.')[0];
     if (ambiguousAliases.has(lead)) {
@@ -1999,14 +2037,22 @@ export function assembleCsharpCandidates(
 
     const candidates: TargetHint[] = [...nestedReadings];
     const pushed = new Set<string>();
+    // Set once a reading names a file-local type: nothing farther is a candidate.
+    let ended = localNested >= 0;
     const add = (hint: TargetHint): void => {
+      if (ended) return;
       if (hint.kind === 'symbol') {
+        if (isFileLocalReading(hint.symbolKey)) {
+          ended = true;
+          return;
+        }
         if (pushed.has(hint.symbolKey)) return;
         pushed.add(hint.symbolKey);
       }
       candidates.push(hint);
     };
     const addSet = (set: SymbolSetMember[]): void => {
+      if (set.some((m) => isFileLocalReading(m.symbolKey))) ended = true;
       for (const m of set) add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set });
     };
 

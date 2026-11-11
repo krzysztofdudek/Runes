@@ -200,6 +200,8 @@ export interface CsharpExtract {
      *  alias-RHS embedded-types walk, then the main walk). Replaying them in order reproduces the
      *  exact `DetectedDep[]` order — load-bearing for the downstream violation-reason order. */
     refs: CsharpRefDescriptor[];
+    /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
+    fileLocalTypes: string[];
 }
 /**
  * Extract one C# file's alias-UNRESOLVED reference descriptors + full file-local using scope.
