@@ -3,6 +3,10 @@ import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor } from '@chrisdudek/runes/relations';
 
+/** The symbol keys one candidate reads, in order: its own, or for an attribute (whose two readings travel apart in one candidate) those of the written reading and then those of the suffixed one. */
+const readingKeys = (c) => (c.kind !== 'symbol' ? [] : c.attribute === undefined ? [c.symbolKey] : [...c.attribute.written, ...(c.attribute.suffixed ?? [])].map((r) => r.symbolKey));
+
+
 /**
  * Branch-coverage tests for the C# extractor targeting the advanced type-reference
  * forms the primary suite does not exercise: attribute usages (`[Foo]` two-reading
@@ -16,12 +20,12 @@ const run = (code) => runExtractor(csharpExtractor, 'csharp', '.cs', code);
 
 /** Every symbol key across every candidate of every detected reference. */
 const symbolKeys = (uses) =>
-  uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+  uses.flatMap((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
 /** The ordered candidate keys of the FIRST detected reference whose group contains `key`. */
 const groupContaining = (uses, key) => {
   const dep = uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === key));
-  return dep?.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : []));
+  return dep?.candidates.flatMap((c) => readingKeys(c));
 };
 
 describe('csharp extractor — attribute usages emit a two-reading group', () => {

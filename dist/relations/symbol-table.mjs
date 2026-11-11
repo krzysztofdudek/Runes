@@ -16,10 +16,30 @@ export class SymbolTable {
     packageMembers = new Map();
     /** `${namespace}\0${prefix}` of every dotted namespace a declared key lies in: each proper dot prefix of the key's part before its first `+` (`A.B.Order` lies in `A` and `A.B`; `A.Outer+Inner` in `A`). */
     namespaces = new Set();
+    /** `${namespace}\0${head}` → value → files, for every key written `<head>\t<value>`: a fact a file states about `head` that carries a value (see `declare`). */
+    listed = new Map();
     key(language, symbolKey) {
         return `${namespaceOf(language)}\0${symbolKey}`;
     }
     declare(language, symbolKey, file) {
+        // A key with a tab is no name: `<head>\t<value>` states a value about `head` (the C# extractor records a type's base list this way), read back by `valuesOf` and by nothing else.
+        const tab = symbolKey.indexOf('\t');
+        if (tab !== -1) {
+            const head = this.key(language, symbolKey.slice(0, tab));
+            let values = this.listed.get(head);
+            if (!values) {
+                values = new Map();
+                this.listed.set(head, values);
+            }
+            const value = symbolKey.slice(tab + 1);
+            let files = values.get(value);
+            if (!files) {
+                files = new Set();
+                values.set(value, files);
+            }
+            files.add(file);
+            return;
+        }
         const k = this.key(language, symbolKey);
         let s = this.defs.get(k);
         if (!s) {
@@ -53,6 +73,11 @@ export class SymbolTable {
     /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. */
     hasNamespace(language, name) {
         return this.namespaces.has(this.key(language, name));
+    }
+    /** Every value declared about `head` in `language` (each key `<head>\t<value>` some file declared), with the files that declared it, in the order first declared; empty when none. */
+    valuesOf(language, head) {
+        const values = this.listed.get(this.key(language, head));
+        return values ? [...values].map(([value, files]) => ({ value, files: [...files] })) : [];
     }
     /** Exactly one same-language definition → that file; zero or 2+ (ambiguous, incl. unowned) → undefined. */
     resolveUnique(language, symbolKey) {

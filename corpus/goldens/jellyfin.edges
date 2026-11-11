@@ -484,6 +484,7 @@ Emby.Server.Implementations/ApplicationHost.cs:220	MediaBrowser.Controller/IServ
 Emby.Server.Implementations/ApplicationHost.cs:226	Emby.Server.Implementations/Configuration/ServerConfigurationManager.cs
 Emby.Server.Implementations/ApplicationHost.cs:277	MediaBrowser.Common/Net/NetworkConfigurationExtensions.cs
 Emby.Server.Implementations/ApplicationHost.cs:316	Jellyfin.Data/DayOfWeekHelper.cs
+Emby.Server.Implementations/ApplicationHost.cs:394	MediaBrowser.Common/IApplicationHost.cs
 Emby.Server.Implementations/ApplicationHost.cs:424	MediaBrowser.Model/Tasks/IScheduledTask.cs
 Emby.Server.Implementations/ApplicationHost.cs:424	MediaBrowser.Model/Tasks/ITaskManager.cs
 Emby.Server.Implementations/ApplicationHost.cs:429	MediaBrowser.Controller/MediaEncoding/IMediaEncoder.cs
@@ -781,7 +782,6 @@ Emby.Server.Implementations/Collections/CollectionManager.cs:137	src/Jellyfin.Ex
 Emby.Server.Implementations/Collections/CollectionManager.cs:139	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:143	Jellyfin.Data/Enums/BaseItemKind.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:144	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
-Emby.Server.Implementations/Collections/CollectionManager.cs:144	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:145	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:148	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:148	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -801,10 +801,8 @@ Emby.Server.Implementations/Collections/CollectionManager.cs:228	MediaBrowser.Co
 Emby.Server.Implementations/Collections/CollectionManager.cs:228	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:230	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:232	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
-Emby.Server.Implementations/Collections/CollectionManager.cs:232	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:237	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:239	MediaBrowser.Controller/Dto/DtoOptions.cs
-Emby.Server.Implementations/Collections/CollectionManager.cs:244	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:251	src/Jellyfin.Extensions/EnumerableExtensions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:263	MediaBrowser.Controller/Entities/LinkedChild.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:264	src/Jellyfin.Extensions/CopyToExtensions.cs
@@ -813,11 +811,9 @@ Emby.Server.Implementations/Collections/CollectionManager.cs:273	MediaBrowser.Co
 Emby.Server.Implementations/Collections/CollectionManager.cs:276	MediaBrowser.Controller/Providers/RefreshPriority.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:280	MediaBrowser.Controller/Collections/CollectionModifiedEventArgs.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:288	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
-Emby.Server.Implementations/Collections/CollectionManager.cs:288	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:29	MediaBrowser.Controller/Collections/ICollectionManager.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:293	MediaBrowser.Controller/Entities/LinkedChild.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:294	MediaBrowser.Controller/Entities/BaseItem.cs
-Emby.Server.Implementations/Collections/CollectionManager.cs:298	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:300	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:31	MediaBrowser.Controller/Library/ILibraryManager.cs
 Emby.Server.Implementations/Collections/CollectionManager.cs:32	MediaBrowser.Model/IO/IFileSystem.cs
@@ -884,8 +880,6 @@ Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:27	MediaBrowser.C
 Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:29	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
 Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:30	MediaBrowser.Controller/IO/IPathManager.cs
 Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:49	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
-Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:65	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:73	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Data/CleanDatabaseScheduledTask.cs:97	MediaBrowser.Controller/Library/DeleteOptions.cs
 Emby.Server.Implementations/Data/ItemTypeLookup.cs:17	MediaBrowser.Controller/Persistence/IItemTypeLookup.cs
 Emby.Server.Implementations/Data/ItemTypeLookup.cs:21	MediaBrowser.Controller/Entities/Audio/Audio.cs
@@ -1101,7 +1095,6 @@ Emby.Server.Implementations/Dto/DtoService.cs:1659	MediaBrowser.Model/Querying/I
 Emby.Server.Implementations/Dto/DtoService.cs:1668	MediaBrowser.Controller/Entities/Photo.cs
 Emby.Server.Implementations/Dto/DtoService.cs:167	MediaBrowser.Model/Dto/BaseItemDto.cs
 Emby.Server.Implementations/Dto/DtoService.cs:1675	MediaBrowser.Controller/Entities/SourceType.cs
-Emby.Server.Implementations/Dto/DtoService.cs:1677	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Dto/DtoService.cs:168	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Dto/DtoService.cs:168	MediaBrowser.Model/Dto/BaseItemDto.cs
 Emby.Server.Implementations/Dto/DtoService.cs:1685	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
@@ -1126,7 +1119,6 @@ Emby.Server.Implementations/Dto/DtoService.cs:172	MediaBrowser.Controller/Entiti
 Emby.Server.Implementations/Dto/DtoService.cs:1721	Jellyfin.Data/Enums/CollectionType.cs
 Emby.Server.Implementations/Dto/DtoService.cs:1721	MediaBrowser.Controller/Entities/UserView.cs
 Emby.Server.Implementations/Dto/DtoService.cs:1722	MediaBrowser.Model/Entities/ImageType.cs
-Emby.Server.Implementations/Dto/DtoService.cs:1725	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Dto/DtoService.cs:1726	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/Dto/DtoService.cs:173	MediaBrowser.Controller/Library/VersionResumeData.cs
 Emby.Server.Implementations/Dto/DtoService.cs:1730	MediaBrowser.Model/Entities/ImageType.cs
@@ -1289,6 +1281,7 @@ Emby.Server.Implementations/Dto/DtoService.cs:61	Jellyfin.Data/Enums/BaseItemKin
 Emby.Server.Implementations/Dto/DtoService.cs:612	MediaBrowser.Controller/Library/VersionResumeData.cs
 Emby.Server.Implementations/Dto/DtoService.cs:616	MediaBrowser.Controller/Entities/Folder.cs
 Emby.Server.Implementations/Dto/DtoService.cs:635	MediaBrowser.Controller/Entities/SourceType.cs
+Emby.Server.Implementations/Dto/DtoService.cs:638	MediaBrowser.Controller/Entities/TV/Season.cs
 Emby.Server.Implementations/Dto/DtoService.cs:638	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Dto/DtoService.cs:65	Jellyfin.Data/Enums/BaseItemKind.cs
 Emby.Server.Implementations/Dto/DtoService.cs:653	MediaBrowser.Model/Querying/ItemFields.cs
@@ -1319,7 +1312,6 @@ Emby.Server.Implementations/Dto/DtoService.cs:77	Jellyfin.Data/Enums/BaseItemKin
 Emby.Server.Implementations/Dto/DtoService.cs:771	src/Jellyfin.Extensions/GuidExtensions.cs
 Emby.Server.Implementations/Dto/DtoService.cs:772	src/Jellyfin.Extensions/GuidExtensions.cs
 Emby.Server.Implementations/Dto/DtoService.cs:774	MediaBrowser.Controller/Entities/Folder.cs
-Emby.Server.Implementations/Dto/DtoService.cs:774	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Dto/DtoService.cs:775	MediaBrowser.Controller/Entities/UserView.cs
 Emby.Server.Implementations/Dto/DtoService.cs:78	Jellyfin.Data/Enums/BaseItemKind.cs
 Emby.Server.Implementations/Dto/DtoService.cs:782	Jellyfin.Data/Enums/CollectionType.cs
@@ -1580,6 +1572,9 @@ Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:211	MediaBrowser.
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:213	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:223	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:228	MediaBrowser.Model/Entities/ImageType.cs
+Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:231	MediaBrowser.Controller/Playlists/Playlist.cs
+Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:232	MediaBrowser.Controller/Entities/Audio/MusicGenre.cs
+Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:233	MediaBrowser.Controller/Entities/Genre.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:235	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:246	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:246	MediaBrowser.Controller/Providers/IDirectoryService.cs
@@ -2532,7 +2527,6 @@ Emby.Server.Implementations/Library/MediaSourceManager.cs:383	MediaBrowser.Model
 Emby.Server.Implementations/Library/MediaSourceManager.cs:383	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:388	MediaBrowser.Controller/Entities/IHasMediaSources.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:402	MediaBrowser.Controller/Entities/BaseItem.cs
-Emby.Server.Implementations/Library/MediaSourceManager.cs:402	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:409	Jellyfin.Data/Enums/MediaType.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:411	Jellyfin.Data/UserEntityExtensions.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:411	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/PermissionKind.cs
@@ -2610,7 +2604,6 @@ Emby.Server.Implementations/Library/MediaSourceManager.cs:696	MediaBrowser.Model
 Emby.Server.Implementations/Library/MediaSourceManager.cs:698	src/Jellyfin.Extensions/GuidExtensions.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:70	MediaBrowser.Common/Configuration/IApplicationPaths.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:701	src/Jellyfin.Extensions/GuidExtensions.cs
-Emby.Server.Implementations/Library/MediaSourceManager.cs:703	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:707	MediaBrowser.Controller/Library/IDirectStreamProvider.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:707	MediaBrowser.Model/MediaInfo/LiveStreamResponse.cs
 Emby.Server.Implementations/Library/MediaSourceManager.cs:71	MediaBrowser.Model/Globalization/ILocalizationManager.cs
@@ -3739,7 +3732,6 @@ Emby.Server.Implementations/Library/UserViewManager.cs:262	src/Jellyfin.Database
 Emby.Server.Implementations/Library/UserViewManager.cs:269	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/UserViewManager.cs:27	MediaBrowser.Controller/Library/IUserViewManager.cs
 Emby.Server.Implementations/Library/UserViewManager.cs:271	src/Jellyfin.Extensions/GuidExtensions.cs
-Emby.Server.Implementations/Library/UserViewManager.cs:273	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Library/UserViewManager.cs:274	MediaBrowser.Controller/Channels/Channel.cs
 Emby.Server.Implementations/Library/UserViewManager.cs:277	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 Emby.Server.Implementations/Library/UserViewManager.cs:289	MediaBrowser.Controller/Entities/Folder.cs
@@ -3986,13 +3978,11 @@ Emby.Server.Implementations/Playlists/PlaylistManager.cs:203	src/Jellyfin.Extens
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:209	MediaBrowser.Controller/Dto/DtoOptions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:216	MediaBrowser.Controller/Dto/DtoOptions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:216	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
-Emby.Server.Implementations/Playlists/PlaylistManager.cs:219	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:219	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:228	MediaBrowser.Controller/Entities/LinkedChild.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:269	MediaBrowser.Controller/Providers/DirectoryService.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:269	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:273	MediaBrowser.Controller/Providers/RefreshPriority.cs
-Emby.Server.Implementations/Playlists/PlaylistManager.cs:278	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:278	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:287	src/Jellyfin.Extensions/EnumerableExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:29	MediaBrowser.Controller/Entities/Genre.cs
@@ -4000,7 +3990,6 @@ Emby.Server.Implementations/Playlists/PlaylistManager.cs:297	MediaBrowser.Contro
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:297	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:30	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:301	MediaBrowser.Controller/Providers/RefreshPriority.cs
-Emby.Server.Implementations/Playlists/PlaylistManager.cs:316	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:316	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:325	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:326	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
@@ -4054,8 +4043,8 @@ Emby.Server.Implementations/Playlists/PlaylistManager.cs:76	MediaBrowser.Control
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:80	MediaBrowser.Model/Playlists/PlaylistCreationRequest.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:80	MediaBrowser.Model/Playlists/PlaylistCreationResult.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:90	Jellyfin.Data/Enums/MediaType.cs
-Emby.Server.Implementations/Playlists/PlaylistManager.cs:94	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:95	Jellyfin.Data/Enums/MediaType.cs
+Emby.Server.Implementations/Playlists/PlaylistManager.cs:99	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:99	MediaBrowser.Controller/Entities/Audio/MusicGenre.cs
 Emby.Server.Implementations/Playlists/PlaylistsFolder.cs:15	MediaBrowser.Common/RequiresSourceSerialisationAttribute.cs
 Emby.Server.Implementations/Playlists/PlaylistsFolder.cs:16	MediaBrowser.Controller/Entities/BasePluginFolder.cs
@@ -4407,7 +4396,6 @@ Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:173	Emb
 Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:187	Jellyfin.Data/Enums/BaseItemKind.cs
 Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:201	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ImageInfoImageType.cs
 Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:240	MediaBrowser.Controller/Entities/Person.cs
-Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:240	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:245	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:245	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/ScheduledTasks/Tasks/PeopleValidationTask.cs:248	MediaBrowser.Controller/Providers/DirectoryService.cs
@@ -4522,7 +4510,6 @@ Emby.Server.Implementations/Session/SessionManager.cs:1370	src/Jellyfin.Extensio
 Emby.Server.Implementations/Session/SessionManager.cs:1371	MediaBrowser.Model/Session/PlayCommand.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1378	MediaBrowser.Model/Library/PlayAccess.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1388	MediaBrowser.Controller/Entities/TV/Episode.cs
-Emby.Server.Implementations/Session/SessionManager.cs:1388	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1395	MediaBrowser.Controller/Dto/DtoOptions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:140	MediaBrowser.Controller/Session/SessionEventArgs.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1415	src/Jellyfin.Extensions/GuidExtensions.cs
@@ -4534,7 +4521,6 @@ Emby.Server.Implementations/Session/SessionManager.cs:1433	MediaBrowser.Model/Sy
 Emby.Server.Implementations/Session/SessionManager.cs:1437	MediaBrowser.Model/Session/SessionMessageType.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1440	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1440	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
-Emby.Server.Implementations/Session/SessionManager.cs:1442	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1447	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1450	MediaBrowser.Controller/Entities/IItemByName.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1454	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
@@ -4554,7 +4540,6 @@ Emby.Server.Implementations/Session/SessionManager.cs:1488	src/Jellyfin.Database
 Emby.Server.Implementations/Session/SessionManager.cs:149	MediaBrowser.Controller/Session/SessionEventArgs.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1495	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1495	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
-Emby.Server.Implementations/Session/SessionManager.cs:1497	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1502	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1505	MediaBrowser.Controller/Dto/DtoOptions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1509	MediaBrowser.Model/Session/BrowseRequest.cs
@@ -4637,7 +4622,6 @@ Emby.Server.Implementations/Session/SessionManager.cs:1945	MediaBrowser.Model/Qu
 Emby.Server.Implementations/Session/SessionManager.cs:196	MediaBrowser.Controller/Events/Session/SessionStartedEventArgs.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1962	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 Emby.Server.Implementations/Session/SessionManager.cs:198	MediaBrowser.Common/Events/EventHelper.cs
-Emby.Server.Implementations/Session/SessionManager.cs:1980	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1992	MediaBrowser.Model/Session/TranscodingInfo.cs
 Emby.Server.Implementations/Session/SessionManager.cs:1994	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Emby.Server.Implementations/Session/SessionManager.cs:201	MediaBrowser.Controller/Session/SessionEventArgs.cs
@@ -4722,7 +4706,6 @@ Emby.Server.Implementations/Session/SessionManager.cs:692	MediaBrowser.Model/Ses
 Emby.Server.Implementations/Session/SessionManager.cs:694	MediaBrowser.Model/Session/PlaystateCommand.cs
 Emby.Server.Implementations/Session/SessionManager.cs:714	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Session/SessionManager.cs:714	MediaBrowser.Controller/Session/SessionInfo.cs
-Emby.Server.Implementations/Session/SessionManager.cs:727	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:73	MediaBrowser.Controller/Dto/DtoOptions.cs
 Emby.Server.Implementations/Session/SessionManager.cs:742	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Session/SessionManager.cs:744	MediaBrowser.Controller/Entities/Video.cs
@@ -4917,7 +4900,6 @@ Emby.Server.Implementations/SyncPlay/Group.cs:215	MediaBrowser.Model/SyncPlay/Sy
 Emby.Server.Implementations/SyncPlay/Group.cs:218	MediaBrowser.Model/SyncPlay/SyncPlayBroadcastType.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:222	MediaBrowser.Model/SyncPlay/SyncPlayBroadcastType.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:237	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
-Emby.Server.Implementations/SyncPlay/Group.cs:247	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:28	MediaBrowser.Controller/SyncPlay/IGroupStateContext.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:290	MediaBrowser.Controller/Session/SessionInfo.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:290	MediaBrowser.Controller/SyncPlay/Requests/NewGroupRequest.cs
@@ -4960,17 +4942,12 @@ Emby.Server.Implementations/SyncPlay/Group.cs:485	MediaBrowser.Controller/SyncPl
 Emby.Server.Implementations/SyncPlay/Group.cs:506	MediaBrowser.Controller/Session/SessionInfo.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:508	MediaBrowser.Controller/SyncPlay/GroupMember.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:53	MediaBrowser.Controller/Session/ISessionManager.cs
-Emby.Server.Implementations/SyncPlay/Group.cs:560	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-Emby.Server.Implementations/SyncPlay/Group.cs:575	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:58	MediaBrowser.Controller/Library/ILibraryManager.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:605	src/Jellyfin.Extensions/GuidExtensions.cs
-Emby.Server.Implementations/SyncPlay/Group.cs:607	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:628	MediaBrowser.Model/SyncPlay/GroupQueueMode.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:63	MediaBrowser.Controller/SyncPlay/GroupMember.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:642	MediaBrowser.Model/SyncPlay/GroupQueueMode.cs
-Emby.Server.Implementations/SyncPlay/Group.cs:667	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:68	MediaBrowser.Controller/Session/SessionInfo.cs
-Emby.Server.Implementations/SyncPlay/Group.cs:682	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:692	MediaBrowser.Model/SyncPlay/GroupRepeatMode.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:698	MediaBrowser.Model/SyncPlay/GroupShuffleMode.cs
 Emby.Server.Implementations/SyncPlay/Group.cs:704	MediaBrowser.Model/SyncPlay/PlayQueueUpdate.cs
@@ -5106,7 +5083,6 @@ Emby.Server.Implementations/TV/TVSeriesManager.cs:29	MediaBrowser.Controller/Lib
 Emby.Server.Implementations/TV/TVSeriesManager.cs:296	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:304	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:310	MediaBrowser.Controller/Entities/TV/Episode.cs
-Emby.Server.Implementations/TV/TVSeriesManager.cs:310	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:318	MediaBrowser.Controller/Entities/TV/Series.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:323	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:323	MediaBrowser.Model/Querying/NextUpQuery.cs
@@ -5119,9 +5095,7 @@ Emby.Server.Implementations/TV/TVSeriesManager.cs:36	MediaBrowser.Model/Querying
 Emby.Server.Implementations/TV/TVSeriesManager.cs:36	MediaBrowser.Model/Querying/QueryResult.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:41	src/Jellyfin.Extensions/GuidExtensions.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:43	MediaBrowser.Controller/Entities/TV/Series.cs
-Emby.Server.Implementations/TV/TVSeriesManager.cs:43	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:54	MediaBrowser.Controller/Entities/BaseItem.cs
-Emby.Server.Implementations/TV/TVSeriesManager.cs:58	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:72	MediaBrowser.Controller/Entities/Folder.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:73	Jellyfin.Data/UserEntityExtensions.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:73	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/PreferenceKind.cs
@@ -5131,7 +5105,6 @@ Emby.Server.Implementations/TV/TVSeriesManager.cs:80	MediaBrowser.Model/Querying
 Emby.Server.Implementations/TV/TVSeriesManager.cs:80	MediaBrowser.Model/Querying/QueryResult.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:86	src/Jellyfin.Extensions/GuidExtensions.cs
 Emby.Server.Implementations/TV/TVSeriesManager.cs:88	MediaBrowser.Controller/Entities/TV/Series.cs
-Emby.Server.Implementations/TV/TVSeriesManager.cs:88	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Updates/InstallationManager.cs:101	MediaBrowser.Model/Updates/InstallationInfo.cs
 Emby.Server.Implementations/Updates/InstallationManager.cs:104	MediaBrowser.Model/Updates/PackageInfo.cs
 Emby.Server.Implementations/Updates/InstallationManager.cs:108	MediaBrowser.Common/Net/NamedClient.cs
@@ -5761,7 +5734,6 @@ Jellyfin.Api/Controllers/FilterController.cs:131	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/FilterController.cs:133	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/FilterController.cs:134	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/FilterController.cs:140	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/FilterController.cs:140	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/FilterController.cs:143	MediaBrowser.Model/Querying/QueryFilters.cs
 Jellyfin.Api/Controllers/FilterController.cs:144	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 Jellyfin.Api/Controllers/FilterController.cs:147	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -5952,7 +5924,6 @@ Jellyfin.Api/Controllers/ImageController.cs:1775	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/ImageController.cs:1775	MediaBrowser.Controller/Entities/ItemImageInfo.cs
 Jellyfin.Api/Controllers/ImageController.cs:1775	MediaBrowser.Model/Dto/ImageInfo.cs
 Jellyfin.Api/Controllers/ImageController.cs:1807	MediaBrowser.Model/Dto/ImageInfo.cs
-Jellyfin.Api/Controllers/ImageController.cs:1812	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:1828	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:1831	MediaBrowser.Model/Drawing/ImageFormat.cs
 Jellyfin.Api/Controllers/ImageController.cs:1844	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -5987,23 +5958,19 @@ Jellyfin.Api/Controllers/ImageController.cs:284	MediaBrowser.Model/Entities/Imag
 Jellyfin.Api/Controllers/ImageController.cs:298	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/ImageController.cs:303	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:306	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:306	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:326	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/ImageController.cs:331	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:334	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:334	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:353	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/ImageController.cs:354	Jellyfin.Api/Attributes/AcceptsImageFileAttribute.cs
 Jellyfin.Api/Controllers/ImageController.cs:361	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:363	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:363	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:378	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Controllers/ImageController.cs:380	MediaBrowser.Controller/Library/ItemUpdateType.cs
 Jellyfin.Api/Controllers/ImageController.cs:396	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/ImageController.cs:397	Jellyfin.Api/Attributes/AcceptsImageFileAttribute.cs
 Jellyfin.Api/Controllers/ImageController.cs:404	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:407	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:407	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:422	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Controllers/ImageController.cs:424	MediaBrowser.Controller/Library/ItemUpdateType.cs
 Jellyfin.Api/Controllers/ImageController.cs:43	Jellyfin.Api/BaseJellyfinApiController.cs
@@ -6011,12 +5978,10 @@ Jellyfin.Api/Controllers/ImageController.cs:441	MediaBrowser.Common/Api/Policies
 Jellyfin.Api/Controllers/ImageController.cs:446	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:45	MediaBrowser.Controller/Library/IUserManager.cs
 Jellyfin.Api/Controllers/ImageController.cs:450	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:450	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:46	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Api/Controllers/ImageController.cs:47	MediaBrowser.Controller/Providers/IProviderManager.cs
 Jellyfin.Api/Controllers/ImageController.cs:471	MediaBrowser.Model/Dto/ImageInfo.cs
 Jellyfin.Api/Controllers/ImageController.cs:473	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:473	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:479	MediaBrowser.Model/Dto/ImageInfo.cs
 Jellyfin.Api/Controllers/ImageController.cs:48	MediaBrowser.Controller/Drawing/IImageProcessor.cs
 Jellyfin.Api/Controllers/ImageController.cs:49	MediaBrowser.Model/IO/IFileSystem.cs
@@ -6026,12 +5991,10 @@ Jellyfin.Api/Controllers/ImageController.cs:556	Jellyfin.Api/Attributes/Produces
 Jellyfin.Api/Controllers/ImageController.cs:559	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:568	MediaBrowser.Model/Drawing/ImageFormat.cs
 Jellyfin.Api/Controllers/ImageController.cs:576	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:576	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:634	Jellyfin.Api/Attributes/ProducesImageFileAttribute.cs
 Jellyfin.Api/Controllers/ImageController.cs:637	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:647	MediaBrowser.Model/Drawing/ImageFormat.cs
 Jellyfin.Api/Controllers/ImageController.cs:654	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:654	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:66	MediaBrowser.Controller/Library/IUserManager.cs
 Jellyfin.Api/Controllers/ImageController.cs:67	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Api/Controllers/ImageController.cs:68	MediaBrowser.Controller/Providers/IProviderManager.cs
@@ -6043,7 +6006,6 @@ Jellyfin.Api/Controllers/ImageController.cs:72	MediaBrowser.Controller/Configura
 Jellyfin.Api/Controllers/ImageController.cs:724	MediaBrowser.Model/Drawing/ImageFormat.cs
 Jellyfin.Api/Controllers/ImageController.cs:73	MediaBrowser.Common/Configuration/IApplicationPaths.cs
 Jellyfin.Api/Controllers/ImageController.cs:732	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ImageController.cs:732	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ImageController.cs:790	Jellyfin.Api/Attributes/ProducesImageFileAttribute.cs
 Jellyfin.Api/Controllers/ImageController.cs:793	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/ImageController.cs:795	MediaBrowser.Model/Drawing/ImageFormat.cs
@@ -6063,7 +6025,6 @@ Jellyfin.Api/Controllers/InstantMixController.cs:123	MediaBrowser.Model/Entities
 Jellyfin.Api/Controllers/InstantMixController.cs:125	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:126	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:129	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/InstantMixController.cs:129	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:135	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:135	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:158	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6074,7 +6035,6 @@ Jellyfin.Api/Controllers/InstantMixController.cs:166	Jellyfin.Api/ModelBinders/C
 Jellyfin.Api/Controllers/InstantMixController.cs:166	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:168	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:169	src/Jellyfin.Extensions/GuidExtensions.cs
-Jellyfin.Api/Controllers/InstantMixController.cs:172	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:172	MediaBrowser.Controller/Playlists/Playlist.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:178	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:178	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -6097,7 +6057,6 @@ Jellyfin.Api/Controllers/InstantMixController.cs:245	MediaBrowser.Model/Entities
 Jellyfin.Api/Controllers/InstantMixController.cs:247	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:248	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:251	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/InstantMixController.cs:251	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:257	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:257	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:280	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6110,7 +6069,6 @@ Jellyfin.Api/Controllers/InstantMixController.cs:29	Jellyfin.Api/BaseJellyfinApi
 Jellyfin.Api/Controllers/InstantMixController.cs:290	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:291	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:294	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/InstantMixController.cs:294	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:300	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:300	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:31	MediaBrowser.Controller/Library/IUserManager.cs
@@ -6132,7 +6090,6 @@ Jellyfin.Api/Controllers/InstantMixController.cs:372	MediaBrowser.Model/Entities
 Jellyfin.Api/Controllers/InstantMixController.cs:374	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:375	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:378	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/InstantMixController.cs:378	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:384	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:384	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:390	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -6155,7 +6112,6 @@ Jellyfin.Api/Controllers/InstantMixController.cs:80	MediaBrowser.Model/Entities/
 Jellyfin.Api/Controllers/InstantMixController.cs:82	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:83	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:86	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/InstantMixController.cs:86	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:92	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/InstantMixController.cs:92	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:106	MediaBrowser.Controller/Providers/RemoteSearchQuery.cs
@@ -6202,7 +6158,6 @@ Jellyfin.Api/Controllers/ItemLookupController.cs:228	MediaBrowser.Controller/Pro
 Jellyfin.Api/Controllers/ItemLookupController.cs:246	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:251	MediaBrowser.Model/Providers/RemoteSearchResult.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:254	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemLookupController.cs:254	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:267	MediaBrowser.Model/Entities/ProviderIdsExtensions.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:270	MediaBrowser.Controller/Providers/DirectoryService.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:270	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
@@ -6218,7 +6173,6 @@ Jellyfin.Api/Controllers/ItemLookupController.cs:48	MediaBrowser.Controller/Libr
 Jellyfin.Api/Controllers/ItemLookupController.cs:65	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:68	MediaBrowser.Model/Providers/ExternalIdInfo.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:70	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemLookupController.cs:70	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:89	MediaBrowser.Controller/Providers/MovieInfo.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:89	MediaBrowser.Controller/Providers/RemoteSearchQuery.cs
 Jellyfin.Api/Controllers/ItemLookupController.cs:89	MediaBrowser.Model/Providers/RemoteSearchResult.cs
@@ -6235,7 +6189,6 @@ Jellyfin.Api/Controllers/ItemRefreshController.cs:39	MediaBrowser.Model/IO/IFile
 Jellyfin.Api/Controllers/ItemRefreshController.cs:64	MediaBrowser.Controller/Providers/MetadataRefreshMode.cs
 Jellyfin.Api/Controllers/ItemRefreshController.cs:65	MediaBrowser.Controller/Providers/MetadataRefreshMode.cs
 Jellyfin.Api/Controllers/ItemRefreshController.cs:70	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemRefreshController.cs:70	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemRefreshController.cs:76	MediaBrowser.Controller/Providers/DirectoryService.cs
 Jellyfin.Api/Controllers/ItemRefreshController.cs:76	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Jellyfin.Api/Controllers/ItemRefreshController.cs:82	MediaBrowser.Controller/Providers/MetadataRefreshMode.cs
@@ -6251,7 +6204,6 @@ Jellyfin.Api/Controllers/ItemUpdateController.cs:129	MediaBrowser.Controller/Pro
 Jellyfin.Api/Controllers/ItemUpdateController.cs:132	MediaBrowser.Controller/Providers/RefreshPriority.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:148	MediaBrowser.Model/Dto/MetadataEditorInfo.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:150	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemUpdateController.cs:150	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:156	MediaBrowser.Model/Dto/MetadataEditorInfo.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:168	MediaBrowser.Controller/Entities/ICollectionFolder.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:169	MediaBrowser.Controller/Entities/UserView.cs
@@ -6262,7 +6214,6 @@ Jellyfin.Api/Controllers/ItemUpdateController.cs:173	MediaBrowser.Controller/Ent
 Jellyfin.Api/Controllers/ItemUpdateController.cs:184	Jellyfin.Data/Enums/CollectionType.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:185	Jellyfin.Data/Enums/CollectionType.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:212	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemUpdateController.cs:212	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:227	MediaBrowser.Model/Dto/NameValuePair.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:239	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:239	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6326,7 +6277,6 @@ Jellyfin.Api/Controllers/ItemUpdateController.cs:549	MediaBrowser.Model/Dto/Name
 Jellyfin.Api/Controllers/ItemUpdateController.cs:55	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:75	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:77	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemUpdateController.cs:77	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:86	MediaBrowser.Controller/Entities/TV/Series.cs
 Jellyfin.Api/Controllers/ItemUpdateController.cs:97	MediaBrowser.Controller/Entities/PersonInfo.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1001	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6347,14 +6297,12 @@ Jellyfin.Api/Controllers/ItemsController.cs:1076	MediaBrowser.Model/Dto/UserItem
 Jellyfin.Api/Controllers/ItemsController.cs:1080	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1087	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1092	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemsController.cs:1092	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1114	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1132	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1135	MediaBrowser.Model/Dto/UpdateUserItemDataDto.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1137	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1144	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1149	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/ItemsController.cs:1149	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1155	MediaBrowser.Model/Entities/UserDataSaveReason.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1174	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/ItemsController.cs:1177	MediaBrowser.Model/Dto/UpdateUserItemDataDto.cs
@@ -6532,7 +6480,6 @@ Jellyfin.Api/Controllers/ItemsController.cs:953	src/Jellyfin.Database/Jellyfin.D
 Jellyfin.Api/Controllers/ItemsController.cs:954	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/ItemsController.cs:957	MediaBrowser.Controller/Entities/Folder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:971	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/ItemsController.cs:971	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/ItemsController.cs:978	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 Jellyfin.Api/Controllers/ItemsController.cs:980	Jellyfin.Data/Enums/ItemSortBy.cs
 Jellyfin.Api/Controllers/ItemsController.cs:980	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/SortOrder.cs
@@ -6557,7 +6504,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:1085	MediaBrowser.Controller/Libra
 Jellyfin.Api/Controllers/LibraryController.cs:1086	src/Jellyfin.Extensions/EnumerableExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:113	Jellyfin.Api/Attributes/ProducesFileAttribute.cs
 Jellyfin.Api/Controllers/LibraryController.cs:116	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:116	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:116	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 Jellyfin.Api/Controllers/LibraryController.cs:126	MediaBrowser.Controller/IO/FileSystemHelper.cs
 Jellyfin.Api/Controllers/LibraryController.cs:133	MediaBrowser.Model/Net/MimeTypes.cs
@@ -6571,7 +6517,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:159	src/Jellyfin.Extensions/GuidEx
 Jellyfin.Api/Controllers/LibraryController.cs:163	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:164	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:167	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:167	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:175	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/LibraryController.cs:177	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/LibraryController.cs:197	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -6586,7 +6531,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:233	src/Jellyfin.Extensions/GuidEx
 Jellyfin.Api/Controllers/LibraryController.cs:236	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:237	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:240	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:240	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:248	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/LibraryController.cs:250	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/LibraryController.cs:270	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -6603,7 +6547,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:369	src/Jellyfin.Database/Jellyfin
 Jellyfin.Api/Controllers/LibraryController.cs:370	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 Jellyfin.Api/Controllers/LibraryController.cs:371	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:380	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:380	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:393	MediaBrowser.Controller/Library/DeleteOptions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:411	Jellyfin.Api/ModelBinders/CommaDelimitedCollectionModelBinder.cs
 Jellyfin.Api/Controllers/LibraryController.cs:413	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -6611,7 +6554,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:414	src/Jellyfin.Database/Jellyfin
 Jellyfin.Api/Controllers/LibraryController.cs:415	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:416	MediaBrowser.Common/Extensions/ResourceNotFoundException.cs
 Jellyfin.Api/Controllers/LibraryController.cs:426	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:426	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:439	MediaBrowser.Controller/Library/DeleteOptions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:456	MediaBrowser.Model/Dto/ItemCounts.cs
 Jellyfin.Api/Controllers/LibraryController.cs:460	Jellyfin.Api/Helpers/RequestHelpers.cs
@@ -6623,7 +6565,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:491	MediaBrowser.Model/Dto/BaseIte
 Jellyfin.Api/Controllers/LibraryController.cs:493	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/LibraryController.cs:494	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:497	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:497	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:50	MediaBrowser.Controller/Providers/IProviderManager.cs
 Jellyfin.Api/Controllers/LibraryController.cs:503	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/LibraryController.cs:505	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -6663,7 +6604,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:673	Jellyfin.Api/Attributes/Produc
 Jellyfin.Api/Controllers/LibraryController.cs:676	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 Jellyfin.Api/Controllers/LibraryController.cs:677	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:680	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:680	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:713	MediaBrowser.Controller/IO/FileSystemHelper.cs
 Jellyfin.Api/Controllers/LibraryController.cs:720	MediaBrowser.Model/Net/MimeTypes.cs
 Jellyfin.Api/Controllers/LibraryController.cs:739	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6673,7 +6613,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:744	MediaBrowser.Model/Querying/It
 Jellyfin.Api/Controllers/LibraryController.cs:746	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/LibraryController.cs:747	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:756	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:756	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:762	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:77	MediaBrowser.Controller/Providers/IProviderManager.cs
 Jellyfin.Api/Controllers/LibraryController.cs:770	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -6693,7 +6632,6 @@ Jellyfin.Api/Controllers/LibraryController.cs:817	src/Jellyfin.Extensions/GuidEx
 Jellyfin.Api/Controllers/LibraryController.cs:82	MediaBrowser.Controller/Dto/IDtoService.cs
 Jellyfin.Api/Controllers/LibraryController.cs:820	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:824	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LibraryController.cs:824	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryController.cs:83	MediaBrowser.Model/Activity/IActivityManager.cs
 Jellyfin.Api/Controllers/LibraryController.cs:830	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 Jellyfin.Api/Controllers/LibraryController.cs:832	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6751,7 +6689,6 @@ Jellyfin.Api/Controllers/LibraryStructureController.cs:33	Jellyfin.Api/BaseJelly
 Jellyfin.Api/Controllers/LibraryStructureController.cs:35	MediaBrowser.Controller/IServerApplicationPaths.cs
 Jellyfin.Api/Controllers/LibraryStructureController.cs:356	Jellyfin.Api/Models/LibraryStructureDto/UpdateLibraryOptionsDto.cs
 Jellyfin.Api/Controllers/LibraryStructureController.cs:358	MediaBrowser.Controller/Entities/CollectionFolder.cs
-Jellyfin.Api/Controllers/LibraryStructureController.cs:358	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LibraryStructureController.cs:36	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Api/Controllers/LibraryStructureController.cs:364	MediaBrowser.Model/Configuration/LibraryOptions.cs
 Jellyfin.Api/Controllers/LibraryStructureController.cs:37	MediaBrowser.Controller/Library/ILibraryMonitor.cs
@@ -6818,7 +6755,6 @@ Jellyfin.Api/Controllers/LiveTvController.cs:224	Jellyfin.Api/Helpers/RequestHel
 Jellyfin.Api/Controllers/LiveTvController.cs:225	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:228	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:230	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LiveTvController.cs:230	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:237	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:267	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:268	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6862,7 +6798,6 @@ Jellyfin.Api/Controllers/LiveTvController.cs:412	Jellyfin.Api/Helpers/RequestHel
 Jellyfin.Api/Controllers/LiveTvController.cs:413	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:416	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:418	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LiveTvController.cs:418	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:424	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:43	MediaBrowser.Controller/LiveTv/ILiveTvManager.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:437	MediaBrowser.Common/Api/Policies.cs
@@ -6904,7 +6839,6 @@ Jellyfin.Api/Controllers/LiveTvController.cs:579	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/LiveTvController.cs:591	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:602	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:606	MediaBrowser.Controller/Entities/TV/Series.cs
-Jellyfin.Api/Controllers/LiveTvController.cs:606	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:613	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:613	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:628	MediaBrowser.Common/Api/Policies.cs
@@ -6916,7 +6850,6 @@ Jellyfin.Api/Controllers/LiveTvController.cs:633	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/LiveTvController.cs:645	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:656	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:660	MediaBrowser.Controller/Entities/TV/Series.cs
-Jellyfin.Api/Controllers/LiveTvController.cs:660	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:667	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:667	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:695	MediaBrowser.Common/Api/Policies.cs
@@ -6947,7 +6880,6 @@ Jellyfin.Api/Controllers/LiveTvController.cs:77	MediaBrowser.Controller/Dto/IDto
 Jellyfin.Api/Controllers/LiveTvController.cs:779	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:78	MediaBrowser.Controller/Library/IMediaSourceManager.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:784	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/LiveTvController.cs:784	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:79	MediaBrowser.Controller/MediaEncoding/ITranscodeManager.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:790	MediaBrowser.Controller/Library/DeleteOptions.cs
 Jellyfin.Api/Controllers/LiveTvController.cs:80	MediaBrowser.Controller/LiveTv/ISchedulesDirectService.cs
@@ -6990,22 +6922,18 @@ Jellyfin.Api/Controllers/LocalizationController.cs:68	MediaBrowser.Model/Entitie
 Jellyfin.Api/Controllers/LocalizationController.cs:80	MediaBrowser.Model/Globalization/LocalizationOption.cs
 Jellyfin.Api/Controllers/LyricsController.cs:103	MediaBrowser.Model/Lyrics/LyricDto.cs
 Jellyfin.Api/Controllers/LyricsController.cs:107	MediaBrowser.Controller/Entities/Audio/Audio.cs
-Jellyfin.Api/Controllers/LyricsController.cs:107	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:119	src/Jellyfin.Extensions/StringExtensions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:140	MediaBrowser.Controller/Providers/DirectoryService.cs
 Jellyfin.Api/Controllers/LyricsController.cs:140	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:140	MediaBrowser.Controller/Providers/RefreshPriority.cs
 Jellyfin.Api/Controllers/LyricsController.cs:153	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/LyricsController.cs:159	MediaBrowser.Controller/Entities/Audio/Audio.cs
-Jellyfin.Api/Controllers/LyricsController.cs:159	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:177	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/LyricsController.cs:180	MediaBrowser.Model/Lyrics/RemoteLyricInfoDto.cs
 Jellyfin.Api/Controllers/LyricsController.cs:182	MediaBrowser.Controller/Entities/Audio/Audio.cs
-Jellyfin.Api/Controllers/LyricsController.cs:182	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:201	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/LyricsController.cs:204	MediaBrowser.Model/Lyrics/LyricDto.cs
 Jellyfin.Api/Controllers/LyricsController.cs:208	MediaBrowser.Controller/Entities/Audio/Audio.cs
-Jellyfin.Api/Controllers/LyricsController.cs:208	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:220	MediaBrowser.Controller/Providers/DirectoryService.cs
 Jellyfin.Api/Controllers/LyricsController.cs:220	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:220	MediaBrowser.Controller/Providers/RefreshPriority.cs
@@ -7024,7 +6952,6 @@ Jellyfin.Api/Controllers/LyricsController.cs:50	MediaBrowser.Model/IO/IFileSyste
 Jellyfin.Api/Controllers/LyricsController.cs:51	MediaBrowser.Controller/Library/IUserManager.cs
 Jellyfin.Api/Controllers/LyricsController.cs:71	MediaBrowser.Model/Lyrics/LyricDto.cs
 Jellyfin.Api/Controllers/LyricsController.cs:73	MediaBrowser.Controller/Entities/Audio/Audio.cs
-Jellyfin.Api/Controllers/LyricsController.cs:73	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/LyricsController.cs:98	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/LyricsController.cs:99	Jellyfin.Api/Attributes/AcceptsFileAttribute.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:119	MediaBrowser.Model/MediaInfo/PlaybackInfoResponse.cs
@@ -7047,7 +6974,6 @@ Jellyfin.Api/Controllers/MediaInfoController.cs:152	Jellyfin.Api/Helpers/Request
 Jellyfin.Api/Controllers/MediaInfoController.cs:167	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:168	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:171	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/MediaInfoController.cs:171	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:222	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:228	MediaBrowser.Model/MediaInfo/LiveStreamRequest.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:272	MediaBrowser.Model/MediaInfo/LiveStreamResponse.cs
@@ -7071,7 +6997,6 @@ Jellyfin.Api/Controllers/MediaInfoController.cs:75	MediaBrowser.Model/MediaInfo/
 Jellyfin.Api/Controllers/MediaInfoController.cs:77	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:78	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/MediaInfoController.cs:81	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/MediaInfoController.cs:81	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:24	Jellyfin.Api/BaseJellyfinApiController.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:26	MediaBrowser.Controller/MediaSegments/IMediaSegmentManager.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:27	MediaBrowser.Controller/Library/ILibraryManager.cs
@@ -7081,7 +7006,6 @@ Jellyfin.Api/Controllers/MediaSegmentsController.cs:49	MediaBrowser.Model/MediaS
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:49	MediaBrowser.Model/Querying/QueryResult.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:51	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/MediaSegmentType.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:53	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/MediaSegmentsController.cs:53	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:61	MediaBrowser.Model/MediaSegments/MediaSegmentDto.cs
 Jellyfin.Api/Controllers/MediaSegmentsController.cs:61	MediaBrowser.Model/Querying/QueryResult.cs
 Jellyfin.Api/Controllers/MoviesController.cs:26	Jellyfin.Api/BaseJellyfinApiController.cs
@@ -7253,7 +7177,6 @@ Jellyfin.Api/Controllers/PlaystateController.cs:128	Jellyfin.Api/ModelBinders/Le
 Jellyfin.Api/Controllers/PlaystateController.cs:143	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:147	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:154	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/PlaystateController.cs:154	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:160	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:190	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:203	MediaBrowser.Model/Session/PlaybackStartInfo.cs
@@ -7300,7 +7223,6 @@ Jellyfin.Api/Controllers/PlaystateController.cs:76	MediaBrowser.Model/Dto/UserIt
 Jellyfin.Api/Controllers/PlaystateController.cs:79	Jellyfin.Api/ModelBinders/LegacyDateTimeModelBinder.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:81	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:88	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/PlaystateController.cs:88	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/PlaystateController.cs:94	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/PluginsController.cs:146	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Controllers/PluginsController.cs:167	MediaBrowser.Model/Plugins/BasePluginConfiguration.cs
@@ -7333,11 +7255,9 @@ Jellyfin.Api/Controllers/QuickConnectController.cs:86	MediaBrowser.Common/Extens
 Jellyfin.Api/Controllers/QuickConnectController.cs:90	MediaBrowser.Controller/Authentication/AuthenticationException.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:131	MediaBrowser.Model/Providers/ImageProviderInfo.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:133	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/RemoteImageController.cs:133	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:152	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:157	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:160	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/RemoteImageController.cs:160	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:169	MediaBrowser.Controller/Library/ItemUpdateType.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:28	Jellyfin.Api/BaseJellyfinApiController.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:30	MediaBrowser.Controller/Providers/IProviderManager.cs
@@ -7349,7 +7269,6 @@ Jellyfin.Api/Controllers/RemoteImageController.cs:43	MediaBrowser.Controller/Lib
 Jellyfin.Api/Controllers/RemoteImageController.cs:66	MediaBrowser.Model/Providers/RemoteImageResult.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:68	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:74	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/RemoteImageController.cs:74	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:82	MediaBrowser.Model/Providers/RemoteImageQuery.cs
 Jellyfin.Api/Controllers/RemoteImageController.cs:98	MediaBrowser.Model/Providers/RemoteImageResult.cs
 Jellyfin.Api/Controllers/ScheduledTasksController.cs:108	MediaBrowser.Model/Tasks/TaskOptions.cs
@@ -7370,7 +7289,6 @@ Jellyfin.Api/Controllers/SearchController.cs:127	MediaBrowser.Model/Search/Searc
 Jellyfin.Api/Controllers/SearchController.cs:135	MediaBrowser.Controller/Library/SearchHintInfo.cs
 Jellyfin.Api/Controllers/SearchController.cs:135	MediaBrowser.Model/Search/SearchHint.cs
 Jellyfin.Api/Controllers/SearchController.cs:139	MediaBrowser.Model/Search/SearchHint.cs
-Jellyfin.Api/Controllers/SearchController.cs:164	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:164	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:177	MediaBrowser.Controller/Entities/IHasSeries.cs
 Jellyfin.Api/Controllers/SearchController.cs:180	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
@@ -7381,7 +7299,6 @@ Jellyfin.Api/Controllers/SearchController.cs:195	src/Jellyfin.Extensions/ReadOnl
 Jellyfin.Api/Controllers/SearchController.cs:198	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 Jellyfin.Api/Controllers/SearchController.cs:213	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:215	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/SearchController.cs:215	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:222	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:222	MediaBrowser.Model/Search/SearchHint.cs
 Jellyfin.Api/Controllers/SearchController.cs:224	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
@@ -7391,7 +7308,6 @@ Jellyfin.Api/Controllers/SearchController.cs:228	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/SearchController.cs:228	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:231	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:231	MediaBrowser.Model/Entities/ImageType.cs
-Jellyfin.Api/Controllers/SearchController.cs:235	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:235	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:245	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:245	MediaBrowser.Model/Search/SearchHint.cs
@@ -7399,7 +7315,6 @@ Jellyfin.Api/Controllers/SearchController.cs:247	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/SearchController.cs:247	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:248	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:248	MediaBrowser.Model/Entities/ImageType.cs
-Jellyfin.Api/Controllers/SearchController.cs:252	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:252	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:262	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:262	MediaBrowser.Model/Entities/ImageType.cs
@@ -7514,10 +7429,8 @@ Jellyfin.Api/Controllers/StudiosController.cs:98	MediaBrowser.Model/Querying/Ite
 Jellyfin.Api/Controllers/SubtitleController.cs:119	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:122	MediaBrowser.Model/Providers/RemoteSubtitleInfo.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:127	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:127	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:145	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:152	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:152	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:163	MediaBrowser.Controller/Providers/DirectoryService.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:163	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:163	MediaBrowser.Controller/Providers/RefreshPriority.cs
@@ -7541,13 +7454,11 @@ Jellyfin.Api/Controllers/SubtitleController.cs:306	Jellyfin.Api/Attributes/Param
 Jellyfin.Api/Controllers/SubtitleController.cs:307	Jellyfin.Api/Attributes/ParameterObsoleteAttribute.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:341	Jellyfin.Api/Attributes/ProducesPlaylistFileAttribute.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:349	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:349	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:408	MediaBrowser.Model/Net/MimeTypes.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:41	Jellyfin.Api/BaseJellyfinApiController.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:420	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:425	Jellyfin.Api/Models/SubtitleDtos/UploadSubtitleDto.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:427	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:427	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:43	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:44	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:443	MediaBrowser.Controller/Subtitles/SubtitleResponse.cs
@@ -7557,14 +7468,12 @@ Jellyfin.Api/Controllers/SubtitleController.cs:451	MediaBrowser.Controller/Provi
 Jellyfin.Api/Controllers/SubtitleController.cs:451	MediaBrowser.Controller/Providers/RefreshPriority.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:46	MediaBrowser.Controller/MediaEncoding/ISubtitleEncoder.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:460	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:460	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:47	MediaBrowser.Controller/Library/IMediaSourceManager.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:471	MediaBrowser.Model/Entities/MediaStreamType.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:48	MediaBrowser.Controller/Providers/IProviderManager.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:488	MediaBrowser.Model/Entities/MediaStream.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:49	MediaBrowser.Model/IO/IFileSystem.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:518	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:518	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:539	MediaBrowser.Model/Subtitles/FontFile.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:541	MediaBrowser.Common/Configuration/EncodingConfigurationExtensions.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:548	MediaBrowser.Model/Subtitles/FontFile.cs
@@ -7580,7 +7489,6 @@ Jellyfin.Api/Controllers/SubtitleController.cs:69	MediaBrowser.Controller/Provid
 Jellyfin.Api/Controllers/SubtitleController.cs:70	MediaBrowser.Model/IO/IFileSystem.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:92	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/SubtitleController.cs:99	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/SubtitleController.cs:99	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/SuggestionsController.cs:118	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/SuggestionsController.cs:118	MediaBrowser.Model/Querying/QueryResult.cs
 Jellyfin.Api/Controllers/SuggestionsController.cs:120	Jellyfin.Api/ModelBinders/CommaDelimitedCollectionModelBinder.cs
@@ -7790,7 +7698,6 @@ Jellyfin.Api/Controllers/TrickplayController.cs:36	MediaBrowser.Controller/Trick
 Jellyfin.Api/Controllers/TrickplayController.cs:53	Jellyfin.Api/Attributes/ProducesPlaylistFileAttribute.cs
 Jellyfin.Api/Controllers/TrickplayController.cs:82	Jellyfin.Api/Attributes/ProducesImageFileAttribute.cs
 Jellyfin.Api/Controllers/TrickplayController.cs:89	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/TrickplayController.cs:89	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:103	MediaBrowser.Model/Querying/NextUpQuery.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:119	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:119	MediaBrowser.Model/Querying/QueryResult.cs
@@ -7823,19 +7730,15 @@ Jellyfin.Api/Controllers/TvShowsController.cs:227	MediaBrowser.Controller/Entiti
 Jellyfin.Api/Controllers/TvShowsController.cs:229	Jellyfin.Api/Extensions/DtoExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:229	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:235	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/TvShowsController.cs:235	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:236	MediaBrowser.Controller/Entities/TV/Season.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:245	MediaBrowser.Controller/Entities/TV/Series.cs
-Jellyfin.Api/Controllers/TvShowsController.cs:245	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:251	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:256	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:257	MediaBrowser.Controller/Entities/TV/Season.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:261	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:261	MediaBrowser.Controller/Entities/TV/Series.cs
-Jellyfin.Api/Controllers/TvShowsController.cs:261	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:274	MediaBrowser.Controller/Entities/TV/Episode.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:282	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/TvShowsController.cs:282	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:293	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:295	MediaBrowser.Controller/Entities/UserViewBuilder.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:298	Jellyfin.Data/Enums/ItemSortBy.cs
@@ -7855,7 +7758,6 @@ Jellyfin.Api/Controllers/TvShowsController.cs:347	Jellyfin.Api/Helpers/RequestHe
 Jellyfin.Api/Controllers/TvShowsController.cs:348	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:35	MediaBrowser.Controller/Dto/IDtoService.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:351	MediaBrowser.Controller/Entities/TV/Series.cs
-Jellyfin.Api/Controllers/TvShowsController.cs:351	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:357	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:36	MediaBrowser.Controller/TV/ITVSeriesManager.cs
 Jellyfin.Api/Controllers/TvShowsController.cs:364	Jellyfin.Api/Extensions/DtoExtensions.cs
@@ -7883,7 +7785,6 @@ Jellyfin.Api/Controllers/UniversalAudioController.cs:112	Jellyfin.Data/Enums/Med
 Jellyfin.Api/Controllers/UniversalAudioController.cs:119	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UniversalAudioController.cs:120	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UniversalAudioController.cs:123	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UniversalAudioController.cs:123	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UniversalAudioController.cs:171	MediaBrowser.Model/Dlna/DlnaProfileType.cs
 Jellyfin.Api/Controllers/UniversalAudioController.cs:175	MediaBrowser.Model/MediaInfo/MediaProtocol.cs
 Jellyfin.Api/Controllers/UniversalAudioController.cs:183	Jellyfin.Data/Enums/MediaStreamProtocol.cs
@@ -8016,7 +7917,6 @@ Jellyfin.Api/Controllers/UserLibraryController.cs:171	MediaBrowser.Model/Queryin
 Jellyfin.Api/Controllers/UserLibraryController.cs:175	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:182	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:184	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:184	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:191	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:194	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:194	MediaBrowser.Model/Querying/QueryResult.cs
@@ -8026,26 +7926,22 @@ Jellyfin.Api/Controllers/UserLibraryController.cs:223	MediaBrowser.Model/Dto/Use
 Jellyfin.Api/Controllers/UserLibraryController.cs:227	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:234	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:236	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:236	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:256	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:271	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:275	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:282	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:284	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:284	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:304	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:319	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:323	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:330	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:332	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:332	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:35	Jellyfin.Api/BaseJellyfinApiController.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:352	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:368	MediaBrowser.Model/Dto/UserItemDataDto.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:373	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:380	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:382	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:382	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:39	MediaBrowser.Controller/Library/IUserManager.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:40	MediaBrowser.Controller/Library/IUserDataManager.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:403	MediaBrowser.Model/Dto/UserItemDataDto.cs
@@ -8056,7 +7952,6 @@ Jellyfin.Api/Controllers/UserLibraryController.cs:422	Jellyfin.Api/Helpers/Reque
 Jellyfin.Api/Controllers/UserLibraryController.cs:429	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:43	MediaBrowser.Controller/Library/IUserViewManager.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:431	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:431	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:437	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:439	MediaBrowser.Model/Entities/ExtraType.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:44	MediaBrowser.Model/IO/IFileSystem.cs
@@ -8066,7 +7961,6 @@ Jellyfin.Api/Controllers/UserLibraryController.cs:468	MediaBrowser.Model/Dto/Bas
 Jellyfin.Api/Controllers/UserLibraryController.cs:472	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:479	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:481	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:481	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:487	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:491	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:506	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -8118,7 +8012,6 @@ Jellyfin.Api/Controllers/UserLibraryController.cs:84	MediaBrowser.Model/Dto/Base
 Jellyfin.Api/Controllers/UserLibraryController.cs:88	Jellyfin.Api/Helpers/RequestHelpers.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:95	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/UserLibraryController.cs:97	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/UserLibraryController.cs:97	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/UserViewsController.cs:111	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/UserViewsController.cs:111	MediaBrowser.Model/Querying/QueryResult.cs
 Jellyfin.Api/Controllers/UserViewsController.cs:114	Jellyfin.Api/ModelBinders/CommaDelimitedCollectionModelBinder.cs
@@ -8156,13 +8049,11 @@ Jellyfin.Api/Controllers/VideoAttachmentsController.cs:34	MediaBrowser.Controlle
 Jellyfin.Api/Controllers/VideoAttachmentsController.cs:35	MediaBrowser.Controller/MediaEncoding/IAttachmentExtractor.cs
 Jellyfin.Api/Controllers/VideoAttachmentsController.cs:51	Jellyfin.Api/Attributes/ProducesFileAttribute.cs
 Jellyfin.Api/Controllers/VideoAttachmentsController.cs:61	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/VideoAttachmentsController.cs:61	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/VideoAttachmentsController.cs:80	MediaBrowser.Common/Extensions/ResourceNotFoundException.cs
 Jellyfin.Api/Controllers/VideosController.cs:100	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:104	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:105	src/Jellyfin.Extensions/GuidExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:108	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/VideosController.cs:108	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:114	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/VideosController.cs:116	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/VideosController.cs:117	MediaBrowser.Controller/Entities/Video.cs
@@ -8171,9 +8062,7 @@ Jellyfin.Api/Controllers/VideosController.cs:128	MediaBrowser.Model/Dto/BaseItem
 Jellyfin.Api/Controllers/VideosController.cs:128	MediaBrowser.Model/Querying/QueryResult.cs
 Jellyfin.Api/Controllers/VideosController.cs:140	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/VideosController.cs:145	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/VideosController.cs:145	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:153	MediaBrowser.Controller/Entities/Video.cs
-Jellyfin.Api/Controllers/VideosController.cs:153	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:164	MediaBrowser.Controller/Entities/LinkedChild.cs
 Jellyfin.Api/Controllers/VideosController.cs:166	MediaBrowser.Controller/Library/ItemUpdateType.cs
 Jellyfin.Api/Controllers/VideosController.cs:169	MediaBrowser.Controller/Entities/LinkedChild.cs
@@ -8181,7 +8070,6 @@ Jellyfin.Api/Controllers/VideosController.cs:171	MediaBrowser.Controller/Library
 Jellyfin.Api/Controllers/VideosController.cs:184	MediaBrowser.Common/Api/Policies.cs
 Jellyfin.Api/Controllers/VideosController.cs:187	Jellyfin.Api/ModelBinders/CommaDelimitedCollectionModelBinder.cs
 Jellyfin.Api/Controllers/VideosController.cs:191	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Controllers/VideosController.cs:191	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Controllers/VideosController.cs:192	MediaBrowser.Controller/Entities/Video.cs
 Jellyfin.Api/Controllers/VideosController.cs:201	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Controllers/VideosController.cs:207	MediaBrowser.Model/Entities/VideoType.cs
@@ -8531,7 +8419,6 @@ Jellyfin.Api/Helpers/MediaInfoHelper.cs:43	MediaBrowser.Controller/MediaEncoding
 Jellyfin.Api/Helpers/MediaInfoHelper.cs:435	Jellyfin.Api/Extensions/ClaimsPrincipalExtensions.cs
 Jellyfin.Api/Helpers/MediaInfoHelper.cs:44	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Jellyfin.Api/Helpers/MediaInfoHelper.cs:444	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Helpers/MediaInfoHelper.cs:444	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Helpers/MediaInfoHelper.cs:445	MediaBrowser.Common/Extensions/ResourceNotFoundException.cs
 Jellyfin.Api/Helpers/MediaInfoHelper.cs:46	MediaBrowser.Common/Net/INetworkManager.cs
 Jellyfin.Api/Helpers/MediaInfoHelper.cs:466	MediaBrowser.Common/Extensions/HttpContextExtensions.cs
@@ -8599,12 +8486,10 @@ Jellyfin.Api/Helpers/StreamingHelpers.cs:105	src/Jellyfin.Extensions/SplitString
 Jellyfin.Api/Helpers/StreamingHelpers.cs:106	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:107	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:110	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Helpers/StreamingHelpers.cs:110	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:111	MediaBrowser.Common/Extensions/ResourceNotFoundException.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:113	Jellyfin.Data/Enums/MediaType.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:115	MediaBrowser.Model/Dto/MediaSourceInfo.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:129	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Api/Helpers/StreamingHelpers.cs:129	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:133	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:153	MediaBrowser.Common/Extensions/ResourceNotFoundException.cs
 Jellyfin.Api/Helpers/StreamingHelpers.cs:163	MediaBrowser.Common/Configuration/EncodingConfigurationExtensions.cs
@@ -8658,6 +8543,7 @@ Jellyfin.Api/Middleware/ExceptionMiddleware.cs:132	MediaBrowser.Common/Extension
 Jellyfin.Api/Middleware/ExceptionMiddleware.cs:133	MediaBrowser.Common/Extensions/MethodNotAllowedException.cs
 Jellyfin.Api/Middleware/ExceptionMiddleware.cs:24	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Jellyfin.Api/Middleware/ExceptionMiddleware.cs:37	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
+Jellyfin.Api/Middleware/ExceptionMiddleware.cs:71	MediaBrowser.Controller/Net/SecurityException.cs
 Jellyfin.Api/Middleware/IpBasedAccessValidationMiddleware.cs:36	MediaBrowser.Common/Net/INetworkManager.cs
 Jellyfin.Api/Middleware/IpBasedAccessValidationMiddleware.cs:38	MediaBrowser.Common/Extensions/HttpContextExtensions.cs
 Jellyfin.Api/Middleware/IpBasedAccessValidationMiddleware.cs:45	MediaBrowser.Common/Extensions/HttpContextExtensions.cs
@@ -9992,6 +9878,9 @@ Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:957	sr
 Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:958	src/Jellyfin.Extensions/EnumerableExtensions.cs
 Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:965	src/Jellyfin.Extensions/EnumerableExtensions.cs
 Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:966	src/Jellyfin.Extensions/EnumerableExtensions.cs
+Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:979	src/Jellyfin.Extensions/EnumerableExtensions.cs
+Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:985	src/Jellyfin.Extensions/EnumerableExtensions.cs
+Jellyfin.Server.Implementations/Item/BaseItemRepository.TranslateQuery.cs:991	src/Jellyfin.Extensions/EnumerableExtensions.cs
 Jellyfin.Server.Implementations/Item/BaseItemRepository.cs:104	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Server.Implementations/Item/BaseItemRepository.cs:104	MediaBrowser.Controller/IServerApplicationHost.cs
 Jellyfin.Server.Implementations/Item/BaseItemRepository.cs:104	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/BaseItemEntity.cs
@@ -10082,7 +9971,6 @@ Jellyfin.Server.Implementations/Item/BaseItemRepository.cs:87	Jellyfin.Server.Im
 Jellyfin.Server.Implementations/Item/ChapterRepository.cs:110	MediaBrowser.Model/Entities/ChapterInfo.cs
 Jellyfin.Server.Implementations/Item/ChapterRepository.cs:110	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Chapter.cs
 Jellyfin.Server.Implementations/Item/ChapterRepository.cs:112	MediaBrowser.Model/Entities/ChapterInfo.cs
-Jellyfin.Server.Implementations/Item/ChapterRepository.cs:122	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Server.Implementations/Item/ChapterRepository.cs:18	MediaBrowser.Controller/Persistence/IChapterRepository.cs
 Jellyfin.Server.Implementations/Item/ChapterRepository.cs:20	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
 Jellyfin.Server.Implementations/Item/ChapterRepository.cs:21	MediaBrowser.Controller/Drawing/IImageProcessor.cs
@@ -10799,7 +10687,6 @@ Jellyfin.Server.Implementations/Users/UserManager.cs:45	MediaBrowser.Controller/
 Jellyfin.Server.Implementations/Users/UserManager.cs:452	MediaBrowser.Model/Dto/UserDto.cs
 Jellyfin.Server.Implementations/Users/UserManager.cs:452	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 Jellyfin.Server.Implementations/Users/UserManager.cs:455	MediaBrowser.Model/Dto/UserDto.cs
-Jellyfin.Server.Implementations/Users/UserManager.cs:463	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Server.Implementations/Users/UserManager.cs:464	MediaBrowser.Model/Configuration/UserConfiguration.cs
 Jellyfin.Server.Implementations/Users/UserManager.cs:47	MediaBrowser.Controller/Authentication/IPasswordResetProvider.cs
 Jellyfin.Server.Implementations/Users/UserManager.cs:477	Jellyfin.Data/UserEntityExtensions.cs
@@ -11454,7 +11341,6 @@ Jellyfin.Server/Migrations/Routines/20250420130000_RemoveDownloadImagesInAdvance
 Jellyfin.Server/Migrations/Routines/20250420130000_RemoveDownloadImagesInAdvance.cs:17	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Server/Migrations/Routines/20250420130000_RemoveDownloadImagesInAdvance.cs:19	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Server/Migrations/Routines/20250420130000_RemoveDownloadImagesInAdvance.cs:39	MediaBrowser.Controller/Entities/CollectionFolder.cs
-Jellyfin.Server/Migrations/Routines/20250420130000_RemoveDownloadImagesInAdvance.cs:39	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Server/Migrations/Routines/20250420140000_MigrateAuthenticationDb.cs:106	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Security/Device.cs
 Jellyfin.Server/Migrations/Routines/20250420140000_MigrateAuthenticationDb.cs:121	Emby.Server.Implementations/Data/SqliteExtensions.cs
 Jellyfin.Server/Migrations/Routines/20250420140000_MigrateAuthenticationDb.cs:138	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Security/DeviceOptions.cs
@@ -11870,7 +11756,6 @@ Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:40	M
 Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:41	MediaBrowser.Controller/IServerApplicationPaths.cs
 Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:507	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:511	MediaBrowser.Controller/Entities/BaseItem.cs
-Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:522	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:532	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:539	MediaBrowser.Controller/Library/DeleteOptions.cs
 Jellyfin.Server/Migrations/Routines/20260113120000_MigrateLinkedChildren.cs:565	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
@@ -11896,7 +11781,6 @@ Jellyfin.Server/Migrations/Routines/20260113230000_CleanupOrphanedExtras.cs:43	s
 Jellyfin.Server/Migrations/Routines/20260113230000_CleanupOrphanedExtras.cs:44	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Server/Migrations/Routines/20260113230000_CleanupOrphanedExtras.cs:90	Jellyfin.Server.Implementations/Item/BaseItemMapper.cs
 Jellyfin.Server/Migrations/Routines/20260113230000_CleanupOrphanedExtras.cs:91	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/BaseItemEntity.cs
-Jellyfin.Server/Migrations/Routines/20260115120000_FixIncorrectOwnerIdRelationships.cs:153	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Server/Migrations/Routines/20260115120000_FixIncorrectOwnerIdRelationships.cs:177	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
 Jellyfin.Server/Migrations/Routines/20260115120000_FixIncorrectOwnerIdRelationships.cs:21	Jellyfin.Server/Migrations/JellyfinMigrationAttribute.cs
 Jellyfin.Server/Migrations/Routines/20260115120000_FixIncorrectOwnerIdRelationships.cs:22	Jellyfin.Server/Migrations/JellyfinMigrationBackupAttribute.cs
@@ -11923,8 +11807,6 @@ Jellyfin.Server/Migrations/Routines/20260206200000_FixLibrarySubtitleDownloadLan
 Jellyfin.Server/Migrations/Routines/20260206200000_FixLibrarySubtitleDownloadLanguages.cs:33	Jellyfin.Server/ServerSetupApp/IStartupLogger.cs
 Jellyfin.Server/Migrations/Routines/20260206200000_FixLibrarySubtitleDownloadLanguages.cs:34	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Server/Migrations/Routines/20260206200000_FixLibrarySubtitleDownloadLanguages.cs:63	MediaBrowser.Controller/Entities/CollectionFolder.cs
-Jellyfin.Server/Migrations/Routines/20260206200000_FixLibrarySubtitleDownloadLanguages.cs:63	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:196	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:23	Jellyfin.Server/Migrations/JellyfinMigrationAttribute.cs
 Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:24	Jellyfin.Server/Migrations/JellyfinMigrationBackupAttribute.cs
 Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:25	Jellyfin.Server/Migrations/IAsyncMigrationRoutine.cs
@@ -11936,7 +11818,6 @@ Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs
 Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:43	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
 Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:44	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Server/Migrations/Routines/20260508120000_MergeDuplicateMusicArtists.cs:45	MediaBrowser.Controller/Persistence/IItemPersistenceService.cs
-Jellyfin.Server/Migrations/Routines/20260508130000_MergeDuplicatePeople.cs:198	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Server/Migrations/Routines/20260508130000_MergeDuplicatePeople.cs:218	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
 Jellyfin.Server/Migrations/Routines/20260508130000_MergeDuplicatePeople.cs:26	Jellyfin.Server/Migrations/JellyfinMigrationAttribute.cs
 Jellyfin.Server/Migrations/Routines/20260508130000_MergeDuplicatePeople.cs:27	Jellyfin.Server/Migrations/JellyfinMigrationBackupAttribute.cs
@@ -12078,7 +11959,6 @@ Jellyfin.Server/Migrations/Routines/20260831100000_EnableLocalSimilarityProvider
 Jellyfin.Server/Migrations/Routines/20260831100000_EnableLocalSimilarityProviders.cs:37	Jellyfin.Server/ServerSetupApp/IStartupLogger.cs
 Jellyfin.Server/Migrations/Routines/20260831100000_EnableLocalSimilarityProviders.cs:67	MediaBrowser.Model/Entities/VirtualFolderInfo.cs
 Jellyfin.Server/Migrations/Routines/20260831100000_EnableLocalSimilarityProviders.cs:81	MediaBrowser.Controller/Entities/CollectionFolder.cs
-Jellyfin.Server/Migrations/Routines/20260831100000_EnableLocalSimilarityProviders.cs:81	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Jellyfin.Server/Migrations/Routines/20260908120000_RepairAlternateVersionLinks.cs:11	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/LinkedChildType.cs
 Jellyfin.Server/Migrations/Routines/20260908120000_RepairAlternateVersionLinks.cs:18	Jellyfin.Server/Migrations/JellyfinMigrationAttribute.cs
 Jellyfin.Server/Migrations/Routines/20260908120000_RepairAlternateVersionLinks.cs:19	Jellyfin.Server/Migrations/JellyfinMigrationBackupAttribute.cs
@@ -12125,6 +12005,7 @@ Jellyfin.Server/Program.cs:104	Jellyfin.Server/ServerSetupApp/SetupServer.cs
 Jellyfin.Server/Program.cs:104	MediaBrowser.Common/Net/INetworkManager.cs
 Jellyfin.Server/Program.cs:107	Jellyfin.Server/ServerSetupApp/StartupLogger.cs
 Jellyfin.Server/Program.cs:117	Jellyfin.Server/Helpers/StartupHelpers.cs
+Jellyfin.Server/Program.cs:120	MediaBrowser.Controller/Extensions/ConfigurationExtensions.cs
 Jellyfin.Server/Program.cs:137	Jellyfin.Server/ServerSetupApp/SetupServer.cs
 Jellyfin.Server/Program.cs:137	Jellyfin.Server/ServerSetupApp/StartupActivity.cs
 Jellyfin.Server/Program.cs:138	Jellyfin.Server.Implementations/StorageHelpers/StorageHelper.cs
@@ -12150,6 +12031,7 @@ Jellyfin.Server/Program.cs:213	Jellyfin.Server/ServerSetupApp/SetupServer.cs
 Jellyfin.Server/Program.cs:213	Jellyfin.Server/ServerSetupApp/StartupActivity.cs
 Jellyfin.Server/Program.cs:217	Jellyfin.Server/Migrations/Stages/JellyfinMigrationStageTypes.cs
 Jellyfin.Server/Program.cs:225	Jellyfin.Server/Configuration/StartupMode.cs
+Jellyfin.Server/Program.cs:229	MediaBrowser.Controller/Extensions/ConfigurationExtensions.cs
 Jellyfin.Server/Program.cs:231	Jellyfin.Server/Helpers/StartupHelpers.cs
 Jellyfin.Server/Program.cs:233	Jellyfin.Server/Helpers/StartupHelpers.cs
 Jellyfin.Server/Program.cs:243	Jellyfin.Server/Configuration/StartupMode.cs
@@ -12179,6 +12061,7 @@ Jellyfin.Server/Program.cs:363	MediaBrowser.Common/Configuration/IApplicationPat
 Jellyfin.Server/Program.cs:372	Jellyfin.Server/StartupOptions.cs
 Jellyfin.Server/Program.cs:373	MediaBrowser.Common/Configuration/IApplicationPaths.cs
 Jellyfin.Server/Program.cs:377	Emby.Server.Implementations/ConfigurationOptions.cs
+Jellyfin.Server/Program.cs:378	MediaBrowser.Controller/Extensions/ConfigurationExtensions.cs
 Jellyfin.Server/Program.cs:394	src/Jellyfin.Database/Jellyfin.Database.Implementations/JellyfinDbContext.cs
 Jellyfin.Server/Program.cs:395	src/Jellyfin.Database/Jellyfin.Database.Implementations/IJellyfinDatabaseProvider.cs
 Jellyfin.Server/Program.cs:57	Jellyfin.Server/ServerSetupApp/SetupServer.cs
@@ -12707,6 +12590,7 @@ MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:27	MediaBrowser.Controller
 MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:27	MediaBrowser.Controller/Entities/IItemByName.cs
 MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:27	MediaBrowser.Controller/Providers/ArtistInfo.cs
 MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:27	MediaBrowser.Controller/Providers/IHasLookupInfo.cs
+MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:30	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:59	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:65	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Controller/Entities/Audio/MusicArtist.cs:90	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -12729,7 +12613,6 @@ MediaBrowser.Controller/Entities/AudioBook.cs:62	Jellyfin.Data/Enums/UnratedItem
 MediaBrowser.Controller/Entities/BaseItem.cs:1072	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1075	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1084	src/Jellyfin.Extensions/GuidExtensions.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:1089	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1110	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1128	MediaBrowser.Model/Library/PlayAccess.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1128	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -12838,10 +12721,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:2062	Jellyfin.Data/Enums/BaseItemKi
 MediaBrowser.Controller/Entities/BaseItem.cs:2064	Jellyfin.Data/Enums/BaseItemKind.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2072	MediaBrowser.Controller/Entities/LinkedChild.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2077	src/Jellyfin.Extensions/GuidExtensions.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:2082	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2108	MediaBrowser.Controller/Entities/LinkedChild.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:2113	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:2141	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2181	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:219	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2208	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -12918,7 +12798,6 @@ MediaBrowser.Controller/Entities/BaseItem.cs:2864	MediaBrowser.Controller/Provid
 MediaBrowser.Controller/Entities/BaseItem.cs:2866	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2871	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2874	MediaBrowser.Controller/Entities/Video.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:2874	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2876	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2886	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2894	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -12977,7 +12856,6 @@ MediaBrowser.Controller/Entities/BaseItem.cs:514	MediaBrowser.Controller/Channel
 MediaBrowser.Controller/Entities/BaseItem.cs:516	MediaBrowser.Controller/Library/IMediaSourceManager.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:518	MediaBrowser.Controller/MediaSegments/IMediaSegmentManager.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:572	src/Jellyfin.Extensions/GuidExtensions.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:577	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:737	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:750	MediaBrowser.Controller/Channels/Channel.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:755	MediaBrowser.Controller/Entities/ICollectionFolder.cs
@@ -13001,7 +12879,6 @@ MediaBrowser.Controller/Entities/BaseItem.cs:861	Jellyfin.Data/UserEntityExtensi
 MediaBrowser.Controller/Entities/BaseItem.cs:861	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/PreferenceKind.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:87	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:88	MediaBrowser.Model/Entities/ExtraType.cs
-MediaBrowser.Controller/Entities/BaseItem.cs:884	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:884	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:887	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:887	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -13753,6 +13630,7 @@ MediaBrowser.Controller/Entities/UserRootFolder.cs:97	MediaBrowser.Controller/En
 MediaBrowser.Controller/Entities/UserRootFolder.cs:97	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/UserView.cs:100	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/UserView.cs:102	MediaBrowser.Controller/Entities/Folder.cs
+MediaBrowser.Controller/Entities/UserView.cs:104	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/UserView.cs:106	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.Controller/Entities/UserView.cs:109	MediaBrowser.Controller/Entities/UserViewBuilder.cs
 MediaBrowser.Controller/Entities/UserView.cs:114	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -13792,6 +13670,7 @@ MediaBrowser.Controller/Entities/UserView.cs:39	MediaBrowser.Controller/TV/ITVSe
 MediaBrowser.Controller/Entities/UserView.cs:44	Jellyfin.Data/Enums/CollectionType.cs
 MediaBrowser.Controller/Entities/UserView.cs:58	Jellyfin.Data/Enums/CollectionType.cs
 MediaBrowser.Controller/Entities/UserView.cs:75	src/Jellyfin.Extensions/GuidExtensions.cs
+MediaBrowser.Controller/Entities/UserView.cs:79	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/UserView.cs:90	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/UserView.cs:96	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Controller/Entities/UserView.cs:96	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
@@ -14000,8 +13879,6 @@ MediaBrowser.Controller/Entities/UserViewBuilder.cs:669	MediaBrowser.Model/Entit
 MediaBrowser.Controller/Entities/UserViewBuilder.cs:669	MediaBrowser.Model/Entities/ProviderIdsExtensions.cs
 MediaBrowser.Controller/Entities/UserViewBuilder.cs:67	Jellyfin.Data/Enums/CollectionType.cs
 MediaBrowser.Controller/Entities/UserViewBuilder.cs:70	Jellyfin.Data/Enums/CollectionType.cs
-MediaBrowser.Controller/Entities/UserViewBuilder.cs:718	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-MediaBrowser.Controller/Entities/UserViewBuilder.cs:728	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Controller/Entities/UserViewBuilder.cs:73	Jellyfin.Data/Enums/CollectionType.cs
 MediaBrowser.Controller/Entities/UserViewBuilder.cs:76	Jellyfin.Data/Enums/CollectionType.cs
 MediaBrowser.Controller/Entities/UserViewBuilder.cs:79	Jellyfin.Data/Enums/CollectionType.cs
@@ -14040,6 +13917,7 @@ MediaBrowser.Controller/Entities/Video.cs:135	MediaBrowser.Model/Entities/IsoTyp
 MediaBrowser.Controller/Entities/Video.cs:141	MediaBrowser.Model/Entities/Video3DFormat.cs
 MediaBrowser.Controller/Entities/Video.cs:167	MediaBrowser.Controller/LiveTv/IRecordingsManager.cs
 MediaBrowser.Controller/Entities/Video.cs:170	MediaBrowser.Controller/Entities/SourceType.cs
+MediaBrowser.Controller/Entities/Video.cs:190	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/Entities/Video.cs:253	Jellyfin.Data/Enums/MediaType.cs
 MediaBrowser.Controller/Entities/Video.cs:263	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/Entities/Video.cs:266	src/Jellyfin.Extensions/StringExtensions.cs
@@ -14725,6 +14603,8 @@ MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:27	MediaBrowser.Controller/Entit
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:42	MediaBrowser.Model/LiveTv/ChannelType.cs
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:45	MediaBrowser.Model/Entities/LocationType.cs
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:48	Jellyfin.Data/Enums/MediaType.cs
+MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:79	src/Jellyfin.Extensions/EnumerableExtensions.cs
+MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:106	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:171	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:171	MediaBrowser.Model/Entities/ProviderIdsExtensions.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:177	MediaBrowser.Model/Entities/MetadataProvider.cs
@@ -14742,6 +14622,10 @@ MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:227	MediaBrowser.Model/LiveTv/Li
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:230	MediaBrowser.Model/LiveTv/ListingsProviderInfo.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:236	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:34	MediaBrowser.Controller/Entities/SourceType.cs
+MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:71	src/Jellyfin.Extensions/EnumerableExtensions.cs
+MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:85	src/Jellyfin.Extensions/EnumerableExtensions.cs
+MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:92	src/Jellyfin.Extensions/EnumerableExtensions.cs
+MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:99	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/ProgramInfo.cs:89	MediaBrowser.Model/LiveTv/ProgramAudio.cs
 MediaBrowser.Controller/LiveTv/SeriesTimerInfo.cs:75	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:126	src/Jellyfin.Extensions/EnumerableExtensions.cs
@@ -16884,6 +16768,7 @@ MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:248	MediaBrowser.Model/E
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:258	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:258	MediaBrowser.Controller/Providers/LocalImageInfo.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:258	MediaBrowser.Model/IO/FileSystemMetadata.cs
+MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:262	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:262	MediaBrowser.Controller/Entities/PhotoAlbum.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:267	MediaBrowser.Controller/Entities/Person.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:272	MediaBrowser.Controller/Entities/TV/Series.cs
@@ -19396,6 +19281,10 @@ MediaBrowser.Providers/Manager/ImageSaver.cs:447	MediaBrowser.Model/Entities/Ima
 MediaBrowser.Providers/Manager/ImageSaver.cs:45	MediaBrowser.Model/IO/IFileSystem.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:470	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:486	MediaBrowser.Model/Entities/ImageType.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:503	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:504	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:505	MediaBrowser.Controller/Entities/PhotoAlbum.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:506	MediaBrowser.Controller/Entities/Person.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:507	MediaBrowser.Model/Configuration/ImageSavingConvention.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:513	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:516	MediaBrowser.Model/Entities/ImageType.cs
@@ -20012,7 +19901,6 @@ MediaBrowser.Providers/Manager/ProviderManager.cs:921	MediaBrowser.Controller/En
 MediaBrowser.Providers/Manager/ProviderManager.cs:922	MediaBrowser.Controller/Providers/ItemLookupInfo.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:924	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:926	src/Jellyfin.Extensions/GuidExtensions.cs
-MediaBrowser.Providers/Manager/ProviderManager.cs:928	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:934	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:934	MediaBrowser.Controller/Providers/RemoteSearchQuery.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:934	MediaBrowser.Model/Providers/RemoteSearchResult.cs
@@ -20580,6 +20468,9 @@ MediaBrowser.Providers/Movies/ImdbExternalId.cs:19	MediaBrowser.Model/Entities/M
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:22	MediaBrowser.Model/Providers/ExternalIdMediaType.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:25	MediaBrowser.Model/Entities/IHasProviderIds.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:28	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
+MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/MusicVideo.cs
+MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/TV/Episode.cs
+MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Movies/ImdbExternalUrlProvider.cs:12	MediaBrowser.Controller/Providers/IExternalUrlProvider.cs
 MediaBrowser.Providers/Movies/ImdbExternalUrlProvider.cs:18	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -21290,6 +21181,7 @@ MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:62	MediaBrowser.Model/P
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:72	MediaBrowser.Common/Net/NamedClient.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:75	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:77	MediaBrowser.Controller/Entities/TV/Episode.cs
+MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:77	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:135	MediaBrowser.Providers/Plugins/Omdb/OmdbProvider.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:137	MediaBrowser.Common/Net/NamedClient.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:144	MediaBrowser.Model/Providers/RemoteSearchResult.cs
@@ -21440,6 +21332,7 @@ MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:15	MediaBrow
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:18	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:21	MediaBrowser.Model/Providers/ExternalIdMediaType.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:24	MediaBrowser.Model/Entities/IHasProviderIds.cs
+MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:26	MediaBrowser.Controller/Entities/MusicVideo.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:26	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetImageProvider.cs:18	MediaBrowser.Controller/Providers/IHasOrder.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetImageProvider.cs:18	MediaBrowser.Controller/Providers/IRemoteImageProvider.cs
@@ -21679,6 +21572,7 @@ MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:20	MediaBrows
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:27	MediaBrowser.Providers/Plugins/Tmdb/TmdbClientManager.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:37	MediaBrowser.Providers/Plugins/Tmdb/TmdbUtils.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:40	MediaBrowser.Controller/Entities/BaseItem.cs
+MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:42	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:46	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:46	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbEpisodeImageProvider.cs:48	MediaBrowser.Model/Entities/ImageType.cs
@@ -21800,7 +21694,6 @@ MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:62	MediaBro
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:632	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:632	MediaBrowser.Model/Entities/ProviderIdsExtensions.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:654	MediaBrowser.Controller/Entities/TV/Episode.cs
-MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:657	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:657	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:67	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.Providers/Plugins/Tmdb/TV/TmdbMissingEpisodeProvider.cs:67	MediaBrowser.Model/Entities/MetadataProvider.cs
@@ -22809,7 +22702,6 @@ MediaBrowser.XbmcMetadata/Providers/SeriesNfoSeasonProvider.cs:60	MediaBrowser.X
 MediaBrowser.XbmcMetadata/Providers/SeriesNfoSeasonProvider.cs:64	MediaBrowser.Controller/Providers/IDirectoryService.cs
 MediaBrowser.XbmcMetadata/Providers/SeriesNfoSeasonProvider.cs:64	MediaBrowser.Controller/Providers/ItemInfo.cs
 MediaBrowser.XbmcMetadata/Providers/SeriesNfoSeasonProvider.cs:64	MediaBrowser.Model/IO/FileSystemMetadata.cs
-MediaBrowser.XbmcMetadata/Providers/SeriesNfoSeasonProvider.cs:76	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.XbmcMetadata/Providers/VideoNfoProvider.cs:13	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.XbmcMetadata/Providers/VideoNfoProvider.cs:13	MediaBrowser.XbmcMetadata/Providers/BaseVideoNfoProvider.cs
 MediaBrowser.XbmcMetadata/Providers/VideoNfoProvider.cs:27	MediaBrowser.Model/IO/IFileSystem.cs
@@ -22846,6 +22738,7 @@ MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:50	MediaBrowser.Controller/En
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:50	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:54	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:56	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
+MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:60	MediaBrowser.XbmcMetadata/Configuration/NfoConfigurationExtension.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:66	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:71	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:95	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -22954,7 +22847,6 @@ MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:790	MediaBrowser.Controller/Ent
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:795	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:801	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:804	MediaBrowser.Controller/Entities/LinkedChildType.cs
-MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:813	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:842	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:842	MediaBrowser.Controller/Library/ILibraryManager.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:846	MediaBrowser.Model/Entities/ImageType.cs
@@ -22983,6 +22875,7 @@ MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:49	MediaBrowser.Controller/E
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:49	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:53	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:55	MediaBrowser.Controller/Entities/TV/Episode.cs
+MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:76	MediaBrowser.XbmcMetadata/Configuration/NfoConfigurationExtension.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:100	MediaBrowser.Controller/Entities/MusicVideo.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:102	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:113	MediaBrowser.Controller/Entities/Movies/Movie.cs
@@ -24035,7 +23928,6 @@ src/Jellyfin.LiveTv/DefaultLiveTvService.cs:556	MediaBrowser.Controller/LiveTv/A
 src/Jellyfin.LiveTv/DefaultLiveTvService.cs:569	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
 src/Jellyfin.LiveTv/DefaultLiveTvService.cs:598	MediaBrowser.Controller/Entities/BaseItem.cs
 src/Jellyfin.LiveTv/DefaultLiveTvService.cs:598	MediaBrowser.Controller/LiveTv/TimerInfo.cs
-src/Jellyfin.LiveTv/DefaultLiveTvService.cs:601	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/DefaultLiveTvService.cs:604	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
 src/Jellyfin.LiveTv/DefaultLiveTvService.cs:606	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 src/Jellyfin.LiveTv/DefaultLiveTvService.cs:610	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -24168,7 +24060,6 @@ src/Jellyfin.LiveTv/Guide/GuideManager.cs:35	MediaBrowser.Model/IO/IFileSystem.c
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:358	src/Jellyfin.Extensions/GuidExtensions.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:36	MediaBrowser.Controller/Persistence/IItemRepository.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:364	src/Jellyfin.Extensions/EnumerableExtensions.cs
-src/Jellyfin.LiveTv/Guide/GuideManager.cs:366	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:37	MediaBrowser.Controller/Library/ILibraryManager.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:372	MediaBrowser.Controller/Library/DeleteOptions.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:38	MediaBrowser.Controller/LiveTv/ILiveTvManager.cs
@@ -24177,7 +24068,6 @@ src/Jellyfin.LiveTv/Guide/GuideManager.cs:389	MediaBrowser.Controller/LiveTv/Cha
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:39	MediaBrowser.Controller/LiveTv/ITunerHostManager.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:391	MediaBrowser.Controller/Entities/BaseItem.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:40	MediaBrowser.Controller/LiveTv/IRecordingsManager.cs
-src/Jellyfin.LiveTv/Guide/GuideManager.cs:400	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:400	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:402	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/Guide/GuideManager.cs:41	MediaBrowser.Controller/LiveTv/ISchedulesDirectService.cs
@@ -24528,18 +24418,14 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:165	Jellyfin.Data/Enums/BaseItemKind.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:168	MediaBrowser.Model/Entities/ImageType.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:169	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:174	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:179	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:188	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:195	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:206	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:206	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:208	Jellyfin.Data/Enums/BaseItemKind.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:211	MediaBrowser.Model/Entities/ImageType.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:212	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:218	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:223	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:234	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:241	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:255	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:257	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:257	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
@@ -24547,9 +24433,7 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:259	Jellyfin.Data/Enums/BaseItemKind.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:262	MediaBrowser.Model/Entities/ImageType.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:263	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:268	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:273	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:282	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:289	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:300	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:300	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:302	Jellyfin.Data/Enums/BaseItemKind.cs
@@ -24561,11 +24445,9 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:313	Jellyfin.Data/Enums/BaseItemKind.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:316	MediaBrowser.Model/Entities/ImageType.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:317	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:324	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:329	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:33	MediaBrowser.Controller/Drawing/IImageProcessor.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:34	MediaBrowser.Controller/Dto/IDtoService.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:340	MediaBrowser.Model/Entities/ImageType.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:347	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:35	MediaBrowser.Common/IApplicationHost.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:36	MediaBrowser.Controller/Library/ILibraryManager.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:360	MediaBrowser.Model/LiveTv/DayPattern.cs
@@ -24577,7 +24459,6 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:379	src/Jellyfin.Extensions/EnumerableEx
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:381	MediaBrowser.Model/LiveTv/DayPattern.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:389	MediaBrowser.Controller/Entities/BaseItem.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:39	MediaBrowser.Controller/Dto/IDtoService.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:393	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:393	MediaBrowser.Model/Entities/ImageType.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:40	MediaBrowser.Controller/Drawing/IImageProcessor.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:407	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
@@ -24591,8 +24472,6 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:431	MediaBrowser.Model/LiveTv/TimerInfoD
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:431	src/Jellyfin.LiveTv/LiveTvManager.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:433	MediaBrowser.Controller/LiveTv/TimerInfo.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:460	src/Jellyfin.Extensions/GuidExtensions.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:462	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:472	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:493	MediaBrowser.Controller/LiveTv/SeriesTimerInfo.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:493	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:493	src/Jellyfin.LiveTv/LiveTvManager.cs
@@ -24603,8 +24482,6 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:52	MediaBrowser.Controller/LiveTv/LiveTv
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:52	MediaBrowser.Controller/LiveTv/TimerInfo.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:52	MediaBrowser.Model/LiveTv/TimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:526	src/Jellyfin.Extensions/GuidExtensions.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:528	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
-src/Jellyfin.LiveTv/LiveTvDtoService.cs:538	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:54	MediaBrowser.Model/LiveTv/TimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:86	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:88	MediaBrowser.Model/LiveTv/RecordingStatus.cs
@@ -24616,7 +24493,6 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:1019	MediaBrowser.Controller/LiveTv/ILiveTv
 src/Jellyfin.LiveTv/LiveTvManager.cs:102	Jellyfin.Data/Events/GenericEventArgs.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:102	MediaBrowser.Controller/LiveTv/TimerInfo.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1020	MediaBrowser.Controller/LiveTv/ProgramInfo.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:1026	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1028	MediaBrowser.Controller/LiveTv/ProgramInfo.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:106	Jellyfin.Data/Events/GenericEventArgs.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:106	MediaBrowser.Controller/LiveTv/TimerEventInfo.cs
@@ -24625,7 +24501,6 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:1073	MediaBrowser.Controller/LiveTv/ILiveTv
 src/Jellyfin.LiveTv/LiveTvManager.cs:1073	MediaBrowser.Controller/LiveTv/SeriesTimerInfo.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1076	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1083	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:1085	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1085	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1112	MediaBrowser.Model/LiveTv/TimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1123	MediaBrowser.Controller/LiveTv/ILiveTvService.cs
@@ -24682,12 +24557,10 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:156	MediaBrowser.Controller/LiveTv/ILiveTvS
 src/Jellyfin.LiveTv/LiveTvManager.cs:156	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:162	MediaBrowser.Controller/LiveTv/ILiveTvService.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:162	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:164	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:164	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:169	MediaBrowser.Controller/LiveTv/ILiveTvService.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:177	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:177	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:179	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:186	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:188	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:198	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -24725,7 +24598,6 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:335	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:335	MediaBrowser.Model/Querying/QueryResult.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:341	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:341	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:355	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:37	MediaBrowser.Controller/LiveTv/ILiveTvManager.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:382	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:384	MediaBrowser.Controller/LiveTv/TimerInfo.cs
@@ -24778,7 +24650,6 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:544	MediaBrowser.Model/Querying/ItemFields.
 src/Jellyfin.LiveTv/LiveTvManager.cs:548	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:55	MediaBrowser.Controller/Dto/IDtoService.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:56	MediaBrowser.Controller/Library/IUserManager.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:563	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:565	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:57	MediaBrowser.Controller/Library/ILibraryManager.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:571	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
@@ -24789,7 +24660,6 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:584	MediaBrowser.Controller/LiveTv/ActiveRe
 src/Jellyfin.LiveTv/LiveTvManager.cs:584	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:584	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:59	MediaBrowser.Controller/Channels/IChannelManager.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:590	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:590	src/Jellyfin.LiveTv/DefaultLiveTvService.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:60	MediaBrowser.Controller/LiveTv/IRecordingsManager.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:61	src/Jellyfin.LiveTv/LiveTvDtoService.cs
@@ -24829,9 +24699,7 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:76	src/Jellyfin.LiveTv/DefaultLiveTvService
 src/Jellyfin.LiveTv/LiveTvManager.cs:765	MediaBrowser.Model/LiveTv/RecordingStatus.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:769	MediaBrowser.Model/LiveTv/RecordingStatus.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:793	MediaBrowser.Model/LiveTv/TimerInfoDto.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:799	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:799	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:801	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:81	Jellyfin.Data/Events/GenericEventArgs.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:81	MediaBrowser.Controller/LiveTv/TimerEventInfo.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:810	MediaBrowser.Model/LiveTv/TimerInfoDto.cs
@@ -24882,7 +24750,6 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:931	MediaBrowser.Controller/Sorting/SortExt
 src/Jellyfin.LiveTv/LiveTvManager.cs:935	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/SortOrder.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:936	MediaBrowser.Controller/Sorting/SortExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:937	MediaBrowser.Controller/Sorting/SortExtensions.cs
-src/Jellyfin.LiveTv/LiveTvManager.cs:948	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:95	Jellyfin.Data/Events/GenericEventArgs.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:956	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:956	MediaBrowser.Model/Querying/QueryResult.cs
@@ -24916,7 +24783,6 @@ src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:251	MediaBrowser.Model/Entities
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:259	MediaBrowser.Controller/Library/ILiveStream.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:259	MediaBrowser.Model/Dto/MediaSourceInfo.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:262	MediaBrowser.Controller/Library/ILiveStream.cs
-src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:270	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:270	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:272	MediaBrowser.Model/LiveTv/ChannelType.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:276	MediaBrowser.Model/Dto/MediaSourceInfo.cs
@@ -29474,10 +29340,8 @@ tests/Jellyfin.Providers.Tests/MediaInfo/MediaInfoResolverTests.cs:91	MediaBrows
 tests/Jellyfin.Providers.Tests/MediaInfo/MediaInfoResolverTests.cs:99	MediaBrowser.Controller/Entities/BaseItem.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/MediaInfoResolverTests.cs:99	MediaBrowser.Controller/Library/IMediaSourceManager.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:100	MediaBrowser.Controller/Entities/TV/Episode.cs
-tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:102	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:102	MediaBrowser.Controller/Providers/IDirectoryService.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:109	MediaBrowser.Controller/Entities/TV/Episode.cs
-tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:111	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:111	MediaBrowser.Controller/Providers/IDirectoryService.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:26	MediaBrowser.Providers/MediaInfo/ProbeProvider.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:30	MediaBrowser.Controller/Library/IMediaSourceManager.cs
@@ -29499,16 +29363,12 @@ tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:50	MediaBrowser.C
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:51	MediaBrowser.Controller/Persistence/IMediaAttachmentRepository.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:52	MediaBrowser.Controller/Persistence/IMediaStreamRepository.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:60	MediaBrowser.Controller/Entities/TV/Episode.cs
-tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:62	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:62	MediaBrowser.Controller/Providers/IDirectoryService.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:68	MediaBrowser.Controller/Entities/Audio/Audio.cs
-tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:70	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:70	MediaBrowser.Controller/Providers/IDirectoryService.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:79	MediaBrowser.Controller/Entities/TV/Episode.cs
-tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:86	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:86	MediaBrowser.Controller/Providers/IDirectoryService.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:92	MediaBrowser.Controller/Entities/TV/Episode.cs
-tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:94	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/ProbeProviderTests.cs:94	MediaBrowser.Controller/Providers/IDirectoryService.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/SubtitleResolverTests.cs:24	MediaBrowser.Providers/MediaInfo/SubtitleResolver.cs
 tests/Jellyfin.Providers.Tests/MediaInfo/SubtitleResolverTests.cs:29	MediaBrowser.Controller/Entities/Video.cs

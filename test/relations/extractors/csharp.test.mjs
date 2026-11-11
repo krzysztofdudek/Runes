@@ -8,13 +8,16 @@ import { SymbolTable } from '@chrisdudek/runes/relations';
 import { makeResolver } from '@chrisdudek/runes/relations';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 
+/** The symbol keys one candidate reads, in order: its own, or for an attribute (whose two readings travel apart in one candidate) those of the written reading and then those of the suffixed one. */
+const readingKeys = (c) => (c.kind !== 'symbol' ? [] : c.attribute === undefined ? [c.symbolKey] : [...c.attribute.written, ...(c.attribute.suffixed ?? [])].map((r) => r.symbolKey));
+
 const run = (code) => runExtractor(csharpExtractor, 'csharp', '.cs', code);
 
 /** Every symbol key across EVERY candidate of EVERY detected reference. Each C# reference is
  *  now ONE ordered DetectedDep carrying its whole candidate group (nearest binding first,
  *  verbatim/top-level last), so a key may sit at any position in the group. */
 const symbolKeys = (uses) =>
-  uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+  uses.flatMap((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
 /** The ordered symbol-key group for the reference whose group CONTAINS `key` (anywhere). */
 const groupContaining = (
@@ -24,7 +27,7 @@ const groupContaining = (
   const dep = uses.find((u) =>
     u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === key),
   );
-  return dep?.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : []));
+  return dep?.candidates.flatMap((c) => readingKeys(c));
 };
 
 /** Resolve a detected reference exactly as `pass.ts` does: walk its ordered candidate group
@@ -233,6 +236,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     expect(symbolKeys(uses)).toContain('Foo.Bar.Baz');
   });
 
+
   it('honors `global using Foo.Bar;` as a prefix for a bare `new Baz()` too', async () => {
     const { uses } = await run(
       ['global using Foo.Bar;', 'class C { void M() { var x = new Baz(); } }', ''].join('\n'),
@@ -297,7 +301,7 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     // entries legitimately produce two groups — each a clean single-candidate `[Foo.Bar]`.)
     const { uses } = await run(['class C : Foo.Bar, Foo.Bar { }', ''].join('\n'));
     for (const u of uses) {
-      const keys = u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : []));
+      const keys = u.candidates.flatMap((c) => readingKeys(c));
       expect(new Set(keys).size).toBe(keys.length); // no duplicate key inside any one group
     }
   });
@@ -847,7 +851,7 @@ describe('csharp — extension-method declaration keys (m27)', () => {
 
 describe('csharp — member-access receivers and extension calls (M16, m27)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a dotted receiver emits ONE group of its prefixes, leftmost first', async () => {
     const { uses } = await run(['class C { void M(object o) { Shop.Core.Guard.NotNull(o); } }', ''].join('\n'));
@@ -864,6 +868,22 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
   it('an unshadowed type-name receiver emits no extension group (a static call)', async () => {
     const { uses } = await run(['class C { void M() { Guard.Check(); } }', ''].join('\n'));
     expect(groups(uses)).toEqual([['C+Guard', 'Guard']]);
+    expect(uses[0].candidates.every((c) => c.unless === undefined)).toBe(true);
+  });
+  it('inside a type that can hold a member the file does not show, the same call is also given as an extension call, each reading under its condition', async () => {
+    for (const code of ['partial class C { void M() { Guard.Check(1); } }', 'class C : B { void M() { Guard.Check(1); } }']) {
+      const { uses } = await run(`${code}\n`);
+      const [ext, receiver] = uses.filter((u) => u.candidates.some((c) => c.unless !== undefined));
+      expect(ext.candidates.map((c) => c.symbolKey)).toEqual(['Check()']);
+      expect(ext.candidates[0].unless).toEqual([{ kind: 'no-member', types: ['C'], name: 'Guard', call: { method: 'Check', args: 1, typeArgs: 0, from: ['C'] } }]);
+      expect(receiver.candidates.map((c) => c.symbolKey)).toEqual(['C+Guard', 'Guard']);
+      expect(receiver.candidates.map((c) => c.unless)).toEqual([[{ kind: 'member', types: ['C'], name: 'Guard' }], [{ kind: 'member', types: ['C'], name: 'Guard' }]]);
+      expect(receiver.candidates[0].unless).toBe(receiver.candidates[1].unless);
+    }
+    // A receiver that is more than the name carries no call for the member's own type; outside every type no member can be meant.
+    const deep = (await run('partial class C { void M() { Guard.Inner.Check(); } }\n')).uses.find((u) => u.candidates[0].symbolKey === 'Check()');
+    expect(deep.candidates[0].unless).toEqual([{ kind: 'no-member', types: ['C'], name: 'Guard' }]);
+    expect(groups((await run('Guard.Check();\n')).uses)).toEqual([['Guard']]);
   });
   it('System.Object members, names the file declares as methods, and base.X() are never extension calls', async () => {
     const { uses } = await run(
@@ -911,7 +931,7 @@ describe('csharp — project-wide global alias with 2+ targets (M7)', () => {
 
 describe('csharp — extension and receiver shapes that must NOT count (branch guards)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('only a static top-level class member with a `this` receiver, or a misread extension block member, is an extension', async () => {
     const { declarations } = await run(
@@ -958,7 +978,7 @@ describe('csharp — extension and receiver shapes that must NOT count (branch g
 
 describe('csharp — type arguments of generic methods and the remaining typed expressions (issue 016)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a generic method call emits its type arguments, never the method name', async () => {
     const { uses } = await run(['class C { void M(object s) { Make<Order>(); Shop.Make<Line>(); } }', ''].join('\n'));
@@ -997,7 +1017,7 @@ describe('csharp — type arguments of generic methods and the remaining typed e
 describe('csharp — the implicit Program of top-level statements (issue 075)', () => {
   const keys = (declarations) => declarations.map((d) => [d.symbolKey, d.line]);
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   // The implicit class is published under its own fallback key (the compiler's pre-C# 10 name, which no source can write), so an explicit global `Program` anywhere is always tried first.
   it('a file with top-level statements declares the implicit `Program` fallback key at its first statement', async () => {
@@ -1014,7 +1034,7 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
   });
   it('a file without top-level statements declares no implicit `Program`', async () => {
     const { declarations } = await run(['namespace App;', 'public class Startup { void Main() { } }', ''].join('\n'));
-    expect(keys(declarations)).toEqual([['App.Startup', 2]]);
+    expect(keys(declarations)).toEqual([['App.Startup', 2]]); // the class and its one method, nothing for a `Program`
   });
   it('a bare `Program` reference tries every explicit reading first and the implicit fallback last', async () => {
     const { uses } = await run(['namespace T;', 'class C { F<Program> f; }', ''].join('\n'));
@@ -1032,7 +1052,7 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
 
 describe('csharp — a declaration expression names a type only where C# allows one (issue 016, round 2)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a comparison pair in a call, constructor or indexer argument list emits nothing', async () => {
     const { uses } = await run(['class C { object M(int i, int j) => F(i < A, j > B) && new P(i < A, j > B) && this[i < A, j > B]; }', ''].join('\n'));
@@ -1050,7 +1070,7 @@ describe('csharp — a declaration expression names a type only where C# allows 
 
 describe('csharp — a type parameter in scope shadows a type of the same name (issue 138)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a class type parameter names nothing in a field, a return type, a parameter, a constraint, typeof, a cast, `is`, `as` or `new T[n]`', async () => {
     const { uses } = await run(['class Repo<T> : Base<T> where T : class { T f; T M(T a) => (T)a ?? (a as T) ?? default(T); bool N(object o) => o is T; object K() => typeof(T); T[] P(int n) => new T[n]; }', ''].join('\n'));
@@ -1078,7 +1098,7 @@ describe('csharp — a type parameter in scope shadows a type of the same name (
 
 describe('csharp — a qualified comparison pair the grammar reads as a declaration (issue 150)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('`x.i < A, j > B` and `a.b.i < A, j.k > B` in a call, constructor or indexer argument list emit nothing', async () => {
     const { uses } = await run(['class C { object M(object x, object a, int j) => F(x.i < A, j > B) && new P(x.i < A, j > B) && this[a.b.i < A, j.k > B]; }', ''].join('\n'));
@@ -1092,7 +1112,7 @@ describe('csharp — a qualified comparison pair the grammar reads as a declarat
 
 describe('csharp — the element type of a stackalloc (issue 139)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('`stackalloc Foo[n]` and `stackalloc Baz[] { … }` emit the element; a predefined element and `stackalloc[] { … }` emit nothing', async () => {
     const { uses } = await run(['class C { unsafe void M(int n) { var s = stackalloc Foo[n]; var u = stackalloc Baz[] { 1 }; var a = stackalloc int[2]; var w = stackalloc[] { 1, 2 }; } }', ''].join('\n'));
@@ -1102,7 +1122,7 @@ describe('csharp — the element type of a stackalloc (issue 139)', () => {
 
 describe('csharp — `global::` with a single name binds the global namespace only (issue 156)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('`global::Settings` and `global::Box<Order>` are rooted: no enclosing namespace or using candidate; the type argument is an ordinary reference', async () => {
     const { uses } = await run(['using Shop.Core;', 'namespace App;', 'class C : global::Base { global::Settings s; global::Box<Order> b; object M() => new global::Thing(); }', ''].join('\n'));
@@ -1120,7 +1140,7 @@ describe('csharp — `global::` with a single name binds the global namespace on
 
 describe('csharp — a tuple type with named elements as a type argument (issue 161)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('the element types of a named tuple type argument followed by an initializer, arguments or a pattern designation are emitted; the element names never are', async () => {
     const { uses } = await run([
@@ -1142,7 +1162,7 @@ describe('csharp — a tuple type with named elements as a type argument (issue 
 
 describe('csharp — `global::` in attributes and member accesses, and a named tuple type argument one generic level deeper (issue 174)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('an attribute written after `global::` is rooted, single or qualified, plain or generic; its type arguments are ordinary references', async () => {
     // `[global::A.Bar]` was read through the enclosing namespaces and the usings, and `[global::Foo]` / `[global::Gen<Order>]` emitted nothing.
@@ -1234,7 +1254,7 @@ describe('csharp — `global::` in attributes and member accesses, and a named t
 
 describe('csharp — a generic attribute behind a qualifier, and an attribute after a using alias (issue 181)', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a qualified generic attribute is named without its type arguments, rooted after `global::`, and its type arguments are ordinary references', async () => {
     // `[A.Gen<Order>]` looked up `A.Gen<Order>` and `A.Gen<Order>Attribute` and emitted no type argument.
@@ -1320,7 +1340,7 @@ describe('csharp — a declaration only its own assembly sees carries the intern
 
 describe('csharp — the generic arity is part of every type key', () => {
   const groups = (uses) =>
-    uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+    uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a generic type declares its arity, and so does every generic type around a nested one', async () => {
     const { declarations } = await run(['namespace N;', 'class Plain { }', 'class One<T> { class Inner { } }', 'class Two<TK, TV> { class Deep<X> { } }', ''].join('\n'));
@@ -1341,7 +1361,7 @@ describe('csharp — the generic arity is part of every type key', () => {
 });
 
 describe('csharp — a type named in a pattern or after `is`', () => {
-  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a dotted name in a constant pattern is read as the type it spells, a generic segment and a `global::` lead included', async () => {
     const { uses } = await run(['class C { bool A(object o) => o is Lib.Order; bool B(object o) => o is Lib.Box<int>.Item; bool D(object o) => o is global::Lib.Credit; }', ''].join('\n'));
@@ -1352,7 +1372,7 @@ describe('csharp — a type named in a pattern or after `is`', () => {
   });
   it('a dotted constant reads its first name before the dotted name, so a type bound there ends the lookup', async () => {
     const { uses } = await run('namespace App.Core;\nclass C { bool A(int n) => n is Limits.Max; }\n');
-    const group = uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : []))).find((g) => g.includes('Limits.Max'));
+    const group = uses.map((u) => u.candidates.flatMap((c) => readingKeys(c))).find((g) => g.includes('Limits.Max'));
     expect(group.indexOf('App.Core.Limits')).toBeGreaterThanOrEqual(0);
     expect(group.indexOf('App.Core.Limits')).toBeLessThan(group.indexOf('Limits.Max'));
   });
@@ -1373,7 +1393,7 @@ describe('csharp — a type named in a pattern or after `is`', () => {
 });
 
 describe('csharp — a type under `ref`, in a query clause or in a function pointer', () => {
-  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
   it('a ref return, a ref property, a ref indexer, a ref local and a ref local function name their type; `ref var` names none', async () => {
     const { uses } = await run([
