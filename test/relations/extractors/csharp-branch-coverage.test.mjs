@@ -197,6 +197,25 @@ describe('csharp extractor — a using static imports nested types and extension
   });
 });
 
+describe('csharp extractor — an explicit interface implementation declares no name of its class', () => {
+  const keysOf = (uses) => uses.map((u) => u.candidates.map((c) => c.symbolKey));
+
+  it('a receiver named like an explicitly implemented property or event is read as a type', async () => {
+    const { uses } = await run('class C : I {\n  int I.Settings => 1;\n  event System.Action I.Changed { add { } remove { } }\n  void M() { Settings.Get(); Changed.Raise(); }\n}\n');
+    expect(keysOf(uses).filter((g) => g.includes('Settings') || g.includes('Changed'))).toEqual([['C+Settings', 'Settings'], ['C+Changed', 'Changed']]);
+  });
+
+  it('a call named like an explicitly implemented method is an extension call, and one named like an ordinary method is not', async () => {
+    const { uses } = await run('class C : I {\n  void I.Run() { }\n  void Walk() { }\n  void M(object o) { o.Run(); o.Walk(); }\n}\n');
+    expect(keysOf(uses).filter((g) => g.some((k) => k.endsWith('()')))).toEqual([['Run()']]);
+  });
+
+  it('a property the class declares itself still shadows a type of its name', async () => {
+    const { uses } = await run('class C {\n  int Settings => 1;\n  void M() { Settings.Get(); }\n}\n');
+    expect(keysOf(uses).filter((g) => g.includes('Settings'))).toEqual([]);
+  });
+});
+
 describe('csharp extractor — a file-local type ends the lookup of its name in its own file', () => {
   const keysOf = (uses) => uses.map((u) => u.candidates.map((c) => c.symbolKey));
 

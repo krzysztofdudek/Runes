@@ -1434,7 +1434,8 @@ const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed
  * Every name this file DECLARES that is not a namespace: locals, parameters (method, lambda,
  * primary-constructor), fields, properties, events, methods and local functions, enum members,
  * pattern/`out var`/deconstruction designations, `foreach`/`catch`/query range variables, and the
- * file's own type names — collected file-wide, not per scope. A type parameter is not a value: it
+ * file's own type names — collected file-wide, not per scope. An explicit interface implementation
+ * declares no such name. A type parameter is not a value: it
  * is scoped to its own declaration by `isTypeParameterInScope`, never file-wide.
  *
  * WHY FILE-WIDE (the M16 shadow guard): a member access `X.Member` reads as a static access
@@ -1477,6 +1478,8 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
         declaredNames.add(left.text); // `foreach (var (a, b) in …)` is a pattern
         typed(left.text, node.childForFieldName('type'), node);
       }
+    } else if ((type === 'method_declaration' || type === 'property_declaration' || type === 'event_declaration') && node.namedChildren.some((c) => c!.type === 'explicit_interface_specifier')) {
+      // An explicit interface implementation (`ISettings IHasSettings.Settings => …`) gives its type no member of that name: it is reached through the interface alone (C# spec §18.6.2), so a simple name beside it still names a type, and a call of that name on a value of the class is not its call.
     } else if (NAME_DECLARING_TYPES.has(type)) {
       // An ordinary (non-extension) method or local function also names a callable member.
       const ordinaryMethod =
@@ -2957,7 +2960,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 34,
+  rev: 35,
   declarations,
   uses,
 };

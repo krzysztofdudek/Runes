@@ -65,6 +65,7 @@ describe('MATRIX — qualified-reference & nested-type keying', () => {
   it('csharp-enclosing-nested-type-before-namespace-silence', () => runCase('csharp-enclosing-nested-type-before-namespace-silence'));
   it('csharp-enclosing-nested-type-before-using-silence', () => runCase('csharp-enclosing-nested-type-before-using-silence'));
   it('csharp-enclosing-nested-enum-receiver-silence', () => runCase('csharp-enclosing-nested-enum-receiver-silence'));
+  it('csharp-explicit-interface-implementation-type-receiver-edge', () => runCase('csharp-explicit-interface-implementation-type-receiver-edge'));
   it('csharp-receiver-nearer-namespace-before-global-type-edge', () => runCase('csharp-receiver-nearer-namespace-before-global-type-edge'));
   it('csharp-enclosing-nested-type-other-part-silence', () => runCase('csharp-enclosing-nested-type-other-part-silence'));
   it('csharp-enclosing-nested-type-before-global-alias-edge', () => runCase('csharp-enclosing-nested-type-before-global-alias-edge'));
