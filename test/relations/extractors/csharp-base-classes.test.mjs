@@ -509,3 +509,15 @@ describe('csharp: what the large repositories showed', () => {
     });
   });
 });
+
+describe('resolver: a nested-only reading outside C#', () => {
+  it('still reads the split at a declared type and never the dotted key', () => {
+    const table = new SymbolTable();
+    table.declare('php', 'A.B', 'src/a/B.php');
+    table.declare('php', 'A.B+T', 'src/a/T.php');
+    table.declare('php', 'A.C.T', 'src/c/T.php');
+    const resolver = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: table, resolvePathToFile: () => undefined });
+    expect(resolver.resolveFile({ kind: 'symbol', symbolKey: 'A.B.T', nestedOnly: true }, 'x.php', 'php')).toBe('src/a/T.php');
+    expect(resolver.resolveFile({ kind: 'symbol', symbolKey: 'A.C.T', nestedOnly: true }, 'x.php', 'php')).toBe(undefined);
+  });
+});
