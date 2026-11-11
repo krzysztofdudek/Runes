@@ -85,31 +85,30 @@ describe('a node with very many children is read in time linear in their number'
     assert.equal(declarations.length, 0);
   });
 
-  // A deconstruction with no right side, line after line: each element is a declaration expression, read against the tuple it stands in and against what that tuple stands in. The extractor asked each of them for its parent, and its parent's, and the same input took 29 seconds.
+  // A deconstruction with no right side, line after line: each element is a declaration expression, read against the tuple it stands in and against what that tuple stands in. The extractor asked each of them for its parent, and its parent's, and the full input took 29 seconds.
   it('malformed C# of 388 000 characters whose lines are tuple deconstructions', async () => {
-    const { uses, declarations, elapsed } = await timed(relations.csharpExtractor, 'A.cs', 'csharp', repeatTo('(A a, B b) =\n', SIZE));
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo('(A a, B b) =\n', SIZE * scale));
     assert.deepEqual([uses.length, declarations.length], [0, 0]);
-    assert.ok(elapsed < BOUND_MS, `took ${Math.round(elapsed)} ms`);
   });
 
   // The grammar reads each line as comparisons around a tuple of declaration expressions; each named element's type and the generic that holds the tuple give their references.
   it('malformed C# of 388 000 characters whose lines create a generic of a named tuple', async () => {
     const line = 'new List<(Order Item, int Index)>(\n';
-    const { uses, declarations, elapsed } = await timed(relations.csharpExtractor, 'A.cs', 'csharp', repeatTo(line, SIZE));
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(line, SIZE * scale));
     assert.equal(uses.length, 2 * Math.floor(SIZE / line.length));
     assert.equal(declarations.length, 0);
-    assert.ok(elapsed < BOUND_MS, `took ${Math.round(elapsed)} ms`);
   });
 
   // The members of the misread C# 14 extension block are local functions, each read against the constructor two steps above it; the parameters of a primary constructor are read against the type their list belongs to.
-  it('a C# extension block of 30 000 methods, and a primary constructor of 48 000 parameters, are read in the same time', async () => {
-    const block = `static class X { extension(Order o) {\n${repeatTo('void F() { }\n', SIZE)}} }\n`;
-    const methods = await timed(relations.csharpExtractor, 'A.cs', 'csharp', block);
-    assert.equal(methods.declarations.filter((d) => d.symbolKey === 'F()').length, Math.floor(SIZE / 13));
-    assert.ok(methods.elapsed < BOUND_MS, `took ${Math.round(methods.elapsed)} ms`);
-    const primary = await timed(relations.csharpExtractor, 'A.cs', 'csharp', `partial class C(\n${repeatTo('int a,\n', SIZE)}int z) { }\n`);
-    assert.deepEqual(primary.declarations.map((d) => d.symbolKey), ['C', 'members:C\t-a -z']);
-    assert.ok(primary.elapsed < BOUND_MS, `took ${Math.round(primary.elapsed)} ms`);
+  it('a C# extension block of 30 000 methods', async () => {
+    const method = 'void F() { }\n';
+    const { declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => `static class X { extension(Order o) {\n${repeatTo(method, SIZE * scale)}} }\n`);
+    assert.equal(declarations.filter((d) => d.symbolKey === 'F()').length, Math.floor(SIZE / method.length));
+  });
+
+  it('a C# primary constructor of 55 000 parameters', async () => {
+    const { declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => `partial class C(\n${repeatTo('int a,\n', SIZE * scale)}int z) { }\n`);
+    assert.deepEqual(declarations.map((d) => d.symbolKey), ['C', 'members:C\t-a -z']);
   });
 
   it('a Python file of 20 000 decorated top-level functions declares each of them', async () => {
