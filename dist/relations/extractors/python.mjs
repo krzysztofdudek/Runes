@@ -1,4 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
  * Python dependency extractor.
@@ -37,8 +38,7 @@ function moduleOfAliasedImport(aliased) {
  *  children (each a `dotted_name` or `aliased_import` whose `name` is the symbol). */
 function importedNames(fromStatement) {
     const out = [];
-    for (let i = 0; i < fromStatement.namedChildCount; i++) {
-        const child = fromStatement.namedChild(i);
+    for (const child of fromStatement.namedChildren) {
         if (child === null)
             continue;
         // Skip the module_name field child (handled separately) and wildcard.
@@ -75,8 +75,7 @@ function uses(file) {
             case 'import_statement': {
                 // `import a.b.c`, `import x as y`, `import a, b.c` — iterate every
                 // field-`name` child (a dotted_name or an aliased_import).
-                for (let i = 0; i < node.namedChildCount; i++) {
-                    const child = node.namedChild(i);
+                for (const child of node.namedChildren) {
                     if (child === null)
                         continue;
                     if (child.type === 'dotted_name') {
@@ -134,32 +133,19 @@ function uses(file) {
     return out;
 }
 const TOP_LEVEL_DECLARATION_TYPES = new Set(['class_definition', 'function_definition']);
-/** True when the declaration sits at module top level — directly under `module`,
- *  or wrapped in a `decorated_definition` that is itself directly under `module`. */
-function isTopLevel(node) {
-    const parent = node.parent;
-    if (parent === null)
-        return false;
-    if (parent.type === 'module')
-        return true;
-    if (parent.type === 'decorated_definition') {
-        const grandparent = parent.parent;
-        return grandparent !== null && grandparent.type === 'module';
-    }
-    return false;
-}
 function declarations(file) {
     const out = [];
-    walk(file.tree.rootNode, (node) => {
-        if (!TOP_LEVEL_DECLARATION_TYPES.has(node.type))
-            return undefined;
-        if (!isTopLevel(node))
-            return undefined;
-        const nameNode = node.childForFieldName('name');
-        if (nameNode === null)
-            return undefined;
-        out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
-        return undefined;
+    walkScoped(file.tree.rootNode, 'inner', (node, level) => {
+        if (node.type === 'module')
+            return 'top';
+        if (node.type === 'decorated_definition')
+            return level;
+        if (level === 'top' && TOP_LEVEL_DECLARATION_TYPES.has(node.type)) {
+            const nameNode = node.childForFieldName('name');
+            if (nameNode !== null)
+                out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+        }
+        return 'inner';
     });
     return out;
 }

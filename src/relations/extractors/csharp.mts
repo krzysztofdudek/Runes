@@ -1,6 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
-import { indexScopes, walkScoped } from './scope-walk.mjs';
+import { indexScopes, walkScoped, walkWithParent, type ParentOf } from './scope-walk.mjs';
 import type {
   DependencyExtractor,
   DetectedDep,
@@ -206,7 +206,7 @@ function csSeen(node: Node, inherited: CsScope): CsScope {
 }
 
 /** The scope the children of `node` inherit, or undefined when it is `own`. */
-function csBelow(node: Node, own: CsScope): CsScope | undefined {
+function csBelow(node: Node, own: CsScope, parentOf: ParentOf): CsScope | undefined {
   const type = node.type;
   let { ns, chain, bodyChain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
   let tpSkip: TypeParameters | null | undefined;
@@ -226,9 +226,12 @@ function csBelow(node: Node, own: CsScope): CsScope | undefined {
     changed = true;
   }
   // The body of a type declaration (`declaration_list`, or an enum's member list): only inside it are the type's members, its nested types included, in scope.
-  if ((type === 'declaration_list' || type === 'enum_member_declaration_list') && node.parent !== null && TYPE_DECLARATION_TYPES.has(node.parent.type)) {
-    bodyChain = chain;
-    changed = true;
+  if (type === 'declaration_list' || type === 'enum_member_declaration_list') {
+    const parent = parentOf();
+    if (parent !== null && TYPE_DECLARATION_TYPES.has(parent.type)) {
+      bodyChain = chain;
+      changed = true;
+    }
   }
   if (type === 'extension_declaration') {
     extBelow = true;
@@ -258,11 +261,10 @@ function csBelow(node: Node, own: CsScope): CsScope | undefined {
 /** The names the `type_parameter_list` of a declaration declares (none when it has no list). */
 function typeParameterNames(decl: Node): Set<string> {
   const names = new Set<string>();
-  for (let i = 0; i < decl.namedChildCount; i++) {
-    const list = decl.namedChild(i);
+  for (const list of decl.namedChildren) {
     if (list === null || list.type !== 'type_parameter_list') continue;
-    for (let j = 0; j < list.namedChildCount; j++) {
-      const name = list.namedChild(j)?.childForFieldName('name')?.text;
+    for (const tp of list.namedChildren) {
+      const name = tp?.childForFieldName('name')?.text;
       if (name !== undefined) names.add(name);
     }
     break;
@@ -272,10 +274,10 @@ function typeParameterNames(decl: Node): Set<string> {
 
 /** Walk the tree with the scope of every node (see `CsScope`); a visitor that returns `false` skips the children of the node it was given. */
 function walkCs(root: Node, visit: (node: Node, scope: CsScope) => boolean | undefined): void {
-  walkScoped<CsScope>(root, TOP_SCOPE, (node, inherited) => {
+  walkScoped<CsScope>(root, TOP_SCOPE, (node, inherited, parentOf) => {
     const own = csSeen(node, inherited);
     if (visit(node, own) === false) return false;
-    return csBelow(node, own) ?? (own === inherited ? undefined : own);
+    return csBelow(node, own, parentOf) ?? (own === inherited ? undefined : own);
   });
 }
 
@@ -294,8 +296,7 @@ function blockNamespace(scope: CsScope): string {
  *  declaring source file (it cannot be referenced cross-file, and two different files may each
  *  declare an unrelated same-named `file` type). */
 function hasFileModifier(node: Node): boolean {
-  for (let i = 0; i < node.childCount; i++) {
-    const c = node.child(i);
+  for (const c of node.children) {
     if (c !== null && c.type === 'modifier' && c.text === 'file') return true;
   }
   return false;
@@ -343,8 +344,7 @@ export function internalKey(symbolKey: string): string {
 /** The access modifiers a declaration node carries. */
 function accessModifiers(node: Node): Set<string> {
   const out = new Set<string>();
-  for (let i = 0; i < node.childCount; i++) {
-    const c = node.child(i);
+  for (const c of node.children) {
     if (c !== null && c.type === 'modifier' && /^(?:public|internal|protected|private|partial)$/.test(c.text)) out.add(c.text);
   }
   return out;
@@ -381,8 +381,7 @@ function firstTopLevelStatement(root: Node): Node | undefined {
 
 /** True when `node` has a `static` modifier child. */
 function hasStaticModifier(node: Node): boolean {
-  for (let i = 0; i < node.childCount; i++) {
-    const c = node.child(i);
+  for (const c of node.children) {
     if (c !== null && c.type === 'modifier' && c.text === 'static') return true;
   }
   return false;
@@ -390,8 +389,7 @@ function hasStaticModifier(node: Node): boolean {
 
 /** True when a parameter carries the `this` modifier (the receiver of a classic extension method). */
 function isThisParameter(param: Node): boolean {
-  for (let i = 0; i < param.childCount; i++) {
-    const c = param.child(i);
+  for (const c of param.children) {
     if (c !== null && c.type === 'modifier' && c.text === 'this') return true;
   }
   return false;
@@ -569,8 +567,7 @@ const NAMESPACE_NODE_TYPES = new Set([
  *  skipped so the ALIASED target is returned, not the alias name. The text is normalized so a
  *  `global::`-rooted import (`global::Foo.Bar`) records the clean dotted FQN. */
 function directiveNamespaceText(directive: Node, skipName: Node | null = null): string | undefined {
-  for (let i = 0; i < directive.namedChildCount; i++) {
-    const c = directive.namedChild(i);
+  for (const c of directive.namedChildren) {
     if (c === null) continue;
     if (skipName !== null && c.id === skipName.id) continue;
     if (NAMESPACE_NODE_TYPES.has(c.type)) return stripGlobalQualifier(c.text);
@@ -598,8 +595,7 @@ function isRootedDirective(directive: Node): boolean {
 
 /** True when the directive has an anonymous token child of the given keyword type. */
 function hasTokenChild(directive: Node, token: string): boolean {
-  for (let i = 0; i < directive.childCount; i++) {
-    const c = directive.child(i);
+  for (const c of directive.children) {
     if (c !== null && !c.isNamed && c.type === token) return true;
   }
   return false;
@@ -1029,10 +1025,12 @@ function collectDeclaredNames(root: Node): { declaredNames: Set<string>; methodN
       // An ordinary (non-extension) method or local function also names a callable member.
       const ordinaryMethod =
         (node.type === 'method_declaration' || node.type === 'local_function_statement') && extensionMethodName(node, scope) === undefined;
-      for (let i = 0; i < node.childCount; i++) {
-        if (node.fieldNameForChild(i) !== 'name' || node.child(i)!.type !== 'identifier') continue;
-        declaredNames.add(node.child(i)!.text);
-        if (ordinaryMethod) methodNames.add(node.child(i)!.text);
+      const children = node.children;
+      for (let i = 0; i < children.length; i++) {
+        const c = children[i];
+        if (c === null || c.type !== 'identifier' || node.fieldNameForChild(i) !== 'name') continue;
+        declaredNames.add(c.text);
+        if (ordinaryMethod) methodNames.add(c.text);
       }
     }
     return undefined;
@@ -1248,16 +1246,14 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         return;
       }
       case 'tuple_type': {
-        for (let i = 0; i < typeNode.namedChildCount; i++) {
-          const el = typeNode.namedChild(i);
+        for (const el of typeNode.namedChildren) {
           if (el !== null && el.type === 'tuple_element') emitTypeNode(el.childForFieldName('type'));
         }
         return;
       }
       case 'function_pointer_type': {
         // `delegate*<Order, ref Item, Result>`: each parameter's type and the return type.
-        for (let i = 0; i < typeNode.namedChildCount; i++) {
-          const el = typeNode.namedChild(i);
+        for (const el of typeNode.namedChildren) {
           if (el !== null && el.type === 'function_pointer_parameter') emitTypeNode(el.childForFieldName('type'));
         }
         emitTypeNode(typeNode.childForFieldName('returns'));
@@ -1272,7 +1268,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   /** Descend the type arguments of one `generic_name` (each argument is its own reference). */
   function emitTypeArguments(generic: Node): void {
     const args = findChild(generic, 'type_argument_list')!; // a generic_name always has its argument list
-    for (let i = 0; i < args.namedChildCount; i++) emitTypeNode(args.namedChild(i));
+    for (const a of args.namedChildren) emitTypeNode(a);
   }
 
   /**
@@ -1362,8 +1358,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
 
   /** The first child of the given type, or null. */
   function findChild(node: Node, childType: string): Node | null {
-    for (let i = 0; i < node.namedChildCount; i++) {
-      const c = node.namedChild(i);
+    for (const c of node.namedChildren) {
       if (c !== null && c.type === childType) return c;
     }
     return null;
@@ -1443,7 +1438,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return false;
   });
 
-  walk(file.tree.rootNode, (node) => {
+  walkWithParent(file.tree.rootNode, (node, parentOf) => {
     // Do NOT descend into directive/declaration HEADERS — their dotted names are the
     // imported namespace or the declared namespace name, not a symbol USE.
     if (node.type === 'using_directive' || node.type === 'file_scoped_namespace_declaration') {
@@ -1578,14 +1573,15 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     // type-position handler, or when it is a namespace-declaration name, or a nested qualifier.
     if (node.type === 'qualified_name') {
       if (emitted.has(node.id)) return undefined;
-      if (node.parent !== null && node.parent.type === 'namespace_declaration') {
-        const nm = node.parent.childForFieldName('name');
+      const parent = parentOf();
+      if (parent !== null && parent.type === 'namespace_declaration') {
+        const nm = parent.childForFieldName('name');
         if (nm !== null && nm.id === node.id) return undefined;
       }
-      if (node.parent !== null && node.parent.type === 'qualified_name') return undefined;
+      if (parent !== null && parent.type === 'qualified_name') return undefined;
       // A `qualified_name` that is itself the `qualifier` of an `alias_qualified_name` is part
       // of a `global::`-rooted name handled at the alias node — skip the bare qualifier.
-      if (node.parent !== null && node.parent.type === 'alias_qualified_name') return undefined;
+      if (parent !== null && parent.type === 'alias_qualified_name') return undefined;
       emitted.add(node.id);
       emitQualified(node);
       return undefined;
@@ -1675,7 +1671,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
 
     // Bare type identifiers in base_list entries.
     if (node.type === 'base_list') {
-      for (let i = 0; i < node.namedChildCount; i++) emitTypeNode(node.namedChild(i));
+      for (const c of node.namedChildren) emitTypeNode(c);
       return undefined;
     }
 
@@ -1731,8 +1727,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         // The comparison reading (177): `F(x < Limits.Max, y > z)` is two comparisons, so each type argument that is a member access `Limits.Max` is a receiver of its own, `Limits` being a type unless this file declares it as a value.
         const type = node.childForFieldName('type');
         const args = type?.type === 'generic_name' ? findChild(type, 'type_argument_list') : null;
-        for (let i = 0; args !== null && i < args.namedChildCount; i++) {
-          const arg = args.namedChild(i)!;
+        for (const arg of (args?.namedChildren ?? []) as Node[]) {
           const qualifier = arg.type === 'qualified_name' ? arg.childForFieldName('qualifier') : null;
           const chainText = qualifier !== null ? dottedName(qualifier) : undefined;
           if (chainText === undefined) continue;

@@ -504,6 +504,7 @@ function readHeader(chunk: Chunk): LexicalDecl | null | undefined {
  *  token lies outside all of them (the chunk touches damage). */
 function coveringNodes(chunk: Chunk, clean: Node[]): Node[] | undefined {
   const used: Node[] = [];
+  const usedSet = new Set<Node>();
   for (const t of chunk.toks) {
     if (t.kind === 'nl') continue;
     // `clean` is in source order: find the last node starting at or before the token.
@@ -516,7 +517,10 @@ function coveringNodes(chunk: Chunk, clean: Node[]): Node[] | undefined {
     }
     const c = at === -1 ? undefined : clean[at];
     if (c === undefined || t.end > c.endIndex) return undefined;
-    if (!used.includes(c)) used.push(c);
+    if (!usedSet.has(c)) {
+      usedSet.add(c);
+      used.push(c);
+    }
   }
   return used;
 }
@@ -684,8 +688,7 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
     // re-parsed on its own.
     const baseToks = base === tree ? toks : tokenize(text).toks;
     const clean: Node[] = [];
-    for (let i = 0; i < base.rootNode.childCount; i++) {
-      const c = base.rootNode.child(i);
+    for (const c of base.rootNode.children) {
       if (c !== null && !damaged(c)) clean.push(c);
     }
     const { chunks, balanced } = chunkSpan(baseToks, 0, text.length);

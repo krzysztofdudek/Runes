@@ -53,8 +53,7 @@ function declarations(file) {
             return undefined;
         }
         if (node.type === 'type_definition') {
-            for (let i = 0; i < node.namedChildCount; i++) {
-                const child = node.namedChild(i);
+            for (const child of node.namedChildren) {
                 if (child !== null && child.type === 'type_identifier') {
                     out.push({ symbolKey: child.text, line });
                 }

@@ -1,6 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
-import { indexScopes, walkScoped } from './scope-walk.mjs';
+import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
 import { isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
@@ -78,8 +78,7 @@ function dropLastSegment(fqn: string): string | undefined {
 /** The single FQN node of an `import_declaration`: its named `scoped_identifier`
  *  (or a bare `identifier` for a single-segment import). Returns its `.text`. */
 function importFqn(decl: Node): string | undefined {
-  for (let i = 0; i < decl.namedChildCount; i++) {
-    const child = decl.namedChild(i);
+  for (const child of decl.namedChildren) {
     if (child === null) continue;
     if (child.type === 'scoped_identifier' || child.type === 'identifier') {
       return child.text;
@@ -90,8 +89,7 @@ function importFqn(decl: Node): string | undefined {
 
 /** True when `decl` has an anonymous `static` token child (a static import). */
 function isStaticImport(decl: Node): boolean {
-  for (let j = 0; j < decl.childCount; j++) {
-    const c = decl.child(j);
+  for (const c of decl.children) {
     if (c !== null && !c.isNamed && c.type === 'static') return true;
   }
   return false;
@@ -99,8 +97,7 @@ function isStaticImport(decl: Node): boolean {
 
 /** True when `decl` has a named `asterisk` child (a wildcard / on-demand import). */
 function isWildcardImport(decl: Node): boolean {
-  for (let j = 0; j < decl.childCount; j++) {
-    const c = decl.child(j);
+  for (const c of decl.children) {
     if (c !== null && c.type === 'asterisk') return true;
   }
   return false;
@@ -121,14 +118,12 @@ function isWildcardImport(decl: Node): boolean {
  *     `module` identifier of an erroring scoped_identifier.
  */
 function isModuleImport(decl: Node): boolean {
-  for (let j = 0; j < decl.childCount; j++) {
-    const c = decl.child(j);
+  for (const c of decl.children) {
     if (c !== null && !c.isNamed && c.type === 'module') return true; // future grammar
   }
   // Pre-JEP-511 fallback: a malformed `scoped_identifier` whose first identifier is the
   // swallowed `module` soft keyword.
-  for (let i = 0; i < decl.namedChildCount; i++) {
-    const child = decl.namedChild(i);
+  for (const child of decl.namedChildren) {
     if (child === null) continue;
     if (child.type === 'scoped_identifier' && child.hasError) {
       const firstId = firstIdentifierText(child);
@@ -146,8 +141,7 @@ function firstIdentifierText(node: Node): string | undefined {
   while (cur !== null) {
     if (cur.type === 'identifier') return cur.text;
     let next: Node | null = null;
-    for (let i = 0; i < cur.namedChildCount; i++) {
-      const c = cur.namedChild(i);
+    for (const c of cur.namedChildren) {
       if (c !== null && (c.type === 'scoped_identifier' || c.type === 'identifier')) {
         next = c;
         break;
@@ -208,7 +202,7 @@ function fileScope(file: ParsedFile): FileScope | undefined {
       const name = node.childForFieldName('name')?.text;
       if (name !== undefined) scope.variables.add(name);
     } else if (node.type === 'inferred_parameters') {
-      for (let i = 0; i < node.namedChildCount; i++) scope.variables.add(node.namedChild(i)?.text ?? '');
+      for (const c of node.namedChildren) scope.variables.add(c?.text ?? '');
     } else if (node.type === 'lambda_expression') {
       const p = node.childForFieldName('parameters');
       if (p?.type === 'identifier') scope.variables.add(p.text);
@@ -248,8 +242,7 @@ function superTypeNames(decl: Node): string[] {
   const out: string[] = [];
   const take = (n: Node | null): void => {
     if (n === null) return;
-    for (let i = 0; i < n.namedChildCount; i++) {
-      const c = n.namedChild(i);
+    for (const c of n.namedChildren) {
       if (c === null) continue;
       if (c.type === 'type_list') take(c);
       else {
@@ -266,8 +259,7 @@ function superTypeNames(decl: Node): string[] {
   }
   take(decl.childForFieldName('superclass'));
   take(decl.childForFieldName('interfaces'));
-  for (let i = 0; i < decl.namedChildCount; i++) {
-    const c = decl.namedChild(i);
+  for (const c of decl.namedChildren) {
     if (c?.type === 'extends_interfaces') take(c);
   }
   return out;
@@ -276,8 +268,8 @@ function superTypeNames(decl: Node): string[] {
 /** The names a `type_parameters` node declares. */
 function typeParameterNames(node: Node): Set<string> {
   const out = new Set<string>();
-  for (let i = 0; i < node.namedChildCount; i++) {
-    const c = node.namedChild(i)?.namedChild(0);
+  for (const tp of node.namedChildren) {
+    const c = tp?.namedChild(0);
     if (c !== null && c !== undefined) out.add(c.text);
   }
   return out;
@@ -326,8 +318,7 @@ function aroundScopes(root: Node): Map<number, AroundScope> {
 }
 
 /** True when `n` is the receiver of a member access or method reference: `Owner` of `Owner.m()`, `Owner.X`, `Owner::m`. */
-function isReceiver(n: Node): boolean {
-  const p = n.parent;
+function isReceiver(n: Node, p: Node | null): boolean {
   if (p === null) return false;
   if (p.type === 'method_invocation' || p.type === 'field_access') return p.childForFieldName('object')?.id === n.id;
   if (p.type === 'method_reference') return p.namedChild(0)?.id === n.id;
@@ -353,22 +344,20 @@ function uses(file: ParsedFile): DetectedDep[] {
     out.push({ candidates, kind: 'type-ref', line });
   };
   // A name in a type position: not a type parameter's own name, not the member of a qualified type (`Entry` of `Map.Entry`), not a package segment (`com` of `com.app.X`), not the type of `outer.new Inner()`.
-  const typeIdentifier = (node: Node): void => {
-    const p = node.parent;
+  const typeIdentifier = (node: Node, p: Node | null): void => {
     if (p === null) return;
     if (p.type === 'type_parameter' && p.namedChild(0)?.id === node.id) return;
     if (p.type === 'scoped_type_identifier' && (p.namedChild(0)?.id !== node.id || !isCapitalised(node.text))) return;
     if (p.type === 'object_creation_expression' && p.child(0)?.type !== 'new') return;
     emitSamePackage(node.text, node);
   };
-  const identifier = (node: Node): void => {
-    const p = node.parent;
+  const identifier = (node: Node, p: Node | null): void => {
     if (p === null) return;
     if ((p.type === 'marker_annotation' || p.type === 'annotation') && p.childForFieldName('name')?.id === node.id) {
       emitSamePackage(node.text, node);
     } else if (p.type === 'record_pattern' && p.namedChild(0)?.id === node.id) {
       emitSamePackage(node.text, node);
-    } else if (isCapitalised(node.text) && isReceiver(node) && scope !== undefined && !scope.variables.has(node.text)) {
+    } else if (isCapitalised(node.text) && isReceiver(node, p) && scope !== undefined && !scope.variables.has(node.text)) {
       emitSamePackage(node.text, node);
     }
   };
@@ -399,20 +388,20 @@ function uses(file: ParsedFile): DetectedDep[] {
     out.push(single({ kind: 'symbol', symbolKey }, 'type-ref', line));
   };
 
-  walk(file.tree.rootNode, (node) => {
+  walkWithParent(file.tree.rootNode, (node, parent) => {
     if (node.type === 'type_identifier') {
-      typeIdentifier(node);
+      typeIdentifier(node, parent());
       return undefined;
     }
     if (node.type === 'identifier') {
-      identifier(node);
+      identifier(node, parent());
       return undefined;
     }
 
     // Inline FQN type reference: the OUTERMOST scoped_type_identifier of a chain carries the
     // complete dotted FQN; inner ones are its `scope` segments. Type positions only — an
     // expression-position dotted access is a field_access chain, never this node.
-    if (node.type === 'scoped_type_identifier' && node.parent?.type !== 'scoped_type_identifier') {
+    if (node.type === 'scoped_type_identifier' && parent()?.type !== 'scoped_type_identifier') {
       emitSymbol(node.text, node);
       return undefined;
     }
@@ -422,8 +411,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     // carry module/package names and are skipped (they are not `*_module_directive`
     // type-bearing forms we read).
     if (node.type === 'uses_module_directive' || node.type === 'provides_module_directive') {
-      for (let i = 0; i < node.namedChildCount; i++) {
-        const c = node.namedChild(i);
+      for (const c of node.namedChildren) {
         if (c !== null && (c.type === 'scoped_identifier' || c.type === 'identifier')) {
           emit(c.text, c);
         }
@@ -469,8 +457,7 @@ function packageFqn(file: ParsedFile): string {
   let pkg = '';
   walk(file.tree.rootNode, (node) => {
     if (node.type !== 'package_declaration') return undefined;
-    for (let i = 0; i < node.namedChildCount; i++) {
-      const c = node.namedChild(i);
+    for (const c of node.namedChildren) {
       if (c !== null && (c.type === 'scoped_identifier' || c.type === 'identifier')) {
         pkg = c.text;
         return false; // first package_declaration wins; stop descending it

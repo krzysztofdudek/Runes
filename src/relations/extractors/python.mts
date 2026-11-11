@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
 
@@ -42,8 +43,7 @@ function moduleOfAliasedImport(aliased: Node): string | undefined {
  *  children (each a `dotted_name` or `aliased_import` whose `name` is the symbol). */
 function importedNames(fromStatement: Node): string[] {
   const out: string[] = [];
-  for (let i = 0; i < fromStatement.namedChildCount; i++) {
-    const child = fromStatement.namedChild(i);
+  for (const child of fromStatement.namedChildren) {
     if (child === null) continue;
     // Skip the module_name field child (handled separately) and wildcard.
     if (child.type === 'dotted_name') {
@@ -77,8 +77,7 @@ function uses(file: ParsedFile): DetectedDep[] {
       case 'import_statement': {
         // `import a.b.c`, `import x as y`, `import a, b.c` — iterate every
         // field-`name` child (a dotted_name or an aliased_import).
-        for (let i = 0; i < node.namedChildCount; i++) {
-          const child = node.namedChild(i);
+        for (const child of node.namedChildren) {
           if (child === null) continue;
           if (child.type === 'dotted_name') {
             emit(dottedText(child), node);
@@ -132,28 +131,20 @@ function uses(file: ParsedFile): DetectedDep[] {
 
 const TOP_LEVEL_DECLARATION_TYPES = new Set(['class_definition', 'function_definition']);
 
-/** True when the declaration sits at module top level — directly under `module`,
- *  or wrapped in a `decorated_definition` that is itself directly under `module`. */
-function isTopLevel(node: Node): boolean {
-  const parent = node.parent;
-  if (parent === null) return false;
-  if (parent.type === 'module') return true;
-  if (parent.type === 'decorated_definition') {
-    const grandparent = parent.parent;
-    return grandparent !== null && grandparent.type === 'module';
-  }
-  return false;
-}
+/** Where a node sits: `top` at module top level — directly under `module`, or wrapped in a
+ *  `decorated_definition` that is itself directly under `module` — and `inner` anywhere else. */
+type Level = 'top' | 'inner';
 
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
-  walk(file.tree.rootNode, (node) => {
-    if (!TOP_LEVEL_DECLARATION_TYPES.has(node.type)) return undefined;
-    if (!isTopLevel(node)) return undefined;
-    const nameNode = node.childForFieldName('name');
-    if (nameNode === null) return undefined;
-    out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
-    return undefined;
+  walkScoped<Level>(file.tree.rootNode, 'inner', (node, level) => {
+    if (node.type === 'module') return 'top';
+    if (node.type === 'decorated_definition') return level;
+    if (level === 'top' && TOP_LEVEL_DECLARATION_TYPES.has(node.type)) {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+    }
+    return 'inner';
   });
   return out;
 }

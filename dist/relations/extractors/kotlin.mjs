@@ -1,5 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
-import { indexScopes, walkScoped } from './scope-walk.mjs';
+import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
 import { kotlinView } from './kotlin-recover.mjs';
 import { isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
@@ -76,8 +76,7 @@ import { isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
 /** The FQN `qualified_identifier` child of an `import` node, as dotted text. A
  *  single-segment import is a bare `identifier` instead. Returns its `.text`. */
 function importFqn(decl) {
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const child = decl.namedChild(i);
+    for (const child of decl.namedChildren) {
         if (child === null)
             continue;
         if (child.type === 'qualified_identifier' || child.type === 'identifier') {
@@ -91,8 +90,7 @@ function importFqn(decl) {
  *  undefined for a single-segment type (`String`) — not a fully-qualified reference. */
 function dottedUserType(node) {
     const segs = [];
-    for (let i = 0; i < node.namedChildCount; i++) {
-        const c = node.namedChild(i);
+    for (const c of node.namedChildren) {
         if (c === null)
             continue;
         if (c.type === 'identifier')
@@ -104,8 +102,7 @@ function dottedUserType(node) {
 }
 /** True when an `import` node is a star import (`import a.b.*`): the `*` is its own token. */
 function isStarImport(decl) {
-    for (let i = 0; i < decl.childCount; i++) {
-        const c = decl.child(i);
+    for (const c of decl.children) {
         if (c !== null && !c.isNamed && c.type === '*')
             return true;
     }
@@ -115,6 +112,16 @@ function isStarImport(decl) {
 function walkView(view, visit) {
     for (const root of view.roots) {
         walk(root, (node) => (node.type === 'ERROR' ? false : visit(node)));
+    }
+}
+/** Walk every trustworthy root of a view like `walkView`, handing each visit the parent of its node (see `ParentOf`). A view's root is a whole tree's root or a top-level node of one, so its own parent is read from its tree instead of searched for: a damaged file has one root per clean top-level node, and `root.parent` on each would cost the square of their number. */
+function walkViewWithParent(view, visit) {
+    for (const root of view.roots) {
+        const parentOfRoot = () => {
+            const top = root.tree.rootNode;
+            return top.id === root.id ? null : top;
+        };
+        walkWithParent(root, (node, parent) => (node.type === 'ERROR' ? false : visit(node, parent)), parentOfRoot);
     }
 }
 /** Walk every trustworthy root of a view like `walkView`, handing each node the scope its ancestors made (see `walkScoped`). */
@@ -143,8 +150,7 @@ function packageOf(view) {
     walkView(view, (node) => {
         if (node.type !== 'package_header')
             return undefined;
-        for (let i = 0; i < node.namedChildCount; i++) {
-            const c = node.namedChild(i);
+        for (const c of node.namedChildren) {
             if (c !== null && c.type === 'qualified_identifier') {
                 pkg = c.text;
                 return false; // first package_header wins; stop descending it
@@ -182,8 +188,7 @@ function kotlinScope(view) {
                 scope.variables.add(name);
         }
         else if (node.type === 'lambda_parameters') {
-            for (let i = 0; i < node.namedChildCount; i++) {
-                const c = node.namedChild(i);
+            for (const c of node.namedChildren) {
                 if (c?.type === 'identifier')
                     scope.variables.add(c.text);
             }
@@ -210,8 +215,7 @@ function supertypeName(spec) {
     if (t === undefined || t === null)
         return undefined;
     const segs = [];
-    for (let i = 0; i < t.namedChildCount; i++) {
-        const c = t.namedChild(i);
+    for (const c of t.namedChildren) {
         if (c === null || c.type !== 'identifier')
             break;
         segs.push(c.text);
@@ -221,12 +225,11 @@ function supertypeName(spec) {
 /** The supertype names a declaration lists (`class C : Base(), Face`, `object : Base()`). */
 function supertypeNames(decl) {
     const out = [];
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const list = decl.namedChild(i);
+    for (const list of decl.namedChildren) {
         if (list?.type !== 'delegation_specifiers')
             continue;
-        for (let j = 0; j < list.namedChildCount; j++) {
-            const spec = list.namedChild(j)?.namedChild(0);
+        for (const member of list.namedChildren) {
+            const spec = member?.namedChild(0);
             const name = spec === null || spec === undefined ? undefined : supertypeName(spec);
             if (name !== undefined)
                 out.push(name);
@@ -237,12 +240,11 @@ function supertypeNames(decl) {
 /** The names a `type_parameters` child of `decl` declares. */
 function kotlinTypeParameters(decl) {
     const out = new Set();
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const tps = decl.namedChild(i);
+    for (const tps of decl.namedChildren) {
         if (tps?.type !== 'type_parameters')
             continue;
-        for (let j = 0; j < tps.namedChildCount; j++) {
-            const name = tps.namedChild(j)?.namedChildren.find((c) => c?.type === 'identifier')?.text;
+        for (const tp of tps.namedChildren) {
+            const name = tp?.namedChildren.find((c) => c?.type === 'identifier')?.text;
             if (name !== undefined)
                 out.add(name);
         }
@@ -307,7 +309,7 @@ function usesOf(view) {
         seen.add(dedupKey);
         out.push(single({ kind: 'symbol', symbolKey }, kind, line));
     };
-    walkView(view, (node) => {
+    walkViewWithParent(view, (node, parent) => {
         // Inline FQN type reference: a multi-segment `user_type` (type position only — an
         // expression-position dotted reference is a navigation_expression, never a user_type).
         if (node.type === 'user_type') {
@@ -320,7 +322,7 @@ function usesOf(view) {
         }
         // A capitalised receiver or callee: `Foo.make()`, `Foo::class`, `Foo(...)`. A variable of that name obscures it.
         if (node.type === 'identifier') {
-            const p = node.parent;
+            const p = parent();
             if (p !== null && (p.type === 'navigation_expression' || p.type === 'call_expression') && p.namedChild(0)?.id === node.id && isCapitalised(node.text) && scope !== undefined && !scope.variables.has(node.text)) {
                 emitSamePackage(node.text, node);
             }
@@ -349,8 +351,7 @@ function declarationName(node) {
     if (node.type === 'property_declaration') {
         // `val x = ...` → variable_declaration → identifier. (A multi_variable_declaration
         // destructures; v1 indexes only the single-name form, the common top-level case.)
-        for (let i = 0; i < node.namedChildCount; i++) {
-            const c = node.namedChild(i);
+        for (const c of node.namedChildren) {
             if (c !== null && c.type === 'variable_declaration') {
                 const id = firstIdentifier(c);
                 if (id !== undefined)
@@ -367,8 +368,7 @@ function declarationName(node) {
 }
 /** The text of the first named `identifier` descendant child of `node` (shallow). */
 function firstIdentifier(node) {
-    for (let i = 0; i < node.namedChildCount; i++) {
-        const c = node.namedChild(i);
+    for (const c of node.namedChildren) {
         if (c !== null && c.type === 'identifier')
             return c.text;
     }
