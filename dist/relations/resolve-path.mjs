@@ -315,8 +315,8 @@ function makeRustResolveDeps(plain, exists) {
         const compiling = severalRoots && declaresModule !== undefined ? rootsCompiling(rel, target.srcDir, existingRoots, at, declaresModule) : { certain: [], conditional: [] };
         const reached = [...compiling.certain, ...compiling.conditional];
         if (target.byDeclaration === true) {
-            // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the one binary known to declare them, under a `cfg` or not; with none known, or several, `crate::` names no root that can be told.
-            const unrooted = reached.length !== 1;
+            // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the binaries known to declare them, probed as the roots of one tree are: the one that certainly compiles them, then those that compile them under a `cfg`. With none known, or two or more that certainly compile them, `crate::` names no root that can be told; a binary under a `cfg` is never one of the two.
+            const unrooted = reached.length === 0 || compiling.certain.length > 1;
             return { srcDir: at(target.srcDir), crateName, rootFiles: unrooted ? [] : reached.map(at), fileIsRoot: false, lib: lib ?? null, crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, reached), ...(unrooted ? { unrooted } : {}) };
         }
         // Two or more roots that certainly compile the file: `crate::` is a different root in each, so a root item binds none. Otherwise the roots are probed in order: the one that certainly compiles the file, then those that compile it under a `cfg`, which proves nothing about the others, then the rest in their usual order, since one of them may compile the file too.

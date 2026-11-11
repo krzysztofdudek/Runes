@@ -965,8 +965,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
   it('reads the files of a src/bin/ directory without main.rs as modules of the binary that declares them, and of no crate when none or several do', async () => {
     put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n');
     put('src/lib.rs', 'pub struct LibThing;\n');
-    put('src/bin/one.rs', 'mod common;\nmod config;\nstruct Top;\nfn main() {}\n');
-    put('src/bin/two.rs', 'mod shared;\nmod config;\nfn main() {}\n');
+    put('src/bin/one.rs', 'mod common;\nmod config;\nmod mixed;\nstruct Top;\nfn main() {}\n');
+    put('src/bin/two.rs', 'mod shared;\nmod config;\n#[cfg(feature = "x")]\nmod mixed;\nstruct Two;\nfn main() {}\n');
     put('src/bin/three.rs', 'mod shared;\nfn main() {}\n');
     put('src/bin/config/mod.rs', 'pub struct Cfg;\n');
     put('src/bin/common/mod.rs', 'mod deep;\n');
@@ -984,6 +984,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/selfish/inner.rs', '');
     put('src/bin/four.rs', '#[cfg(unix)]\nmod gated;\nstruct Four;\nfn main() {}\n');
     put('src/bin/gated/mod.rs', '');
+    put('src/bin/five.rs', '#[cfg(windows)]\nmod gated;\nstruct Five;\nfn main() {}\n');
+    put('src/bin/mixed/mod.rs', '');
     const declared = await tableNow();
     const resolve = (spec, from, language) => makeResolvePathToFile(ws)(spec, from, language, false, declared);
     // Without the pass's symbol table no binary is known to declare the directory, and it is still no crate of its own.
@@ -1007,8 +1009,12 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::peer::T', 'src/bin/loose/sub.rs', 'rust')).toBe('src/bin/loose/peer.rs');
     expect(resolve('super::super::config::Cfg', 'src/bin/shared/sib.rs', 'rust')).toBeUndefined();
     expect(resolve('super::config::Cfg', 'src/bin/shared/mod.rs', 'rust')).toBeUndefined();
-    // A declaration under a cfg is a declaration here: the one binary that holds it roots the directory.
+    // A declaration under a cfg is a declaration here, never a second certain one: the binaries that hold it are probed as the roots of one tree are, the one that certainly compiles the directory first and those under a cfg after it.
     expect(resolve('crate::Four', 'src/bin/gated/mod.rs', 'rust')).toBe('src/bin/four.rs');
+    expect(resolve('crate::Five', 'src/bin/gated/mod.rs', 'rust')).toBe('src/bin/five.rs');
+    expect(resolve('crate::Top', 'src/bin/mixed/mod.rs', 'rust')).toBe('src/bin/one.rs');
+    expect(resolve('crate::Two', 'src/bin/mixed/mod.rs', 'rust')).toBe('src/bin/two.rs');
+    expect(resolve('super::config::Cfg', 'src/bin/mixed/mod.rs', 'rust')).toBe('src/bin/config/mod.rs');
     // A binary that names itself as its own module declares nothing: the files below its name have no known crate.
     expect(resolve('crate::config::Cfg', 'src/bin/selfish/inner.rs', 'rust')).toBeUndefined();
     // A directory with a main.rs is a crate of its own: its files read `crate::` in its tree.
