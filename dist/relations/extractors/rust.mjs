@@ -970,7 +970,7 @@ function externCratesIn(scope) {
     const out = [];
     for (const node of scope.namedChildren) {
         const call = node?.type === 'expression_statement' ? node.namedChild(0) : node;
-        const body = call?.type === 'macro_invocation' ? cfgIfBody(call, call.parent) : null;
+        const body = node !== null && call?.type === 'macro_invocation' ? cfgIfBody(call, call === node ? scope : node) : null;
         if (body !== null)
             out.push(...cfgIfExternCrates(body));
         if (node === null || node.type !== 'extern_crate_declaration')
