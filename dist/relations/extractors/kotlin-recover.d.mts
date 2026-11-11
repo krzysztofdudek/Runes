@@ -19,9 +19,10 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every row and column stays put — a nested class header is joined to its primary constructor on the next line by moving one newline (only the class name changes row, see `constructorJoins`), and the file is re-parsed. A clean re-parse is used as-is.
  *   3. Whatever is still damaged is split into top-level declarations by a small lexer (a
  *      declaration starts on a column-0 line at bracket depth 0) and each one is re-parsed on
- *      its own, padded so its rows and columns match the file. A clean declaration is walked
- *      like any other; a declaration that still fails contributes only the name read from its
- *      leading tokens (`class X`, `fun f`, `val v`), never the nodes of a broken parse.
+ *      its own, where it stands in the file, so its rows and columns are the file's. A clean declaration is walked
+ *      like any other; a declaration that still fails, or whose parse re-reads its text past the bound of
+ *      `boundedParse`, contributes only the name read from its leading tokens (`class X`, `fun f`, `val v`),
+ *      never the nodes of a broken parse.
  *   4. What cannot be read at all is reported as INCOMPLETE: the whole package (a declaration
  *      whose name is unreadable, or a lexer that lost track of the brackets) or one type's
  *      members (a class whose body did not parse). The extractor turns these into marker

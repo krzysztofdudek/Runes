@@ -1,4 +1,4 @@
-import type { Node, Parser, Tree } from 'web-tree-sitter';
+import type { Node, Parser, Point, Range, Tree } from 'web-tree-sitter';
 
 /**
  * Kotlin parse recovery for the relation extractor.
@@ -20,9 +20,10 @@ import type { Node, Parser, Tree } from 'web-tree-sitter';
  *   2. Otherwise the three known forms are BLANKED — replaced by spaces, same length, so every row and column stays put — a nested class header is joined to its primary constructor on the next line by moving one newline (only the class name changes row, see `constructorJoins`), and the file is re-parsed. A clean re-parse is used as-is.
  *   3. Whatever is still damaged is split into top-level declarations by a small lexer (a
  *      declaration starts on a column-0 line at bracket depth 0) and each one is re-parsed on
- *      its own, padded so its rows and columns match the file. A clean declaration is walked
- *      like any other; a declaration that still fails contributes only the name read from its
- *      leading tokens (`class X`, `fun f`, `val v`), never the nodes of a broken parse.
+ *      its own, where it stands in the file, so its rows and columns are the file's. A clean declaration is walked
+ *      like any other; a declaration that still fails, or whose parse re-reads its text past the bound of
+ *      `boundedParse`, contributes only the name read from its leading tokens (`class X`, `fun f`, `val v`),
+ *      never the nodes of a broken parse.
  *   4. What cannot be read at all is reported as INCOMPLETE: the whole package (a declaration
  *      whose name is unreadable, or a lexer that lost track of the brackets) or one type's
  *      members (a class whose body did not parse). The extractor turns these into marker
@@ -590,15 +591,54 @@ function damaged(node: Node): boolean {
   return node.descendantsOfType('ERROR').length > 0;
 }
 
-/** Parse the text of `[start, end)` of `text`, padded with newlines and spaces so its rows and
- *  columns match the file. */
-function parseAt(parser: Parser, text: string, start: number, end: number): Tree | null {
-  const before = text.slice(0, start);
-  const rows = (before.match(/\n/g) ?? []).length;
-  const col = start - (before.lastIndexOf('\n') + 1);
-  // The trailing newline ends the last statement: without it the grammar reports a missing
-  // member separator after a one-line class body at end of input.
-  return parser.parse('\n'.repeat(rows) + ' '.repeat(col) + text.slice(start, end) + '\n');
+/** The grammar's error recovery re-reads its input. On a long damaged stretch (thousands of damaged lines, a declaration whose bracket never closes until the end of the file) the number of reads grows with the square of the stretch's length. A parse of each top-level declaration of the Kotlin in moshi and okhttp read each slice of `READ_SLICE` characters at most 40 times, besides some 60 reads at the end of its input. A recovery parse that reads its text more than `READS_PER_SLICE` times per slice beyond `READS_FLOOR` is stopped and counts as damaged, so its declaration falls back to the name its leading tokens give. The bound counts reads, not time, so a file gives the same facts on any machine and under any load. */
+const READ_SLICE = 1024;
+const READS_PER_SLICE = 100;
+const READS_FLOOR = 400;
+
+/** Parse what `read` serves, as `Parser.parse` reads a callback, stopped past the bound on reads. `length` is the number of characters the parse covers. */
+function boundedParse(parser: Parser, read: (index: number) => string, length: number, ranges?: Range[]): Tree | null {
+  const budget = READS_FLOOR + READS_PER_SLICE * Math.ceil(length / READ_SLICE);
+  let reads = 0;
+  const tree = parser.parse((index) => { reads++; return read(index); }, null, { includedRanges: ranges, progressCallback: () => reads > budget });
+  // A stopped parse resumes on the next call unless the parser is reset.
+  if (tree === null) parser.reset();
+  return tree;
+}
+
+/** The offsets at which the lines of `text` begin. */
+function lineStarts(text: string): number[] {
+  const out = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) out.push(i + 1);
+  return out;
+}
+
+function pointAt(starts: number[], index: number): Point {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= index) lo = mid; else hi = mid - 1;
+  }
+  return { row: lo, column: index - starts[lo] };
+}
+
+/**
+ * Parse `[start, end)` of `text` as the text `'\n'.repeat(row) + ' '.repeat(column) + text.slice(start, end) + '\n'`, where `row` and `column` are those of `start`, so its rows and columns are the file's. The trailing newline ends the last statement: without it the grammar reports a missing member separator after a one-line class body at end of input.
+ *
+ * The padding is never read: the parse covers only the declaration and its newline, from where the padding would end, so a file's declarations cost their own length, not the length of what precedes them. Its extent still counts, because the grammar weighs how much text an error would skip, the padding before the first token included: the same broken declaration repairs into a clean tree forty lines into a file and stays an ERROR on line twenty. Starting the parse where the padding ends keeps that choice what it was.
+ */
+function parseAt(parser: Parser, text: string, starts: number[], start: number, end: number): Tree | null {
+  const at = pointAt(starts, start);
+  const pad = at.row + at.column;
+  const length = end - start;
+  // The parse reads from the range's start on, never before it.
+  const read = (i: number): string => {
+    if (i < pad + length) return text.slice(Math.max(start, start + i - pad), Math.min(end, start + i - pad + READ_SLICE));
+    return i === pad + length ? '\n' : '';
+  };
+  const range: Range = { startIndex: pad, endIndex: pad + length + 1, startPosition: at, endPosition: { row: pointAt(starts, end).row + 1, column: 0 } };
+  return boundedParse(parser, read, length + 1, [range]);
 }
 
 /**
@@ -671,7 +711,7 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
     const text = applyRewrites(content, blankRanges(toks), constructorJoins(toks, content));
     let base = tree;
     if (text !== content) {
-      const reparsed = parser.parse(text);
+      const reparsed = boundedParse(parser, (i) => text.slice(i, i + READ_SLICE), text.length);
       if (reparsed !== null) { owned.push(reparsed); base = reparsed; }
     }
     const view: KotlinView = { roots: [], lexical: [], packageIncomplete: false, incompleteTypes: new Set(), dispose };
@@ -694,13 +734,14 @@ export function kotlinView(tree: Tree, content: string, newParser?: () => Parser
     const { chunks, balanced } = chunkSpan(baseToks, 0, text.length);
     if (!balanced) view.packageIncomplete = true;
     const taken = new Set<number>();
+    const starts = lineStarts(text);
     for (const chunk of chunks) {
       const covering = coveringNodes(chunk, clean);
       if (covering !== undefined) {
         for (const c of covering) if (!taken.has(c.id)) { taken.add(c.id); view.roots.push(c); }
         continue;
       }
-      const t = parseAt(parser, text, chunk.start, chunk.end);
+      const t = parseAt(parser, text, starts, chunk.start, chunk.end);
       if (t !== null) owned.push(t);
       if (t !== null && !damaged(t.rootNode)) {
         view.roots.push(t.rootNode);
