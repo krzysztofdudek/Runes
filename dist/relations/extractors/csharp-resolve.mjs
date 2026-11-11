@@ -171,7 +171,8 @@ export function makeCsharpTypeLookup(table, bind) {
                     continue;
                 if (method.reach === 'public')
                     return true;
-                if (method.reach === 'private' ? from.includes(declaring) : from.some((type) => lineage(type).includes(declaring)))
+                // A protected method is reached through an instance only when the instance's type is the calling type or derives from it (C# spec §7.5.4, CS1540).
+                if (method.reach === 'private' ? from.includes(declaring) : from.some((type) => lineage(type).includes(declaring) && lineage(typeKey).includes(type)))
                     return true;
             }
         }

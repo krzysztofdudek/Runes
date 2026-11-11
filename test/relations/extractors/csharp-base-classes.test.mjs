@@ -360,7 +360,15 @@ describe('csharp: an extension call gives way to an instance method of the recei
         '}',
       ].join('\n'),
     }, ({ files }) => {
-      const ext = new Map(extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map((r) => [r.name, [r.on?.map((d) => d.kind === 'plain' ? d.ref : `${d.aliasName}::${d.tail}`), r.self]]));
+      const extract = extractCsharpRefs(files[0]);
+      const written = (place) => { const d = extract.receiverTypes[place]; return d.kind === 'plain' ? d.ref : `${d.aliasName}::${d.tail}`; };
+      const ext = new Map(extract.refs.filter((r) => r.kind === 'ext').map((r) => [r.name, [r.on?.map(written), r.self]]));
+      // A call carries its counts and the types around it only where a receiver type will be asked, and calls on one declaration share its written type.
+      const calls = Object.fromEntries(extract.refs.filter((r) => r.kind === 'ext').map((r) => [r.name, r]));
+      expect([calls.A.args, calls.A.typeArgs, extract.lists[calls.A.from]]).toEqual([0, 0, ['App.Use']]);
+      expect([calls.J.args, calls.J.typeArgs, calls.J.from]).toEqual([undefined, undefined, undefined]);
+      expect(calls.B.on).toEqual(calls.H.on);
+      expect(extract.lists).toEqual([['App.Use']]);
       expect(Object.fromEntries(ext)).toEqual({
         A: [['Param'], undefined], B: [['Field'], undefined], C: [['Prop'], undefined], D: [['Local'], undefined], E: [['Generic`1'], undefined], F: [['Primary'], undefined],
         G: [undefined, 'App.Use'], Run2: [undefined, 'App.Use'], H: [['Field'], undefined], I: [['S::Aliased'], undefined],
@@ -376,8 +384,9 @@ describe('csharp: an extension call gives way to an instance method of the recei
       // Two declarations of `x` in one block are not valid C#; the reader still takes both types, because it cannot say which the call means.
       'src/a/Use.cs': 'namespace App;\npublic class Use<T> {\n  void Run(T item) {\n    First x = null; Second x = null; x.A();\n    for (Third y = null;;) { y.B(); }\n    for (Fourth y = null;;) { y.B(); }\n    using (Fifth z = null) { z.C(); }\n    item.D();\n  }\n}\n',
     }, ({ files }) => {
-      const ext = extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map((r) => [r.name, r.on?.map((d) => d.ref), r.from]);
-      expect(ext).toEqual([['A', ['First', 'Second'], ['App.Use`1']], ['B', ['Third'], ['App.Use`1']], ['B', ['Fourth'], ['App.Use`1']], ['C', ['Fifth'], ['App.Use`1']], ['D', undefined, ['App.Use`1']]]);
+      const extract = extractCsharpRefs(files[0]);
+      const ext = extract.refs.filter((r) => r.kind === 'ext').map((r) => [r.name, r.on?.map((place) => extract.receiverTypes[place].ref), r.from === undefined ? undefined : extract.lists[r.from]]);
+      expect(ext).toEqual([['A', ['First', 'Second'], ['App.Use`1']], ['B', ['Third'], ['App.Use`1']], ['B', ['Fourth'], ['App.Use`1']], ['C', ['Fifth'], ['App.Use`1']], ['D', undefined, undefined]]);
     });
   });
 
@@ -386,12 +395,12 @@ describe('csharp: an extension call gives way to an instance method of the recei
       'src/core/Order.cs': 'namespace App;\npublic partial class Order { void Secret() { } public void Open() { } protected void Guarded() { } }\npublic class Other { }\n',
       'src/ext/Ext.cs': 'namespace App;\npublic static class Ext {\n  public static void Secret(this Other o) { }\n  public static void Open(this Other o) { }\n  public static void Guarded(this Other o) { }\n}\n',
       'src/web/Use.cs': 'namespace App;\npublic class Use {\n  void Run(Order order, Other other, Missing missing) {\n    order.Secret();\n    order.Open();\n    other.Open();\n    missing.Open();\n    order.Guarded();\n  }\n}\n',
-      'src/core/Order.Part.cs': 'namespace App;\npublic partial class Order {\n  void Run(Order next) { next.Secret(); }\n}\npublic class Rush : Order {\n  void Go(Order next) { next.Guarded(); next.Secret(); }\n}\n',
+      'src/core/Order.Part.cs': 'namespace App;\npublic partial class Order {\n  void Run(Order next) { next.Secret(); }\n}\npublic class Rush : Order {\n  void Go(Order next) { next.Secret(); }\n  void Mine(Rush mine) { mine.Guarded(); this.Guarded(); }\n  void Yours(Order next) { next.Guarded(); }\n}\n',
     }, ({ files, edges, resolver }) => {
       // A private or a protected method of Order does not take a call from Use; the public one does.
       expect(edges('src/web/Use.cs')).toEqual(['3->core', '4->ext', '6->ext', '7->ext', '8->ext']);
-      // Another part of Order reaches its private method; a derived class reaches the protected one and not the private one.
-      expect(edges('src/core/Order.Part.cs')).toEqual(['6->ext']);
+      // Another part of Order reaches its private method. A derived class does not (line 6); it reaches the protected one on itself and on an instance of its own type (line 7), and not through an instance of the base class (line 8).
+      expect(edges('src/core/Order.Part.cs')).toEqual(['6->ext', '8->ext']);
       const group = csharpUses(files.find((f) => f.path === 'src/web/Use.cs')).find((u) => u.line === 5).candidates;
       expect(group.map((c) => c.symbolKey)).toEqual(['App.Open()', 'Open()']);
       expect(group[0].unless).toBe(group[1].unless);

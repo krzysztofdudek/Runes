@@ -1318,6 +1318,26 @@ export function extractCsharpRefs(file) {
         refs.length = before;
         return described;
     };
+    /** What an `ext` descriptor says of its receiver: the receiver's written type, and the call's counts and the types around it where a receiver type will be asked. */
+    const extensionReceiver = (inv, call) => {
+        const receiver = receiverType(call.receiver);
+        if (receiver.on === undefined && receiver.self === undefined && call.member?.direct !== true)
+            return {};
+        const from = enclosingTypes(inv).types;
+        return { args: call.args, typeArgs: call.typeArgs, ...(from === undefined ? {} : { from: listPlace(from) }), ...receiver };
+    };
+    // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
+    const lists = [];
+    const listPlaces = new Map();
+    const listPlace = (list) => {
+        const key = list.join('\n');
+        let place = listPlaces.get(key);
+        if (place === undefined)
+            listPlaces.set(key, (place = lists.push(list) - 1));
+        return place;
+    };
+    const receiverTypes = [];
+    const receiverTypePlaces = new Map();
     /** What the file says of the type of a call's receiver (see the `ext` descriptor): the enclosing type for `this`, the written types of the nearest declarations of a name for an identifier or `this.name`, or nothing where no type is written. */
     const receiverType = (receiver) => {
         if (receiver.type === 'this') {
@@ -1337,10 +1357,17 @@ export function extractCsharpRefs(file) {
         const nearest = inScope.filter((e) => e.end - e.start === size);
         const on = [];
         for (const e of nearest) {
-            const described = e.type === null ? undefined : describeType(e.type);
-            if (described === undefined)
+            if (e.type === null)
                 return {};
-            on.push(described);
+            let place = receiverTypePlaces.get(e.type.id);
+            if (place === undefined) {
+                const described = describeType(e.type);
+                place = described === undefined ? -1 : receiverTypes.push(described) - 1;
+                receiverTypePlaces.set(e.type.id, place);
+            }
+            if (place === -1)
+                return {};
+            on.push(place);
         }
         return { on };
     };
@@ -1943,10 +1970,7 @@ export function extractCsharpRefs(file) {
                     line: node.startPosition.row + 1,
                     enclosingNs: nsChain(node),
                     at: node.startIndex,
-                    args: call.args,
-                    typeArgs: call.typeArgs,
-                    ...(enclosingTypes(node).types === undefined ? {} : { from: enclosingTypes(node).types }),
-                    ...receiverType(call.receiver),
+                    ...extensionReceiver(node, call),
                     ...(call.member === undefined ? {} : { member: call.member }),
                 });
             }
@@ -2043,7 +2067,7 @@ export function extractCsharpRefs(file) {
         }
         return undefined;
     });
-    return { fileNs, scope, refs, fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs) };
+    return { fileNs, scope, refs, fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs), ...(lists.length > 0 ? { lists } : {}), ...(receiverTypes.length > 0 ? { receiverTypes } : {}) };
 }
 /**
  * Assemble the final `DetectedDep[]` from a pure C# extract plus the LIVE project-global scope.
@@ -2479,6 +2503,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 c.unless = unless;
         out.push({ candidates, kind: 'import', line });
     };
+    /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it. */
+    const lists = extract.lists ?? [];
+    const receiverGroups = new Map();
+    const receiverReadings = (place) => {
+        let group = receiverGroups.get(place);
+        if (group === undefined)
+            receiverGroups.set(place, (group = groupOf(extract.receiverTypes[place])));
+        return group;
+    };
     /** The ordered group of readings one reference gives, taken aside instead of pushed (empty when it gives none). */
     const groupOf = (r) => {
         const before = out.length;
@@ -2538,8 +2571,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
             }
             case 'ext': {
                 // The receiver's written type, where the file gives one, is a condition on every reading of the group: an instance method of that name there takes the call.
-                const receivers = (r.on ?? []).map(groupOf).filter((g) => g.length > 0);
-                const call = { method: r.name, args: r.args, typeArgs: r.typeArgs, from: r.from ?? [] };
+                const receivers = (r.on ?? []).map(receiverReadings).filter((g) => g.length > 0);
+                const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from: r.from === undefined ? [] : lists[r.from] };
                 const unless = [];
                 // A receiver the file does not declare is a value only as a member of a type around the call.
                 if (r.member !== undefined)
@@ -2569,7 +2602,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 27,
+    rev: 28,
     declarations,
     uses,
 };

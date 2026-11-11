@@ -464,4 +464,5 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-extension-beside-protected-method-edge', () => runCase('csharp-extension-beside-protected-method-edge'));
   it('csharp-extension-receiver-in-sibling-loops-edge', () => runCase('csharp-extension-receiver-in-sibling-loops-edge'));
   it('csharp-file-local-type-base-class-members-edge', () => runCase('csharp-file-local-type-base-class-members-edge'));
+  it('csharp-extension-beside-protected-method-through-base-instance-edge', () => runCase('csharp-extension-beside-protected-method-through-base-instance-edge'));
 });
