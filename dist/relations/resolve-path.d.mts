@@ -50,6 +50,8 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *
  *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare it, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller that the directory is no crate of its own: the file's root is the one binary known to declare it, or none.
  *
+ *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`, and the caller leaves them out when it reads the edition of a file of the tree, which the library and `src/main.rs` decide as they did before those roots were told.
+ *
  *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
  *
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
@@ -60,6 +62,7 @@ export declare function rustTargetFor(rel: string, existsInPackage: (sub: string
     rootFiles: string[];
     fileIsRoot: boolean;
     byDeclaration?: boolean;
+    declaredRoots?: string[];
 };
 /** The parts of a Cargo.toml the Rust resolver needs. */
 interface CargoDependencySpec {
