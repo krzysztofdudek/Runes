@@ -1029,7 +1029,8 @@ export function extractCsharpRefs(file) {
             }
             case 'array_type':
             case 'nullable_type':
-            case 'pointer_type': {
+            case 'pointer_type':
+            case 'ref_type': {
                 emitTypeNode(typeNode.childForFieldName('type'));
                 return;
             }
@@ -1041,8 +1042,18 @@ export function extractCsharpRefs(file) {
                 }
                 return;
             }
+            case 'function_pointer_type': {
+                // `delegate*<Order, ref Item, Result>`: each parameter's type and the return type.
+                for (let i = 0; i < typeNode.namedChildCount; i++) {
+                    const el = typeNode.namedChild(i);
+                    if (el !== null && el.type === 'function_pointer_parameter')
+                        emitTypeNode(el.childForFieldName('type'));
+                }
+                emitTypeNode(typeNode.childForFieldName('returns'));
+                return;
+            }
             default:
-                // predefined_type / implicit_type / function_pointer_type / unrecognized → no named dep.
+                // predefined_type / implicit_type / unrecognized → no named dep.
                 return;
         }
     };
@@ -1315,6 +1326,11 @@ export function extractCsharpRefs(file) {
         // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
         if (node.type === 'is_expression') {
             emitTypeNode(node.childForFieldName('right'));
+            return undefined;
+        }
+        // The explicit type of a query range variable: `from Row r in xs`, `join Cell c in ys on …`.
+        if (node.type === 'from_clause' || node.type === 'join_clause') {
+            emitTypeNode(node.childForFieldName('type'));
             return undefined;
         }
         // Generic constraint `where T : Constraint`.

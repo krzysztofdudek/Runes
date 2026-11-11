@@ -1364,3 +1364,42 @@ describe('csharp — a type named in a pattern or after `is`', () => {
     expect(keys).toContain('Card');
   });
 });
+
+describe('csharp — a type under `ref`, in a query clause or in a function pointer', () => {
+  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a ref return, a ref property, a ref indexer, a ref local and a ref local function name their type; `ref var` names none', async () => {
+    const { uses } = await run([
+      'class C {',
+      '  ref Lib.Order A() => throw null;',
+      '  ref readonly Box<Item> P => throw null;',
+      '  ref Card this[int i] => throw null;',
+      '  void M() { ref Line l = ref G(); ref var v = ref G(); ref Slip F() => throw null; }',
+      '}',
+      '',
+    ].join('\n'));
+    const keys = keysOf(uses);
+    for (const k of ['Lib.Order', 'Box`1', 'Item', 'Card', 'Line', 'Slip']) expect(keys).toContain(k);
+    expect(keys).not.toContain('var');
+  });
+  it('the explicit type of a from clause and of a join clause is a reference; an implicit one is not', async () => {
+    const { uses } = await run([
+      'class C { object Q(object xs, object ys) =>',
+      '  from Lib.Row r in xs',
+      '  join Cell c in ys on r equals c',
+      '  from Box<Tag> t in xs',
+      '  from u in xs',
+      '  join w in ys on u equals w',
+      '  select r;',
+      '}',
+      '',
+    ].join('\n'));
+    const keys = keysOf(uses);
+    for (const k of ['Lib.Row', 'Cell', 'Box`1', 'Tag']) expect(keys).toContain(k);
+  });
+  it('a function pointer type names each parameter type and its return type', async () => {
+    const { uses } = await run('unsafe class C { delegate*<Order, ref Lib.Item, Box<Tag>, Result> a; delegate* unmanaged[Cdecl]<int, void> b; }\n');
+    const keys = keysOf(uses);
+    for (const k of ['Order', 'Lib.Item', 'Box`1', 'Tag', 'Result']) expect(keys).toContain(k);
+  });
+});
