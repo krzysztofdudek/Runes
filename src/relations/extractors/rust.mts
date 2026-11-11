@@ -2,7 +2,7 @@ import type { Node } from 'web-tree-sitter';
 import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
-import { rustExternBindingKey, rustExternCrateKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 
 /**
  * Rust dependency extractor.
@@ -44,11 +44,17 @@ import { rustExternBindingKey, rustExternCrateKey, rustExternNameKey, rustModule
  * `cargo fix` rewrites it to `r#gen`). The `r#` prefix is stripped from every segment so
  * `mod r#gen;` and `crate::r#gen::X` probe `gen.rs`, the file rustc loads.
  *
- * EXTERN CRATE: `extern crate name [as alias];` emits the bare crate `name`. The resolver
- * binds it only when `name` is an in-repo path dependency of the importing crate; `std`,
- * registry crates and `extern crate self` stay silent. The alias is not part of the emitted
- * path: `declarations()` records which crate each name bound at the top level stands for, and
- * the resolver follows a later path that starts with the alias from there.
+ * EXTERN CRATE: `extern crate name [as alias];` emits `extern::name`. `extern` is a keyword, so
+ * no path of the source starts with it: the form says the path names a crate for certain,
+ * which in edition 2015 no `use` path does. The resolver binds it only when `name` is an
+ * in-repo path dependency of the importing crate or the package's own library; `std`,
+ * registry crates and `extern crate self` stay silent. The declaration binds its name (the
+ * alias, else the crate) in the module or block that writes it, and nowhere else. A `use`
+ * declaration of that same scope whose path starts with the bound name is therefore emitted as
+ * `extern::name::as::bound::…`: the crate, and the path as written, which is what an edition
+ * 2015 crate reads instead. A `use` in an inline module or a block inside that scope is
+ * another scope and is emitted as written. For the crate root, whose `extern crate` names
+ * reach every module of the crate, `declarations()` records which crate each name stands for.
  *
  * GLOB (`use a::b::*`) emits the prefix module `a::b`. RENAMED (`use a::b as c`)
  * strips the alias and emits the real path `a::b`. `pub use` (re-export) is
@@ -236,10 +242,24 @@ function uses(file: ParsedFile): DetectedDep[] {
   // The inline modules around the node being visited, carried down the walk.
   let mods: ModScope | null = null;
 
+  // While a `use` declaration is read: the crates the `extern crate` declarations of its own scope bind, by bound name.
+  let externs: ReadonlyMap<string, string> | null = null;
+  const externsByScope = new Map<number, ReadonlyMap<string, string>>();
+  const externsOf = (scope: Node): ReadonlyMap<string, string> => {
+    let bound = externsByScope.get(scope.id);
+    if (bound === undefined) {
+      bound = new Map(externCratesIn(scope).flatMap((e) => (e.crate === undefined ? [] : [[e.name, e.crate] as const])));
+      externsByScope.set(scope.id, bound);
+    }
+    return bound;
+  };
+
   const emit = (raw: string | undefined, node: Node): void => {
     if (raw === undefined || raw === '') return;
     let specifier = unrawPath(raw);
-    const root = specifier.split('::', 1)[0];
+    const root = specifier.split('::', 1)[0]!;
+    const crate = externs?.get(root);
+    if (crate !== undefined) specifier = `extern::${crate}::as::${specifier}`;
     if (root === 'self' || root === 'super') {
       // Relative to the module the node sits in: rebase across enclosing inline modules.
       const chain = inlineModChain(mods);
@@ -329,7 +349,10 @@ function uses(file: ParsedFile): DetectedDep[] {
     mods = scope;
     if (node.type === 'use_declaration') {
       const arg = node.childForFieldName('argument');
+      const scope = node.parent; // one step: the item list the declaration stands in
+      externs = scope === null ? null : externsOf(scope);
       if (arg !== null) handleArgument(arg, '');
+      externs = null;
       return false; // do not descend into the use tree again
     }
 
@@ -348,11 +371,11 @@ function uses(file: ParsedFile): DetectedDep[] {
       return { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope };
     }
 
-    // `extern crate name [as alias];` → the bare crate name (never `self`); the resolver
-    // binds it only to an in-repo path dependency.
+    // `extern crate name [as alias];` → `extern::name` (never `self`); the resolver binds it
+    // only to an in-repo path dependency or the package's own library.
     if (node.type === 'extern_crate_declaration') {
       const name = node.childForFieldName('name');
-      if (name !== null && name.type === 'identifier' && name.text !== 'self') emit(name.text, node);
+      if (name !== null && name.type === 'identifier' && name.text !== 'self') emit(`extern::${name.text}`, node);
       return false;
     }
 
@@ -409,10 +432,7 @@ function join(prefix: string, tail: string | undefined): string | undefined {
  * items, these are the names a `crate::` path or a path into a dependency can go through in a
  * crate-root file. The crate each such name stands for is declared under
  * `rustExternBindingKey(name, crate)` (`extern:<name>=<crate>`), which lets a path that starts
- * with the name resolve to the crate. And every crate the file names in an `extern crate`
- * declaration, at any depth, is declared under `rustExternCrateKey(crate)`
- * (`externcrate:<crate>`): in edition 2015 only such a declaration names a dependency by its
- * crate name.
+ * with the name resolve to the crate.
  *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
@@ -442,10 +462,6 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   for (const { name, crate, line } of topLevelExternCrates(root)) {
     out.push({ symbolKey: rustExternNameKey(name), line });
     if (crate !== undefined) out.push({ symbolKey: rustExternBindingKey(name, crate), line });
-  }
-  for (const node of root.descendantsOfType('extern_crate_declaration')) {
-    const crate = node?.childForFieldName('name') ?? null;
-    if (node !== null && crate !== null && crate.type === 'identifier' && crate.text !== 'self') out.push({ symbolKey: rustExternCrateKey(unraw(crate.text)), line: node.startPosition.row + 1 });
   }
   for (const { path, line, conditional } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
   return out;
@@ -533,7 +549,7 @@ const ITEM_MACROS = new Set(['thread_local', 'lazy_static', 'bitflags']);
 const ITEM_KEYWORDS = new Set(['struct', 'enum', 'union', 'trait', 'type', 'fn', 'const', 'static', 'mod']);
 
 /**
- * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`; for a function with `#[proc_macro_derive(Name, …)]` in front of it the derive `Name` in place of the function's own name), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
+ * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`; for a function with `#[proc_macro_derive(Name, …)]` in front of it the derive `Name` as well as the function), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
  */
 export function topLevelItemNames(root: Node): Array<{ name: string; line: number }> {
   const out: Array<{ name: string; line: number }> = [];
@@ -567,7 +583,7 @@ export function topLevelItemNames(root: Node): Array<{ name: string; line: numbe
   return out;
 }
 
-/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it: `Name`, the attribute's first argument. That is the item the crate root gains; the function itself cannot be named from outside a proc-macro crate, and the names in `attributes(…)` are helper attributes, no items. An attribute whose first argument is no name gives the empty string, so nothing is bound. Undefined for any other function. */
+/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it: `Name`, the attribute's first argument. It is one more item of the crate root, beside the function, which stays an item inside its own crate; the names in `attributes(…)` are helper attributes, no items. Undefined for any other function, and for an attribute whose first argument is no name. */
 function deriveMacroName(fn: Node): string | undefined {
   for (const item of attributesBefore(fn)) {
     const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
@@ -581,8 +597,13 @@ function deriveMacroName(fn: Node): string | undefined {
 
 /** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate) and `crate` the crate it stands for, both with `r#` stripped; `crate` is undefined for `extern crate self as name;`, which names the crate that writes it. `extern crate a as _;` binds none. */
 export function topLevelExternCrates(root: Node): Array<{ name: string; crate: string | undefined; line: number }> {
+  return externCratesIn(root);
+}
+
+/** The `extern crate` declarations among the items of `scope` itself (a file, the body of an inline module, a block), as `topLevelExternCrates` gives them for a file. */
+function externCratesIn(scope: Node): Array<{ name: string; crate: string | undefined; line: number }> {
   const out: Array<{ name: string; crate: string | undefined; line: number }> = [];
-  for (const node of root.namedChildren) {
+  for (const node of scope.namedChildren) {
     if (node === null || node.type !== 'extern_crate_declaration') continue;
     const crate = node.childForFieldName('name');
     const bound = unraw((node.childForFieldName('alias') ?? crate)?.text ?? '');
@@ -663,7 +684,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 9,
+  rev: 10,
   declarations,
   uses,
 };
