@@ -1299,8 +1299,12 @@ describe('csharp — a declaration only its own assembly sees carries the intern
     ])).toEqual(['N.Int', 'N.Bare', 'N.Outer+PrivProtIn', 'N.Outer+PrivIn', 'N.Outer+BareIn', 'N.Closed', 'N.Closed+PubInClosed', 'N.S+E']);
   });
 
-  it('does not mark a partial part without an access modifier, nor a type nested in one: another part may make it public', async () => {
+  it('does not mark a partial part without an access modifier, nor a public type nested in one: another part may make it public', async () => {
     expect(await marked(['namespace N;', 'partial class P { public class Inner { } }', 'internal partial class Q { }', 'public partial class R { class Hidden { } }'])).toEqual(['N.Q', 'N.R+Hidden']);
+  });
+
+  it('marks a partial part nested in an internal type: the type around it already keeps it inside its assembly', async () => {
+    expect(await marked(['namespace N;', 'internal class Box { partial class Part { } public partial class Open { } }'])).toEqual(['N.Box', 'N.Box+Part', 'N.Box+Open']);
   });
 
   it('marks an extension method that is not public, or whose static class only its assembly sees', async () => {
