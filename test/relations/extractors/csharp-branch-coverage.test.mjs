@@ -183,6 +183,8 @@ describe('csharp extractor — a using static imports nested types and extension
     const shapesOf = (declarations) => Object.fromEntries(declarations.filter((d) => d.symbolKey.startsWith('shapes:')).map((d) => d.symbolKey.slice('shapes:'.length).split('\t')));
     const classic = await run('public static class E {\n  public static void M(this int x, string a, int b = 1) { }\n  public static void M<T>(this int x) { }\n  public static void M(this int x, params string[] rest) { }\n  public static void M(this long x) { }\n}\n');
     expect(shapesOf(classic.declarations)).toEqual({ 'M()': '0:1:2 1:0:0 0:0:* 0:0:0', 'E#M()': '0:1:2 1:0:0 0:0:* 0:0:0' });
+    const hidden = await run('public static class E {\n  public static void M(this int x) { }\n  internal static void M(this int x, int a) { }\n}\ninternal static class F { public static void K(this int x) { } }\n');
+    expect(shapesOf(hidden.declarations)).toEqual({ 'M()': '0:0:0 -0:1:1', 'E#M()': '0:0:0 -0:1:1', 'K()': '-0:0:0', 'F#K()': '-0:0:0' });
     const block = await run('public static class E {\n  extension(Order o) {\n    public void Ship(int a, int b = 2) { }\n  }\n}\n');
     expect(shapesOf(block.declarations)).toEqual({ 'Ship()': '*:1:2', 'E#Ship()': '*:1:2' });
   });

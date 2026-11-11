@@ -355,6 +355,8 @@ describe('MATRIX — C# what a project compiles and what another project may see
   it('csharp-internal-type-internals-visible-to-attribute-silence', () => runCase('csharp-internal-type-internals-visible-to-attribute-silence'));
   it('csharp-internal-type-internals-visible-to-item-edge', () => runCase('csharp-internal-type-internals-visible-to-item-edge'));
   it('csharp-internal-extension-other-project-not-candidate-edge', () => runCase('csharp-internal-extension-other-project-not-candidate-edge'));
+  it('csharp-extension-internal-sibling-method-not-counted-edge', () => runCase('csharp-extension-internal-sibling-method-not-counted-edge'));
+  it('csharp-extension-unreferenced-sibling-method-not-counted-edge', () => runCase('csharp-extension-unreferenced-sibling-method-not-counted-edge'));
 });
 
 describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {

@@ -794,6 +794,28 @@ describe('csharp: an extension method takes a call only by its counts', () => {
     });
   });
 
+  it('counts a sibling file of the bound owner only as far as the calling file sees it', async () => {
+    await project({
+      'src/core/Order.cs': 'namespace App;\npublic class Order { }\n',
+      'src/lib/L.cs': 'namespace App;\npublic static class L { public static void Tag(this Order o, string k) { } }\n',
+      'src/ext/A.cs': 'namespace App.Web;\npublic static class A { public static void Tag(this Order o) { } }\n',
+      'src/ext/B.cs': 'namespace App.Web;\ninternal static class B { public static void Tag(this Order o, string k) { } }\n',
+      'src/web/Page.cs': 'namespace App.Web;\nclass Page {\n  void M() {\n    var o = Make();\n    o.Tag("k");\n  }\n}\n',
+    }, ({ table, files }) => {
+      const ownerOf = (file) => file.split('/').at(-2);
+      const uses = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Page.cs'));
+      const through = (reach) => resolveDetectedEdges(uses, makeResolver({ ownerIndex: { ownerOf }, symbolTable: table, resolvePathToFile: () => undefined, reach }), 'src/web/Page.cs', 'csharp').map((e) => `${e.line}->${e.owner}`);
+      const sameOrReachable = (from, to) => (ownerOf(from) === ownerOf(to) ? 'same' : 'reachable');
+      // B's method is internal to its assembly: it counts for a friend, and for a graph that reads no internals, and for no other caller.
+      expect(through(Object.assign((from, to) => sameOrReachable(from, to), { internalsVisible: () => false }))).toEqual(['5->lib']);
+      expect(through(Object.assign((from, to) => sameOrReachable(from, to), { internalsVisible: () => true }))).toEqual(['5->ext']);
+      expect(through((from, to) => sameOrReachable(from, to))).toEqual(['5->ext']);
+      // A file of a project out of reach has no say; one the graph knows nothing about counts.
+      expect(through((from, to) => (to === 'src/ext/B.cs' ? 'unreachable' : sameOrReachable(from, to)))).toEqual(['5->lib']);
+      expect(through((from, to) => (to === 'src/ext/B.cs' ? 'unknown' : sameOrReachable(from, to)))).toEqual(['5->ext']);
+    });
+  });
+
   it('two owners that declare the name at one level stay an ambiguity, whatever their shapes', async () => {
     await project({
       'src/lib/E.cs': 'namespace Lib;\npublic static class E { public static void Add(this object o, int a) { } }\n',

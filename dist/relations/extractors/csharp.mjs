@@ -282,7 +282,7 @@ function classExtensionKey(classKey, name) {
     return `${classKey}#${name}()`;
 }
 /**
- * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces. A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
+ * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`). A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
  */
 export function extensionShapesKey(key) {
     return `shapes:${key}`;
@@ -827,7 +827,8 @@ function declarations(file) {
                 let listed = extensionShapes.get(symbolKey);
                 if (listed === undefined)
                     extensionShapes.set(symbolKey, (listed = { line, shapes: new Set() }));
-                listed.shapes.add(shape);
+                // A method only its own assembly sees says so in its shape: the mark of the key (`internalKey`) speaks for a file, and one file may hold a public and an internal method of one name.
+                listed.shapes.add(assemblyOnly ? `-${shape}` : shape);
             }
             return undefined;
         }
@@ -2886,7 +2887,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 37,
+    rev: 38,
     declarations,
     uses,
 };

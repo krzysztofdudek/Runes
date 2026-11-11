@@ -357,7 +357,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   /**
-   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. True when one of those shapes takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
+   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. Such a file counts only as far as the calling file sees it, as the reach filter reads a definer: a file of a project out of reach has no say, and neither has a method only its own assembly sees (a shape led by `-`) for a caller of another compilation that is no friend. True when one of the shapes left takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
    */
   const takesCall = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: ReadonlySet<string>, language: string, fromFile: string): boolean => {
     const takes = hint.takes;
@@ -372,7 +372,10 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       for (const [file, shapes] of csharp().extensionShapes(key)) {
         const owner = files.has(file) ? undefined : deps.ownerIndex.ownerOf(file);
         if (!files.has(file) && (owner === undefined || !owners.has(owner))) continue;
-        if (shapes.some((shape) => shapeTakes(shape, takes.typeArgs, takes.args))) return true;
+        const seen = deps.reach?.(fromFile, file);
+        if (seen === 'unreachable') continue;
+        const friend = seen !== 'reachable' || deps.reach?.internalsVisible === undefined || deps.reach.internalsVisible(fromFile, file);
+        if (shapes.some((shape) => (shape.startsWith('-') ? friend && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shapeTakes(shape, takes.typeArgs, takes.args)))) return true;
         recorded.add(file);
       }
     }
