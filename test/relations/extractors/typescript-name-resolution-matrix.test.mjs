@@ -146,6 +146,8 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-commonjs-module-dynamic-import-edge', () => runCase('typescript-exports-commonjs-module-dynamic-import-edge'));
   it('typescript-exports-preserve-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-preserve-dynamic-import-in-cts-file-edge'));
   it('typescript-exports-nodenext-typeof-import-in-cts-file-edge', () => runCase('typescript-exports-nodenext-typeof-import-in-cts-file-edge'));
+  it('typescript-exports-resolution-mode-type-only-import-edge', () => runCase('typescript-exports-resolution-mode-type-only-import-edge'));
+  it('typescript-exports-resolution-mode-import-type-edge', () => runCase('typescript-exports-resolution-mode-import-type-edge'));
   it('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-class-heritage-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-class-heritage-type-argument-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-call-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-call-type-argument-import-type-in-cts-file-edge'));

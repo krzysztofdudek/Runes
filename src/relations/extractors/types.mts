@@ -24,7 +24,7 @@ export type CsharpCondition =
   | { kind: 'no-member'; types: string[]; name: string; call?: { method: string; args: number; typeArgs: number; from: string[] } };
 
 export type TargetHint =
-  | { kind: 'path'; specifier: string; isPackage?: boolean; callForm?: 'require' | 'import' }
+  | { kind: 'path'; specifier: string; isPackage?: boolean; callForm?: 'require' | 'import' | 'esm' }
   | {
       kind: 'symbol';
       /** The candidate's OWN display key — what `groupContaining`/`symbolKeys` read, and what

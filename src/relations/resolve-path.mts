@@ -56,7 +56,7 @@ export function makeResolvePathToFile(
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
   options?: ResolvePathOptions,
-): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import') => string | undefined {
+): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined {
   // Every read goes through one of two sources, and with a view given they are the same one. On the disk they differ in a single manner: a candidate probe exists only under the name its directory lists (on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs, issue 482), while a configuration read or a repository walk takes the file system's own rule.
   const probe: FileSource = options?.files ?? diskFileView(projectRoot, true);
   const plain: FileSource = options?.files ?? diskFileView(projectRoot, false);

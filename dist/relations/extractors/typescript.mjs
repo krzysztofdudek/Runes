@@ -133,12 +133,50 @@ function isImportMetaUrl(node) {
 const RECOVERY_PATTERNS = [
     // import x from '…' · import { a, type B } from '…' · import * as ns from '…' · import type … · import defer * as …
     // export { a } from '…' · export * from '…' · export * as ns from '…' · export type { … } from '…'
-    /^[ \t]*(?:import|export)\b([\w$\s{},*]*?)\bfrom[ \t]*(['"])([^'"\r\n]+)\2/gm,
+    // A type-only one may carry `with { 'resolution-mode': 'import' }`, which groups 4 and 5 read.
+    /^[ \t]*(?:import|export)\b([\w$\s{},*]*?)\bfrom[ \t]*(['"])([^'"\r\n]+)\2(?:\s*(?:with|assert)\s*\{\s*(['"])resolution-mode\4\s*:\s*(['"])(import|require)\5)?/gm,
     // import './side-effect'
     /^[ \t]*import()[ \t]*(['"])([^'"\r\n]+)\2/gm,
     // import x = require('…') · export import x = require('…') · import type x = require('…')
     /^[ \t]*(?:export[ \t]+)?import([ \t]+(?:type[ \t]+)?)[\w$]+[ \t]*=[ \t]*require[ \t]*\([ \t]*(['"])([^'"\r\n]+)\2/gm,
 ];
+/** The call form a `resolution-mode` value stands for: `require` reads as a `require()` does, `import` is `'esm'`, the `import` condition whatever the file and the module setting. Any other value is no mode. */
+function modeOf(value) {
+    return value === 'require' ? 'require' : value === 'import' ? 'esm' : undefined;
+}
+/** The mode a `{ 'resolution-mode': '…' }` object names, or undefined. */
+function modeOfAttributes(object) {
+    if (object === null || object === undefined || object.type !== 'object')
+        return undefined;
+    for (const pair of object.namedChildren) {
+        if (pair === null || pair.type !== 'pair')
+            continue;
+        if (specifierFromStringNode(pair.childForFieldName('key')) === 'resolution-mode')
+            return modeOf(specifierFromStringNode(pair.childForFieldName('value')));
+    }
+    return undefined;
+}
+/** The mode the `resolution-mode` attribute of a type-only import declaration names (`import type … from 'x' with { 'resolution-mode': 'import' }`), or undefined. The compiler reads the attribute only where the whole declaration is type-only, so an inline `import { type T }` and a value import carry none. */
+function modeOfImportStatement(node) {
+    if (node.child(1)?.type !== 'type')
+        return undefined;
+    const attribute = node.namedChildren.find((c) => c !== null && c.type === 'import_attribute');
+    return attribute === null || attribute === undefined ? undefined : modeOfAttributes(attribute.namedChild(0));
+}
+/** The mode the options of an import type name (`import('x', { with: { 'resolution-mode': 'import' } }).T`), or undefined. */
+function modeOfImportType(call) {
+    const options = argumentAt(call, 1);
+    if (options === null || options.type !== 'object')
+        return undefined;
+    for (const pair of options.namedChildren) {
+        if (pair === null || pair.type !== 'pair')
+            continue;
+        const key = pair.childForFieldName('key')?.text;
+        if (key === 'with' || key === 'assert')
+            return modeOfAttributes(pair.childForFieldName('value'));
+    }
+    return undefined;
+}
 /** Zero-based rows touched by any ERROR node in the tree (empty for an error-free parse). An ERROR node's rows hold those of every node below it, so the walk does not descend into one: each row is added once per outermost ERROR, not once per nested one. */
 function errorRows(root) {
     const rows = new Set();
@@ -195,7 +233,8 @@ function recoverFromErrors(file) {
                 touched = rows.has(r);
             if (!touched)
                 continue;
-            out.push({ specifier: m[3], line: first + 1 });
+            const mode = m[6] !== undefined && /^\s*type\b/.test(m[1]) ? modeOf(m[6]) : undefined;
+            out.push(mode === undefined ? { specifier: m[3], line: first + 1 } : { specifier: m[3], line: first + 1, mode });
         }
     }
     return out;
@@ -328,7 +367,7 @@ function uses(file) {
                     emit(specifierFromSource(requireClause), node, 'require');
                     break;
                 }
-                emit(specifierFromSource(node), node);
+                emit(specifierFromSource(node), node, modeOfImportStatement(node));
                 break;
             }
             case 'export_statement': {
@@ -356,7 +395,7 @@ function uses(file) {
                 // A plain string literal OR a no-substitution template literal yields a
                 // static specifier; an interpolated template literal / identifier / other
                 // expression is non-literal and skipped (specifierFromCallArg returns undefined).
-                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inType ? undefined : 'import');
+                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inType ? modeOfImportType(node) : 'import');
                 break;
             }
             case 'module': {
@@ -387,8 +426,8 @@ function uses(file) {
         }
         return inType || TYPE_POSITION_ANCESTORS.has(node.type) ? true : undefined;
     });
-    for (const { specifier, line } of recoverFromErrors(file))
-        emitAt(specifier, line);
+    for (const { specifier, line, mode } of recoverFromErrors(file))
+        emitAt(specifier, line, mode);
     return out;
 }
 const TOP_LEVEL_DECLARATION_TYPES = new Set([
@@ -424,13 +463,14 @@ function declarations(file) {
 }
 export const typescriptExtractor = {
     languages: new Set(['typescript', 'tsx', 'javascript']),
+    // rev 5: a type-only import or re-export and an import type that carry the `resolution-mode` attribute carry the mode it names, `require` or `esm`;
     // rev 4: a require() call or `import x = require()` and a dynamic import() (not an import type) carry
     // their call form, which picks the `require` or `import` condition of an `exports` entry;
     // rev 3: every type-only reference gives its edge (statement forms, type-position
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
     // `new URL(…, import.meta.url)`; ERROR-region recovery.
-    rev: 4,
+    rev: 5,
     declarations,
     uses,
 };

@@ -171,6 +171,8 @@ const UNREAD_BUNDLER_MODULES = ['commonjs', 'esnext', 'preserve'];
  * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. Under a Node resolution with a `module` that is not a Node one (tsc reports the pair and still resolves), the nearest package.json `"type"` decides when it is `module` or `commonjs`, and with no `type` the file requires under `commonjs`, `amd`, `umd`, `system` or `none` and imports otherwise. Under Bundler with a Node `module` a file imports unless its extension says it requires. Any other file kind (a Vue or Svelte component) decides nothing.
  *
  * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
+ *
+ * The `resolution-mode` import attribute overrides the format too, and nothing overrides it: the compiler reads it on a type-only import or export declaration and on an import type (`getModeForUsageLocation`), and resolves the specifier in the mode it names under every setting that reads `exports`.
  */
 function exportConditions(from, deps, callForm) {
     const config = deps.tsconfigFor(from);
@@ -184,7 +186,7 @@ function exportConditions(from, deps, callForm) {
     const type = () => deps.nearestPackage(from)?.manifest.type;
     if (config === undefined) {
         const format = esm ? 'import' : cjs ? 'require' : type() === 'module' ? 'import' : 'require';
-        return { readings: [{ form: callForm ?? format, node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
+        return { readings: [{ form: callForm === 'esm' ? 'import' : (callForm ?? format), node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
     }
     // undefined: set by a base that cannot be read.
     const module = config.module === UNREAD_SETTING ? undefined : (config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext'));
@@ -241,7 +243,7 @@ function exportConditions(from, deps, callForm) {
         const format = staticFormat(kind, mod);
         if (format === undefined)
             return undefined;
-        const form = callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
+        const form = callForm === 'require' ? 'require' : callForm === 'esm' ? 'import' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
         const node = kind === 'node';
         if (!readings.some((r) => r.form === form && r.node === node))
             readings.push({ form, node });

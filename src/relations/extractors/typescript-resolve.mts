@@ -4,8 +4,8 @@ import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING, t
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
 
-/** How a specifier was written when it is a call: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. */
-export type TsCallForm = 'require' | 'import';
+/** How a specifier was written when its form decides the condition: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. A type-only import or an import type whose `resolution-mode` attribute names `require` reads as a `require` does; one that names `import` is `'esm'`, the `import` condition wherever it stands, which a dynamic `import()` is not (the compiler may emit that as a `require`). */
+export type TsCallForm = 'require' | 'import' | 'esm';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -280,6 +280,8 @@ const UNREAD_BUNDLER_MODULES = ['commonjs', 'esnext', 'preserve'];
  * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. Under a Node resolution with a `module` that is not a Node one (tsc reports the pair and still resolves), the nearest package.json `"type"` decides when it is `module` or `commonjs`, and with no `type` the file requires under `commonjs`, `amd`, `umd`, `system` or `none` and imports otherwise. Under Bundler with a Node `module` a file imports unless its extension says it requires. Any other file kind (a Vue or Svelte component) decides nothing.
  *
  * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
+ *
+ * The `resolution-mode` import attribute overrides the format too, and nothing overrides it: the compiler reads it on a type-only import or export declaration and on an import type (`getModeForUsageLocation`), and resolves the specifier in the mode it names under every setting that reads `exports`.
  */
 function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallForm): ExportConditions | undefined {
   const config = deps.tsconfigFor(from);
@@ -291,7 +293,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
   const type = (): unknown => deps.nearestPackage(from)?.manifest.type;
   if (config === undefined) {
     const format = esm ? 'import' : cjs ? 'require' : type() === 'module' ? 'import' : 'require';
-    return { readings: [{ form: callForm ?? format, node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
+    return { readings: [{ form: callForm === 'esm' ? 'import' : (callForm ?? format), node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
   }
   // undefined: set by a base that cannot be read.
   const module = config.module === UNREAD_SETTING ? undefined : (config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext'));
@@ -310,7 +312,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
   else if (resolution === 'node16' || resolution === 'nodenext') pairings = [['node', module ?? 'nodenext']];
   else return undefined;
   // The format of the file under one resolution and one `module`.
-  const staticFormat = (kind: 'node' | 'bundler', mod: string): TsCallForm | undefined => {
+  const staticFormat = (kind: 'node' | 'bundler', mod: string): ExportReading['form'] | undefined => {
     if (esm) return 'import';
     if (cjs) return 'require';
     if (kind === 'node') {
@@ -323,7 +325,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
     return ESM_MODULE_KINDS.has(mod) ? 'import' : undefined;
   };
   // What a dynamic import() reads: `import`, unless the compiler emits the call as a require.
-  const dynamicForm = (kind: 'node' | 'bundler', mod: string, format: TsCallForm): TsCallForm => {
+  const dynamicForm = (kind: 'node' | 'bundler', mod: string, format: ExportReading['form']): ExportReading['form'] => {
     if (NODE_MODULE_KINDS.has(mod) || mod === 'preserve') return 'import';
     const rewritten = kind === 'node' ? format === 'require' : cjs || (!esm && IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod));
     return rewritten ? 'require' : 'import';
@@ -332,7 +334,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
   for (const [kind, mod] of pairings) {
     const format = staticFormat(kind, mod);
     if (format === undefined) return undefined;
-    const form = callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
+    const form = callForm === 'require' ? 'require' : callForm === 'esm' ? 'import' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
     const node = kind === 'node';
     if (!readings.some((r) => r.form === form && r.node === node)) readings.push({ form, node });
   }
@@ -341,7 +343,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
 
 /** One reading of a lookup: the branch the importing file enters, with whether `node` is entered. The two belong together, since a resolution fixes both. */
 interface ExportReading {
-  form: TsCallForm;
+  form: 'require' | 'import';
   node: boolean;
 }
 
