@@ -116,6 +116,10 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-inline-package-table-crate-name-edge', () => runCase('rust-inline-package-table-crate-name-edge'));
   it('rust-reexported-extern-crate-edge', () => runCase('rust-reexported-extern-crate-edge'));
   it('rust-extern-crate-alias-edge', () => runCase('rust-extern-crate-alias-edge'));
+  it('rust-module-of-two-roots-or-none-root-item-edge', () => runCase('rust-module-of-two-roots-or-none-root-item-edge'));
+  it('rust-bin-path-in-src-module-root-item-edge', () => runCase('rust-bin-path-in-src-module-root-item-edge'));
+  it('rust-main-and-lib-module-result-alias-edge', () => runCase('rust-main-and-lib-module-result-alias-edge'));
+  it('rust-main-module-crate-item-lib-same-name-edge', () => runCase('rust-main-module-crate-item-lib-same-name-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
