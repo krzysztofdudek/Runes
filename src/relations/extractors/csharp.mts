@@ -1340,6 +1340,12 @@ const NAME_DECLARING_TYPES = new Set([
   ...TYPE_DECLARATION_TYPES,
 ]);
 
+/** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type. */
+type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean }>>;
+
+/** The nodes a declared name is scoped to. */
+const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed_statement', 'switch_section', 'catch_clause', 'switch_expression_arm', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
+
 /**
  * Every name this file DECLARES that is not a namespace: locals, parameters (method, lambda,
  * primary-constructor), fields, properties, events, methods and local functions, enum members,
@@ -1355,34 +1361,70 @@ const NAME_DECLARING_TYPES = new Set([
  * declares: a call `x.Name()` whose name the file itself declares as a method is most likely that
  * instance method, which C# prefers over any extension method.
  */
-function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<string>; methodNames: Set<string>; openTypes: Set<string> } {
+function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<string>; methodNames: Set<string>; openTypes: Set<string>; typedNames: TypedNames } {
   const declaredNames = new Set<string>();
   const methodNames = new Set<string>();
   // The keys of the types of the file that can hold a member the file does not show (`takesMembers`).
   const openTypes = new Set<string>();
-  walkCs(root, (node, scope) => {
+  const typedNames: TypedNames = new Map();
+  const typed = (name: string, type: Node | null, within: Node, member = false): void => {
+    const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member };
+    const list = typedNames.get(name);
+    if (list === undefined) typedNames.set(name, [entry]);
+    else list.push(entry);
+  };
+  // One walk carries the scope of every node (`CsScope`) with the nearest scope node and the nearest type declaration around it.
+  interface Around { cs: CsScope; scope: Node; type: Node | null }
+  walkScoped<Around>(root, { cs: TOP_SCOPE, scope: root, type: null }, (node, inherited) => {
+    const scope = csSeen(node, inherited.cs);
+    const { scope: around, type: holderType } = inherited;
     if (TYPE_DECLARATION_TYPES.has(node.type) && !isFileLocalType(node, scope) && takesMembers(node)) {
       const key = declaredTypeKey(node, scope, fileNs);
       if (key !== undefined) openTypes.add(key);
     }
     if (node.type === 'implicit_parameter' || node.type === 'single_variable_designation') {
       declaredNames.add(node.text);
+      typed(node.text, null, around);
     } else if (node.type === 'foreach_statement') {
       const left = node.childForFieldName('left')!;
-      if (left.type === 'identifier') declaredNames.add(left.text); // `foreach (var (a, b) in …)` is a pattern
+      if (left.type === 'identifier') {
+        declaredNames.add(left.text); // `foreach (var (a, b) in …)` is a pattern
+        typed(left.text, node.childForFieldName('type'), node);
+      }
     } else if (NAME_DECLARING_TYPES.has(node.type)) {
       // An ordinary (non-extension) method or local function also names a callable member.
       const ordinaryMethod =
         (node.type === 'method_declaration' || node.type === 'local_function_statement') && extensionMethodName(node, scope) === undefined;
       for (let i = 0; i < node.childCount; i++) {
         if (node.fieldNameForChild(i) !== 'name' || node.child(i)!.type !== 'identifier') continue;
-        declaredNames.add(node.child(i)!.text);
-        if (ordinaryMethod) methodNames.add(node.child(i)!.text);
+        const name = node.child(i)!.text;
+        declaredNames.add(name);
+        if (ordinaryMethod) methodNames.add(name);
+        if (node.type === 'parameter') {
+          // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
+          const declaration = node.parent!.parent!;
+          typed(name, node.childForFieldName('type'), declaration);
+        } else if (node.type === 'property_declaration') {
+          if (holderType !== null) typed(name, node.childForFieldName('type'), holderType, true);
+        } else if (node.type === 'catch_declaration' || node.type === 'from_clause' || node.type === 'let_clause' || node.type === 'join_clause' || node.type === 'join_into_clause') {
+          typed(name, null, around);
+        }
       }
     }
-    return undefined;
+    if (node.type === 'variable_declaration') {
+      const holder = node.parent!;
+      const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && holderType !== null;
+      for (const d of node.namedChildren) {
+        const name = d!.type === 'variable_declarator' ? d!.childForFieldName('name') : null;
+        if (name !== null && name.type === 'identifier') typed(name.text, node.childForFieldName('type'), member ? holderType! : around, member);
+      }
+    }
+    const below = csBelow(node, scope) ?? scope;
+    const opens = SCOPE_NODES.has(node.type);
+    if (below === inherited.cs && !opens) return undefined;
+    return { cs: below, scope: opens ? node : around, type: TYPE_DECLARATION_TYPES.has(node.type) ? node : holderType };
   });
-  return { declaredNames, methodNames, openTypes };
+  return { declaredNames, methodNames, openTypes, typedNames };
 }
 
 /**
@@ -1433,7 +1475,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
 
   // Every value/member name this file declares (M16 shadow guard) and the names of the ordinary
   // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
-  const { declaredNames, methodNames, openTypes } = collectDeclaredNames(file.tree.rootNode, fileNs);
+  const { declaredNames, methodNames, openTypes, typedNames } = collectDeclaredNames(file.tree.rootNode, fileNs);
 
   /** The types around `node` in which its first name may be a member this file does not show (see the `receiver` descriptor's `members`). */
   const membersAround = (node: Node): { members?: string[] } => {
@@ -1470,53 +1512,6 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return described;
   };
 
-  /** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type. Read once, when the first receiver asks. */
-  type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean }>>;
-  let typedNames: TypedNames | undefined;
-  const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed_statement', 'switch_section', 'catch_clause', 'switch_expression_arm', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
-  const declaredTypes = (): TypedNames => {
-    if (typedNames !== undefined) return typedNames;
-    const index: TypedNames = new Map();
-    const add = (name: string, type: Node | null, within: Node, member = false): void => {
-      const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member };
-      const list = index.get(name);
-      if (list === undefined) index.set(name, [entry]);
-      else list.push(entry);
-    };
-    // The nearest scope and the nearest type declaration around each node, carried down the walk.
-    interface Around { scope: Node; type: Node | null }
-    walkScoped<Around>(file.tree.rootNode, { scope: file.tree.rootNode, type: null }, (node, { scope: around, type: holderType }) => {
-      if (node.type === 'variable_declaration') {
-        const holder = node.parent!;
-        const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && holderType !== null;
-        for (const d of node.namedChildren) {
-          const name = d!.type === 'variable_declarator' ? d!.childForFieldName('name') : null;
-          if (name !== null && name.type === 'identifier') add(name.text, node.childForFieldName('type'), member ? holderType! : around, member);
-        }
-      } else if (node.type === 'parameter') {
-        const name = node.childForFieldName('name');
-        // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
-        const declaration = node.parent!.parent!;
-        if (name !== null) add(name.text, node.childForFieldName('type'), declaration);
-      } else if (node.type === 'property_declaration' && holderType !== null) {
-        add(node.childForFieldName('name')!.text, node.childForFieldName('type'), holderType, true);
-      } else if (node.type === 'implicit_parameter' || node.type === 'single_variable_designation') {
-        add(node.text, null, around);
-      } else if (node.type === 'foreach_statement') {
-        const left = node.childForFieldName('left')!;
-        if (left.type === 'identifier') add(left.text, node.childForFieldName('type'), node);
-      } else if (node.type === 'catch_declaration' || node.type === 'from_clause' || node.type === 'let_clause' || node.type === 'join_clause' || node.type === 'join_into_clause') {
-        for (let i = 0; i < node.childCount; i++) {
-          if (node.fieldNameForChild(i) === 'name' && node.child(i)!.type === 'identifier') add(node.child(i)!.text, null, around);
-        }
-      }
-      if (!SCOPE_NODES.has(node.type)) return undefined;
-      return { scope: node, type: TYPE_DECLARATION_TYPES.has(node.type) ? node : holderType };
-    });
-    typedNames = index;
-    return index;
-  };
-
   /** What the file says of the type of a call's receiver (see the `ext` descriptor): the enclosing type for `this`, the written types of the nearest declarations of a name for an identifier or `this.name`, or nothing where no type is written. */
   const receiverType = (receiver: Node): { on?: CsharpRefDescriptor[]; self?: string } => {
     if (receiver.type === 'this') {
@@ -1527,7 +1522,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     const nameNode = viaThis ? receiver.childForFieldName('name')! : receiver;
     if (nameNode.type !== 'identifier') return {};
     const at = receiver.startIndex;
-    const inScope = (declaredTypes().get(nameNode.text) ?? []).filter((e) => at >= e.start && at < e.end && (!viaThis || e.member));
+    const inScope = (typedNames.get(nameNode.text) ?? []).filter((e) => at >= e.start && at < e.end && (!viaThis || e.member));
     if (inScope.length === 0) return {};
     // The nearest scope that declares the name decides; where it declares the name more than once, every written type counts, and one without a written type leaves the receiver unknown.
     const size = Math.min(...inScope.map((e) => e.end - e.start));
