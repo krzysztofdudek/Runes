@@ -378,3 +378,11 @@ describe('MATRIX — C# delegate declarations are types', () => {
   it('csharp-delegate-generic-arity-edge', () => runCase('csharp-delegate-generic-arity-edge'));
   it('csharp-delegate-file-local-not-published-edge', () => runCase('csharp-delegate-file-local-not-published-edge'));
 });
+
+describe('MATRIX — C# type positions in patterns', () => {
+  it('csharp-pattern-qualified-not-or-switch-edge', () => runCase('csharp-pattern-qualified-not-or-switch-edge'));
+  it('csharp-pattern-qualified-type-edge', () => runCase('csharp-pattern-qualified-type-edge'));
+  it('csharp-pattern-array-type-edge', () => runCase('csharp-pattern-array-type-edge'));
+  it('csharp-pattern-generic-type-edge', () => runCase('csharp-pattern-generic-type-edge'));
+  it('csharp-pattern-enum-member-through-type-edge', () => runCase('csharp-pattern-enum-member-through-type-edge'));
+});
