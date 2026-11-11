@@ -327,6 +327,12 @@ export function makeResolver(deps) {
                 || condition.receivers.some((readings) => {
                     const bound = bindCsharpType(readings, fromFile);
                     return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from, fromFile);
+                })
+                || (condition.fileReceivers ?? []).some(({ readings, type }) => {
+                    // A nearer reading that names a declaration decides; else the receiver is the `file` type of the referencing file.
+                    const nearer = readings.some((hint) => hint.kind === 'symbol' && hintFiles(hint, 'csharp', fromFile).size > 0);
+                    const key = nearer ? bindCsharpType(readings, fromFile)?.key : type;
+                    return key !== undefined && csharp().hasMethod(key, condition, condition.from, fromFile);
                 });
         }
         // The nearest type around the name that knows it decides what the name is there.

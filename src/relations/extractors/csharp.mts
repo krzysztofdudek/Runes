@@ -371,6 +371,11 @@ export function fileBaseListKey(typeKey: string): string {
   return `file-base:${typeKey}`;
 }
 
+/** The marker key of a C#11 `file` interface of the key `typeKey`: `file-interface:<key>`, declared by the file that declares the interface and read for that file's type alone, as its base records are (`fileBaseListKey`). An interface inherits from its base interfaces, a class from none of the interfaces it lists, and a `file` type publishes no `interface:` mark. */
+export function fileInterfaceKey(typeKey: string): string {
+  return `file-interface:${typeKey}`;
+}
+
 /** What leads the key of a C#11 `file` type where a reading names the type whose body holds it (`fileTypeRef`). The colon is in no C# name, so no published key starts with it. */
 export const FILE_TYPE_REF = 'file:';
 
@@ -911,8 +916,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     if (symbolKey === undefined) return undefined;
     // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN; its base list is recorded apart (`fileBaseListKey`).
     const fileLocal = isFileLocalType(node, scope);
-    if (fileLocal) fileLocalTypes.push(symbolKey);
-    else {
+    if (fileLocal) {
+      fileLocalTypes.push(symbolKey);
+      if (node.type === 'interface_declaration') out.push({ symbolKey: fileInterfaceKey(symbolKey), line: node.startPosition.row + 1 });
+    } else {
       out.push({ symbolKey, line: node.startPosition.row + 1 });
       if (typeSeen(node, scope.typeDecl) === 'assembly') out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
       if (node.type === 'interface_declaration') out.push({ symbolKey: interfaceKey(symbolKey), line: node.startPosition.row + 1 });
@@ -2413,6 +2420,28 @@ export function assembleCsharpCandidates(
     }
     return false;
   };
+  /** The key of the type this file keeps to itself that the whole reading `key` spells (each dot after a type boundary read as the `+` of a nested type), or undefined. */
+  const fileLocalKeyOf = (key: string): string | undefined => {
+    if (fileLocal.size === 0) return undefined;
+    const segments = key.split('.');
+    for (let dots = 1; dots <= segments.length; dots++) {
+      const head = segments.slice(0, dots).join('.');
+      const rest = segments.slice(dots);
+      const type = rest.length === 0 ? head : `${head}+${rest.join('+')}`;
+      if (fileLocal.has(type)) return type;
+    }
+    return undefined;
+  };
+  /** Where the reading `key` leads through a type this file keeps to itself and on to names that type does not declare itself: the longest such type its first names spell, and the names after it. Those names are members the type inherits, if anything: a nested type of a base class. Undefined when the reading names a file-local type itself, or leads through none. */
+  const throughFileLocal = (key: string): { type: string; rest: string[] } | undefined => {
+    if (fileLocalKeyOf(key) !== undefined) return undefined;
+    const segments = key.split('.');
+    for (let end = segments.length - 1; end >= 1; end--) {
+      const type = fileLocalKeyOf(segments.slice(0, end).join('.'));
+      if (type !== undefined) return { type, rest: segments.slice(end) };
+    }
+    return undefined;
+  };
   /** A type around a reference as its readings name it: a type the file keeps to itself says so (`fileTypeRef`). */
   const typeRef = (typeKey: string): string => (fileLocal.has(typeKey) ? fileTypeRef(typeKey) : typeKey);
 
@@ -2639,7 +2668,7 @@ export function assembleCsharpCandidates(
    *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
    *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
    */
-  const pushRef = (ref: string, enclosingNs: string[], line: number, rooted: boolean, at: number, types: readonly string[] = [], unless?: CsharpCondition[], steps?: number[]): boolean => {
+  const pushRef = (ref: string, enclosingNs: string[], line: number, rooted: boolean, at: number, types: readonly string[] = [], unless?: CsharpCondition[], steps?: number[], ends?: { type?: string }): boolean => {
     // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
     // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
     // candidate.
@@ -2657,7 +2686,10 @@ export function assembleCsharpCandidates(
     const nestedReadings: TargetHint[] = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: typeRef(t), ...(unless === undefined ? {} : { unless }) }));
     // A nested type of a file-local type is found there, before any namespace: the group ends at it.
     const localNested = nestedReadings.findIndex((h) => isFileLocalReading((h as SymbolHint).symbolKey));
-    if (localNested >= 0) nestedReadings.length = localNested;
+    if (localNested >= 0) {
+      if (ends !== undefined) ends.type = fileLocalKeyOf((nestedReadings[localNested] as SymbolHint).symbolKey);
+      nestedReadings.length = localNested;
+    }
 
     const lead = ref.split('.')[0];
     if (ambiguousAliases.has(lead)) {
@@ -2680,6 +2712,13 @@ export function assembleCsharpCandidates(
       if (ended) return;
       if (hint.kind === 'symbol') {
         if (isFileLocalReading(hint.symbolKey)) {
+          // The lookup ends at the type the file keeps to itself. Where the reading names that type, the caller may ask which it is (`ends`); where it leads through the type to a name the type does not declare, that name is read in the type, which finds what its base classes hand down (`Worker.Options` through `file class Worker : WorkerBase`).
+          if (ends !== undefined) ends.type = fileLocalKeyOf(hint.symbolKey);
+          const through = throughFileLocal(hint.symbolKey);
+          if (through !== undefined) {
+            candidates.push({ kind: 'symbol', symbolKey: `${through.type}+${through.rest.join('.')}`, within: fileTypeRef(through.type) });
+            steps?.push(step);
+          }
           ended = true;
           return;
         }
@@ -2827,17 +2866,24 @@ export function assembleCsharpCandidates(
 
   // The two parts the descriptors name by place. An extract a store kept without them (it copied `refs` and the fields it knew) names places that hold nothing: a descriptor that does gives no group, since the condition it carries cannot be read and the edge without it may be the false one.
   const lists = (extract.lists ?? []).map((list) => list.map(typeRef));
-  /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it; undefined where the extract holds nothing at that place. */
-  const receiverGroups = new Map<number, TargetHint[]>();
-  const receiverReadings = (place: number): TargetHint[] | undefined => {
+  /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it, and, where they end at a type the file keeps to itself, that type (the receiver's type when no nearer reading binds); undefined where the extract holds nothing at that place. */
+  const receiverGroups = new Map<number, { readings: TargetHint[]; fileType?: string }>();
+  const receiverType = (place: number): { readings: TargetHint[]; fileType?: string } | undefined => {
     let group = receiverGroups.get(place);
     if (group === undefined) {
       const written = extract.receiverTypes?.[place];
       if (written === undefined) return undefined;
-      receiverGroups.set(place, (group = groupOf(written)));
+      if (written.kind === 'plain') {
+        const ends: { type?: string } = {};
+        const before = out.length;
+        pushRef(written.ref, written.enclosingNs, written.line, written.rooted, written.at, written.types, undefined, undefined, ends);
+        group = { readings: out.splice(before)[0]?.candidates ?? [], ...(ends.type === undefined ? {} : { fileType: fileTypeRef(ends.type) }) };
+      } else group = { readings: groupOf(written) };
+      receiverGroups.set(place, group);
     }
     return group;
   };
+  const receiverReadings = (place: number): TargetHint[] | undefined => receiverType(place)?.readings;
 
   /** The ordered group of readings one reference gives, taken aside instead of pushed (empty when it gives none). */
   const groupOf = (r: CsharpRefDescriptor): TargetHint[] => {
@@ -2912,11 +2958,14 @@ export function assembleCsharpCandidates(
       }
       case 'ext': {
         // The receiver's written type, where the file gives one, is a condition on every reading of the group: an instance method of that name there takes the call.
-        const written = (r.on ?? []).map(receiverReadings);
+        const written = (r.on ?? []).map(receiverType);
         const from = r.from === undefined ? [] : lists[r.from];
         const holders = r.member === undefined ? [] : lists[r.member.types];
         if (from === undefined || holders === undefined || written.includes(undefined)) break;
-        const receivers = (written as TargetHint[][]).filter((g) => g.length > 0);
+        const known = written as Array<{ readings: TargetHint[]; fileType?: string }>;
+        const receivers = known.filter((g) => g.fileType === undefined && g.readings.length > 0).map((g) => g.readings);
+        // A receiver whose written type is a type the file keeps to itself: that type, unless a nearer reading binds.
+        const fileReceivers = known.filter((g) => g.fileType !== undefined).map((g) => ({ readings: g.readings, type: g.fileType! }));
         // The written type of each argument, as the conditions read it; an argument whose type the extract does not hold says nothing.
         const argTypes = r.argTypes?.map((a): CsharpArgType => {
           if (a === null || typeof a === 'string') return a;
@@ -2933,7 +2982,7 @@ export function assembleCsharpCandidates(
         const unless: CsharpCondition[] = [];
         // A receiver the file does not declare is a value only as a member of a type around the call.
         if (r.member !== undefined) unless.push({ kind: 'no-member', types: holders, name: r.member.name, ...(r.member.direct ? { call } : {}), ...(r.member.own === true ? { own: true } : {}) });
-        if (receivers.length > 0 || r.self !== undefined) unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
+        if (receivers.length > 0 || fileReceivers.length > 0 || r.self !== undefined) unless.push({ kind: 'instance-method', ...call, receivers, ...(fileReceivers.length === 0 ? {} : { fileReceivers }), ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
         pushExtension(r.name, r.enclosingNs, r.line, r.at, unless, { args: call.args, typeArgs: call.typeArgs });
         break;
       }
@@ -2960,7 +3009,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 35,
+  rev: 36,
   declarations,
   uses,
 };

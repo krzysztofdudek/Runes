@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint, CsharpArgType } from './types.mjs';
-import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes, extensionShapesKey, enumKey, convertsKey } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, fileInterfaceKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes, extensionShapesKey, enumKey, convertsKey } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -120,7 +120,12 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return result;
   };
 
-  const isInterface = (typeKey: string): boolean => table.has(LANGUAGE, interfaceKey(typeKey));
+  /** Whether the type `id` is an interface: the mark of a published type, or for a `file` type the mark its own file declares (`fileInterfaceKey`). */
+  const isInterface = (id: string): boolean => {
+    const tab = id.indexOf('\t');
+    if (tab === -1) return table.has(LANGUAGE, interfaceKey(id));
+    return table.filesFor(LANGUAGE, fileInterfaceKey(referencedTypeKey(id.slice(0, tab)))).includes(id.slice(tab + 1));
+  };
 
   /** The bases a type inherits nested types from: its base class, or for an interface its base interfaces. */
   const inherited = (typeKey: string): string[] => {

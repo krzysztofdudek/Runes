@@ -1,4 +1,4 @@
-import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes, extensionShapesKey, enumKey, convertsKey } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, fileInterfaceKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes, extensionShapesKey, enumKey, convertsKey } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -87,7 +87,13 @@ export function makeCsharpTypeLookup(table, bind, declared = () => true) {
         }
         return result;
     };
-    const isInterface = (typeKey) => table.has(LANGUAGE, interfaceKey(typeKey));
+    /** Whether the type `id` is an interface: the mark of a published type, or for a `file` type the mark its own file declares (`fileInterfaceKey`). */
+    const isInterface = (id) => {
+        const tab = id.indexOf('\t');
+        if (tab === -1)
+            return table.has(LANGUAGE, interfaceKey(id));
+        return table.filesFor(LANGUAGE, fileInterfaceKey(referencedTypeKey(id.slice(0, tab)))).includes(id.slice(tab + 1));
+    };
     /** The bases a type inherits nested types from: its base class, or for an interface its base interfaces. */
     const inherited = (typeKey) => {
         const all = bases(typeKey).inside;

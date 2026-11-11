@@ -952,6 +952,58 @@ describe('csharp: a call on this.<name> reads the member another part or a base 
   });
 });
 
+describe('csharp: a file type is read as a type of its file in three more places', () => {
+  const core = {
+    'src/core/Order.cs': 'namespace App;\npublic class Order { public bool Validate() => true; public class Options { public static void Parse() { } } }\npublic interface IBase { public class Settings { } }\n',
+    'src/ext/Checks.cs': 'namespace App;\npublic static class Checks { public static bool Validate(this object o) => false; public static bool Other(this object o) => false; }\n',
+  };
+
+  it('a receiver written as a file type has the instance methods the type inherits, and no others', async () => {
+    await project({
+      ...core,
+      'src/web/Rush.cs': 'namespace App;\nfile class Rush : Order { }\nfile class Plain { }\npublic class Desk {\n  bool A(Rush r) => r.Validate();\n  bool B(Rush r) => r.Other();\n  bool C(Plain p) => p.Validate();\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Rush.cs').filter((e) => e.endsWith('->ext'))).toEqual(['6->ext', '7->ext']);
+      const condition = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Rush.cs')).find((u) => u.line === 5 && u.candidates[0].symbolKey.endsWith('()')).candidates[0].unless[0];
+      // The nested type of the enclosing class is the one nearer reading; nothing declares it, so the file type is the receiver's.
+      expect([condition.receivers, condition.fileReceivers]).toEqual([[], [{ readings: [{ kind: 'symbol', symbolKey: 'App.Desk+Rush', within: 'App.Desk' }], type: 'file:App.Rush' }]]);
+    });
+  });
+
+  it('a nearer type of the same name than the file type is the receiver\'s type', async () => {
+    await project({
+      ...core,
+      // Inside `Desk`, `Rush` names the nested class, which has no Validate; the file type of the namespace is farther out.
+      'src/web/Rush.cs': 'namespace App;\nfile class Rush : Order { }\npublic partial class Desk {\n  bool A(Rush r) => r.Validate();\n}\n',
+      'src/web/Desk.Rush.cs': 'namespace App;\npublic partial class Desk { public class Rush { } }\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Rush.cs').filter((e) => e.endsWith('->ext'))).toEqual(['4->ext']);
+    });
+  });
+
+  it('a file interface inherits the nested types of its base interfaces, and a file class none of an interface it lists', async () => {
+    await project({
+      ...core,
+      'src/legacy/Settings.cs': 'namespace App;\npublic class Settings { }\n',
+      'src/web/Derived.cs': 'namespace App;\nfile interface IDerived : IBase {\n  Settings Read();\n}\nfile class Impl : IBase {\n  Settings _s;\n}\n',
+    }, ({ edges, keys }) => {
+      expect(edges('src/web/Derived.cs')).toEqual(['2->core', '3->core', '5->core', '6->legacy']);
+      expect(keys('src/web/Derived.cs').filter((k) => k.startsWith('file-interface:'))).toEqual(['file-interface:App.IDerived']);
+    });
+  });
+
+  it('a dotted name through a file type reads what the type inherits, and nothing the file type nests itself', async () => {
+    await project({
+      ...core,
+      'src/web/Worker.cs': 'namespace App;\nfile class Worker : Order { public class Own { } }\npublic class Host {\n  Worker.Options _a;\n  Worker.Own _b;\n  Worker.Missing _c;\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Worker.cs')).toEqual(['2->core', '4->core']);
+      const readings = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Worker.cs')).filter((u) => u.line >= 4 && u.line <= 6).map((u) => u.candidates.map((c) => [c.symbolKey, c.within]));
+      expect(readings).toEqual([[['App.Host+Worker.Options', 'App.Host'], ['App.Worker+Options', 'file:App.Worker']], [['App.Host+Worker.Own', 'App.Host']], [['App.Host+Worker.Missing', 'App.Host'], ['App.Worker+Missing', 'file:App.Worker']]]);
+    });
+  });
+});
+
 describe('csharp: the lists an extract names by place', () => {
   it('writes the types that can hold an unseen member once, for every receiver and call of one type body', async () => {
     await project({

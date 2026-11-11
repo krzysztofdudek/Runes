@@ -17,6 +17,8 @@ export declare function internalKey(symbolKey: string): string;
 export declare function baseListKey(typeKey: string): string;
 /** The head of the key that records one base of a C#11 `file` type of the key `typeKey`: `file-base:<key>`, with a value like a base record's. Such a type has no published key and belongs to its file alone, so its bases are kept apart from those of a published type of the same name, and each record is read only for the `file` type of a file that declares it (`fileTypeRef`): a published type, or a `file` type of another file, may share the key and is another type. */
 export declare function fileBaseListKey(typeKey: string): string;
+/** The marker key of a C#11 `file` interface of the key `typeKey`: `file-interface:<key>`, declared by the file that declares the interface and read for that file's type alone, as its base records are (`fileBaseListKey`). An interface inherits from its base interfaces, a class from none of the interfaces it lists, and a `file` type publishes no `interface:` mark. */
+export declare function fileInterfaceKey(typeKey: string): string;
 /** What leads the key of a C#11 `file` type where a reading names the type whose body holds it (`fileTypeRef`). The colon is in no C# name, so no published key starts with it. */
 export declare const FILE_TYPE_REF = "file:";
 /** The key `typeKey` as a reading written inside the `file` type of that key names it: `file:<key>`, in `TargetHint.within` and in the type lists of a `CsharpCondition`. A published type, or a `file` type of another file, may have the same full name, so the reading says which it stands in, and the resolver reads for it what the referencing file alone records: its `file-base:` records, and nothing recorded under the published key. */

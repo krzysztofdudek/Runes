@@ -18,10 +18,12 @@ export interface SymbolSetMember { symbolKey: string; nestedOnly?: boolean; shad
  *
  * A type of `self`, `from` and `types` that is a C#11 `file` type of the referencing file is written `file:<key>`, as in `TargetHint.within`: the resolver reads for it the bases that file records for its `file` type, and nothing a published type of the same name declares.
  *
+ * `fileReceivers`, on `instance-method`, holds each receiver whose written type's readings end at a C#11 `file` type of the referencing file: `type` is that type (`file:<key>`), the receiver's type unless one of the nearer `readings` names a declaration, which then decides as a reading of `receivers` does.
+ *
  * `argTypes`, on `instance-method` and on the `call` of `no-member`, is what the file writes of the type of each argument, in order (`CsharpArgType`). An instance method the call fits by its counts does not take the call when the type of one argument is one the parameter there cannot take, as far as the written types say for certain; an argument or a parameter whose type is not known takes part in nothing.
  */
 export type CsharpCondition =
-  | { kind: 'instance-method'; method: string; args: number; typeArgs: number; argTypes?: CsharpArgType[]; receivers: TargetHint[][]; self?: string; from: string[] }
+  | { kind: 'instance-method'; method: string; args: number; typeArgs: number; argTypes?: CsharpArgType[]; receivers: TargetHint[][]; fileReceivers?: Array<{ readings: TargetHint[]; type: string }>; self?: string; from: string[] }
   | { kind: 'member'; types: string[]; name: string }
   | { kind: 'no-member'; types: string[]; name: string; call?: { method: string; args: number; typeArgs: number; argTypes?: CsharpArgType[]; from: string[] }; own?: true };
 
