@@ -1451,7 +1451,8 @@ describe('resolveTsPath — a package entry under outDir that is not in the repo
     // A type-checking tsconfig.json with noEmit writes no output, whatever its rootDir says.
     const check = { compilerOptions: { rootDir: '.', outDir: 'dist', noEmit: true } };
     expect(project(pkg({ main: './dist/index.js' }, check, { ...build, 'packages/core/index.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
-    expect(project(pkg({ main: './dist/index.js' }, check, { 'packages/core/index.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(pkg({ main: './dist/other.js' }, check, { 'packages/core/other.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(pkg({ main: './dist/other.js' }, { compilerOptions: { rootDir: '.', outDir: 'dist' } }, { 'packages/core/other.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/other.ts');
     // noEmit set off again by the inheriting config, as a build config does.
     const emitting = { 'packages/core/tsconfig.build.json': JSON.stringify({ extends: './tsconfig.json', compilerOptions: { rootDir: 'src', noEmit: false } }) };
     expect(project(pkg({ main: './dist/index.js' }, { compilerOptions: { outDir: 'dist', noEmit: true } }, emitting))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
