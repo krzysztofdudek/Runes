@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -390,6 +390,11 @@ function join(prefix, tail) {
  * function body, a `const` or `static` initializer, a closure or a `macro_rules!` body is
  * never taken for an item of the root.
  *
+ * Every name the file's top level binds with `extern crate` is declared under
+ * `rustExternNameKey(name)` (`extern:<name>`), read by `topLevelExternCrates`: beside the
+ * items, these are the names a `crate::` path or a path into a dependency can go through in a
+ * crate-root file.
+ *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
  * declaration nothing can switch off, `modfile?:<path>` for one under a `cfg`. This is what the
@@ -415,6 +420,8 @@ function declarations(file) {
     }
     for (const { name, line } of topLevelItemNames(root))
         out.push({ symbolKey: rustTopLevelItemKey(name), line });
+    for (const { name, line } of topLevelExternCrates(root))
+        out.push({ symbolKey: rustExternNameKey(name), line });
     for (const { path, line, conditional } of plainModuleFiles(root))
         out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
     return out;
@@ -552,6 +559,18 @@ export function topLevelItemNames(root) {
     }
     return out;
 }
+/** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate), with `r#` stripped. `extern crate a as _;` binds none. */
+export function topLevelExternCrates(root) {
+    const out = [];
+    for (const node of root.namedChildren) {
+        if (node === null || node.type !== 'extern_crate_declaration')
+            continue;
+        const bound = unraw((node.childForFieldName('alias') ?? node.childForFieldName('name'))?.text ?? '');
+        if (bound !== '' && bound !== '_' && bound !== 'self')
+            out.push({ name: bound, line: node.startPosition.row + 1 });
+    }
+    return out;
+}
 /** The names a `use` argument binds. `last` is the last segment of the path of the group it sits in, which a `self` member binds. */
 function useBindings(arg, last) {
     switch (arg.type) {
@@ -631,7 +650,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 5,
+    rev: 6,
     declarations,
     uses,
 };

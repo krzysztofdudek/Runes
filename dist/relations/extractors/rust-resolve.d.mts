@@ -27,8 +27,8 @@
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because
  * `#[macro_export]` macros also land in the crate-root namespace while being defined
- * elsewhere, the root file is bound for a named item only when it actually declares or
- * `use`s that name (`rootDeclares`); otherwise the path stays silent.
+ * elsewhere, the root file is bound for a named item only when its top level binds that
+ * name (`rootDeclares`, read from the file's parse tree); otherwise the path stays silent.
  *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
@@ -82,11 +82,13 @@ export interface RustResolveDeps {
     /** The library tree of the in-repo path dependency the importing crate calls `name`, or
      *  undefined when `name` is not such a dependency. Absent → no dependency resolution. */
     dependencyFor?(fromFile: string, name: string): RustCrateTree | undefined;
-    /** Does crate-root file `rootFile` declare or `use` an item called `name`? With `asItem` the name must be an item at the top level of the root as a `use` path from the root names it: a module or other item the file defines there, or a name a top-level `use` of it brings in, never a crate bound with `extern crate` and never a name defined inside an inline `mod`, a function body or an initializer. Absent → yes. */
+    /** Does the top level of crate-root file `rootFile` bind `name`: an item the file defines there, a name a top-level `use` brings in, an item of a known item macro, or a crate bound there with `extern crate`? Never a name defined inside an inline `mod`, a function body or an initializer, or one that stands only in a string or a comment. With `asItem` a crate bound with `extern crate` does not count: an edition 2015 `use` path names items. Absent → yes. */
     rootDeclares?(rootFile: string, name: string, asItem?: boolean): boolean;
 }
 export declare function resolveRustPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): string | undefined;
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
 export declare function rustTopLevelItemKey(name: string): string;
+/** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it with `extern crate` (the alias of `extern crate a as name;`, else the crate of `extern crate name;`). Such a name is a name of the file's module that a `crate::` path, or a path into a dependency, can go through (`pub extern crate inner as name;` in a facade), and no item an edition 2015 `use` path names. The `extern:` prefix can never be a Rust identifier. */
+export declare function rustExternNameKey(name: string): string;
 /** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
 export declare function rustModuleFileKey(modulePath: string, conditional?: boolean): string;

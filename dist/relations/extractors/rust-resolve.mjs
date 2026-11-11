@@ -42,6 +42,10 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
 export function rustTopLevelItemKey(name) {
     return `item:${name}`;
 }
+/** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it with `extern crate` (the alias of `extern crate a as name;`, else the crate of `extern crate name;`). Such a name is a name of the file's module that a `crate::` path, or a path into a dependency, can go through (`pub extern crate inner as name;` in a facade), and no item an edition 2015 `use` path names. The `extern:` prefix can never be a Rust identifier. */
+export function rustExternNameKey(name) {
+    return `extern:${name}`;
+}
 /** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
 export function rustModuleFileKey(modulePath, conditional = false) {
     return `${conditional ? 'modfile?' : 'modfile'}:${modulePath}`;

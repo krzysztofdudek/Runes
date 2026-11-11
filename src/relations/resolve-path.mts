@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustModuleFileKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
 import type { SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -50,7 +50,7 @@ export interface ResolvePathOptions {
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate.
  *
- *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for two questions, both answered by what the Rust extractor declares from each file's parse tree: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs (`rustTopLevelItemKey`), and which files a file declares as its modules by name alone, which tells the crate roots that compile a file where a package has several in one tree (`rustModuleFileKey`). Without the table no name is known to be such an item, so those paths stay silent, and no module is known to be declared, so no root is preferred. */
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for two questions, both answered by what the Rust extractor declares from each file's parse tree: whether a crate-root file binds a name at its top level, which a `crate::` path, a path into a dependency and an edition 2015 `use` path from the crate root need (`rustTopLevelItemKey`, `rustExternNameKey`), and which files a file declares as its modules by name alone, which tells the crate roots that compile a file where a package has several in one tree (`rustModuleFileKey`). Without the table no parse tree is at hand: an edition 2015 `use` path stays silent, a `crate::` path or a path into a dependency binds the root file when the file's text, with comments blanked, declares the name anywhere (`rustFileDeclares`, which a word in a string or an item nested in a function also satisfies), and no module is known to be declared, so no root is preferred. */
 export function makeResolvePathToFile(
   projectRoot: string,
   ownerOf?: (repoRelPosix: string) => string | undefined,
@@ -67,7 +67,7 @@ export function makeResolvePathToFile(
   const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
   const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
   const rustDeps = makeRustResolveDeps(plain, exists);
-  // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`), and a file declares a module by name alone only when the table says so (see `rustModuleFileKey`).
+  // The Rust deps for one symbol table: a crate-root file binds `name` at its top level only when the table says so (as an item, see `rustTopLevelItemKey`, or with `extern crate`, see `rustExternNameKey`), and a file declares a module by name alone only when the table says so (see `rustModuleFileKey`).
   const rustDepsByTable = new WeakMap<SymbolTable, RustResolveDeps>();
   const rustDepsFor = (table: SymbolTable | undefined): RustResolveDeps => {
     if (table === undefined) return rustDeps;
@@ -78,7 +78,7 @@ export function makeResolvePathToFile(
       deps = {
         ...rustDeps,
         crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
-        rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares!(rootFile, name)),
+        rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))),
       };
       rustDepsByTable.set(table, deps);
     }
@@ -482,7 +482,7 @@ function makeRustResolveDeps(
   }
 
   function rootDeclares(rootFile: string, name: string, asItem = false): boolean {
-    // Which names the root binds at its top level only its parse tree tells, through the pass's symbol table (`rustDepsFor` in makeResolvePathToFile); without one, none is known.
+    // Which names the root binds at its top level only its parse tree tells, through the pass's symbol table (`rustDepsFor` in makeResolvePathToFile, which answers in place of this function). Without one, no name is known to be an item, and whether the root declares a name at all is read from its text.
     if (asItem) return false;
     let text = rootTextByFile.get(rootFile);
     if (text === undefined) {
@@ -1040,7 +1040,7 @@ function stripRustComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
-/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
+/** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? It is the answer of a caller that passes no symbol table, and a word in a string or an item nested in a function satisfies it. With the table, what the top level binds is read from the parse tree instead (`topLevelItemNames` and `topLevelExternCrates` in the Rust extractor). */
 export function rustFileDeclares(text: string, name: string): boolean {
   const id = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const decl = new RegExp(

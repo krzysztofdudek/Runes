@@ -19,4 +19,9 @@ export declare function topLevelItemNames(root: Node): Array<{
     name: string;
     line: number;
 }>;
+/** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate), with `r#` stripped. `extern crate a as _;` binds none. */
+export declare function topLevelExternCrates(root: Node): Array<{
+    name: string;
+    line: number;
+}>;
 export declare const rustExtractor: DependencyExtractor;

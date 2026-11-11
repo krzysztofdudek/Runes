@@ -206,6 +206,14 @@ describe('MATRIX — a library under a src subdirectory, and an edition inherite
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — what a crate root binds', () => {
+  it('rust-crate-path-root-name-in-string-or-nested-fn-silence', () => runCase('rust-crate-path-root-name-in-string-or-nested-fn-silence'));
+  it('rust-crate-path-root-name-in-comment-silence', () => runCase('rust-crate-path-root-name-in-comment-silence'));
+  it('rust-crate-path-root-item-of-known-macro-edge', () => runCase('rust-crate-path-root-item-of-known-macro-edge'));
+  it('rust-path-dependency-root-name-in-string-silence', () => runCase('rust-path-dependency-root-name-in-string-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one

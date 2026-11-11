@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, rustTopLevelItemKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
@@ -360,6 +360,32 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolver.resolveFile({ kind: 'path', specifier: 'shapes::Circle' }, 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
     // The same tables answer a crate:: path from the file's text, as before.
     expect(makeResolvePathToFile(ws)('crate::shapes::Circle', 'src/api/client.rs', 'rust', false, table)).toBe('src/shapes.rs');
+  });
+
+  it('binds a crate root for a crate:: path or a path into a dependency by what its parse tree binds at the top level, and by its text only without the pass\'s symbol table', async () => {
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n\n[dependencies]\nkit = { path = "kit" }\n');
+    put('src/lib.rs', 'pub const HELP: &str = "call fn ensure first";\nfn setup() { fn nested() {} }\nmod inner { pub struct Deep; }\npub struct Top;\npub use std::fmt::Debug as Shown;\npub extern crate kit as tools;\n');
+    put('src/api/mod.rs', '');
+    put('kit/Cargo.toml', '[package]\nname = "kit"\nedition = "2021"\n');
+    put('kit/src/lib.rs', '// struct Ghost;\npub struct Real;\nconst S: &str = "struct Quoted;";\n');
+    const table = await tableNow();
+    const resolve = makeResolvePathToFile(ws);
+    const withTable = (specifier) => resolve(specifier, 'src/api/mod.rs', 'rust', false, table);
+    for (const name of ['Top', 'Shown', 'tools', 'HELP', 'setup', 'inner']) expect(withTable(`crate::${name}`), name).toBe('src/lib.rs');
+    for (const name of ['ensure', 'nested', 'Deep', 'Debug', 'kit', 'Missing']) expect(withTable(`crate::${name}`), name).toBeUndefined();
+    expect(withTable('kit::Real')).toBe('kit/src/lib.rs');
+    expect(withTable('kit::Ghost')).toBeUndefined();
+    expect(withTable('kit::Quoted')).toBeUndefined();
+    // Without the table there is no parse tree: the text is read, as 1.0 read it, and a word in a string or a nested item passes for a declaration.
+    const withoutTable = (specifier) => resolve(specifier, 'src/api/mod.rs', 'rust');
+    for (const name of ['Top', 'ensure', 'nested', 'Deep']) expect(withoutTable(`crate::${name}`), name).toBe('src/lib.rs');
+    expect(withoutTable('kit::Quoted')).toBe('kit/src/lib.rs');
+    expect(withoutTable('kit::Ghost')).toBeUndefined();
+    // A root file the pass did not extract binds nothing.
+    const partial = new SymbolTable();
+    partial.declare('rust', rustTopLevelItemKey('Real'), 'src/api/mod.rs');
+    expect(resolve('crate::Top', 'src/api/mod.rs', 'rust', false, partial)).toBeUndefined();
+    expect(resolve('kit::Real', 'src/api/mod.rs', 'rust', false, partial)).toBeUndefined();
   });
 
   it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', async () => {
@@ -802,10 +828,11 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       ['#!/usr/bin/env run-script {\nconst X: u8 = 1;\nmod a;\n', 'a', lib],
       ['#![allow(dead_code)]\nmod a;\n', 'a', lib],
       ['const C: &core::ffi::CStr = cr#"say " {"#;\nconst D: &core::ffi::CStr = c"{";\nmod a;\n', 'a', lib],
-      ['mod a;\nconst S: &str = "open', 'a', lib],
-      ['mod a;\nconst S: &str = r#"open', 'a', lib],
-      ["mod a;\nconst C: char = '\\", 'a', lib],
-      ['mod a;\n/* open', 'a', lib],
+      // A string, a character or a comment left open swallows the rest of the library's text, its `struct Opts` with it: the library's tree binds no such item, and the binary, the next root in the usual order, does.
+      ['mod a;\nconst S: &str = "open', 'a', main],
+      ['mod a;\nconst S: &str = r#"open', 'a', main],
+      ["mod a;\nconst C: char = '\\", 'a', main],
+      ['mod a;\n/* open', 'a', main],
       // The binary declares the module by name alone, so the binary certainly compiles it, whatever the library's text holds.
       ['#[path = "imp/thing.rs"]\nmod thing;\n', 'imp', main, 'mod imp;\n'],
       ['macro_rules! m { () => {}; }\n', 'b', main, 'mod b;\n'],
@@ -1455,6 +1482,17 @@ path = "..\u002fmore"
     expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
     // Anywhere in the file: the top level is the parse tree's question, not this one's.
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
+  });
+
+  it('reads the names the top level binds with `extern crate` from the parse tree: the alias when renamed, else the crate, and none below the top level', async () => {
+    const externsOf = (code) => withParsedFile('x.rs', code, (tree) => topLevelExternCrates(tree.rootNode).map((x) => x.name));
+    expect(await externsOf('pub extern crate grep_printer as printer;\n#[macro_use]\nextern crate log;\nextern crate r#async as r#await ;\nextern crate self as facade;')).toEqual(['printer', 'log', 'await', 'facade']);
+    expect(await externsOf('extern crate a as _;\nmod m { extern crate inner; }\nfn f() { extern crate local; }\nconst S: &str = "extern crate text;";\n// extern crate comment;')).toEqual([]);
+    await withParsedFile('src/lib.rs', 'struct A;\nextern crate log;\npub extern crate grep_printer as printer;\n', (tree) => {
+      const keys = rustExtractor.declarations(parsedFile('src/lib.rs', 'struct A;\nextern crate log;\npub extern crate grep_printer as printer;\n', tree, 'rust'));
+      expect(keys.filter((d) => d.symbolKey.startsWith('extern:'))).toEqual([{ symbolKey: rustExternNameKey('log'), line: 2 }, { symbolKey: rustExternNameKey('printer'), line: 3 }]);
+      expect(keys.some((d) => d.symbolKey === rustTopLevelItemKey('log') || d.symbolKey === rustTopLevelItemKey('printer'))).toBe(false);
+    });
   });
 
   it('declares each module a file places by name alone under its module file key, with the line of the mod item, and under a key of its own when a cfg may remove it', async () => {
