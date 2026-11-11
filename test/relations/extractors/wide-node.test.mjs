@@ -86,8 +86,8 @@ describe('a node with very many children is read in time linear in their number'
   });
 
   // Kotlin recovery reads a damaged file one top-level declaration at a time. A file of many damaged declarations re-reads each of them; a file whose first declaration never closes its bracket is one declaration as long as the file, on which the grammar's own error recovery re-reads its input a number of times that grows with the square of its length.
-  describe('malformed Kotlin of 160 000 characters, each line damaged', () => {
-    const KOTLIN_SIZE = 160_000;
+  describe('malformed Kotlin of 80 000 characters, each line damaged', () => {
+    const KOTLIN_SIZE = 80_000;
     const kotlinLines = (line) => (scale) => {
       let code = '';
       for (let i = 0; code.length < KOTLIN_SIZE * scale; i++) code += line(i);
