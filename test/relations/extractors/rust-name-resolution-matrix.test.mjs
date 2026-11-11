@@ -145,8 +145,8 @@ describe('MATRIX — silence forms (#[path] override / inline mod body / bare ro
 describe('MATRIX — a library under a src subdirectory, and an edition inherited through an inline table', () => {
   it('rust-lib-path-in-src-subdir-crate-path-edge', () => runCase('rust-lib-path-in-src-subdir-crate-path-edge'));
   it('rust-lib-path-in-src-subdir-beside-main-crate-path-edge', () => runCase('rust-lib-path-in-src-subdir-beside-main-crate-path-edge'));
-  it('rust-edition-inline-workspace-bare-use-silence', () => runCase('rust-edition-inline-workspace-bare-use-silence'));
-  it('rust-edition-inline-workspace-reexported-crate-silence', () => runCase('rust-edition-inline-workspace-reexported-crate-silence'));
+  it('rust-edition-inline-workspace-bare-use-registry-crate-edge', () => runCase('rust-edition-inline-workspace-bare-use-registry-crate-edge'));
+  it('rust-edition-inline-workspace-reexported-crate-edge', () => runCase('rust-edition-inline-workspace-reexported-crate-edge'));
   it('rust-edition-inline-workspace-declared-bin-main-edge', () => runCase('rust-edition-inline-workspace-declared-bin-main-edge'));
   it('rust-edition-inline-workspace-declared-bench-main-edge', () => runCase('rust-edition-inline-workspace-declared-bench-main-edge'));
 });

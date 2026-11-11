@@ -460,6 +460,11 @@ export function rustTargetFor(
     const tree = deepestTree([...libRoots, ...targets]);
     if (tree !== undefined) return tree;
   }
+  // A library rooted in a subdirectory of `src/` (`[lib] path = "src/core/lib.rs"`) roots the module tree of the files below that subdirectory there, not at `src/`.
+  if (segs[0] === 'src') {
+    const libTree = deepestTree(libRoots, 'src');
+    if (libTree !== undefined) return libTree;
+  }
   return { srcDir: 'src', rootFiles: [...(inferLib && libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots], fileIsRoot: false };
 }
 
@@ -747,7 +752,11 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (top === 'lib') libDeclared = true;
     if (top === 'package') hasPackage = true;
     if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'name') packageName = tomlString(value);
-    else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'edition') edition = tomlString(value);
+    else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'edition') {
+      // `edition = { workspace = true }` is the inline-table spelling of `edition.workspace = true`: the same key in TOML.
+      if (inlineTableMembers(value) !== undefined) for (const [key, member] of membersOf(value)) assign([...keyPath, ...key], member);
+      else edition = tomlString(value);
+    }
     else if (keyPath.length === 3 && top === 'package' && keyPath[1] === 'edition' && keyPath[2] === 'workspace') editionInherited = value === 'true';
     else if (keyPath.length === 3 && top === 'workspace' && keyPath[1] === 'package' && keyPath[2] === 'edition') workspaceEdition = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'name') libName = tomlString(value);

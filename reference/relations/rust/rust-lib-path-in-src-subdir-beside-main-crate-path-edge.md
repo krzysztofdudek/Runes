@@ -48,3 +48,4 @@ use crate::util::Helper;
 - src/core/engine/mod.rs:1 -> node:util
 - src/core/lib.rs:1 -> node:engine
 - src/core/lib.rs:2 -> node:util
+- src/main.rs:1 -> node:bin_util

@@ -1,8 +1,8 @@
 ---
-id: rust-edition-inline-workspace-reexported-crate-silence
+id: rust-edition-inline-workspace-reexported-crate-edge
 language: rust
 category: import
-expectation: silence
+expectation: edge
 cites: "The Cargo Book, The [workspace] section (`edition = { workspace = true }`); Rust Reference, Use declarations (2018 on: a bare first segment in a submodule is a crate)"
 ---
 

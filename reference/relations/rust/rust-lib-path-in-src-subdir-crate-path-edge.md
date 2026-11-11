@@ -40,3 +40,5 @@ use crate::Item;
 
 - src/core/engine/mod.rs:1 -> node:util
 - src/core/engine/mod.rs:2 -> node:core
+- src/core/lib.rs:1 -> node:engine
+- src/core/lib.rs:2 -> node:util

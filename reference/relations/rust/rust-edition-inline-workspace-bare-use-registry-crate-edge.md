@@ -1,14 +1,14 @@
 ---
-id: rust-edition-inline-workspace-bare-use-silence
+id: rust-edition-inline-workspace-bare-use-registry-crate-edge
 language: rust
 category: import
-expectation: silence
+expectation: edge
 cites: "The Cargo Book, The [workspace] section (`edition.workspace = true`, the same key as `edition = { workspace = true }` in TOML); Rust Reference, Use declarations (edition 2018 on, a bare first segment is a crate or a name in scope)"
 ---
 
 ## Rule
 
-A member writes `edition = { workspace = true }` (the inline-table spelling of `edition.workspace = true`) and the workspace says `edition = "2021"`. The member is edition 2021, so in `src/api/client.rs` `use config::Config;` names the registry crate `config`, never the root's module `config` (`src/config/mod.rs`, node config).
+A member writes `edition = { workspace = true }` (the inline-table spelling of `edition.workspace = true`) and the workspace says `edition = "2021"`. The member is edition 2021, so in `src/api/client.rs` `use config::Config;` names the registry crate `config`, never the root's module `config` (`src/config/mod.rs`, node config): the file gives no edge, and only the root's own `mod config;` stays an edge.
 
 ## Files
 
@@ -44,4 +44,4 @@ use config::Config;
 
 ## Expect
 
-- silence
+- app/src/lib.rs:1 -> node:config
