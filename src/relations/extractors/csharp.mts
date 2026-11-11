@@ -1986,9 +1986,16 @@ export function assembleCsharpCandidates(
   /** The readings of an alias target (plus a dotted `tail`): where its directive reads it (`typeReadings`). */
   const aliasTargetHints = (view: AliasView, tail: string): SymbolHint[] => typeReadings(view.chain, view.outer, view.at, `${view.target}${tail}`);
 
+  /** The readings up to the first that names a file-local type of this file, or a set one member of which does: a name found there ends the lookup (see `isFileLocalReading`). */
+  const beforeFileLocal = (hints: TargetHint[]): TargetHint[] => {
+    const end = hints.findIndex((h) => h.kind === 'symbol' && (isFileLocalReading(h.symbolKey) || (h.set ?? []).some((m) => isFileLocalReading(m.symbolKey))));
+    return end < 0 ? hints : hints.slice(0, end);
+  };
+
   /** Push ONE group of readings in order (an alias rewrite, `S::Tail`): the first that binds wins. */
   const pushHints = (candidates: TargetHint[], line: number): void => {
-    out.push({ candidates, kind: 'import', line });
+    const kept = beforeFileLocal(candidates);
+    if (kept.length > 0) out.push({ candidates: kept, kind: 'import', line });
   };
 
   /**
@@ -2171,7 +2178,7 @@ export function assembleCsharpCandidates(
         // A named type of a using alias or `using static` target, read where the directive reads it (`typeReadings`). A bare `Program` may be the implicit class of top-level statements, as in `pushRef`.
         const candidates: TargetHint[] = typeReadings(r.enclosingNs, r.outer ?? [], r.at, r.fqn);
         if (r.fqn === 'Program') candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
-        out.push({ candidates, kind: 'import', line: r.line });
+        pushHints(candidates, r.line);
         break;
       }
       case 'plain':

@@ -214,6 +214,12 @@ describe('csharp extractor — a file-local type ends the lookup of its name in 
     expect(keysOf(uses)).toEqual([['App.C+Helper']]);
   });
 
+  it('gives no reading for the target of a using alias or a using static that names a file-local type, nor for an alias-qualified name or attribute that does', async () => {
+    const { uses } = await run('using S = App;\nnamespace App;\nusing H = Helper;\nusing static Helper;\nfile class Helper { }\n[S::Marker]\nclass C { H a; S::Helper b; }\nfile class MarkerAttribute { }\n');
+    // Left: the alias target `App`, the attribute's other reading `Marker`, and the nested reading of `H`; the alias target of `H`, `using static Helper`, `S::Helper` and `MarkerAttribute` give none.
+    expect(keysOf(uses)).toEqual([['App'], ['App.Marker'], ['App.C+H']]);
+  });
+
   it('declares nothing for a file-local type nor for a type nested in one', async () => {
     const { declarations } = await run('namespace App;\nfile class Helper { class Inner { } }\nclass C { }\n');
     expect(declarations.map((d) => d.symbolKey)).toEqual(['App.C', 'internal:App.C']);

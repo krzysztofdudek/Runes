@@ -1849,9 +1849,16 @@ export function assembleCsharpCandidates(extract, options = {}) {
     };
     /** The readings of an alias target (plus a dotted `tail`): where its directive reads it (`typeReadings`). */
     const aliasTargetHints = (view, tail) => typeReadings(view.chain, view.outer, view.at, `${view.target}${tail}`);
+    /** The readings up to the first that names a file-local type of this file, or a set one member of which does: a name found there ends the lookup (see `isFileLocalReading`). */
+    const beforeFileLocal = (hints) => {
+        const end = hints.findIndex((h) => h.kind === 'symbol' && (isFileLocalReading(h.symbolKey) || (h.set ?? []).some((m) => isFileLocalReading(m.symbolKey))));
+        return end < 0 ? hints : hints.slice(0, end);
+    };
     /** Push ONE group of readings in order (an alias rewrite, `S::Tail`): the first that binds wins. */
     const pushHints = (candidates, line) => {
-        out.push({ candidates, kind: 'import', line });
+        const kept = beforeFileLocal(candidates);
+        if (kept.length > 0)
+            out.push({ candidates: kept, kind: 'import', line });
     };
     /**
      * Build and push ONE ordered candidate group for a reference whose written text is `ref` (a
@@ -2031,7 +2038,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 const candidates = typeReadings(r.enclosingNs, r.outer ?? [], r.at, r.fqn);
                 if (r.fqn === 'Program')
                     candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
-                out.push({ candidates, kind: 'import', line: r.line });
+                pushHints(candidates, r.line);
                 break;
             }
             case 'plain':
