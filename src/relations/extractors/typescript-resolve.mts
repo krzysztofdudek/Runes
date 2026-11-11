@@ -523,15 +523,15 @@ function entryOf(pkg: TsPackage, exists: (repoRelPosix: string) => boolean, deps
   return undefined;
 }
 
-// The sources an output file may be emitted from, by the output's extension: tsc writes `a.js` and `a.d.ts` for `a.ts` or `a.tsx` (and for `a.js` or `a.jsx` under `allowJs`), `a.jsx` for `a.tsx` under `jsx: preserve`, `a.mjs` and `a.d.mts` for `a.mts`, `a.cjs` and `a.d.cts` for `a.cts`.
-const OUTPUT_SOURCES: Array<{ suffix: string; declaration: boolean; ts: string[]; js: string[] }> = [
+// The sources an output file may be emitted from, by the output's extension: tsc writes `a.js` and `a.d.ts` for `a.ts` or `a.tsx` (and for `a.js` or `a.jsx` under `allowJs`), `a.jsx` for `a.tsx` under `jsx: preserve`, `a.mjs` and `a.d.mts` for `a.mts`, `a.cjs` and `a.d.cts` for `a.cts`. A bundler (tsup, unbuild) names the two builds of a dual package by format instead: `a.mjs` and `a.d.mts`, `a.cjs` and `a.d.cts`, all from `a.ts` or `a.tsx`; `bundled` holds those sources, read only where none of the compiler's is there.
+const OUTPUT_SOURCES: Array<{ suffix: string; declaration: boolean; ts: string[]; js: string[]; bundled?: string[] }> = [
   { suffix: '.d.ts', declaration: true, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
-  { suffix: '.d.mts', declaration: true, ts: ['.mts'], js: ['.mjs'] },
-  { suffix: '.d.cts', declaration: true, ts: ['.cts'], js: ['.cjs'] },
+  { suffix: '.d.mts', declaration: true, ts: ['.mts'], js: ['.mjs'], bundled: ['.ts', '.tsx'] },
+  { suffix: '.d.cts', declaration: true, ts: ['.cts'], js: ['.cjs'], bundled: ['.ts', '.tsx'] },
   { suffix: '.js', declaration: false, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
   { suffix: '.jsx', declaration: false, ts: ['.tsx'], js: ['.jsx'] },
-  { suffix: '.mjs', declaration: false, ts: ['.mts'], js: ['.mjs'] },
-  { suffix: '.cjs', declaration: false, ts: ['.cts'], js: ['.cjs'] },
+  { suffix: '.mjs', declaration: false, ts: ['.mts'], js: ['.mjs'], bundled: ['.ts', '.tsx'] },
+  { suffix: '.cjs', declaration: false, ts: ['.cts'], js: ['.cjs'], bundled: ['.ts', '.tsx'] },
 ];
 const COMPILED_TS = /\.(?:ts|tsx|mts|cts)$/;
 const COMPILED_JS = /\.(?:js|jsx|mjs|cjs)$/;
@@ -1389,7 +1389,7 @@ export function makeTsResolveDeps(
     return root;
   };
   const allowsJs = (config: LoadedConfig): boolean => config.allowJs ?? config.checkJs ?? false;
-  // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
+  // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. A `.mjs`, `.d.mts`, `.cjs` or `.d.cts` entry with no `.mts` or `.cts` source is read as a bundler's build of the `.ts` or `.tsx` source of that name. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
   const sourceOfOutput = (pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined => {
     const projects = projectsOf(pkgDir);
     if (projects === 'unknown' || projects.length === 0) return undefined;
@@ -1417,7 +1417,7 @@ export function makeTsResolveDeps(
         }
         for (const root of roots) {
           const base = root === '' ? rel : `${root}/${rel}`;
-          const source = [...kind.ts, ...(allowsJs(config) ? kind.js : [])].map((ext) => base + ext).find((cand) => cand !== output && exists(cand) && holds(config, configDir, cand));
+          const source = [...kind.ts, ...(allowsJs(config) ? kind.js : []), ...(kind.bundled ?? [])].map((ext) => base + ext).find((cand) => cand !== output && exists(cand) && holds(config, configDir, cand));
           if (source !== undefined) hits.add(source);
         }
       }
