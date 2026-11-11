@@ -57,4 +57,11 @@ export declare function cfgIfModules(body: Node): Array<{
     at: Node;
     moved: boolean;
 }>;
+/** The `extern crate` declarations of a `cfg_if!` body: each in a braced branch or in a `cfg_if!` nested in one, never one inside an inline `mod` or a function body written there, as `topLevelExternCrates` gives them (the name bound, the crate, `r#` stripped, none for `as _` or `self` alone), with `at`, the `extern` token. Every branch is listed, since each is the module's on some target. */
+export declare function cfgIfExternCrates(body: Node): Array<{
+    name: string;
+    crate: string | undefined;
+    line: number;
+    at: Node;
+}>;
 export declare const rustExtractor: DependencyExtractor;

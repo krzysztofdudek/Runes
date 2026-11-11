@@ -41,7 +41,8 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGl
  * `cargo fix` rewrites it to `r#gen`). The `r#` prefix is stripped from every segment so
  * `mod r#gen;` and `crate::r#gen::X` probe `gen.rs`, the file rustc loads.
  *
- * EXTERN CRATE: `extern crate name [as alias];` emits `extern::name`. `extern` is a keyword, so
+ * EXTERN CRATE: `extern crate name [as alias];` emits `extern::name`, also in a branch of a
+ * `cfg_if!` among a module's items, where it binds its name as one outside the macro does. `extern` is a keyword, so
  * no path of the source starts with it: the form says the path names a crate for certain,
  * which in edition 2015 no `use` path does. The resolver binds it only when `name` is an
  * in-repo path dependency of the importing crate or the package's own library; `std`,
@@ -457,6 +458,9 @@ function uses(file) {
             for (const mod of cfgIfModules(body))
                 if (!mod.moved)
                     emit(`self::${mod.names.join('::')}`, mod.at);
+            for (const e of cfgIfExternCrates(body))
+                if (e.crate !== undefined)
+                    emit(`extern::${e.crate}`, e.at);
             return false;
         }
         // `extern crate name [as alias];` → `extern::name` (never `self`); the resolver binds it
@@ -811,8 +815,12 @@ function attributeIsCfg(item) {
     const applied = cfgAttrApplies(attr);
     return applied === undefined || applied.includes('cfg');
 }
-/** The names of the attributes a `cfg_attr` applies when its predicate holds, read from its tokens (`attr` is the `attribute` node, or the token tree of a `cfg_attr` nested in one): each attribute after the predicate, by its path (`cfg`, `path`, `rustfmt::skip`), and those of a `cfg_attr` nested among them. Comments are passed over. Undefined when the tokens do not read as a predicate followed by attributes. */
+/** The names of the attributes a `cfg_attr` applies when its predicate holds (see `cfgAttrParts`). */
 function cfgAttrApplies(attr) {
+    return cfgAttrParts(attr)?.map((p) => p.name);
+}
+/** The attributes a `cfg_attr` applies when its predicate holds, read from its tokens (`attr` is the `attribute` node, or the token tree of a `cfg_attr` nested in one): each attribute after the predicate, by its path (`cfg`, `path`, `rustfmt::skip`) and with the token tree of its arguments when it has one, and those of a `cfg_attr` nested among them. Comments are passed over. Undefined when the tokens do not read as a predicate followed by attributes. */
+function cfgAttrParts(attr) {
     const args = attr.type === 'token_tree' ? attr : attr.childForFieldName('arguments');
     if (args === null || args.type !== 'token_tree')
         return undefined;
@@ -841,15 +849,16 @@ function cfgAttrApplies(attr) {
         if (names.length === 0)
             return undefined;
         const name = names.join('::');
+        const after = part[2 * names.length - 1];
+        const args = after?.type === 'token_tree' ? after : undefined;
         if (name === 'cfg_attr') {
-            const tree = part[1];
-            const nested = tree?.type === 'token_tree' ? cfgAttrApplies(tree) : undefined;
+            const nested = args === undefined ? undefined : cfgAttrParts(args);
             if (nested === undefined)
                 return undefined;
             out.push(...nested);
         }
         else
-            out.push(name);
+            out.push({ name, args });
     }
     return out;
 }
@@ -933,14 +942,17 @@ export function topLevelItemNames(root) {
     }
     return out;
 }
-/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it: `Name`, the attribute's first argument. It is one more item of the crate root, beside the function, which stays an item inside its own crate; the names in `attributes(…)` are helper attributes, no items. Undefined for any other function, and for an attribute whose first argument is no name. */
+/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it, or a `cfg_attr` there applies one: `Name`, the attribute's first argument. It is one more item of the crate root, beside the function, which stays an item inside its own crate; the names in `attributes(…)` are helper attributes, no items. Undefined for any other function, and for an attribute whose first argument is no name. */
 function deriveMacroName(fn) {
     for (const item of attributesBefore(fn)) {
         const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
         const id = attr?.namedChild(0) ?? null;
-        if (attr === null || id === null || id.type !== 'identifier' || id.text !== 'proc_macro_derive')
+        if (attr === null || id === null || id.type !== 'identifier')
             continue;
-        const first = attr.childForFieldName('arguments')?.namedChild(0) ?? null;
+        const args = id.text === 'proc_macro_derive' ? attr.childForFieldName('arguments') : id.text === 'cfg_attr' ? cfgAttrParts(attr)?.find((p) => p.name === 'proc_macro_derive')?.args : undefined;
+        if (args === undefined)
+            continue;
+        const first = args?.namedChildren.find((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment') ?? null;
         return first !== null && first.type === 'identifier' ? first.text : undefined;
     }
     return undefined;
@@ -949,10 +961,14 @@ function deriveMacroName(fn) {
 export function topLevelExternCrates(root) {
     return externCratesIn(root);
 }
-/** The `extern crate` declarations among the items of `scope` itself (a file, the body of an inline module, a block), as `topLevelExternCrates` gives them for a file. */
+/** The `extern crate` declarations among the items of `scope` itself (a file, the body of an inline module, a block), as `topLevelExternCrates` gives them for a file, those in the branches of a `cfg_if!` among the items of a module included. */
 function externCratesIn(scope) {
     const out = [];
     for (const node of scope.namedChildren) {
+        const call = node?.type === 'expression_statement' ? node.namedChild(0) : node;
+        const body = call?.type === 'macro_invocation' ? cfgIfBody(call, call.parent) : null;
+        if (body !== null)
+            out.push(...cfgIfExternCrates(body));
         if (node === null || node.type !== 'extern_crate_declaration')
             continue;
         const crate = node.childForFieldName('name');
@@ -1079,6 +1095,40 @@ export function cfgIfModules(body) {
     branches(body, [], false);
     return out;
 }
+/** The `extern crate` declarations of a `cfg_if!` body: each in a braced branch or in a `cfg_if!` nested in one, never one inside an inline `mod` or a function body written there, as `topLevelExternCrates` gives them (the name bound, the crate, `r#` stripped, none for `as _` or `self` alone), with `at`, the `extern` token. Every branch is listed, since each is the module's on some target. */
+export function cfgIfExternCrates(body) {
+    const out = [];
+    const braced = (tree) => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+    const branches = (tree) => {
+        for (const c of tree.namedChildren)
+            if (c !== null && braced(c))
+                items(c);
+    };
+    const items = (tree) => {
+        const tokens = tree.children.filter((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+        for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i];
+            if (t.type === 'identifier' && t.text === 'cfg_if' && tokens[i + 1]?.type === '!' && tokens[i + 2]?.type === 'token_tree') {
+                branches(tokens[i + 2]);
+                i += 2;
+            }
+            else if (t.type === 'identifier' && t.text === 'extern' && tokens[i + 1]?.type === 'crate') {
+                const target = tokens[i + 2];
+                const alias = tokens[i + 3]?.type === 'as' ? tokens[i + 4] : undefined;
+                const end = alias === undefined ? i + 3 : i + 5;
+                if (tokens[end]?.type !== ';' || (target?.type !== 'identifier' && target?.type !== 'self') || (alias !== undefined && alias.type !== 'identifier' && alias.type !== '_'))
+                    continue;
+                const crate = target.type === 'identifier' ? unraw(target.text) : undefined;
+                const bound = alias === undefined ? (crate ?? '') : alias.type === 'identifier' ? unraw(alias.text) : '';
+                if (bound !== '' && bound !== 'self')
+                    out.push({ name: bound, crate, line: t.startPosition.row + 1, at: t });
+                i = end;
+            }
+        }
+    };
+    branches(body);
+    return out;
+}
 /** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
 function cfgIfItems(body) {
     return body.namedChildren.flatMap((c) => (c !== null && c.type === 'token_tree' && c.child(0)?.type === '{' ? tokenItems(c) : []));
@@ -1130,7 +1180,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 20,
+    rev: 21,
     declarations,
     uses,
 };

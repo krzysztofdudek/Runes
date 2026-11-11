@@ -1617,12 +1617,19 @@ path = "..\u002fmore"
     // An attribute with no name to read adds nothing; one on another kind of item is not read.
     expect(await itemsOf('#[proc_macro_derive()]\npub fn a(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive]\npub fn b(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive("C")]\npub fn c(input: TokenStream) -> TokenStream { input }')).toEqual(['a', 'b', 'c']);
     expect(await itemsOf('#[proc_macro_derive(Builder)]\nstruct S;\n#[some::proc_macro_derive(X)]\nfn plain() {}')).toEqual(['S', 'plain']);
+    // A cfg_attr that applies proc_macro_derive defines the derive as the attribute written plainly does, through a nested cfg_attr and a comment too.
+    expect(await itemsOf('#[cfg_attr(feature = "x", proc_macro_derive(Name, attributes(name)))]\npub fn name_derive(input: TokenStream) -> TokenStream { input }')).toEqual(['name_derive', 'Name']);
+    expect(await itemsOf('#[cfg_attr(unix, allow(dead_code), cfg_attr(feature = "x", proc_macro_derive(/* c */ Deep)))]\npub fn deep(input: TokenStream) -> TokenStream { input }')).toEqual(['deep', 'Deep']);
+    // A cfg_attr that applies another attribute, one with no name to read, or one whose tokens do not read adds nothing.
+    expect(await itemsOf('#[cfg_attr(docsrs, doc(cfg(x)))]\npub fn a(input: TokenStream) -> TokenStream { input }\n#[cfg_attr(x, proc_macro_derive)]\npub fn b(input: TokenStream) -> TokenStream { input }\n#[cfg_attr(x, proc_macro_derive("C"))]\npub fn c(input: TokenStream) -> TokenStream { input }\n#[cfg_attr(x)]\npub fn d(input: TokenStream) -> TokenStream { input }')).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('reads the names the top level binds with `extern crate` from the parse tree: the alias when renamed, else the crate, with the crate each stands for, and none below the top level', async () => {
     const externsOf = (code) => withParsedFile('x.rs', code, (tree) => topLevelExternCrates(tree.rootNode).map((x) => [x.name, x.crate]));
     expect(await externsOf('pub extern crate grep_printer as printer;\n#[macro_use]\nextern crate log;\nextern crate r#async as r#await ;\nextern crate self as facade;')).toEqual([['printer', 'grep_printer'], ['log', 'log'], ['await', 'async'], ['facade', undefined]]);
     expect(await externsOf('extern crate a as _;\nmod m { extern crate inner; }\nfn f() { extern crate local; }\nconst S: &str = "extern crate text;";\n// extern crate comment;')).toEqual([]);
+    // A cfg_if! among the items of the file binds what its branches declare, a nested cfg_if! included; not a declaration inside an inline mod or a function written there, nor one that does not read as a declaration.
+    expect(await externsOf('cfg_if! {\n    if #[cfg(unix)] {\n        #[macro_use]\n        extern crate r#util as u;\n        mod m { extern crate inner; }\n        fn f() { extern crate local; }\n    } else if #[cfg(windows)] {\n        cfg_if! { if #[cfg(a)] { extern crate deep; } }\n        extern crate self as me;\n        extern crate gone as _;\n        extern crate self;\n    } else {\n        extern crate broken\n        extern crate as x;\n        extern crate odd as "s";\n    }\n}\nfn g() { cfg_if! { if #[cfg(b)] { extern crate in_body; } } }')).toEqual([['u', 'util'], ['deep', 'deep'], ['me', undefined]]);
     const code = 'struct A;\nextern crate log;\npub extern crate grep_printer as printer;\nextern crate self as me;\n';
     await withParsedFile('src/lib.rs', code, (tree) => {
       const keys = rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust'));
