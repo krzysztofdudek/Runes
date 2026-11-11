@@ -237,6 +237,14 @@ describe('MATRIX — a use path that starts with a name in scope (edition 2018 o
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a path through a glob re-export of a crate root', () => {
+  it('rust-crate-root-glob-module-without-name-silence', () => runCase('rust-crate-root-glob-module-without-name-silence'));
+  it('rust-crate-root-glob-reexport-edge', () => runCase('rust-crate-root-glob-reexport-edge'));
+  it('rust-crate-root-glob-reexport-spellings-edge', () => runCase('rust-crate-root-glob-reexport-spellings-edge'));
+  it('rust-crate-root-two-globs-same-name-silence', () => runCase('rust-crate-root-two-globs-same-name-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one

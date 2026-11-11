@@ -2,7 +2,7 @@ import type { Node } from 'web-tree-sitter';
 import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
-import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 
 /**
  * Rust dependency extractor.
@@ -561,6 +561,11 @@ function join(prefix: string, tail: string | undefined): string | undefined {
  * `rustExternBindingKey(name, crate)` (`extern:<name>=<crate>`), which lets a path that starts
  * with the name resolve to the crate.
  *
+ * Every module whose names a top-level glob `use` brings in is declared under
+ * `rustGlobKey(path)` (`glob:<path>`), read by `topLevelGlobs`: with the item keys of that
+ * module's file, this is what tells the resolver that a crate root re-exports a name it does
+ * not write.
+ *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
  * declaration nothing can switch off, `modfile?:<path>` for one under a `cfg`. This is what the
@@ -589,6 +594,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     out.push({ symbolKey: rustExternNameKey(name), line });
     if (crate !== undefined) out.push({ symbolKey: rustExternBindingKey(name, crate), line });
   }
+  for (const { path, line } of topLevelGlobs(root)) out.push({ symbolKey: rustGlobKey(path), line });
   for (const { path, line, conditional } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
   return out;
 }
@@ -739,6 +745,31 @@ function externCratesIn(scope: Node): Array<{ name: string; crate: string | unde
   return out;
 }
 
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
+export function topLevelGlobs(root: Node): Array<{ path: string; line: number }> {
+  const out: Array<{ path: string; line: number }> = [];
+  const visit = (arg: Node, prefix: string, line: number): void => {
+    if (arg.type === 'use_wildcard') {
+      const pre = prefixNode(arg);
+      const path = pre === null ? undefined : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
+      if (path !== undefined) out.push({ path: unrawPath(path), line });
+    } else if (arg.type === 'scoped_use_list') {
+      const pre = prefixNode(arg);
+      const groupPrefix = pre === null ? prefix : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
+      const list = arg.childForFieldName('list');
+      if (groupPrefix !== undefined && list !== null) visit(list, groupPrefix, line);
+    } else if (arg.type === 'use_list') {
+      for (const item of arg.namedChildren) if (item !== null) visit(item, prefix, line);
+    }
+  };
+  for (const node of root.namedChildren) {
+    if (node === null || node.type !== 'use_declaration') continue;
+    const arg = node.childForFieldName('argument');
+    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', node.startPosition.row + 1);
+  }
+  return out;
+}
+
 /** The names a `use` argument binds. `last` is the last segment of the path of the group it sits in, which a `self` member binds. */
 function useBindings(arg: Node, last: string | undefined): string[] {
   switch (arg.type) {
@@ -811,7 +842,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 12,
+  rev: 13,
   declarations,
   uses,
 };

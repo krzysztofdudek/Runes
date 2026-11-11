@@ -360,3 +360,10 @@ describe('rust extractor — a use path that starts with a name in scope', () =>
     expect(specs(uses)).toEqual(['extern::core_lib', 'self::cl', 'extern::core_lib::as::cl::Engine']);
   });
 });
+
+describe('rust extractor — the globs of a file', () => {
+  it('declares the path of each top-level glob, in a group too, and none that starts with ::', async () => {
+    const { declarations } = await run('pub use types::*;\nuse self::a::{b::*, C, d::{e::*}};\nuse crate::r#gen::*;\nuse ::kit::*;\nuse {f::*};\nmod inner { use hidden::*; }\nfn f() { use local::*; }');
+    expect(declarations.filter((d) => d.symbolKey.startsWith('glob:')).map((d) => `${d.symbolKey}@${d.line}`)).toEqual(['glob:types@1', 'glob:self::a::b@2', 'glob:self::a::d::e@2', 'glob:crate::gen@3', 'glob:f@5']);
+  });
+});

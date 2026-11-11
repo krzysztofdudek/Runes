@@ -112,6 +112,10 @@ export function rustExternBindingKey(name, crate) {
 export function rustModuleFileKey(modulePath, conditional = false) {
     return `${conditional ? 'modfile?' : 'modfile'}:${modulePath}`;
 }
+/** The symbol key under which the Rust extractor declares, for a file, a module whose names a top-level glob `use` of the file brings into the file's own module: `path` is the glob's path as written, without the `::*` and with `r#` stripped (`types`, `self::types`, `crate::a::b`). In a crate root, where `self` and `crate` are the same module and a bare first name is a module the root declares, the three spellings name the module at that path below the root. The `glob:` prefix can never be a Rust identifier. */
+export function rustGlobKey(path) {
+    return `glob:${path}`;
+}
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */
 const EDITION_2015_EXTERNAL_ROOTS = new Set(['std', 'core', 'alloc', 'proc_macro', 'test']);
 /** The crate-root name check: the deps' own, or "every name is declared" when absent. */

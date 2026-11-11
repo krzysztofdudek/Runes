@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -59,11 +59,31 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
         if (deps === undefined) {
             const declared = (file, key) => table.has('rust', key) && table.filesFor('rust', key).includes(file);
             const declaresModule = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
+            // Whether exactly one module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines). The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used.
+            const globBrings = (rootFile, name) => {
+                const key = rustTopLevelItemKey(name);
+                if (!table.has('rust', key))
+                    return false;
+                const dir = path.posix.dirname(rootFile) === '.' ? '' : path.posix.dirname(rootFile);
+                const modules = new Set();
+                for (const file of table.filesFor('rust', key)) {
+                    const below = file === rootFile || !file.endsWith('.rs') ? undefined : dir === '' ? file : file.startsWith(`${dir}/`) ? file.slice(dir.length + 1) : undefined;
+                    if (below === undefined)
+                        continue;
+                    const names = below.slice(0, -'.rs'.length).split('/');
+                    if (names[names.length - 1] === 'mod')
+                        names.pop();
+                    const modulePath = names.join('::');
+                    if (modulePath !== '' && [modulePath, `self::${modulePath}`, `crate::${modulePath}`].some((spelling) => declared(rootFile, rustGlobKey(spelling))))
+                        modules.add(modulePath);
+                }
+                return modules.size === 1;
+            };
             deps = {
                 ...rustDeps,
                 crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
                 externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
-                rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))),
+                rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))) || globBrings(rootFile, name),
             };
             rustDepsByTable.set(table, deps);
         }

@@ -32,6 +32,11 @@ import path from 'node:path';
  * elsewhere, the root file is bound for a named item only when its top level binds that
  * name (`rootDeclares`, read from the file's parse tree); otherwise the path stays silent.
  *
+ * A root also binds a name it does not write when one of its top-level globs brings it in
+ * (`mod types; pub use types::*;`): the name is then an item of the module the glob names, a
+ * module of the root's own tree. Two globs that both bring the name in make it ambiguous,
+ * which Rust refuses where the name is used, so the path stays silent.
+ *
  * EXTERN CRATE NAMES: `extern crate a as b;` binds `b` in the module or block that writes it.
  * Written in the crate root it makes `b` name the crate `a` in every module of that crate
  * (`externCrateFor`). Written anywhere else it binds `b` in that scope only; the extractor,
@@ -105,7 +110,7 @@ export interface RustResolveDeps {
   /** The library tree of the in-repo path dependency the importing crate calls `name`, or
    *  undefined when `name` is not such a dependency. Absent → no dependency resolution. */
   dependencyFor?(fromFile: string, name: string): RustCrateTree | undefined;
-  /** Does the top level of crate-root file `rootFile` bind `name`: an item the file defines there, a name a top-level `use` brings in, an item of a known item macro, or a crate bound there with `extern crate`? Never a name defined inside an inline `mod`, a function body or an initializer, or one that stands only in a string or a comment. With `asItem` a crate bound with `extern crate` does not count: an edition 2015 `use` path names items. Absent → yes. */
+  /** Does the top level of crate-root file `rootFile` bind `name`: an item the file defines there, a name a top-level `use` brings in by name or through the one glob whose module declares it, an item of a known item macro, or a crate bound there with `extern crate`? Never a name defined inside an inline `mod`, a function body or an initializer, or one that stands only in a string or a comment. With `asItem` a crate bound with `extern crate` does not count: an edition 2015 `use` path names items. Absent → yes. */
   rootDeclares?(rootFile: string, name: string, asItem?: boolean): boolean;
   /** The library tree of the crate that the top level of `file` binds as `name` with `extern crate` (`extern crate a as name;`, or `extern crate name;`), when that crate is an in-repo path dependency of the package of `fromFile`, or that package's own library. Undefined when `file` binds no such name there or the crate is not in the repository. Absent → no name is known to be bound that way. Its presence also says that what a crate root binds is known, which the edition 2015 rule for a path dependency needs. */
   externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
@@ -240,6 +245,11 @@ export function rustExternBindingKey(name: string, crate: string): string {
 /** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
 export function rustModuleFileKey(modulePath: string, conditional = false): string {
   return `${conditional ? 'modfile?' : 'modfile'}:${modulePath}`;
+}
+
+/** The symbol key under which the Rust extractor declares, for a file, a module whose names a top-level glob `use` of the file brings into the file's own module: `path` is the glob's path as written, without the `::*` and with `r#` stripped (`types`, `self::types`, `crate::a::b`). In a crate root, where `self` and `crate` are the same module and a bare first name is a module the root declares, the three spellings name the module at that path below the root. The `glob:` prefix can never be a Rust identifier. */
+export function rustGlobKey(path: string): string {
+  return `glob:${path}`;
 }
 
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */

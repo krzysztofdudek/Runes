@@ -25,4 +25,9 @@ export declare function topLevelExternCrates(root: Node): Array<{
     crate: string | undefined;
     line: number;
 }>;
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
+export declare function topLevelGlobs(root: Node): Array<{
+    path: string;
+    line: number;
+}>;
 export declare const rustExtractor: DependencyExtractor;
