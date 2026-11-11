@@ -99,12 +99,20 @@ describe('a node with very many children is read in time linear in their number'
     assert.equal(declarations.length, 0);
   });
 
-  // Dotted names of three segments in the run. The whole name is one reference; the walk then comes to the qualified name inside it (`A.B` of `A.B.C`), which no type position has taken, and reads it against its parent to see that it is part of a longer name. That read is the one that asked the tree for the parent: a name of two segments never reaches it, and with it this input took 204 seconds, 24 times its quarter.
+  // Dotted names of three segments in the run. The whole name is one reference; the walk then comes to the qualified name inside it (`A.B` of `A.B.C`) and reads it against its parent to see that it is part of a longer name. A name of two segments reaches the same read of the parent for the name itself, so the input above guards that read as well; this one guards the path through a nested qualifier. With the parent asked of the tree, a quarter of this input took 7 seconds and the whole of it 152.
   it('malformed C# of 388 000 characters whose lines hold dotted names of three segments', async () => {
     const line = 'A.B.C c(\n';
     const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(line, SIZE * scale));
     assert.equal(uses.length, Math.floor(SIZE / line.length));
     assert.equal(declarations.length, 0);
+  });
+
+  // Type declarations inside one flat run of errors: an `#if` that is never closed leaves every later line in the run, and each `class A { }` in it keeps its body. The body is read against its parent, to see that it is the body of a type. With the parent asked of the tree, a quarter of this input took 1.3 seconds and the whole of it 25.
+  it('malformed C# of 388 000 characters whose lines are an open #if and a class', async () => {
+    const lines = '#if X\nclass A { }\n';
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(lines, SIZE * scale));
+    assert.equal(uses.length, 0);
+    assert.equal(declarations.filter((d) => d.symbolKey === 'A').length, Math.floor(SIZE / lines.length));
   });
 
   // A deconstruction with no right side, line after line: each element is a declaration expression, read against the tuple it stands in and against what that tuple stands in. The extractor asked each of them for its parent, and its parent's, and the full input took 29 seconds.
