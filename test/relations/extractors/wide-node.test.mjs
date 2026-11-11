@@ -37,9 +37,10 @@ describe('a node with very many children is read in time linear in their number'
     assert.ok(elapsed < BOUND_MS, `took ${Math.round(elapsed)} ms`);
   });
 
-  for (const [name, extractor, filePath, language, code] of [
+  // Kotlin's one declaration is its mark for a file whose declarations cannot all be read.
+  for (const [name, extractor, filePath, language, code, declared = []] of [
     ['Java', relations.javaExtractor, 'A.java', 'java', MALFORMED],
-    ['Kotlin', relations.kotlinExtractor, 'A.kt', 'kotlin', MALFORMED],
+    ['Kotlin', relations.kotlinExtractor, 'A.kt', 'kotlin', MALFORMED, [{ symbolKey: '*', line: 1 }]],
     ['PHP', relations.phpExtractor, 'a.php', 'php', `<?php\n${MALFORMED}`],
     ['Rust', relations.rustExtractor, 'a.rs', 'rust', MALFORMED],
     ['Ruby', relations.rubyExtractor, 'a.rb', 'ruby', MALFORMED],
@@ -50,7 +51,8 @@ describe('a node with very many children is read in time linear in their number'
   ]) {
     it(`malformed ${name} of 388 000 characters`, async () => {
       const { uses, declarations, elapsed } = await timed(extractor, filePath, language, code);
-      assert.deepEqual([uses.length, declarations.length], [0, 0]);
+      assert.deepEqual(uses, []);
+      assert.deepEqual(declarations, declared);
       assert.ok(elapsed < BOUND_MS, `took ${Math.round(elapsed)} ms`);
     });
   }

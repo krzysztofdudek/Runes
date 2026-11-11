@@ -67,8 +67,7 @@ function constantKey(node: Node | null): string | undefined {
 
 /** The first named child of a node (or null). */
 function firstNamedChild(node: Node): Node | null {
-  for (let i = 0; i < node.namedChildCount; i++) {
-    const c = node.namedChild(i);
+  for (const c of node.namedChildren) {
     if (c !== null) return c;
   }
   return null;
@@ -92,8 +91,7 @@ function literalStringArg(callNode: Node): string | undefined {
   const first = firstNamedChild(args);
   if (first === null || first.type !== 'string') return undefined;
   let content: string | undefined;
-  for (let i = 0; i < first.namedChildCount; i++) {
-    const c = first.namedChild(i);
+  for (const c of first.namedChildren) {
     if (c === null) continue;
     if (c.type === 'interpolation') return undefined; // dynamic → not resolvable
     if (c.type === 'string_content') content = c.text;
@@ -167,7 +165,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     out.push({ candidates, kind: 'import', line });
   };
 
-  const visit = (node: Node, nesting: readonly string[]): void => {
+  const visit = (node: Node, nesting: readonly string[], parent: Node | null): void => {
     // (a) require_relative '<lit>' → PATH hint. Path links never shadow; nesting-agnostic.
     if (isBareCallTo(node, REQUIRE_RELATIVE)) {
       emitPath(literalStringArg(node), node.startPosition.row + 1);
@@ -191,9 +189,8 @@ function uses(file: ParsedFile): DetectedDep[] {
         const rootedName = nameNode !== null && nameNode.text.trimStart().startsWith('::');
         const fqn = name === undefined ? undefined : rootedName || nesting.length === 0 ? name : `${nesting[0]}::${name}`;
         const inner = fqn === undefined ? nesting : [fqn, ...nesting];
-        for (let i = 0; i < body.namedChildCount; i++) {
-          const c = body.namedChild(i);
-          if (c !== null) visit(c, inner);
+        for (const c of body.namedChildren) {
+          if (c !== null) visit(c, inner, body);
         }
       }
       return;
@@ -203,8 +200,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     if (isBareCallTo(node, MIXIN_METHODS)) {
       const args = node.childForFieldName('arguments');
       if (args !== null) {
-        for (let i = 0; i < args.namedChildCount; i++) {
-          const arg = args.namedChild(i);
+        for (const arg of args.namedChildren) {
           if (arg !== null) emitConstant(arg, nesting, arg.startPosition.row + 1);
         }
       }
@@ -213,7 +209,6 @@ function uses(file: ParsedFile): DetectedDep[] {
 
     // (d) A bare `constant` or a `scope_resolution` used as a value / receiver.
     if (node.type === 'constant' || node.type === 'scope_resolution') {
-      const parent = node.parent;
       if (parent !== null) {
         if (parent.type === 'class' || parent.type === 'module') {
           const nameField = parent.childForFieldName('name');
@@ -227,13 +222,12 @@ function uses(file: ParsedFile): DetectedDep[] {
     }
 
     // Generic descent (nesting unchanged for non-class/module containers).
-    for (let i = 0; i < node.namedChildCount; i++) {
-      const c = node.namedChild(i);
-      if (c !== null) visit(c, nesting);
+    for (const c of node.namedChildren) {
+      if (c !== null) visit(c, nesting, node);
     }
   };
 
-  visit(file.tree.rootNode, []);
+  visit(file.tree.rootNode, [], null);
   return out;
 }
 
@@ -297,8 +291,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
         const body = node.childForFieldName('body');
         if (body !== null) {
           const childNs = [...nsStack, name];
-          for (let i = 0; i < body.namedChildCount; i++) {
-            const c = body.namedChild(i);
+          for (const c of body.namedChildren) {
             if (c !== null) visit(c, childNs);
           }
         }
@@ -325,8 +318,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     // Generic descent for everything else (the body_statement of a class/module is reached
     // via the explicit recursion above; here we cover the top-level program and any other
     // container that may hold a class/module/assignment).
-    for (let i = 0; i < node.namedChildCount; i++) {
-      const c = node.namedChild(i);
+    for (const c of node.namedChildren) {
       if (c !== null) visit(c, nsStack);
     }
   };

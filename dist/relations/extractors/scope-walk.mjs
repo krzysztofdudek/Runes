@@ -1,14 +1,20 @@
-/**
- * Visit `root` and every node below it, depth-first in document order, handing each node the scope its ancestors made. The visitor returns `false` to skip the node's children, `undefined` to let them inherit the scope it was given, or a new scope for them. The walk moves a tree cursor (first child, next sibling, parent), each step constant time, and keeps one scope per depth, so a context an extractor needs from the ancestors (the enclosing namespaces, the type parameters in scope) is carried down once instead of being read by climbing `.parent` from every node, which costs the square of the depth.
- */
-export function walkScoped(root, initial, visitor) {
+/** Visit `root` and every node below it like `walk`, handing each visit the parent of its node (see `ParentOf`). The walk did not come through the parent of `root` itself: a caller that starts many walks at the children of one wide node, and knows their parent, passes it as `parentOfRoot` instead of leaving it to `root.parent`. */
+export function walkWithParent(root, visitor, parentOfRoot) {
+    walkScoped(root, null, (node, _scope, parent) => (visitor(node, parent) === false ? false : undefined), parentOfRoot);
+}
+export function walkScoped(root, initial, visitor, parentOfRoot = () => root.parent) {
     const cursor = root.walk();
     try {
         // scopes[d] is the scope the nodes at depth d inherit (depth 0 is `root`, which inherits `initial`).
         const scopes = [initial];
+        // nodes[d] is the node the walk is at on depth d, so the parent of the node being visited is one read away.
+        const nodes = [];
         let depth = 0;
+        const parent = () => (depth === 0 ? parentOfRoot() : nodes[depth - 1]);
         for (;;) {
-            const result = visitor(cursor.currentNode, scopes[depth]);
+            const node = cursor.currentNode;
+            nodes[depth] = node;
+            const result = visitor(node, scopes[depth], parent);
             if (result !== false && cursor.gotoFirstChild()) {
                 scopes[depth + 1] = result === undefined ? scopes[depth] : result;
                 depth++;

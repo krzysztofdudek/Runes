@@ -63,8 +63,7 @@ function constantKey(node) {
 }
 /** The first named child of a node (or null). */
 function firstNamedChild(node) {
-    for (let i = 0; i < node.namedChildCount; i++) {
-        const c = node.namedChild(i);
+    for (const c of node.namedChildren) {
         if (c !== null)
             return c;
     }
@@ -91,8 +90,7 @@ function literalStringArg(callNode) {
     if (first === null || first.type !== 'string')
         return undefined;
     let content;
-    for (let i = 0; i < first.namedChildCount; i++) {
-        const c = first.namedChild(i);
+    for (const c of first.namedChildren) {
         if (c === null)
             continue;
         if (c.type === 'interpolation')
@@ -166,7 +164,7 @@ function uses(file) {
         candidates.push({ kind: 'symbol', symbolKey: key, rubyInheritGuard: first });
         out.push({ candidates, kind: 'import', line });
     };
-    const visit = (node, nesting) => {
+    const visit = (node, nesting, parent) => {
         // (a) require_relative '<lit>' → PATH hint. Path links never shadow; nesting-agnostic.
         if (isBareCallTo(node, REQUIRE_RELATIVE)) {
             emitPath(literalStringArg(node), node.startPosition.row + 1);
@@ -189,10 +187,9 @@ function uses(file) {
                 const rootedName = nameNode !== null && nameNode.text.trimStart().startsWith('::');
                 const fqn = name === undefined ? undefined : rootedName || nesting.length === 0 ? name : `${nesting[0]}::${name}`;
                 const inner = fqn === undefined ? nesting : [fqn, ...nesting];
-                for (let i = 0; i < body.namedChildCount; i++) {
-                    const c = body.namedChild(i);
+                for (const c of body.namedChildren) {
                     if (c !== null)
-                        visit(c, inner);
+                        visit(c, inner, body);
                 }
             }
             return;
@@ -201,8 +198,7 @@ function uses(file) {
         if (isBareCallTo(node, MIXIN_METHODS)) {
             const args = node.childForFieldName('arguments');
             if (args !== null) {
-                for (let i = 0; i < args.namedChildCount; i++) {
-                    const arg = args.namedChild(i);
+                for (const arg of args.namedChildren) {
                     if (arg !== null)
                         emitConstant(arg, nesting, arg.startPosition.row + 1);
                 }
@@ -211,7 +207,6 @@ function uses(file) {
         }
         // (d) A bare `constant` or a `scope_resolution` used as a value / receiver.
         if (node.type === 'constant' || node.type === 'scope_resolution') {
-            const parent = node.parent;
             if (parent !== null) {
                 if (parent.type === 'class' || parent.type === 'module') {
                     const nameField = parent.childForFieldName('name');
@@ -227,13 +222,12 @@ function uses(file) {
             return; // do not descend into a scope_resolution's inner constants
         }
         // Generic descent (nesting unchanged for non-class/module containers).
-        for (let i = 0; i < node.namedChildCount; i++) {
-            const c = node.namedChild(i);
+        for (const c of node.namedChildren) {
             if (c !== null)
-                visit(c, nesting);
+                visit(c, nesting, node);
         }
     };
-    visit(file.tree.rootNode, []);
+    visit(file.tree.rootNode, [], null);
     return out;
 }
 /**
@@ -296,8 +290,7 @@ function declarations(file) {
                 const body = node.childForFieldName('body');
                 if (body !== null) {
                     const childNs = [...nsStack, name];
-                    for (let i = 0; i < body.namedChildCount; i++) {
-                        const c = body.namedChild(i);
+                    for (const c of body.namedChildren) {
                         if (c !== null)
                             visit(c, childNs);
                     }
@@ -323,8 +316,7 @@ function declarations(file) {
         // Generic descent for everything else (the body_statement of a class/module is reached
         // via the explicit recursion above; here we cover the top-level program and any other
         // container that may hold a class/module/assignment).
-        for (let i = 0; i < node.namedChildCount; i++) {
-            const c = node.namedChild(i);
+        for (const c of node.namedChildren) {
             if (c !== null)
                 visit(c, nsStack);
         }

@@ -124,8 +124,7 @@ function pathText(node: Node): string | undefined {
  *  `{ … }` list or the `*`. It is a named child that is one of the path-shaped
  *  node types; the trailing `use_list` is excluded. Returns undefined when absent. */
 function prefixNode(parent: Node): Node | null {
-  for (let i = 0; i < parent.namedChildCount; i++) {
-    const c = parent.namedChild(i);
+  for (const c of parent.namedChildren) {
     if (c === null) continue;
     if (
       c.type === 'scoped_identifier' ||
@@ -313,8 +312,7 @@ function uses(file: ParsedFile): DetectedDep[] {
       }
       case 'use_list': {
         // `{ items }` — a group's list, or a brace list with no path prefix at all (`use {a::X, b::Y};`, where it is the argument itself): resolve every item on its own under the current prefix (empty at the top level).
-        for (let i = 0; i < arg.namedChildCount; i++) {
-          const item = arg.namedChild(i);
+        for (const item of arg.namedChildren) {
           if (item !== null) handleArgument(item, prefix);
         }
         return;
@@ -324,7 +322,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     }
   };
 
-  walkScoped<ModScope | null>(file.tree.rootNode, null, (node, scope) => {
+  walkScoped<ModScope | null>(file.tree.rootNode, null, (node, scope, parent) => {
     mods = scope;
     if (node.type === 'use_declaration') {
       const arg = node.childForFieldName('argument');
@@ -356,7 +354,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     }
 
     // Inline FQN in TYPE position — the outermost scoped_type_identifier carries the full path.
-    if (node.type === 'scoped_type_identifier' && node.parent?.type !== 'scoped_type_identifier') {
+    if (node.type === 'scoped_type_identifier' && parent()?.type !== 'scoped_type_identifier') {
       emitInline(scopedTypePathText(node), node);
       return undefined;
     }
@@ -366,8 +364,8 @@ function uses(file: ParsedFile): DetectedDep[] {
     // scoped_type_identifier) have a scoped parent and are skipped.
     if (
       node.type === 'scoped_identifier' &&
-      node.parent?.type !== 'scoped_identifier' &&
-      node.parent?.type !== 'scoped_type_identifier'
+      parent()?.type !== 'scoped_identifier' &&
+      parent()?.type !== 'scoped_type_identifier'
     ) {
       emitInline(pathText(node), node);
       return undefined;
@@ -406,8 +404,7 @@ function join(prefix: string, tail: string | undefined): string | undefined {
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
   const root = file.tree.rootNode;
-  for (let i = 0; i < root.namedChildCount; i++) {
-    const node = root.namedChild(i);
+  for (const node of root.namedChildren) {
     if (node === null) continue;
     if (
       node.type === 'struct_item' ||

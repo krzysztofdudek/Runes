@@ -52,8 +52,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     }
     if (node.type === 'type_definition') {
       // A typedef may declare one or more type_identifiers; emit each.
-      for (let i = 0; i < node.namedChildCount; i++) {
-        const child = node.namedChild(i);
+      for (const child of node.namedChildren) {
         if (child !== null && child.type === 'type_identifier') {
           out.push({ symbolKey: child.text, line: node.startPosition.row + 1 });
         }

@@ -1,5 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
-import { indexScopes, walkScoped } from './scope-walk.mjs';
+import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
 import { isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
 /**
@@ -74,8 +74,7 @@ function dropLastSegment(fqn) {
 /** The single FQN node of an `import_declaration`: its named `scoped_identifier`
  *  (or a bare `identifier` for a single-segment import). Returns its `.text`. */
 function importFqn(decl) {
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const child = decl.namedChild(i);
+    for (const child of decl.namedChildren) {
         if (child === null)
             continue;
         if (child.type === 'scoped_identifier' || child.type === 'identifier') {
@@ -86,8 +85,7 @@ function importFqn(decl) {
 }
 /** True when `decl` has an anonymous `static` token child (a static import). */
 function isStaticImport(decl) {
-    for (let j = 0; j < decl.childCount; j++) {
-        const c = decl.child(j);
+    for (const c of decl.children) {
         if (c !== null && !c.isNamed && c.type === 'static')
             return true;
     }
@@ -95,8 +93,7 @@ function isStaticImport(decl) {
 }
 /** True when `decl` has a named `asterisk` child (a wildcard / on-demand import). */
 function isWildcardImport(decl) {
-    for (let j = 0; j < decl.childCount; j++) {
-        const c = decl.child(j);
+    for (const c of decl.children) {
         if (c !== null && c.type === 'asterisk')
             return true;
     }
@@ -117,15 +114,13 @@ function isWildcardImport(decl) {
  *     `module` identifier of an erroring scoped_identifier.
  */
 function isModuleImport(decl) {
-    for (let j = 0; j < decl.childCount; j++) {
-        const c = decl.child(j);
+    for (const c of decl.children) {
         if (c !== null && !c.isNamed && c.type === 'module')
             return true; // future grammar
     }
     // Pre-JEP-511 fallback: a malformed `scoped_identifier` whose first identifier is the
     // swallowed `module` soft keyword.
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const child = decl.namedChild(i);
+    for (const child of decl.namedChildren) {
         if (child === null)
             continue;
         if (child.type === 'scoped_identifier' && child.hasError) {
@@ -145,8 +140,7 @@ function firstIdentifierText(node) {
         if (cur.type === 'identifier')
             return cur.text;
         let next = null;
-        for (let i = 0; i < cur.namedChildCount; i++) {
-            const c = cur.namedChild(i);
+        for (const c of cur.namedChildren) {
             if (c !== null && (c.type === 'scoped_identifier' || c.type === 'identifier')) {
                 next = c;
                 break;
@@ -197,8 +191,8 @@ function fileScope(file) {
                 scope.variables.add(name);
         }
         else if (node.type === 'inferred_parameters') {
-            for (let i = 0; i < node.namedChildCount; i++)
-                scope.variables.add(node.namedChild(i)?.text ?? '');
+            for (const c of node.namedChildren)
+                scope.variables.add(c?.text ?? '');
         }
         else if (node.type === 'lambda_expression') {
             const p = node.childForFieldName('parameters');
@@ -248,8 +242,7 @@ function superTypeNames(decl) {
     const take = (n) => {
         if (n === null)
             return;
-        for (let i = 0; i < n.namedChildCount; i++) {
-            const c = n.namedChild(i);
+        for (const c of n.namedChildren) {
             if (c === null)
                 continue;
             if (c.type === 'type_list')
@@ -270,8 +263,7 @@ function superTypeNames(decl) {
     }
     take(decl.childForFieldName('superclass'));
     take(decl.childForFieldName('interfaces'));
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const c = decl.namedChild(i);
+    for (const c of decl.namedChildren) {
         if (c?.type === 'extends_interfaces')
             take(c);
     }
@@ -280,8 +272,8 @@ function superTypeNames(decl) {
 /** The names a `type_parameters` node declares. */
 function typeParameterNames(node) {
     const out = new Set();
-    for (let i = 0; i < node.namedChildCount; i++) {
-        const c = node.namedChild(i)?.namedChild(0);
+    for (const tp of node.namedChildren) {
+        const c = tp?.namedChild(0);
         if (c !== null && c !== undefined)
             out.add(c.text);
     }
@@ -318,8 +310,7 @@ function aroundScopes(root) {
     });
 }
 /** True when `n` is the receiver of a member access or method reference: `Owner` of `Owner.m()`, `Owner.X`, `Owner::m`. */
-function isReceiver(n) {
-    const p = n.parent;
+function isReceiver(n, p) {
     if (p === null)
         return false;
     if (p.type === 'method_invocation' || p.type === 'field_access')
@@ -349,8 +340,7 @@ function uses(file) {
         out.push({ candidates, kind: 'type-ref', line });
     };
     // A name in a type position: not a type parameter's own name, not the member of a qualified type (`Entry` of `Map.Entry`), not a package segment (`com` of `com.app.X`), not the type of `outer.new Inner()`.
-    const typeIdentifier = (node) => {
-        const p = node.parent;
+    const typeIdentifier = (node, p) => {
         if (p === null)
             return;
         if (p.type === 'type_parameter' && p.namedChild(0)?.id === node.id)
@@ -361,8 +351,7 @@ function uses(file) {
             return;
         emitSamePackage(node.text, node);
     };
-    const identifier = (node) => {
-        const p = node.parent;
+    const identifier = (node, p) => {
         if (p === null)
             return;
         if ((p.type === 'marker_annotation' || p.type === 'annotation') && p.childForFieldName('name')?.id === node.id) {
@@ -371,7 +360,7 @@ function uses(file) {
         else if (p.type === 'record_pattern' && p.namedChild(0)?.id === node.id) {
             emitSamePackage(node.text, node);
         }
-        else if (isCapitalised(node.text) && isReceiver(node) && scope !== undefined && !scope.variables.has(node.text)) {
+        else if (isCapitalised(node.text) && isReceiver(node, p) && scope !== undefined && !scope.variables.has(node.text)) {
             emitSamePackage(node.text, node);
         }
     };
@@ -404,19 +393,19 @@ function uses(file) {
         seenSym.add(dedupKey);
         out.push(single({ kind: 'symbol', symbolKey }, 'type-ref', line));
     };
-    walk(file.tree.rootNode, (node) => {
+    walkWithParent(file.tree.rootNode, (node, parent) => {
         if (node.type === 'type_identifier') {
-            typeIdentifier(node);
+            typeIdentifier(node, parent());
             return undefined;
         }
         if (node.type === 'identifier') {
-            identifier(node);
+            identifier(node, parent());
             return undefined;
         }
         // Inline FQN type reference: the OUTERMOST scoped_type_identifier of a chain carries the
         // complete dotted FQN; inner ones are its `scope` segments. Type positions only — an
         // expression-position dotted access is a field_access chain, never this node.
-        if (node.type === 'scoped_type_identifier' && node.parent?.type !== 'scoped_type_identifier') {
+        if (node.type === 'scoped_type_identifier' && parent()?.type !== 'scoped_type_identifier') {
             emitSymbol(node.text, node);
             return undefined;
         }
@@ -425,8 +414,7 @@ function uses(file) {
         // carry module/package names and are skipped (they are not `*_module_directive`
         // type-bearing forms we read).
         if (node.type === 'uses_module_directive' || node.type === 'provides_module_directive') {
-            for (let i = 0; i < node.namedChildCount; i++) {
-                const c = node.namedChild(i);
+            for (const c of node.namedChildren) {
                 if (c !== null && (c.type === 'scoped_identifier' || c.type === 'identifier')) {
                     emit(c.text, c);
                 }
@@ -470,8 +458,7 @@ function packageFqn(file) {
     walk(file.tree.rootNode, (node) => {
         if (node.type !== 'package_declaration')
             return undefined;
-        for (let i = 0; i < node.namedChildCount; i++) {
-            const c = node.namedChild(i);
+        for (const c of node.namedChildren) {
             if (c !== null && (c.type === 'scoped_identifier' || c.type === 'identifier')) {
                 pkg = c.text;
                 return false; // first package_declaration wins; stop descending it
