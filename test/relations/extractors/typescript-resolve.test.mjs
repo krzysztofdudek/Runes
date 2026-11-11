@@ -86,7 +86,7 @@ function project(files, isExcluded) {
     }
   };
   const deps = makeTsResolveDeps(root, isExcluded);
-  return (spec, from) => resolveTsPath(spec, from, isFile, deps);
+  return (spec, from, callForm) => resolveTsPath(spec, from, isFile, deps, callForm);
 }
 
 describe('resolveTsPath — tsconfig', () => {
@@ -259,16 +259,14 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
       [{ module: 7, moduleResolution: 'bundler' }, 'app/a.ts'], // a value of another type is unset
       [{ module: 'esnext', moduleResolution: 'bundler' }, 'app/a.vue'], // a component's format is not read
     ]) expect(withConfig(options)('lib', from), JSON.stringify(options)).toBe('lib/cjs/index.cts');
-    expect(project(lib)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts'); // no tsconfig at all
+    // A tsconfig that sets nothing decides nothing either.
+    expect(project({ ...lib, 'app/tsconfig.json': '{ "compilerOptions": { "strict": true } }' })('lib/types', 'app/a.ts')).toBe('lib/v99.d.ts');
   });
-  it('stops at a null target and at a versioned types key, and reads an array entry by entry', () => {
+  it('stops at a null target, skips a versioned types key the compiler fails, and reads an array entry by entry', () => {
     const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
-    expect(r('lib/types', 'app/a.ts')).toBeUndefined();
+    expect(r('lib/types', 'app/a.ts')).toBe('lib/t.d.ts');
     expect(r('lib/blocked', 'app/a.ts')).toBeUndefined();
     expect(r('lib/list', 'app/a.ts')).toBe('lib/esm/index.ts');
-    // Without settings that decide, the earlier reading: every target in order.
-    expect(project(lib)('lib/types', 'app/a.ts')).toBe('lib/v99.d.ts');
-    expect(project(lib)('lib/blocked', 'app/a.ts')).toBe('lib/t.d.ts');
   });
   it('chooses a package.json imports target by the same conditions', () => {
     const r = project({
@@ -279,6 +277,138 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
     });
     expect(r('#dep', 'app/a.ts')).toBe('app/esm.ts');
     expect(r('#dep', 'app/a.cts')).toBe('app/cjs.cts');
+  });
+});
+
+describe('resolveTsPath — a file no tsconfig covers reads exports with the default conditions', () => {
+  const pkgs = {
+    'lib/package.json': JSON.stringify({
+      name: 'lib',
+      exports: {
+        '.': { 'react-server': './server/index.js', default: './client/index.js' },
+        './server': { 'edge-light': './edge/server.js', worker: './edge/server.js', default: './node/server.js' },
+        './shim': { 'react-native': './native/index.js', default: './shim/index.js' },
+        './dual': { require: './cjs/dual.cjs', import: './esm/dual.mjs' },
+        './typed': { 'types@>=99': './v99.d.ts', types: './t.d.ts', default: './t.js' },
+        './node': { node: './node-build.js', default: './other.js' },
+        './onlyserver': { 'react-server': './server/index.js' },
+      },
+    }),
+    'lib/server/index.js': '',
+    'lib/client/index.js': '',
+    'lib/edge/server.js': '',
+    'lib/node/server.js': '',
+    'lib/native/index.js': '',
+    'lib/shim/index.js': '',
+    'lib/cjs/dual.cjs': '',
+    'lib/esm/dual.mjs': '',
+    'lib/t.d.ts': '',
+    'lib/v99.d.ts': '',
+    'lib/node-build.js': '',
+    'lib/other.js': '',
+    'app/package.json': '{ "name": "app" }',
+    'esm/package.json': '{ "name": "esm", "type": "module" }',
+  };
+  it('skips the react-server, edge-light, worker and react-native keys that no resolver enters by default', () => {
+    const r = project(pkgs);
+    expect(r('lib', 'app/a.ts')).toBe('lib/client/index.js');
+    expect(r('lib/server', 'app/a.ts')).toBe('lib/node/server.js');
+    expect(r('lib/shim', 'app/a.ts')).toBe('lib/shim/index.js');
+  });
+  it('enters node and types, and passes over a key whose only target is a condition nobody enters', () => {
+    const r = project(pkgs);
+    expect(r('lib/node', 'app/a.ts')).toBe('lib/node-build.js');
+    expect(r('lib/typed', 'app/a.ts')).toBe('lib/t.d.ts');
+    expect(r('lib/onlyserver', 'app/a.ts')).toBeUndefined();
+  });
+  it('takes the format as Node does: the extension, then the nearest package type', () => {
+    const r = project(pkgs);
+    expect(r('lib/dual', 'app/a.ts')).toBe('lib/cjs/dual.cjs');
+    expect(r('lib/dual', 'app/a.js')).toBe('lib/cjs/dual.cjs');
+    expect(r('lib/dual', 'app/a.mts')).toBe('lib/esm/dual.mjs');
+    expect(r('lib/dual', 'app/a.mjs')).toBe('lib/esm/dual.mjs');
+    expect(r('lib/dual', 'app/a.cts')).toBe('lib/cjs/dual.cjs');
+    expect(r('lib/dual', 'esm/a.ts')).toBe('lib/esm/dual.mjs');
+    expect(r('lib/dual', 'esm/a.jsx')).toBe('lib/esm/dual.mjs');
+    expect(r('lib/dual', 'esm/a.cjs')).toBe('lib/cjs/dual.cjs');
+  });
+  it('keeps the earlier reading for a file of a kind whose format is not known, as for a component', () => {
+    const r = project(pkgs);
+    expect(r('lib', 'app/a.vue')).toBe('lib/server/index.js');
+  });
+  it('reads package.json imports by the same conditions', () => {
+    const imp = project({
+      'app/package.json': JSON.stringify({ name: 'app', imports: { '#dep': { 'react-server': './server.js', default: './client.js' } } }),
+      'app/server.js': '',
+      'app/client.js': '',
+    });
+    expect(imp('#dep', 'app/a.ts')).toBe('app/client.js');
+  });
+});
+
+describe('resolveTsPath — the call form selects require or import', () => {
+  const lib = {
+    'lib/package.json': '{ "name": "lib", "exports": { ".": { "require": "./cjs/index.cts", "import": "./esm/index.ts" } } }',
+    'lib/cjs/index.cts': '',
+    'lib/esm/index.ts': '',
+    'app/package.json': '{ "name": "app" }',
+    'esm/package.json': '{ "name": "esm", "type": "module" }',
+  };
+  const withConfig = (options) => project({ ...lib, 'app/tsconfig.json': JSON.stringify({ compilerOptions: options }), 'esm/tsconfig.json': JSON.stringify({ compilerOptions: options }) });
+  it('under Node16 a dynamic import() enters import in a CommonJS file, and a require() enters require in an ES module', () => {
+    const r = withConfig({ module: 'node16' });
+    expect(r('lib', 'app/a.cts')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'esm/a.ts')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'esm/a.ts', 'require')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'esm/a.mts', 'require')).toBe('lib/cjs/index.cts');
+  });
+  it('under Bundler the call form decides as well', () => {
+    const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
+    expect(r('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+  });
+  it('for a file no tsconfig covers the call form decides too', () => {
+    const r = project(lib);
+    expect(r('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'esm/a.ts', 'require')).toBe('lib/cjs/index.cts');
+  });
+  it('a call form changes nothing where the settings decide no conditions', () => {
+    const r = withConfig({ module: 'esnext' });
+    expect(r('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
+  });
+  it('imports reached through a require() or import() read package.json imports by the form', () => {
+    const r = project({
+      'app/package.json': '{ "name": "app", "imports": { "#dep": { "require": "./cjs.cts", "import": "./esm.ts" } } }',
+      'app/tsconfig.json': '{ "compilerOptions": { "module": "node16" } }',
+      'app/cjs.cts': '',
+      'app/esm.ts': '',
+    });
+    expect(r('#dep', 'app/a.ts')).toBe('app/cjs.cts');
+    expect(r('#dep', 'app/a.ts', 'import')).toBe('app/esm.ts');
+  });
+});
+
+describe('resolveTsPath — a versioned types key is entered when the compiler\'s version satisfies its range', () => {
+  const resolveKey = (key) => project({
+    'lib/package.json': JSON.stringify({ name: 'lib', exports: { '.': { [key]: './ranged.d.ts', types: './plain.d.ts' } } }),
+    'lib/ranged.d.ts': '',
+    'lib/plain.d.ts': '',
+    'app/package.json': '{ "name": "app" }',
+    'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }',
+  })('lib', 'app/a.ts');
+  it('enters a key the version satisfies', () => {
+    for (const range of ['>=5', '>=6.0', '>5.9', '<=6', '<7', '=6.0', '6.0', '6', '6.x', '6.*', '5 - 6', '5.1 - 6.0', '>=4.7 <7', '<5 || >=6', '~6.0', '^6.0', '>=6.0.0-0', 'x', '*', '']) {
+      expect(resolveKey(`types@${range}`), range).toBe('lib/ranged.d.ts');
+    }
+  });
+  it('skips a key the version fails, or whose range does not parse', () => {
+    for (const range of ['>=99', '>6.0', '<6.0', '<=5.9', '=5', '5.x', '7 - 8', '>=7 <8', '<5 || >=7', '~5.9', '^7.0', 'nonsense', '>=', '>=1.2.3.4', '>=a.b']) {
+      expect(resolveKey(`types@${range}`), range).toBe('lib/plain.d.ts');
+    }
   });
 });
 

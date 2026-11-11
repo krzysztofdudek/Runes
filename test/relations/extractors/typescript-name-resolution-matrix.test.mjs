@@ -126,6 +126,14 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-custom-condition-edge', () => runCase('typescript-exports-custom-condition-edge'));
   it('typescript-exports-unmatched-custom-condition-silence', () => runCase('typescript-exports-unmatched-custom-condition-silence'));
   it('typescript-exports-no-module-settings-first-target-edge', () => runCase('typescript-exports-no-module-settings-first-target-edge'));
+  it('typescript-exports-no-tsconfig-react-server-default-edge', () => runCase('typescript-exports-no-tsconfig-react-server-default-edge'));
+  it('typescript-exports-no-tsconfig-edge-light-default-edge', () => runCase('typescript-exports-no-tsconfig-edge-light-default-edge'));
+  it('typescript-exports-no-tsconfig-react-native-default-edge', () => runCase('typescript-exports-no-tsconfig-react-native-default-edge'));
+  it('typescript-exports-no-tsconfig-esm-package-import-branch-edge', () => runCase('typescript-exports-no-tsconfig-esm-package-import-branch-edge'));
+  it('typescript-exports-node16-dynamic-import-in-cjs-file-edge', () => runCase('typescript-exports-node16-dynamic-import-in-cjs-file-edge'));
+  it('typescript-exports-node16-require-call-in-esm-package-edge', () => runCase('typescript-exports-node16-require-call-in-esm-package-edge'));
+  it('typescript-exports-versioned-types-key-out-of-range-edge', () => runCase('typescript-exports-versioned-types-key-out-of-range-edge'));
+  it('typescript-exports-versioned-types-key-in-range-edge', () => runCase('typescript-exports-versioned-types-key-in-range-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
   it('typescript-workspace-member-beats-fixture-edge', () => runCase('typescript-workspace-member-beats-fixture-edge'));
