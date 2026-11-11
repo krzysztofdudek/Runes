@@ -325,6 +325,69 @@ describe('buildCsharpReachability — Directory.Build files and imports', () => 
   });
 });
 
+describe('buildCsharpReachability — files a project takes out of its compilation', () => {
+  const layout = (webProject, extra = {}) => reachOf({
+    'core/Core.csproj': PROJECT, 'core/Order.cs': '',
+    'web/Web.csproj': webProject, 'web/Api.cs': '', 'web/Old/Order.cs': '', 'web/Old/Deep/Line.cs': '',
+    'app/App.csproj': withItems(projectRef('../web/Web.csproj')), 'app/x.cs': '',
+    ...extra,
+  });
+
+  it('reads a file under Compile Remove as code of no compilation: no caller sees it, and its own references bind nowhere the graph knows', () => {
+    const reach = layout(withItems('<Compile Remove="Old/**" />', projectRef('../core/Core.csproj')));
+    expect(reach('web/Api.cs', 'web/Old/Order.cs')).toBe('unreachable');
+    expect(reach('web/Api.cs', 'web/Old/Deep/Line.cs')).toBe('unreachable');
+    expect(reach('app/x.cs', 'web/Old/Order.cs')).toBe('unreachable');
+    expect(reach('web/Old/Order.cs', 'core/Order.cs')).toBe('unknown');
+    expect(reach('web/Api.cs', 'core/Order.cs')).toBe('reachable');
+    expect(reach('app/x.cs', 'web/Api.cs')).toBe('reachable');
+  });
+
+  it('reads a removal of several files, a file path and a backslash path', () => {
+    const reach = layout(withItems('<Compile Remove="Old\\Order.cs;Old\\Deep\\*.cs" />'));
+    expect(reach('web/Api.cs', 'web/Old/Order.cs')).toBe('unreachable');
+    expect(reach('web/Api.cs', 'web/Old/Deep/Line.cs')).toBe('unreachable');
+  });
+
+  it('keeps a file that a Compile Include of the same project names again, before or after the removal', () => {
+    for (const items of [['<Compile Remove="Old/**" />', '<Compile Include="Old/Order.cs" />'], ['<Compile Include="Old/Order.cs" />', '<Compile Remove="Old/**" />']]) {
+      const reach = layout(withItems(...items));
+      expect(reach('web/Api.cs', 'web/Old/Order.cs'), items.join('')).toBe('same');
+      expect(reach('web/Api.cs', 'web/Old/Deep/Line.cs'), items.join('')).toBe('unreachable');
+    }
+  });
+
+  it('ignores a removal that may not apply: under a condition on the item, its ItemGroup or a Choose branch, or inside a Target', () => {
+    for (const web of [
+      withItems('<Compile Remove="Old/**" Condition="\'$(TargetFramework)\' != \'net48\'" />'),
+      '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup Condition="\'$(Legacy)\' != \'true\'"><Compile Remove="Old/**" /></ItemGroup></Project>',
+      '<Project Sdk="Microsoft.NET.Sdk"><Choose><When Condition="true"><ItemGroup><Compile Remove="Old/**" /></ItemGroup></When></Choose></Project>',
+      '<Project Sdk="Microsoft.NET.Sdk"><Target Name="Trim" BeforeTargets="CoreCompile"><ItemGroup><Compile Remove="Old/**" /></ItemGroup></Target></Project>',
+    ]) {
+      expect(layout(web)('web/Api.cs', 'web/Old/Order.cs'), web).toBe('same');
+    }
+  });
+
+  it('reads a removal after a closed conditional group as one that applies', () => {
+    const web = '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup Condition="false"><Compile Include="x.cs" /></ItemGroup><Target Name="T" /><ItemGroup><Compile Remove="Old/**" /></ItemGroup></Project>';
+    expect(layout(web)('web/Api.cs', 'web/Old/Order.cs')).toBe('unreachable');
+  });
+
+  it('reads a removal in a Directory.Build.props against the project being built, and $(MSBuildThisFileDirectory) against the props file', () => {
+    const fromProps = layout(PROJECT, { 'Directory.Build.props': withItems('<Compile Remove="Old/**" />') });
+    expect(fromProps('web/Api.cs', 'web/Old/Order.cs')).toBe('unreachable');
+    const thisFile = layout(PROJECT, { 'Directory.Build.props': withItems('<Compile Remove="$(MSBuildThisFileDirectory)web/Old/**" />') });
+    expect(thisFile('web/Api.cs', 'web/Old/Order.cs')).toBe('unreachable');
+    expect(thisFile('web/Api.cs', 'web/Old/Deep/Line.cs')).toBe('unreachable');
+  });
+
+  it('ignores a removal it cannot place: one that needs an unknown property or leaves the repository', () => {
+    for (const item of ['<Compile Remove="$(OldDir)/**" />', '<Compile Remove="../../Old/**" />']) {
+      expect(layout(withItems(item))('web/Api.cs', 'web/Old/Order.cs'), item).toBe('same');
+    }
+  });
+});
+
 describe('buildCsharpReachability — open projects', () => {
   it('reads a project as open for a Compile item outside its directory, or one that needs an unknown property', () => {
     for (const item of ['<Compile Include="..\\Shared\\*.cs" Link="s.cs" />', '<Compile Include="$(GenDir)/g.cs" />', '<Compile Include="C:\\gen\\g.cs" />']) {

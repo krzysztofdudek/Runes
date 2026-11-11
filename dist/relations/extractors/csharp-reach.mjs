@@ -11,7 +11,7 @@ const SKIPPED_DIRS = new Set(['bin', 'obj', 'node_modules']);
 function norm(p) {
     return path.posix.normalize(p.replace(/\\/g, '/')).replace(/\/$/, '') || '.';
 }
-/** A glob (`*`, `**`, `?`) as an anchored, case-insensitive regular expression over normalized paths. */
+/** A glob (`*`, `**`, `?`) as an anchored, case-insensitive regular expression over normalized paths. A `**` that ends the glob (`Old/**`) matches every file below, as in MSBuild. */
 function globToRegExp(glob) {
     let re = '';
     for (let i = 0; i < glob.length; i++) {
@@ -19,9 +19,13 @@ function globToRegExp(glob) {
         if (c === '*') {
             if (glob[i + 1] === '*') {
                 i++;
-                if (glob[i + 1] === '/')
-                    i++;
-                re += '(?:.*/)?';
+                if (i + 1 === glob.length)
+                    re += '.*';
+                else {
+                    if (glob[i + 1] === '/')
+                        i++;
+                    re += '(?:.*/)?';
+                }
             }
             else
                 re += '[^/]*';
@@ -37,6 +41,27 @@ function globToRegExp(glob) {
 function includes(attrText) {
     const value = attributes(attrText).get('include');
     return value === undefined ? [] : value.split(';').map((s) => s.trim()).filter((s) => s !== '');
+}
+/** True when the item whose start tag is at `index` of `text` may not always apply: it has a `Condition`, or it sits in an `ItemGroup` with one, in a `Choose` branch or in a `Target`. */
+function conditional(text, index, attrText) {
+    if (attributes(attrText).has('condition'))
+        return true;
+    const open = [];
+    const tags = /<(\/?)(ItemGroup|Target|Choose|When|Otherwise)\b([^>]*?)(\/?)>/gi;
+    let m;
+    while ((m = tags.exec(text)) !== null && m.index < index) {
+        if (m[4] === '/')
+            continue;
+        const name = m[2].toLowerCase();
+        if (m[1] === '/') {
+            const at = open.map((e) => e.name).lastIndexOf(name);
+            if (at !== -1)
+                open.length = at;
+        }
+        else
+            open.push({ name, condition: attributes(m[3]).has('condition') });
+    }
+    return open.some((e) => e.condition || e.name !== 'itemgroup');
 }
 /** The file name without its directory and extension, of a path in either separator style. */
 function stem(p) {
@@ -141,9 +166,9 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         }
         return source.isFile(at) ? at : undefined;
     };
-    const resolveItemPath = (raw, declDir, projectDir) => {
+    const resolveItemPath = (raw, declDir, projectDir, plainBase = declDir) => {
         let value = raw.replace(/\\/g, '/');
-        let base = declDir;
+        let base = plainBase;
         const lead = /^\$\((MSBuildThisFileDirectory|MSBuildProjectDirectory)\)\/?/i.exec(value);
         if (lead !== null) {
             base = lead[1].toLowerCase() === 'msbuildthisfiledirectory' ? declDir : projectDir;
@@ -168,7 +193,7 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const hit = factsCache.get(projectDir);
         if (hit !== undefined)
             return hit;
-        const facts = { refs: new Set(), open: false, links: [] };
+        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [] };
         factsCache.set(projectDir, facts);
         const queue = [];
         const queued = new Set();
@@ -246,7 +271,18 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                             facts.open = true;
                             facts.links.push(globToRegExp(r.path));
                         }
+                        else
+                            facts.kept.push(globToRegExp(r.path));
                     }
+                }
+                const remove = attributes(m[1]).get('remove');
+                if (remove === undefined || conditional(text, m.index, m[1]))
+                    continue;
+                // MSBuild reads an item's relative path against the project being built, whichever imported file holds it; a removal is read in that one way only, because a second reading could take out a file the project compiles.
+                for (const item of remove.split(';').map((v) => v.trim()).filter((v) => v !== '')) {
+                    const r = resolveItemPath(item, declDir, projectDir, projectDir);
+                    if (r.kind === 'path')
+                        facts.removed.push(globToRegExp(r.path));
                 }
             }
             const imports = /<Import\b([^>]*?)\/?>/gi;
@@ -318,11 +354,21 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         }
         return [...new Set(linkIndex.filter(([dir, re]) => dir !== own && re.test(file)).map(([dir]) => dir))];
     };
+    /** True when the file's own project compiles it: no `Compile Remove` of the project takes it out, or a `Compile Include` of the project names it again. */
+    const compiledByOwn = (file, own) => {
+        const facts = factsOf(own);
+        return !facts.removed.some((re) => re.test(file)) || facts.kept.some((re) => re.test(file));
+    };
     return (fromFile, targetFile) => {
         const from = projectOf.get(fromFile);
         const target = projectOf.get(targetFile);
         if (from === undefined || target === undefined)
             return 'unknown';
+        // A file its project removes, and no other project links, is code of no compilation: as a target it declares nothing anyone sees; as a caller its references bind nowhere, which the graph cannot say anything about.
+        if (!compiledByOwn(fromFile, from) && linkersOf(fromFile, from).length === 0)
+            return 'unknown';
+        if (!compiledByOwn(targetFile, target) && linkersOf(targetFile, target).length === 0)
+            return 'unreachable';
         if (from === target)
             return 'same';
         let open = false;
