@@ -283,18 +283,26 @@ function makeRustResolveDeps(
     const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
     // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
     const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib, rel.startsWith('src/bin/') ? srcBinFiles(pkgDir) : []);
     // Cargo compiles a file once per crate that declares it (`mod x;` from a crate root down), so with several roots in the tree the file's crates are those whose root declares the first module segment below the tree's directory: a root item named in the file is that root's, and when none or several do, no item binds (see `resolveFromModuleDir`).
     const existingRoots = target.rootFiles.filter((f) => exists(at(f)));
-    const owningRoots = existingRoots.length > 1 && !target.fileIsRoot ? rootsDeclaring(rel, target.srcDir, existingRoots, at) : undefined;
+    const owningRoots = target.byDeclaration === true || (existingRoots.length > 1 && !target.fileIsRoot) ? rootsDeclaring(rel, target.srcDir, existingRoots, at) : undefined;
+    // A module of the binaries of `src/bin/` belongs to the one that declares it; with none or several, `crate::` names no root we can tell.
+    const unrooted = target.byDeclaration === true && owningRoots?.length !== 1;
     return {
       srcDir: at(target.srcDir),
       crateName,
-      rootFiles: (owningRoots ?? target.rootFiles).map(at),
+      rootFiles: unrooted ? [] : (owningRoots ?? target.rootFiles).map(at),
       fileIsRoot: target.fileIsRoot,
       lib: lib ?? null,
-      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, owningRoots?.length === 1 ? owningRoots : existingRoots),
+      crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, owningRoots?.length === 1 ? owningRoots : existingRoots),
+      ...(unrooted ? { unrooted } : {}),
     };
+  }
+
+  /** The `.rs` files lying directly in `src/bin/` of the package at `pkgDir`, package-relative. */
+  function srcBinFiles(pkgDir: string): string[] {
+    return (plain.list(joinRel(pkgDir, 'src/bin')) ?? []).filter((e) => e.kind === 'file' && e.name.endsWith('.rs')).map((e) => `src/bin/${e.name}`);
   }
 
   /** The roots among `roots` that declare the module `file` lies in, below the tree directory `srcDir` (all package-relative, `at` makes a path repository-relative): all of them when `file` lies outside that directory, which tells nothing, and otherwise those that declare it: one root owns it, several are the crates it belongs to, none means no crate compiles it. */
@@ -426,6 +434,8 @@ function makeRustResolveDeps(
  *
  *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`.
  *
+ *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare its directory, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller to pick the roots that declare it.
+ *
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
  *
  *  `undiscoveredDirs` are the directories among `src/bin`, `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autobins = false`, `autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
@@ -439,7 +449,8 @@ export function rustTargetFor(
   inferMain = true,
   droppedInferred: readonly string[] = [],
   inferLib = true,
-): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } {
+  binFiles: readonly string[] = [],
+): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean; byDeclaration?: boolean } {
   const targets = [...new Set(targetPaths.map((p) => path.posix.normalize(p)))];
   // `src/main.rs` is a crate root when Cargo infers it (`inferMain`, false under `autobins = false` unless a `[[bin]]` is named like the package, and when a declared bin of the package's name left it out) or a `[[bin]]` names it by `path`; otherwise it belongs to no crate.
   const mainIsRoot = (inferMain && !droppedInferred.includes('src/main.rs')) || targets.includes('src/main.rs');
@@ -474,7 +485,9 @@ export function rustTargetFor(
     if (segs.length === 3) return { srcDir: 'src/bin', rootFiles: [rel], fileIsRoot: true };
     const dir = `src/bin/${segs[2]}`;
     const main = `${dir}/main.rs`;
-    return { srcDir: dir, rootFiles: [main], fileIsRoot: rel === main };
+    if (rel === main || existsInPackage(main)) return { srcDir: dir, rootFiles: [main], fileIsRoot: rel === main };
+    // Cargo (`infer_subdirectory`): a directory of `src/bin/` is a target only when it holds a `main.rs`. Without one its files are modules of the binaries of `src/bin/` that declare them, over the tree of `src/bin/` itself.
+    return { srcDir: 'src/bin', rootFiles: binFiles.filter((f) => inferredLive(f, 'src/bin')), fileIsRoot: false, byDeclaration: true };
   }
   if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2 && (undiscoveredDirs.includes(segs[0]) || !inferredLive(segs.length === 2 ? rel : `${segs[0]}/${segs[1]}/main.rs`, segs[0]))) {
     const named = namedTargets.filter((n) => n.startsWith(`${segs[0]}/`) && !n.slice(segs[0].length + 1).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);

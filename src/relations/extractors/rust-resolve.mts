@@ -68,6 +68,8 @@ export interface RustCrateRoot {
   lib?: RustCrateTree | null;
   /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
   crateRelativeUses?: boolean;
+  /** True when the file is a module of a crate that cannot be told: no crate declares it, or several do and each reads `crate::` and `super::` as its own root. A path rooted at `crate` or `super` then names nothing, and the edition 2015 relative `use` is not read; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
+  unrooted?: boolean;
 }
 
 export interface RustResolveDeps {
@@ -113,6 +115,7 @@ export function resolveRustPath(
   if (crate === undefined) return undefined; // no Cargo.toml ancestor → not a crate path
 
   if (root === 'crate') {
+    if (crate.unrooted === true) return undefined;
     return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares));
   }
 
@@ -185,6 +188,7 @@ function resolveRelative(
 ): string | undefined {
   const crate = deps.crateRootFor(fromFile);
   if (crate === undefined) return undefined;
+  if (crate.unrooted === true && segments.includes('super')) return undefined;
   const srcDir = crate.srcDir;
 
   const fromPosix = toPosix(fromFile);

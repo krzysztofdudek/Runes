@@ -622,6 +622,46 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::Opts', 'src/cli.rs', 'rust')).toBe('src/cli.rs');
   });
 
+  it('reads the files of a src/bin/ directory without main.rs as modules of the binary that declares them, and of no crate when none or several do', async () => {
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n');
+    put('src/lib.rs', 'pub struct LibThing;\n');
+    put('src/bin/one.rs', 'mod common;\nmod config;\nstruct Top;\nfn main() {}\n');
+    put('src/bin/two.rs', 'mod shared;\nmod config;\nfn main() {}\n');
+    put('src/bin/three.rs', 'mod shared;\nfn main() {}\n');
+    put('src/bin/config/mod.rs', 'pub struct Cfg;\n');
+    put('src/bin/common/mod.rs', 'mod deep;\n');
+    put('src/bin/common/deep/mod.rs', '');
+    put('src/bin/shared/mod.rs', '');
+    put('src/bin/loose/mod.rs', '');
+    put('src/bin/loose/sub.rs', '');
+    put('src/bin/withmain/main.rs', 'mod config;\nfn main() {}\n');
+    put('src/bin/withmain/config/mod.rs', '');
+    put('src/bin/withmain/helper.rs', '');
+    const resolve = makeResolvePathToFile(ws);
+    // The binary that declares the directory roots its files, at any depth, for `crate::` and `super::` alike.
+    expect(resolve('crate::config::Cfg', 'src/bin/common/mod.rs', 'rust')).toBe('src/bin/config/mod.rs');
+    expect(resolve('super::config::Cfg', 'src/bin/common/mod.rs', 'rust')).toBe('src/bin/config/mod.rs');
+    expect(resolve('crate::config::Cfg', 'src/bin/common/deep/mod.rs', 'rust')).toBe('src/bin/config/mod.rs');
+    expect(resolve('crate::Top', 'src/bin/common/deep/mod.rs', 'rust')).toBe('src/bin/one.rs');
+    // None declares the directory, or two do: which crate it is cannot be told, so `crate::` and `super::` name nothing, while `self::`, the package's own name and the file's own module still do.
+    for (const from of ['src/bin/loose/mod.rs', 'src/bin/shared/mod.rs']) {
+      expect(resolve('crate::config::Cfg', from, 'rust')).toBeUndefined();
+      expect(resolve('super::config::Cfg', from, 'rust')).toBeUndefined();
+      expect(resolve('self::super::config::Cfg', from, 'rust')).toBeUndefined();
+      expect(resolve('app::LibThing', from, 'rust')).toBe('src/lib.rs');
+    }
+    expect(resolve('self::sub', 'src/bin/loose/mod.rs', 'rust')).toBe('src/bin/loose/sub.rs');
+    // A directory with a main.rs is a crate of its own: its files read `crate::` in its tree.
+    expect(resolve('crate::config', 'src/bin/withmain/helper.rs', 'rust')).toBe('src/bin/withmain/config/mod.rs');
+    expect(resolve('crate::config::Cfg', 'src/bin/withmain/config/mod.rs', 'rust')).toBe('src/bin/withmain/config/mod.rs');
+    // In edition 2015 the same files read a bare `use` path from the root of the binary that declares them, and from no root otherwise.
+    put('Cargo.toml', '[package]\nname = "app"\n');
+    const table = await tableNow();
+    const resolve2015 = makeResolvePathToFile(ws);
+    expect(resolve2015('config::Cfg', 'src/bin/common/mod.rs', 'rust', false, table)).toBe('src/bin/config/mod.rs');
+    expect(resolve2015('config::Cfg', 'src/bin/loose/mod.rs', 'rust', false, table)).toBeUndefined();
+  });
+
   it('roots crate:: of a [[test]], [[example]] or [[bench]] path at that target, also below tests/ where no main.rs is (the zed shape)', () => {
     // Issue 173: those paths were ignored, so such a target's root was a module of the default tree and its modules resolved under src/ or under tests/.
     put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/integration/suite.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\nname = "perf"\npath = "perf/bench_main.rs"\n');

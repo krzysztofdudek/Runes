@@ -13,6 +13,8 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     if (crate === undefined)
         return undefined; // no Cargo.toml ancestor → not a crate path
     if (root === 'crate') {
+        if (crate.unrooted === true)
+            return undefined;
         return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares));
     }
     // A bare leading identifier: the current crate's own package name (2018+ edition
@@ -67,6 +69,8 @@ function rootContext(dir, files, declares) {
 function resolveRelative(root, segments, fromFile, exists, deps) {
     const crate = deps.crateRootFor(fromFile);
     if (crate === undefined)
+        return undefined;
+    if (crate.unrooted === true && segments.includes('super'))
         return undefined;
     const srcDir = crate.srcDir;
     const fromPosix = toPosix(fromFile);
