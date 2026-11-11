@@ -24,7 +24,7 @@ export type TsCallForm = 'require' | 'import';
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. An `exports` target or an entry field that names no file is mapped back to the source it is compiled from, through the package's tsconfig (`outDir` to `rootDir`, see `sourceOfOutput` in {@link makeTsResolveDeps}); one that maps to nothing binds nothing and is reported. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -44,16 +44,26 @@ export interface TsResolveDeps {
     packageNamed(name: string, fromFile: string): TsPackage | 'ambiguous' | undefined;
     /** The package whose package.json sits directly in `dir`, if any. */
     packageAt?(dir: string): TsPackage | undefined;
+    /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, {@link SOURCES_DISAGREE} when two readings name different files. */
+    sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined;
+    /** Told that an entry of a package's package.json names no file and maps to no source, so an import that resolved to it bound nothing. */
+    entryMissing?(pkg: TsPackage, target: string, sourcesDisagree: boolean): void;
     /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution target, whether or not it is on disk. */
     isExcluded?(repoRelPosix: string): boolean;
 }
+/** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
+export declare const SOURCES_DISAGREE: unique symbol;
 export interface TsPathConfig {
     /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
     baseUrl?: string;
     /** `moduleResolution` and `module`, lower-cased, and `customConditions`, when set anywhere in the chain: what the conditions of a package's `exports` and `imports` are chosen by. */
     moduleResolution?: string;
     module?: string;
+    /** `target`, lower-cased, when set anywhere in the chain: what the compiler takes its default `module` from. */
+    target?: string;
     customConditions?: string[];
+    /** Whether a base that cannot be read may have set `customConditions`, and nothing read since has set them. */
+    customConditionsUnknown?: boolean;
     /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
     paths?: {
         base: string;

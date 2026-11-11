@@ -2354,9 +2354,11 @@ compiler/packages/eslint-plugin-react-compiler/__tests__/PluginTest-test.ts:8	co
 compiler/packages/eslint-plugin-react-compiler/__tests__/ReactCompilerRuleTypescript-test.ts:9	compiler/packages/eslint-plugin-react-compiler/__tests__/shared-utils.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackend-test.ts:15	compiler/packages/eslint-plugin-react-compiler/src/rules/ReactCompilerRule.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackend-test.ts:16	compiler/packages/eslint-plugin-react-compiler/src/index.ts
+compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackend-test.ts:25	compiler/packages/babel-plugin-react-compiler-rust/src/index.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackend-test.ts:8	compiler/packages/eslint-plugin-react-compiler/__tests__/shared-utils.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackendComparison-test.ts:18	compiler/packages/eslint-plugin-react-compiler/src/index.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackendComparison-test.ts:19	compiler/packages/eslint-plugin-react-compiler/src/rules/ReactCompilerRule.ts
+compiler/packages/eslint-plugin-react-compiler/__tests__/RustBackendComparison-test.ts:30	compiler/packages/babel-plugin-react-compiler-rust/src/index.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/shared-utils.ts:2	compiler/packages/babel-plugin-react-compiler/src/CompilerError.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/shared-utils.ts:4	compiler/packages/eslint-plugin-react-compiler/src/index.ts
 compiler/packages/eslint-plugin-react-compiler/__tests__/shared-utils.ts:5	compiler/packages/eslint-plugin-react-compiler/src/rules/ReactCompilerRule.ts
@@ -2366,6 +2368,7 @@ compiler/packages/eslint-plugin-react-compiler/src/rules/ReactCompilerRule.ts:15
 compiler/packages/eslint-plugin-react-compiler/src/rules/ReactCompilerRule.ts:9	compiler/packages/babel-plugin-react-compiler/src/index.ts
 compiler/packages/eslint-plugin-react-compiler/src/shared/RunReactCompiler.ts:11	compiler/packages/babel-plugin-react-compiler/src/index.ts
 compiler/packages/eslint-plugin-react-compiler/src/shared/RunReactCompiler.ts:16	compiler/packages/babel-plugin-react-compiler/src/Entrypoint/index.ts
+compiler/packages/eslint-plugin-react-compiler/src/shared/RunReactCompiler.ts:36	compiler/packages/babel-plugin-react-compiler-rust/src/index.ts
 compiler/packages/make-read-only-util/src/__tests__/makeReadOnly-test.ts:8	compiler/packages/make-read-only-util/src/makeReadOnly.ts
 compiler/packages/react-compiler-healthcheck/src/checks/libraryCompat.ts:9	compiler/packages/react-compiler-healthcheck/src/config.ts
 compiler/packages/react-compiler-healthcheck/src/checks/reactCompiler.ts:11	compiler/packages/babel-plugin-react-compiler/src/index.ts
