@@ -229,8 +229,20 @@ export function makeResolver(deps) {
         }
         return files;
     };
-    /** True when every declaration `file` gives of `keys` is internal to its assembly (the extractor's `internal:<key>` marker beside it). */
-    const assemblyOnlyIn = (language, keys, file) => keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || deps.symbolTable.filesFor(language, internalKey(k)).includes(file));
+    /** True when the declaration `file` gives of `key` is internal to its assembly: the file marks it so (the extractor's `internal:<key>` marker beside it), or, for a type, a file of the same compilation marks the type or a type around it. The parts of a partial type are one type with one accessibility (C# spec §15.2.7), so a part without an access modifier, which its own file cannot mark, takes what another part of its compilation says. An extension method's key names every method of that name in its namespace, each with its own modifier, so only its own file speaks for it. */
+    const internalIn = (language, key, file) => {
+        if (deps.symbolTable.filesFor(language, internalKey(key)).includes(file))
+            return true;
+        if (key.endsWith('()'))
+            return false;
+        for (let end = key.length; end !== -1; end = key.lastIndexOf('+', end - 1)) {
+            if (deps.symbolTable.filesFor(language, internalKey(key.slice(0, end))).some((part) => part !== file && deps.reach?.(file, part) === 'same'))
+                return true;
+        }
+        return false;
+    };
+    /** True when every declaration `file` gives of `keys` is internal to its assembly (`internalIn`). */
+    const assemblyOnlyIn = (language, keys, file) => keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || internalIn(language, k, file));
     /** Every key a symbol hint reads: those of each member of its set, or its own. */
     const hintKeys = (hint, language, fromFile) => hint.set !== undefined
         ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
