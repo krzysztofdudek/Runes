@@ -328,14 +328,44 @@ export function methodsKey(typeKey) {
     return `methods:${typeKey}`;
 }
 const METHOD_REACH_MARKS = { public: '', protected: '~', private: '-' };
-/** The methods a `methods` record's value lists: entries `<mark><name>:<shape>` joined by a space, the mark `~` for a protected method and `-` for a private one. */
+/** The methods a `methods` record's value lists: entries `<mark><name>:<shape>` joined by a space, the mark `~` for a protected method and `-` for a private one, each followed by `(<type>,<type>,…)` where the declaration writes a parameter type the record can hold (`CsharpMethod.params`). */
 export function decodeMethods(value) {
     return value.split(' ').map((entry) => {
         const reach = entry.startsWith('~') ? 'protected' : entry.startsWith('-') ? 'private' : 'public';
         const body = reach === 'public' ? entry : entry.slice(1);
-        const colon = body.indexOf(':');
-        return { name: body.slice(0, colon), shape: body.slice(colon + 1), reach };
+        const paren = body.indexOf('(');
+        const head = paren === -1 ? body : body.slice(0, paren);
+        const colon = head.indexOf(':');
+        return { name: head.slice(0, colon), shape: head.slice(colon + 1), reach, ...(paren === -1 ? {} : { params: body.slice(paren + 1, -1).split(',') }) };
     });
+}
+/** The marker key of an enum: `enum:<key>`, declared beside the type key of every enum declaration. A member of an enum has the enum's type, and an enum value converts to no other type of the repository, which is what tells an overload that takes it from one that does not. */
+export function enumKey(typeKey) {
+    return `enum:${typeKey}`;
+}
+/** The marker key of a type that declares an implicit conversion operator: `converts:<key>`. A value converts to such a type, or such a type to another, in ways its base list does not show, so nothing is concluded from the types of an argument and a parameter where one of them carries the mark. */
+export function convertsKey(typeKey) {
+    return `converts:${typeKey}`;
+}
+/** The written type of a parameter or of an argument's declaration as a method record holds it (`CsharpMethod.params`): the keyword of a predefined type, `<offset>:<name>` for a named type, the empty string for any other; a nullable type is read as the type under it. */
+function writtenTypeEntry(typeNode, scope, typeParameters) {
+    const inner = typeNode.type === 'nullable_type' ? typeNode.childForFieldName('type') : typeNode;
+    if (inner.type === 'predefined_type')
+        return inner.text;
+    const name = writtenName(inner, scope, typeParameters);
+    return name === undefined || name === '' ? '' : encodeWritten({ at: inner.startIndex, name });
+}
+/** The written types of the parameters of the method `method`, as its record entry ends (`(<type>,…)`), or the empty string when no parameter writes a type the record can hold. A parameter with a modifier (`ref`, `out`, `in`, `this`, `params`, `scoped`) writes none. */
+function parameterTypes(method, scope) {
+    const own = typeParameterNames(method);
+    const entries = [];
+    for (const param of method.childForFieldName('parameters').namedChildren) {
+        const type = param.type === 'parameter' && !param.children.some((c) => c.type === 'modifier') ? param.childForFieldName('type') : null;
+        entries.push(type === null ? '' : writtenTypeEntry(type, scope, own));
+    }
+    while (entries.length > 0 && entries[entries.length - 1] === '')
+        entries.pop();
+    return entries.length > 0 ? `(${entries.join(',')})` : '';
 }
 /** Who can call the instance method `method` of the type declaration `owner` (see `CsharpMethod`). */
 function methodReach(method, owner) {
@@ -748,7 +778,10 @@ function declarations(file) {
                         let listed = methods.get(typeKey);
                         if (listed === undefined)
                             methods.set(typeKey, (listed = { line: owner.node.startPosition.row + 1, entries: new Set() }));
-                        listed.entries.add(`${METHOD_REACH_MARKS[reach]}${name}:${methodShape(node)}`);
+                        const types = parameterTypes(node, scope);
+                        if (types.includes(':'))
+                            written = true;
+                        listed.entries.add(`${METHOD_REACH_MARKS[reach]}${name}:${methodShape(node)}${types}`);
                     }
                 }
             }
@@ -762,6 +795,14 @@ function declarations(file) {
             const property = owner.node.type.startsWith('record');
             if (name !== null && givesMembers(owner.node) && (property || hasModifier(owner.node, 'partial')))
                 listMember(typeKey, owner.node, `${property ? '' : '-'}${name.text}`);
+            return undefined;
+        }
+        // A type that declares an implicit conversion operator says so (see `convertsKey`).
+        if (node.type === 'conversion_operator_declaration' && owner !== null && !owner.fileLocal && hasTokenChild(node, 'implicit')) {
+            const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
+            const symbolKey = convertsKey(ns === '' ? scope.chain : `${ns}.${scope.chain}`);
+            if (!out.some((d) => d.symbolKey === symbolKey))
+                out.push({ symbolKey, line: owner.node.startPosition.row + 1 });
             return undefined;
         }
         const extName = extensionMethodName(node, scope);
@@ -798,6 +839,8 @@ function declarations(file) {
                 out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
             if (node.type === 'interface_declaration')
                 out.push({ symbolKey: interfaceKey(symbolKey), line: node.startPosition.row + 1 });
+            if (node.type === 'enum_declaration')
+                out.push({ symbolKey: enumKey(symbolKey), line: node.startPosition.row + 1 });
         }
         // The base list (see `baseListKey`): `class C(int x) : Base(x)` writes the base's type first and its arguments after it.
         const list = BASE_LIST_OWNERS.has(node.type) ? node.namedChildren.find((c) => c.type === 'base_list') : undefined;
@@ -1375,13 +1418,79 @@ export function extractCsharpRefs(file) {
         return described;
     };
     /** What an `ext` descriptor says of its receiver: the receiver's written type, and the call's counts and the types around it where a receiver type will be asked. */
+    /** The place in `receiverTypes` of the written type `typeNode` (-1 when it names no type of its own), described once for every call that reads it. */
+    const typePlace = (typeNode) => {
+        let place = receiverTypePlaces.get(typeNode.id);
+        if (place === undefined) {
+            const described = describeType(typeNode);
+            place = described === undefined ? -1 : receiverTypes.push(described) - 1;
+            receiverTypePlaces.set(typeNode.id, place);
+        }
+        return place;
+    };
+    const memberTypePlaces = new Map();
+    /** What the file says of the type of one argument (see the `ext` descriptor's `argTypes`), or null. */
+    const argumentType = (expr) => {
+        // An argument without an expression of its own (`F(default)`, a parser recovery) says nothing.
+        if (expr === null)
+            return null;
+        if (expr.type === 'identifier') {
+            const at = expr.startIndex;
+            const inScope = (typedNames.get(expr.text) ?? []).filter((e) => at >= e.start && at < e.end);
+            if (inScope.length === 0)
+                return null;
+            const size = Math.min(...inScope.map((e) => e.end - e.start));
+            const nearest = inScope.filter((e) => e.end - e.start === size);
+            // One declaration in the nearest scope, with a type of its own: two of one name there leave the argument's type open.
+            if (nearest.length !== 1 || nearest[0].type === null)
+                return null;
+            const type = nearest[0].type.type === 'nullable_type' ? nearest[0].type.childForFieldName('type') : nearest[0].type;
+            // `dynamic` is bound at run time, whatever the grammar reads the word as.
+            if (type.text === 'dynamic')
+                return null;
+            if (type.type === 'predefined_type')
+                return type.text;
+            const place = typePlace(type);
+            return place === -1 ? null : place;
+        }
+        if (expr.type !== 'member_access_expression')
+            return null;
+        // A member read through a type name: every name but the last spells the type.
+        const segments = dottedName(expr)?.split('.');
+        if (segments === undefined || declaredNames.has(segments[0]) || isTypeParameterInScope(segments[0], scopeOf(expr)))
+            return null;
+        const ref = segments.slice(0, -1).join('.');
+        if (namesOwnProgram(ref))
+            return null;
+        const scope = scopeOf(expr);
+        const memoKey = `${ref}\0${scope.ns?.decl.startIndex ?? -1}\0${scope.bodyChain}`;
+        let place = memberTypePlaces.get(memoKey);
+        if (place === undefined)
+            memberTypePlaces.set(memoKey, (place = receiverTypes.push({ kind: 'plain', ref, line: expr.startPosition.row + 1, rooted: false, enclosingNs: nsChain(expr), at: expr.startIndex, ...enclosingTypes(expr) }) - 1));
+        const holders = membersAround(expr).members;
+        return holders === undefined ? [place] : [place, holders];
+    };
+    /** The written types of a call's arguments (see the `ext` descriptor's `argTypes`), or nothing where the file writes none, or the call names an argument. */
+    const argumentTypes = (inv) => {
+        const argTypes = [];
+        for (const arg of inv.childForFieldName('arguments').namedChildren) {
+            if (arg.type !== 'argument')
+                continue;
+            if (arg.childForFieldName('name') !== null)
+                return {};
+            argTypes.push(hasTokenChild(arg, 'ref') || hasTokenChild(arg, 'out') || hasTokenChild(arg, 'in') ? null : argumentType(arg.namedChild(0)));
+        }
+        while (argTypes.length > 0 && argTypes[argTypes.length - 1] === null)
+            argTypes.pop();
+        return argTypes.length === 0 ? {} : { argTypes };
+    };
     const extensionReceiver = (inv, call) => {
         const receiver = receiverType(call.receiver);
         // The counts alone say which extension methods can take the call; a count of zero is left out.
         if (receiver.on === undefined && receiver.self === undefined && call.member?.direct !== true)
             return { ...(call.args > 0 ? { args: call.args } : {}), ...(call.typeArgs > 0 ? { typeArgs: call.typeArgs } : {}) };
         const from = enclosingTypes(inv).types;
-        return { args: call.args, typeArgs: call.typeArgs, ...(from === undefined ? {} : { from: listPlace(from) }), ...receiver };
+        return { args: call.args, typeArgs: call.typeArgs, ...argumentTypes(inv), ...(from === undefined ? {} : { from: listPlace(from) }), ...receiver };
     };
     /** What the file says of the type of a call's receiver (see the `ext` descriptor): the enclosing type for `this`, the written types of the nearest declarations of a name for an identifier or `this.name`, or nothing where no type is written. */
     const receiverType = (receiver) => {
@@ -1404,12 +1513,7 @@ export function extractCsharpRefs(file) {
         for (const e of nearest) {
             if (e.type === null)
                 return {};
-            let place = receiverTypePlaces.get(e.type.id);
-            if (place === undefined) {
-                const described = describeType(e.type);
-                place = described === undefined ? -1 : receiverTypes.push(described) - 1;
-                receiverTypePlaces.set(e.type.id, place);
-            }
+            const place = typePlace(e.type);
             if (place === -1)
                 return {};
             on.push(place);
@@ -2663,7 +2767,23 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 if (from === undefined || holders === undefined || written.includes(undefined))
                     break;
                 const receivers = written.filter((g) => g.length > 0);
-                const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from };
+                // The written type of each argument, as the conditions read it; an argument whose type the extract does not hold says nothing.
+                const argTypes = r.argTypes?.map((a) => {
+                    if (a === null || typeof a === 'string')
+                        return a;
+                    const place = typeof a === 'number' ? a : a[0];
+                    const readings = receiverReadings(place);
+                    if (readings === undefined || readings.length === 0)
+                        return null;
+                    if (typeof a === 'number')
+                        return { type: readings };
+                    const around = a[1] === undefined ? undefined : lists[a[1]];
+                    const named = extract.receiverTypes[place];
+                    if ((a[1] !== undefined && around === undefined) || named.kind !== 'plain')
+                        return null;
+                    return { member: readings, ...(around === undefined ? {} : { unless: { types: around, name: named.ref.split('.')[0] } }) };
+                });
+                const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from, ...(argTypes === undefined ? {} : { argTypes }) };
                 const unless = [];
                 // A receiver the file does not declare is a value only as a member of a type around the call.
                 if (r.member !== undefined)
@@ -2693,7 +2813,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 32,
+    rev: 33,
     declarations,
     uses,
 };

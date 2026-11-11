@@ -3924,12 +3924,14 @@ Emby.Server.Implementations/Playlists/PlaylistManager.cs:228	MediaBrowser.Contro
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:269	MediaBrowser.Controller/Providers/DirectoryService.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:269	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:273	MediaBrowser.Controller/Providers/RefreshPriority.cs
+Emby.Server.Implementations/Playlists/PlaylistManager.cs:278	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:278	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:29	MediaBrowser.Controller/Entities/Genre.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:297	MediaBrowser.Controller/Providers/DirectoryService.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:297	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:30	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:301	MediaBrowser.Controller/Providers/RefreshPriority.cs
+Emby.Server.Implementations/Playlists/PlaylistManager.cs:316	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:316	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:325	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:326	src/Jellyfin.Extensions/ReadOnlyListExtension.cs
@@ -7197,6 +7199,7 @@ Jellyfin.Api/Controllers/SearchController.cs:127	MediaBrowser.Model/Search/Searc
 Jellyfin.Api/Controllers/SearchController.cs:135	MediaBrowser.Controller/Library/SearchHintInfo.cs
 Jellyfin.Api/Controllers/SearchController.cs:135	MediaBrowser.Model/Search/SearchHint.cs
 Jellyfin.Api/Controllers/SearchController.cs:139	MediaBrowser.Model/Search/SearchHint.cs
+Jellyfin.Api/Controllers/SearchController.cs:164	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:164	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:177	MediaBrowser.Controller/Entities/IHasSeries.cs
 Jellyfin.Api/Controllers/SearchController.cs:180	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
@@ -7216,6 +7219,7 @@ Jellyfin.Api/Controllers/SearchController.cs:228	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/SearchController.cs:228	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:231	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:231	MediaBrowser.Model/Entities/ImageType.cs
+Jellyfin.Api/Controllers/SearchController.cs:235	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:235	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:245	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:245	MediaBrowser.Model/Search/SearchHint.cs
@@ -7223,6 +7227,7 @@ Jellyfin.Api/Controllers/SearchController.cs:247	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/SearchController.cs:247	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:248	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:248	MediaBrowser.Model/Entities/ImageType.cs
+Jellyfin.Api/Controllers/SearchController.cs:252	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 Jellyfin.Api/Controllers/SearchController.cs:252	MediaBrowser.Model/Entities/ImageType.cs
 Jellyfin.Api/Controllers/SearchController.cs:262	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/SearchController.cs:262	MediaBrowser.Model/Entities/ImageType.cs
@@ -23955,6 +23960,7 @@ src/Jellyfin.LiveTv/LiveTvDtoService.cs:374	MediaBrowser.Model/LiveTv/DayPattern
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:381	MediaBrowser.Model/LiveTv/DayPattern.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:389	MediaBrowser.Controller/Entities/BaseItem.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:39	MediaBrowser.Controller/Dto/IDtoService.cs
+src/Jellyfin.LiveTv/LiveTvDtoService.cs:393	MediaBrowser.Controller/Drawing/ImageProcessorExtensions.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:393	MediaBrowser.Model/Entities/ImageType.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:40	MediaBrowser.Controller/Drawing/IImageProcessor.cs
 src/Jellyfin.LiveTv/LiveTvDtoService.cs:407	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
@@ -23997,6 +24003,7 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:1073	MediaBrowser.Controller/LiveTv/ILiveTv
 src/Jellyfin.LiveTv/LiveTvManager.cs:1073	MediaBrowser.Controller/LiveTv/SeriesTimerInfo.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1076	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1083	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
+src/Jellyfin.LiveTv/LiveTvManager.cs:1085	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1085	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1112	MediaBrowser.Model/LiveTv/TimerInfoDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:1123	MediaBrowser.Controller/LiveTv/ILiveTvService.cs
@@ -24057,6 +24064,7 @@ src/Jellyfin.LiveTv/LiveTvManager.cs:164	MediaBrowser.Controller/LiveTv/LiveTvCh
 src/Jellyfin.LiveTv/LiveTvManager.cs:169	MediaBrowser.Controller/LiveTv/ILiveTvService.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:177	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:177	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
+src/Jellyfin.LiveTv/LiveTvManager.cs:179	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:186	MediaBrowser.Controller/Dto/DtoOptions.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:188	MediaBrowser.Model/Dto/BaseItemDto.cs
 src/Jellyfin.LiveTv/LiveTvManager.cs:198	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -24279,6 +24287,7 @@ src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:251	MediaBrowser.Model/Entities
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:259	MediaBrowser.Controller/Library/ILiveStream.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:259	MediaBrowser.Model/Dto/MediaSourceInfo.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:262	MediaBrowser.Controller/Library/ILiveStream.cs
+src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:270	MediaBrowser.Controller/Library/LibraryManagerExtensions.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:270	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:272	MediaBrowser.Model/LiveTv/ChannelType.cs
 src/Jellyfin.LiveTv/LiveTvMediaSourceProvider.cs:276	MediaBrowser.Model/Dto/MediaSourceInfo.cs

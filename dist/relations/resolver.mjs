@@ -307,7 +307,7 @@ export function makeResolver(deps) {
         return undefined;
     };
     let csharpLookup;
-    const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
+    const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key, (readings, fromFile) => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0)));
     /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
     const held = new WeakMap();
     const holds = (condition, fromFile) => {

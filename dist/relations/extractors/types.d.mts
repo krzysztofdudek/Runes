@@ -18,12 +18,15 @@ export interface SymbolSetMember {
  * `no-member`: the reading is an extension method of a call whose receiver's first name `name` the file does not declare, so the receiver is a value only as such a member. The condition holds when the nearest of `types` that knows the name has it as a nested type, or none of them knows it: the call is then a static call through a type. With `call` (the receiver is that name alone), it also holds when the member is a field or a property whose written type has an instance method the call fits, as `instance-method` reads it.
  *
  * A type of `self`, `from` and `types` that is a C#11 `file` type of the referencing file is written `file:<key>`, as in `TargetHint.within`: the resolver reads for it the bases that file records for its `file` type, and nothing a published type of the same name declares.
+ *
+ * `argTypes`, on `instance-method` and on the `call` of `no-member`, is what the file writes of the type of each argument, in order (`CsharpArgType`). An instance method the call fits by its counts does not take the call when the type of one argument is one the parameter there cannot take, as far as the written types say for certain; an argument or a parameter whose type is not known takes part in nothing.
  */
 export type CsharpCondition = {
     kind: 'instance-method';
     method: string;
     args: number;
     typeArgs: number;
+    argTypes?: CsharpArgType[];
     receivers: TargetHint[][];
     self?: string;
     from: string[];
@@ -39,9 +42,22 @@ export type CsharpCondition = {
         method: string;
         args: number;
         typeArgs: number;
+        argTypes?: CsharpArgType[];
         from: string[];
     };
 };
+/**
+ * What a C# file writes of the type of one argument of a call: the keyword of a predefined type (`string`); `type`, the ordered group of readings of the written type of the parameter, field, property or local the argument is; `member`, the readings of the type a member is read through (`ImageType.Primary`), which is the argument's type when that type is an enum, and says nothing where the first name is a member of one of `unless.types` (the types around the call that can hold a member the file does not show); or null where the file writes none.
+ */
+export type CsharpArgType = string | {
+    type: TargetHint[];
+} | {
+    member: TargetHint[];
+    unless?: {
+        types: string[];
+        name: string;
+    };
+} | null;
 export type TargetHint = {
     kind: 'path';
     specifier: string;

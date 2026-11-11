@@ -296,12 +296,12 @@ describe('csharp: an extension call gives way to an instance method of the recei
       const listed = Object.fromEntries(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:')).map((k) => k.slice('methods:'.length).split('\t')));
       expect(listed).toEqual({
         // A private method is listed only in a partial type, whose other parts can call it.
-        'App.Order': 'Save:0:0:0 Save:0:1:1 -Hidden:0:0:0 ~Shared:0:0:0 ~Derived:0:0:0 Wide:0:0:0 Inside:0:0:0 -Secret:0:0:0 -Outer:0:0:0',
+        'App.Order': 'Save:0:0:0 Save:0:1:1(int) -Hidden:0:0:0 ~Shared:0:0:0 ~Derived:0:0:0 Wide:0:0:0 Inside:0:0:0 -Secret:0:0:0 -Outer:0:0:0',
         'App.Order+Line': 'Total:0:0:0',
         'App.IOrder': 'Explicit:0:0:0',
         'App.Money': 'Round:0:0:0',
       });
-      expect(decodeMethods(listed['App.Order']).slice(1, 4)).toEqual([{ name: 'Save', shape: '0:1:1', reach: 'public' }, { name: 'Hidden', shape: '0:0:0', reach: 'private' }, { name: 'Shared', shape: '0:0:0', reach: 'protected' }]);
+      expect(decodeMethods(listed['App.Order']).slice(1, 4)).toEqual([{ name: 'Save', shape: '0:1:1', reach: 'public', params: ['int'] }, { name: 'Hidden', shape: '0:0:0', reach: 'private' }, { name: 'Shared', shape: '0:0:0', reach: 'protected' }]);
       expect(methodsKey('App.Order')).toBe('methods:App.Order');
     });
   });
@@ -310,7 +310,7 @@ describe('csharp: an extension call gives way to an instance method of the recei
     await project({
       'src/a/Types.cs': 'public class Bag {\n  public void Put(int a) { }\n  public void Put<T>(T a, int b = 0) { }\n  public void Put(string format, params object[] rest) { }\n  public void Put(int a, int b, int c) { }\n}\n',
     }, ({ keys, table, resolver }) => {
-      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:'))).toEqual(['methods:Bag\tPut:0:1:1 Put:1:1:2 Put:0:1:* Put:0:3:3']);
+      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:'))).toEqual(['methods:Bag\tPut:0:1:1(int) Put:1:1:2(,int) Put:0:1:*(string) Put:0:3:3(int,int,int)']);
       for (const [shape, typeArgs, args, fits] of [
         ['0:1:1', 0, 1, true], ['0:1:1', 0, 0, false], ['0:1:1', 0, 2, false], ['0:1:1', 1, 1, false],
         ['1:1:2', 0, 1, true], ['1:1:2', 1, 2, true], ['1:1:2', 2, 1, false], ['1:1:2', 0, 3, false],
@@ -779,6 +779,126 @@ describe('csharp: an extension method takes a call only by its counts', () => {
       expect(edges('src/web/Use.cs')).toEqual([]);
       const group = csharpExtractor.uses(files[2]).find((u) => u.line === 6).candidates;
       expect(group.map((c) => resolver.classify(c, 'src/web/Use.cs', 'csharp').kind)).toEqual(['absent', 'ambiguous', 'ambiguous']);
+    });
+  });
+});
+
+describe('csharp: an instance method takes a call only when its parameters can take the written types of the arguments', () => {
+  // One row per call: the parameter type of the instance method, the argument as the call writes it, and whether the instance method refuses it (the extension method of that name then takes the call).
+  const ROWS = [
+    ['long', 'i', false, 'an int widens to a long'],
+    ['int', 's', true, 'a string converts to no int'],
+    ['string', 'i', true, 'an int converts to no string'],
+    ['object', 'o', false, 'object takes everything'],
+    ['string', 'o', true, 'a class whose bases are all read, none with a conversion operator'],
+    ['string', 'e', false, 'a class with a base outside the repository may convert'],
+    ['string', 'k', true, 'an enum value converts to no string'],
+    ['string', 'm', false, 'a class that declares an implicit conversion operator may convert'],
+    ['Base', 'd', false, 'a derived class'],
+    ['IThing', 't', false, 'an implemented interface'],
+    ['Base', 'o', true, 'an unrelated class'],
+    ['Base', 'e', false, 'an unrelated class with a base outside the repository'],
+    ['Base', 's', true, 'a string converts to no class without a conversion operator'],
+    ['Money', 's', false, 'a parameter type with a conversion operator'],
+    ['Money', 'o', false, 'a parameter type with a conversion operator takes a class too'],
+    ['Guid', 's', true, 'a framework struct takes no string'],
+    ['Guid?', 's', true, 'a nullable type is read as the type under it'],
+    ['Guid', 'k', true, 'a framework struct takes no enum value'],
+    ['IComparable', 'k', false, 'an interface System.Enum implements'],
+    ['IComparable', 's', false, 'a framework type that is no known struct'],
+    ['Al', 'k', false, 'a using alias may name anything'],
+    ['Twin', 'k', false, 'a name two imported namespaces declare is not known to be outside'],
+    ['long', 'n', false, 'a native integer is not read'],
+    ['nint', 'i', false, 'a native integer parameter is not read'],
+    ['int', 'dy', false, 'a dynamic argument is bound at run time'],
+    ['int', 'ref s', false, 'an argument passed by reference is not read'],
+    ['int', 'a: s', false, 'a named argument leaves every argument unread'],
+    ['string', 'Kind.A', true, 'an enum member has the enum\'s type'],
+    ['string', 'Flags.On', false, 'a member of a type that is no enum says nothing'],
+    ['string', 'v', false, 'a var local writes no type'],
+    ['int', 'q', false, 'two declarations of one name in one scope leave its type open'],
+    ['Kind', 'Kind.A', false, 'the enum itself'],
+    ['Kind', 'o', true, 'an enum takes no class'],
+    ['Base', 'k', true, 'a class takes no enum value'],
+    ['int[]', 's', false, 'an array parameter is not read'],
+  ];
+  const sources = () => ({
+    'src/a/Twin.cs': 'namespace A;\npublic class Twin { }\n',
+    'src/b/Twin.cs': 'namespace B;\npublic class Twin { }\n',
+    'src/core/IBag.cs': [
+      'using System;', 'using A;', 'using B;', 'using Al = System.Guid;', 'namespace App;',
+      'public class Base { }', 'public class Derived : Base { }', 'public class Other { }', 'public class Odd : Exception { }',
+      'public class Money { public static implicit operator Money(string s) => null; }',
+      'public interface IThing { }', 'public class Thing : IThing { }', 'public enum Kind { A }', 'public static class Flags { public const int On = 1; }',
+      'public interface IBag {',
+      ...ROWS.map(([param], n) => `  void P${n}(${param} a);`),
+      '  void Wide(int a, params string[] rest);',
+      '  void Open<T>(T a);',
+      '}',
+    ].join('\n'),
+    'src/ext/BagExtensions.cs': ['namespace App;', 'public static class BagExtensions {', ...ROWS.map((_, n) => `  public static void P${n}(this IBag b, object a) { }`), '  public static void Wide(this IBag b, object a, object c) { }', '  public static void Open(this IBag b, object a) { }', '}'].join('\n'),
+    'src/web/Use.cs': [
+      'using System;', 'namespace App;', 'public class Use {', '  private readonly IBag _bag;',
+      '  public void M(int i, string s, Derived d, Other o, Odd e, Thing t, Kind k, Money m, dynamic dy, nint n) {',
+      '    var v = Make();', '    int q = 1, r = 2; { string q2 = s; }',
+      ...ROWS.map(([, arg], n) => `    _bag.P${n}(${arg});`),
+      '    _bag.Wide(i, o);',
+      '    _bag.Open(s);',
+      '  }', '}',
+    ].join('\n'),
+  });
+  const FIRST_CALL = 8;
+
+  it('refuses a parameter only where the written types say for certain that it cannot take the argument', async () => {
+    await project(sources(), ({ edges }) => {
+      const toExt = new Set(edges('src/web/Use.cs').filter((e) => e.endsWith('->ext')).map((e) => Number(e.split('->')[0])));
+      const answered = ROWS.map(([param, arg, , why], n) => [`${param} <- ${arg}`, toExt.has(FIRST_CALL + n), why]);
+      expect(answered).toEqual(ROWS.map(([param, arg, refused, why]) => [`${param} <- ${arg}`, refused, why]));
+      // A params parameter and a type parameter take any argument.
+      expect([toExt.has(FIRST_CALL + ROWS.length), toExt.has(FIRST_CALL + ROWS.length + 1)]).toEqual([false, false]);
+    });
+  });
+
+  it('a member read through a name that a type around the call holds as a member is a value: its type is not read', async () => {
+    await project({
+      ...sources(),
+      'src/core/HasKind.cs': 'namespace App;\npublic class HasKind { protected Other Kind; }\n',
+      'src/web/Sub.cs': 'namespace App;\npublic class Sub : HasKind {\n  private readonly IBag _bag;\n  void M() {\n    _bag.P3(Kind.A);\n  }\n}\npublic class Free : Base {\n  private readonly IBag _bag;\n  void M() {\n    _bag.P4(Kind.A);\n  }\n}\n',
+    }, ({ edges }) => {
+      // P3 takes an object, P4 a string: in `Free` the name is the enum and the string parameter refuses it; in `Sub` it is the inherited field, whose members' types are not written here.
+      expect(edges('src/web/Sub.cs').filter((e) => e.endsWith('->ext'))).toEqual(['11->ext']);
+    });
+  });
+
+  it('records the written type of each parameter, the enum mark and the conversion mark, and writes the argument types on a call that carries a receiver type', async () => {
+    await project(sources(), ({ keys, files }) => {
+      const core = keys('src/core/IBag.cs');
+      expect(core.filter((k) => k.startsWith('enum:') || k.startsWith('converts:'))).toEqual(['converts:App.Money', 'enum:App.Kind']);
+      const methods = decodeMethods(core.find((k) => k.startsWith('methods:App.IBag\t')).split('\t')[1]);
+      expect(methods.find((m) => m.name === 'P0').params).toEqual(['long']);
+      expect(methods.find((m) => m.name === 'P8').params.map((t) => t.split(':')[1])).toEqual(['Base']);
+      expect(methods.find((m) => m.name === 'Wide').params).toEqual(['int']);
+      expect(methods.find((m) => m.name === 'Open').params).toBe(undefined);
+      const extract = extractCsharpRefs(files.find((f) => f.path === 'src/web/Use.cs'));
+      const call = (name) => extract.refs.find((r) => r.kind === 'ext' && r.name === name);
+      expect(call('P0').argTypes).toEqual(['int']);
+      expect(extract.receiverTypes[call('P8').argTypes[0]].ref).toBe('Derived');
+      expect(call('P24').argTypes).toBe(undefined); // dynamic
+      expect(call('P25').argTypes).toBe(undefined); // ref
+      expect(call('P26').argTypes).toBe(undefined); // a named argument
+      expect(extract.receiverTypes[call('P27').argTypes[0][0]].ref).toBe('Kind');
+      expect(call('Wide').argTypes.length).toBe(2);
+    });
+  });
+
+  it('an extract stored without the receiver types its argument types name reads those arguments as unknown', async () => {
+    await project(sources(), ({ files, table }) => {
+      const file = files.find((f) => f.path === 'src/web/Use.cs');
+      const { receiverTypes, ...stored } = extractCsharpRefs(file);
+      const kept = { ...stored, refs: stored.refs.map((r) => (r.kind === 'ext' ? { ...r, on: undefined, self: 'App.Use' } : r)), receiverTypes: [] };
+      expect(receiverTypes.length > 0).toBe(true);
+      const resolver = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: table, resolvePathToFile: () => undefined });
+      expect(() => resolveDetectedEdges(assembleCsharpCandidates(kept), resolver, 'src/web/Use.cs', 'csharp')).not.toThrow();
     });
   });
 });
