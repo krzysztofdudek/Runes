@@ -140,20 +140,16 @@ describe('walk and closest', () => {
     });
   });
 
-  // A node with 200 000 direct children: an index loop over them counts from the first child on every call, the square of their number; the cursor takes one step per child. About 0.1 s here, against a bound that leaves room for a loaded machine.
+  // A node with 200 000 direct children, as a malformed file gives: unterminated strings, one per line, parse into one flat run under the root. (A well-formed list will not do: tree-sitter stores a repetition balanced, and an index loop reads that quickly.) An index loop over the run counts from the first child on every call, the square of their number: 2 s at 25 000 lines and 9 s at 50 000. The cursor takes one step per child, about half a second here.
   test('walk reads a node with 200 000 children in time linear in their number', async () => {
-    const elements = 200_000;
-    await host.withParsedFile('wide.js', `const wide = [${'1,'.repeat(elements)}];\n`, (tree) => {
-      let numbers = 0;
-      let widest = 0;
+    const lines = 140_000;
+    await host.withParsedFile('wide.js', '"a(\n'.repeat(lines), (tree) => {
+      assert.ok(tree.rootNode.childCount >= 200_000, `the root has ${tree.rootNode.childCount} children`);
+      let count = 0;
       const start = performance.now();
-      walk(tree.rootNode, (n) => {
-        if (n.type === 'number') numbers++;
-        if (n.childCount > widest) widest = n.childCount;
-      });
+      walk(tree.rootNode, () => { count++; });
       const elapsed = performance.now() - start;
-      assert.equal(numbers, elements);
-      assert.ok(widest >= elements, `the widest node has ${widest} children`);
+      assert.equal(count, tree.rootNode.descendantCount);
       assert.ok(elapsed < 5_000, `took ${Math.round(elapsed)} ms`);
     });
   });

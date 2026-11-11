@@ -57,6 +57,15 @@ describe('a node with very many children is read in time linear in their number'
     });
   }
 
+  // Dotted names in the run: each is a qualified name no type position takes, which is read against its parent, and each gives its reference.
+  it('malformed C# of 388 000 characters whose lines hold dotted names', async () => {
+    const line = 'A.B c(\n';
+    const { uses, declarations, elapsed } = await timed(relations.csharpExtractor, 'A.cs', 'csharp', repeatTo(line, SIZE));
+    assert.equal(uses.length, Math.floor(SIZE / line.length));
+    assert.equal(declarations.length, 0);
+    assert.ok(elapsed < BOUND_MS, `took ${Math.round(elapsed)} ms`);
+  });
+
   it('a Python file of 20 000 decorated top-level functions declares each of them', async () => {
     const count = 20_000;
     let code = '';
