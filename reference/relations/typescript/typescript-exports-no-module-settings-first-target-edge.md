@@ -8,7 +8,7 @@ cites: "TypeScript 6.0.3 computed options: with neither `module` nor `moduleReso
 
 ## Rule
 
-When the importing file's settings do not decide the conditions (no tsconfig, or a tsconfig that sets neither `moduleResolution` nor a `module` that implies it), Runes reads `exports` as it did before it read conditions: every target in declaration order, the first that names a file. Here that is the `require` branch's file.
+When the importing file's settings do not decide the conditions (a tsconfig that sets neither `moduleResolution` nor a `module` that implies it; a file no tsconfig covers is read with Node's default conditions instead), Runes reads `exports` as it did before it read conditions: every target in declaration order, the first that names a file. Here that is the `require` branch's file.
 
 ## Files
 
