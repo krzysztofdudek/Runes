@@ -159,10 +159,12 @@ const IMPORT_CALL_REWRITING_MODULE_KINDS = new Set(['commonjs', 'amd', 'umd', 's
 const UNREAD_SETTING = '?';
 const CLASSIC_MODULE_KINDS = new Set(['amd', 'umd', 'system', 'none']);
 const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
+// One `module` for each way a file is read under Bundler when a base that cannot be read sets it: the compiler accepts Bundler with commonjs, an ES kind (es2015 and later) or preserve, and nothing else.
+const UNREAD_BUNDLER_MODULES = ['commonjs', 'esnext', 'preserve'];
 /**
  * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
  *
- * The settings are read as TypeScript 6 computes them. `moduleResolution` `bundler`, `node16` or `nodenext` names the resolution. With no `moduleResolution` the `module` implies it: `node16`, `node18`, `node20` and `nodenext` imply their own, `amd`, `umd`, `system` and `none` imply Classic, and every other one Bundler. With no `module` the `target` implies it: `es5` gives `commonjs`, and any other target, or none, an ES module kind. Under Node10 or Classic, named or implied, `exports` is not read at all, a difference Runes does not model: the settings then decide nothing. A config that extends a base Runes cannot read (a preset that is installed, not committed) inherits settings that are unknown, not unset: the defaults do not apply to them. `module`, `moduleResolution` and `customConditions` are each known only where a later base or the config itself sets them. What does not depend on the unknown ones is still returned: a `require()` call and `import x = require()` read `require`, a `.mts` or `.mjs` file reads `import`, a `.cts` or `.cjs` file reads `require` outside an `import()`. For the rest the result names every reading that remains: both of `import` and `require`, `node` as a key that may be entered when the resolution is unknown (Node or Bundler; Node10 and Classic read no `exports`), and any non-standard key as one that may be entered when the custom conditions are unknown. {@link pickTarget} binds only when all those readings name one file.
+ * The settings are read as TypeScript 6 computes them. `moduleResolution` `bundler`, `node16` or `nodenext` names the resolution. With no `moduleResolution` the `module` implies it: `node16`, `node18`, `node20` and `nodenext` imply their own, `amd`, `umd`, `system` and `none` imply Classic, and every other one Bundler. With no `module` the `target` implies it: `es5` gives `commonjs`, and any other target, or none, an ES module kind. Under Node10 or Classic, named or implied, `exports` is not read at all, a difference Runes does not model: the settings then decide nothing. A config that extends a base Runes cannot read (a preset that is installed, not committed) inherits settings that are unknown, not unset: the defaults do not apply to them. `module`, `moduleResolution` and `customConditions` are each known only where a later base or the config itself sets them. An unknown one is taken to be a value the compiler accepts beside the known one, since a project that compiles holds no pair it rejects: Bundler goes with `commonjs`, an ES kind from `es2015` on or `preserve` (error 5095 otherwise), and a Node resolution goes with a Node `module` and with no other (5109, 5110). So a Node `module` the config sets means a Node resolution and any other `module` it sets means Bundler; a Node resolution it sets means a Node `module`, and Bundler leaves `commonjs`, an ES kind or `preserve`; with neither set, all of these remain. Node10 and Classic are not among them: the compiler reports both as deprecated and still applies them, they read no `exports`, and counting them would leave every lookup under an unread preset undecided. A `module` that goes only with those two (`amd`, `umd`, `system`, `none`) decides nothing. Each pairing that remains gives one reading, the branch the file enters together with whether `node` is entered, so a `require()` call, `import x = require()`, a `.mts` or `.mjs` file and a `.cts` or `.cjs` file outside an `import()` keep one branch in every reading. A non-standard key is one that may be entered when the custom conditions are unknown. {@link pickTarget} binds the file all readings name, and where they differ the first listed target that one of them names.
  *
  * A file no tsconfig covers is read as Node reads it, whatever the compiler would default to: `import` or `require` by the file's format, `types`, `node` and `default`, so a key for a runtime or a bundler (`react-server`, `edge-light`, `worker`, `react-native`, `browser`) is passed over.
  *
@@ -182,24 +184,31 @@ function exportConditions(from, deps, callForm) {
     const type = () => deps.nearestPackage(from)?.manifest.type;
     if (config === undefined) {
         const format = esm ? 'import' : cjs ? 'require' : type() === 'module' ? 'import' : 'require';
-        return { forms: [callForm ?? format], entered: new Set(['default', 'types', 'node']), maybeNode: false, maybeCustom: false };
+        return { readings: [{ form: callForm ?? format, node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
     }
     // undefined: set by a base that cannot be read.
     const module = config.module === UNREAD_SETTING ? undefined : (config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext'));
     const resolution = config.moduleResolution;
-    let kinds;
-    if (resolution === UNREAD_SETTING)
-        kinds = ['node', 'bundler'];
+    // Each pairing of a resolution and a `module` the settings leave possible. One when both are known, however the compiler judges the pair.
+    let pairings;
+    if (resolution === UNREAD_SETTING) {
+        if (module === undefined)
+            pairings = [['node', 'nodenext'], ...UNREAD_BUNDLER_MODULES.map((mod) => ['bundler', mod])];
+        else if (CLASSIC_MODULE_KINDS.has(module))
+            return undefined;
+        else
+            pairings = [[NODE_MODULE_KINDS.has(module) ? 'node' : 'bundler', module]];
+    }
     else if (resolution === undefined) {
         // `module` is known here: an unread base leaves both settings unknown, and only an explicit value replaces either.
         if (CLASSIC_MODULE_KINDS.has(module))
             return undefined;
-        kinds = [NODE_MODULE_KINDS.has(module) ? 'node' : 'bundler'];
+        pairings = [[NODE_MODULE_KINDS.has(module) ? 'node' : 'bundler', module]];
     }
     else if (resolution === 'bundler')
-        kinds = ['bundler'];
+        pairings = module === undefined ? UNREAD_BUNDLER_MODULES.map((mod) => ['bundler', mod]) : [['bundler', module]];
     else if (resolution === 'node16' || resolution === 'nodenext')
-        kinds = ['node'];
+        pairings = [['node', module ?? 'nodenext']];
     else
         return undefined;
     // The format of the file under one resolution and one `module`.
@@ -227,43 +236,36 @@ function exportConditions(from, deps, callForm) {
         const rewritten = kind === 'node' ? format === 'require' : cjs || (!esm && IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod));
         return rewritten ? 'require' : 'import';
     };
-    const forms = new Set();
-    if (module === undefined) {
-        // No `module` is known: the call form or the file kind may still fix the branch.
-        if (callForm === 'require')
-            forms.add('require');
-        else if (esm)
-            forms.add('import');
-        else if (cjs && callForm === undefined)
-            forms.add('require');
-        else
-            forms.add('import').add('require');
+    const readings = [];
+    for (const [kind, mod] of pairings) {
+        const format = staticFormat(kind, mod);
+        if (format === undefined)
+            return undefined;
+        const form = callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
+        const node = kind === 'node';
+        if (!readings.some((r) => r.form === form && r.node === node))
+            readings.push({ form, node });
     }
-    else {
-        for (const kind of kinds) {
-            const format = staticFormat(kind, module);
-            if (format === undefined)
-                return undefined;
-            forms.add(callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, module, format) : format);
-        }
-    }
-    const entered = new Set(['default', 'types', ...(config.customConditions ?? [])]);
-    if (kinds.length === 1 && kinds[0] === 'node')
-        entered.add('node');
-    return { forms: [...forms], entered, maybeNode: kinds.length > 1, maybeCustom: config.customConditionsUnknown === true };
+    return { readings, entered: new Set(['default', 'types', ...(config.customConditions ?? [])]), maybeCustom: config.customConditionsUnknown === true };
 }
 const STANDARD_CONDITIONS = new Set(['default', 'import', 'require', 'types', 'node']);
 /**
- * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing; a versioned `types@<range>` key is entered when the compiler's version satisfies its range and passed over when it does not. Where the conditions leave something open (see {@link ExportConditions}), the map is walked once for `import` and once for `require` when both remain, and at a key that may or may not be entered the walk asks what passing it over gives: the lookup binds when every reading names the same file, and otherwise falls back to the reading without conditions. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
+ * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing; a versioned `types@<range>` key is entered when the compiler's version satisfies its range and passed over when it does not. Where the conditions leave something open (see {@link ExportConditions}), the map is walked once for each reading, and at a key that may or may not be entered the walk takes both what the key names and what passing it over gives: the lookup binds the file every reading names, and where the readings differ, the first target in declaration order that one of them names, so never a file no reading reaches. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
  */
 function pickTarget(match, conditions, resolve) {
     if (match === undefined)
         return undefined;
     const { value, captured } = match;
-    const firstTarget = () => {
+    const files = new Map();
+    const fileOf = (target) => {
+        if (!files.has(target))
+            files.set(target, resolve(target));
+        return files.get(target);
+    };
+    const firstTarget = (named) => {
         for (const target of collectTargets(value, captured) ?? []) {
-            const hit = resolve(target);
-            if (hit !== undefined)
+            const hit = fileOf(target);
+            if (hit !== undefined && named?.has(hit) !== false)
                 return hit;
         }
         return undefined;
@@ -271,38 +273,37 @@ function pickTarget(match, conditions, resolve) {
     if (conditions === undefined)
         return firstTarget();
     const STOP = null;
-    const DEPENDS = 0;
-    const walk = (v, form) => {
+    // What one reading finds in `v`: each file it may name, STOP for a `null` it may reach, and undefined when it may name nothing here, so the lookup goes on.
+    const walk = (v, reading) => {
         if (typeof v === 'string')
-            return resolve(captured === undefined ? v : v.split('*').join(captured));
+            return new Set([fileOf(captured === undefined ? v : v.split('*').join(captured))]);
         if (v === null)
-            return STOP;
+            return new Set([STOP]);
         const branches = Array.isArray(v) ? v.map((entry) => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
-        const from = (i) => {
-            for (; i < branches.length; i++) {
-                const [condition, branch] = branches[i];
-                const versioned = condition.startsWith('types@');
-                const isEntered = condition === form || conditions.entered.has(condition) || (versioned && typeScriptSatisfies(condition.slice('types@'.length)));
-                const mayBeEntered = !isEntered && ((condition === 'node' && conditions.maybeNode) || (conditions.maybeCustom && !versioned && !STANDARD_CONDITIONS.has(condition)));
-                if (!isEntered && !mayBeEntered)
-                    continue;
-                const hit = walk(branch, form);
-                if (hit === undefined)
-                    continue;
-                if (isEntered || hit === DEPENDS)
-                    return hit;
-                // A key that may or may not be entered: the answer holds only when passing it over gives the same.
-                return from(i + 1) === hit ? hit : DEPENDS;
-            }
-            return undefined;
-        };
-        return from(0);
+        const found = new Set();
+        for (const [condition, branch] of branches) {
+            const versioned = condition.startsWith('types@');
+            const isEntered = condition === reading.form || (condition === 'node' && reading.node) || conditions.entered.has(condition) || (versioned && typeScriptSatisfies(condition.slice('types@'.length)));
+            // A key that may or may not be entered: what it names is found, and so is what passing it over gives.
+            const mayBeEntered = !isEntered && conditions.maybeCustom && !versioned && !STANDARD_CONDITIONS.has(condition);
+            if (!isEntered && !mayBeEntered)
+                continue;
+            const hits = walk(branch, reading);
+            for (const hit of hits)
+                if (hit !== undefined)
+                    found.add(hit);
+            if (isEntered && !hits.has(undefined))
+                return found;
+        }
+        return found.add(undefined);
     };
-    const found = new Set(conditions.forms.map((form) => walk(value, form) ?? STOP));
-    if (found.size > 1 || found.has(DEPENDS))
-        return firstTarget();
-    const only = [...found][0];
-    return typeof only === 'string' ? only : undefined;
+    const named = new Set();
+    for (const reading of conditions.readings)
+        for (const hit of walk(value, reading))
+            named.add(hit ?? STOP);
+    if (named.size > 1)
+        return firstTarget(named);
+    return [...named][0] ?? undefined;
 }
 /** The entry of a subpath map `key` selects: the exact key, else the `*` pattern with the longest prefix, with what its `*` captured. */
 function matchSubpathKey(map, key) {
