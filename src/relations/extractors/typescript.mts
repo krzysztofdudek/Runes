@@ -225,10 +225,16 @@ function augmentationSpecifier(moduleNode: Node, inModuleFile: boolean): string 
 const TYPE_POSITION_ANCESTORS = new Set([
   'type_query',
   'type_annotation',
+  'type_predicate',
+  'conditional_type',
+  'readonly_type',
+  'infer_type',
+  'index_type_query',
+  'lookup_type',
+  'parenthesized_type',
   'type_arguments',
   'constraint',
   'default_type',
-  'implements_clause',
   'union_type',
   'intersection_type',
   'tuple_type',
@@ -239,6 +245,42 @@ const TYPE_POSITION_ANCESTORS = new Set([
 ]);
 // Nodes whose first named child is a value or a name and whose other named children are types.
 const TYPE_ON_THE_RIGHT = new Set(['type_alias_declaration', 'as_expression', 'satisfies_expression']);
+// The grammar cannot read an import type in some places and parses the line as expressions, in an ERROR node or not. Where a token that only introduces a type comes right before the import chain, the chain is a type.
+const TYPE_INTRODUCERS = new Set(['keyof', 'is', 'infer', 'readonly', 'unique', '|', '&', '${']);
+
+/** The import() call at the foot of `import('x')`, `import('x').T` or `import('x').T.U`, or undefined when the node is not such a chain. */
+function importCallOf(node: Node | null): Node | undefined {
+  let cur = node;
+  while (cur !== null && cur.type === 'member_expression') cur = cur.childForFieldName('object');
+  return cur !== null && cur.type === 'call_expression' && cur.childForFieldName('function')?.type === 'import' ? cur : undefined;
+}
+
+/**
+ * The import() calls a node's own children make import types where the grammar does not say so: the one type argument of `B<import('x').T>` read as `B < import('x').T > …` (a class heritage, a tagged template, a call, whose `>` and parameters come as an ERROR node beside the comparison), an import chain in the pattern of a parameter, where a parenthesized type `(import('x').T)` was read as an arrow function's parameters, and a chain after a token that only introduces a type inside an ERROR node (`keyof`, a template literal type's `${`).
+ */
+function misreadImportTypes(node: Node): Node[] {
+  const found: Node[] = [];
+  const add = (chain: Node | null): void => {
+    const call = importCallOf(chain);
+    if (call !== undefined) found.push(call);
+  };
+  if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '>') {
+    const left = node.childForFieldName('left');
+    if (left !== null && left.type === 'binary_expression' && left.childForFieldName('operator')?.type === '<') add(left.childForFieldName('right'));
+  } else if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '<') {
+    // `g<import('x').T>()`: the `>` and the empty parameters that follow are an ERROR node beside the comparison.
+    if (node.nextSibling?.type === 'ERROR' && node.nextSibling.child(0)?.type === '>') add(node.childForFieldName('right'));
+  } else if (node.type === 'required_parameter' || node.type === 'optional_parameter') {
+    add(node.namedChild(0));
+  } else if (node.type === 'ERROR') {
+    const children = node.children;
+    for (let i = 1; i < children.length; i++) {
+      const before = children[i - 1];
+      if (before !== null && !before.isNamed && TYPE_INTRODUCERS.has(before.type)) add(children[i]);
+    }
+  }
+  return found;
+}
 
 function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
@@ -261,6 +303,7 @@ function uses(file: ParsedFile): DetectedDep[] {
   walkScoped(file.tree.rootNode, false, (node, inheritedInType) => {
     const inType = inheritedInType || typeSide.has(node.id);
     if (TYPE_ON_THE_RIGHT.has(node.type)) for (const c of node.namedChildren.slice(1)) if (c !== null) typeSide.add(c.id);
+    for (const call of misreadImportTypes(node)) typeSide.add(call.id);
     switch (node.type) {
       case 'import_statement': {
         // Every form gives its edge, type-only ones included (`import type …`,
