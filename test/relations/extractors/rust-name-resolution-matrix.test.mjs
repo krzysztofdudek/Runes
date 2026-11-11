@@ -147,6 +147,12 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-edition-2015-bin-shared-module-crate-relative-edge', () => runCase('rust-edition-2015-bin-shared-module-crate-relative-edge'));
   it('rust-bin-shared-common-module-edge', () => runCase('rust-bin-shared-common-module-edge'));
   it('rust-module-of-two-roots-root-item-edge', () => runCase('rust-module-of-two-roots-root-item-edge'));
+  it('rust-module-cfg-any-in-library-and-plain-in-main-root-item-edge', () => runCase('rust-module-cfg-any-in-library-and-plain-in-main-root-item-edge'));
+  it('rust-module-cfg-feature-in-library-and-plain-in-main-root-item-edge', () => runCase('rust-module-cfg-feature-in-library-and-plain-in-main-root-item-edge'));
+  it('rust-module-in-cfg-inline-module-of-library-and-plain-in-main-root-item-edge', () => runCase('rust-module-in-cfg-inline-module-of-library-and-plain-in-main-root-item-edge'));
+  it('rust-module-plain-in-library-and-cfg-in-main-root-item-edge', () => runCase('rust-module-plain-in-library-and-cfg-in-main-root-item-edge'));
+  it('rust-edition-2018-bin-in-src-of-2015-package-bare-use-edge', () => runCase('rust-edition-2018-bin-in-src-of-2015-package-bare-use-edge'));
+  it('rust-edition-2015-bin-in-src-of-2018-package-bare-use-edge', () => runCase('rust-edition-2015-bin-in-src-of-2018-package-bare-use-edge'));
   it('rust-module-no-root-declares-root-item-edge', () => runCase('rust-module-no-root-declares-root-item-edge'));
   it('rust-module-of-main-chain-and-library-path-attribute-root-item-edge', () => runCase('rust-module-of-main-chain-and-library-path-attribute-root-item-edge'));
   it('rust-main-module-crate-item-only-in-lib-edge', () => runCase('rust-main-module-crate-item-only-in-lib-edge'));
