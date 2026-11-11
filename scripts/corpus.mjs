@@ -941,6 +941,14 @@ function csharpOracle(repoDir, result, findings) {
   return { checked };
 }
 
+/** A compiler's message with what differs between compilers taken out, so that one explanation matches on every machine: gcc echoes the directive (`error: #error "text"`) where clang prints the text (`error: "text"`), and the text may or may not be quoted. */
+function compilerMessage(message) {
+  const m = /^(.*?: error: )(?:#error\s+)?(.*)$/.exec(message);
+  if (m === null) return message;
+  const text = m[2].length >= 2 && m[2].startsWith('"') && m[2].endsWith('"') ? m[2].slice(1, -1) : m[2];
+  return `${m[1]}${text}`;
+}
+
 /** The C preprocessor's own include closure (`cc -MM -MG` with the manifest's include directories and defines) of every C and C++ source file, against the include edges Runes gives that file: an include target outside the closure is a false edge. Headers are not compiled on their own, and a target the preprocessor reaches through another header is in the closure too, so only what Runes adds is caught, not what it misses. */
 function cOracle(repoDir, repo, result, findings) {
   const deps = result.references.filter((r) => (r.language === 'c' || r.language === 'cpp') && r.resolved !== undefined && r.candidates.every((c) => c.kind === 'path') && /\.(c|cc|cpp|cxx|c\+\+)$/i.test(r.from));
@@ -960,7 +968,7 @@ function cOracle(repoDir, repo, result, findings) {
     const run = spawnSync('cc', ['-MM', '-MG', '-x', lang, ...(lang === 'c++' ? ['-std=c++17'] : []), ...flags, path.join(repoDir, file)], { encoding: 'utf8', cwd: path.join(repoDir, dirOf(file)), maxBuffer: 1 << 26 });
     if (run.error || run.status !== 0) {
       // The preprocessor's first message, with the clone's own directory taken out so that it reads the same on every machine.
-      const message = (run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join('');
+      const message = compilerMessage((run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join(''));
       findings.push({ oracle: 'c', kind: 'unreadable', from: file, line: 0, subject: file, runes: 'not compared', answer: `cc -MM failed: ${message}` });
       continue;
     }
@@ -1043,15 +1051,16 @@ async function compareOracles(opts, repo, dir, result, runes, head, explained, s
   const status = unexplained.length > 0 ? 'FAIL' : 'ok  ';
   process.stdout.write(`${status} ${head}; checked: ${parts.join(', ') || 'no oracle applies'}; ${findings.length} disagreements, ${findings.length - unexplained.length} explained\n`);
   reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => oracleEntry(repo.id, f)));
-  // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. It is named, not failed, because a toolchain of another machine can see a disagreement this one does not.
+  // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. A plain run names it, because a toolchain of another machine can see a disagreement this one does not; --strict, which CI runs with every toolchain installed, fails on it.
   const ran = new Set(Object.entries(outcomes).filter(([, o]) => o.skipped === undefined).map(([name]) => name));
   const unused = [...explained].filter(([key, e]) => e.repo === repo.id && ran.has(e.kind.split(':')[0]) && !used.has(key)).map(([, e]) => `${e.where}: ${e.text.slice(0, 200)}`);
   if (unused.length > 0) {
     process.stdout.write(`    ${unused.length} explanations of ${repo.id} match no disagreement of this run:\n`);
     for (const u of unused.slice(0, 20)) process.stdout.write(`    UNUSED ${u}\n`);
     if (unused.length > 20) process.stdout.write(`    ... and ${unused.length - 20} more\n`);
+    if (opts.strict) process.stdout.write('    --strict: an explanation that matches no disagreement fails the run.\n');
   }
-  return unexplained.length === 0;
+  return unexplained.length === 0 && !(opts.strict && unused.length > 0);
 }
 
 async function main() {

@@ -17,7 +17,7 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     }
     // A bare leading identifier: the current crate's own package name (2018+ edition
     // path-clarity) addresses the package's LIBRARY, from any of its targets.
-    if (crate.crateName !== undefined && root === crate.crateName) {
+    if (crate.crateName !== undefined && root === crate.crateName && crate.lib !== null) {
         const lib = crate.lib ?? { srcDir: crate.srcDir, rootFiles: crate.rootFiles ?? [] };
         return resolveFromModuleDir(lib.srcDir, rest, exists, rootContext(lib.srcDir, lib.rootFiles, declares));
     }

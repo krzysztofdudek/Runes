@@ -61,8 +61,8 @@ export interface RustCrateRoot {
      *  itself). Absent → the legacy basename rule (`lib.rs` / `main.rs`). */
     fileIsRoot?: boolean;
     /** The package's library tree, which the crate's own name addresses from any target.
-     *  Absent → the same tree as `srcDir` / `rootFiles`. */
-    lib?: RustCrateTree;
+     *  Absent → the same tree as `srcDir` / `rootFiles`. Null → the package has no library, so its crate name addresses nothing. */
+    lib?: RustCrateTree | null;
     /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
     crateRelativeUses?: boolean;
 }
