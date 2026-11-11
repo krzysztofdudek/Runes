@@ -214,6 +214,9 @@ describe('MATRIX — what a crate root binds', () => {
   it('rust-proc-macro-derive-name-edge', () => runCase('rust-proc-macro-derive-name-edge'));
   it('rust-proc-macro-derive-through-facade-edge', () => runCase('rust-proc-macro-derive-through-facade-edge'));
   it('rust-proc-macro-derive-helper-attribute-silence', () => runCase('rust-proc-macro-derive-helper-attribute-silence'));
+  it('rust-edition-2015-root-extern-crate-alias-edge', () => runCase('rust-edition-2015-root-extern-crate-alias-edge'));
+  it('rust-root-extern-crate-alias-edge', () => runCase('rust-root-extern-crate-alias-edge'));
+  it('rust-module-extern-crate-alias-own-module-only-edge', () => runCase('rust-module-extern-crate-alias-own-module-only-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -41,10 +41,11 @@ import { rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rus
  * `cargo fix` rewrites it to `r#gen`). The `r#` prefix is stripped from every segment so
  * `mod r#gen;` and `crate::r#gen::X` probe `gen.rs`, the file rustc loads.
  *
- * EXTERN CRATE: `extern crate name [as alias];` emits the bare crate `name` (the alias is a
- * local binding and is dropped). The resolver binds it only when `name` is an in-repo path
- * dependency of the importing crate; `std`, registry crates and `extern crate self` stay
- * silent.
+ * EXTERN CRATE: `extern crate name [as alias];` emits the bare crate `name`. The resolver
+ * binds it only when `name` is an in-repo path dependency of the importing crate; `std`,
+ * registry crates and `extern crate self` stay silent. The alias is not part of the emitted
+ * path: `declarations()` records which crate each name bound at the top level stands for, and
+ * the resolver follows a later path that starts with the alias from there.
  *
  * GLOB (`use a::b::*`) emits the prefix module `a::b`. RENAMED (`use a::b as c`)
  * strips the alias and emits the real path `a::b`. `pub use` (re-export) is
@@ -393,7 +394,9 @@ function join(prefix, tail) {
  * Every name the file's top level binds with `extern crate` is declared under
  * `rustExternNameKey(name)` (`extern:<name>`), read by `topLevelExternCrates`: beside the
  * items, these are the names a `crate::` path or a path into a dependency can go through in a
- * crate-root file.
+ * crate-root file. The crate each such name stands for is declared under
+ * `rustExternBindingKey(name, crate)` (`extern:<name>=<crate>`), which lets a path that starts
+ * with the name resolve to the crate.
  *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
@@ -420,8 +423,11 @@ function declarations(file) {
     }
     for (const { name, line } of topLevelItemNames(root))
         out.push({ symbolKey: rustTopLevelItemKey(name), line });
-    for (const { name, line } of topLevelExternCrates(root))
+    for (const { name, crate, line } of topLevelExternCrates(root)) {
         out.push({ symbolKey: rustExternNameKey(name), line });
+        if (crate !== undefined)
+            out.push({ symbolKey: rustExternBindingKey(name, crate), line });
+    }
     for (const { path, line, conditional } of plainModuleFiles(root))
         out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
     return out;
@@ -571,15 +577,16 @@ function deriveMacroName(fn) {
     }
     return undefined;
 }
-/** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate), with `r#` stripped. `extern crate a as _;` binds none. */
+/** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate) and `crate` the crate it stands for, both with `r#` stripped; `crate` is undefined for `extern crate self as name;`, which names the crate that writes it. `extern crate a as _;` binds none. */
 export function topLevelExternCrates(root) {
     const out = [];
     for (const node of root.namedChildren) {
         if (node === null || node.type !== 'extern_crate_declaration')
             continue;
-        const bound = unraw((node.childForFieldName('alias') ?? node.childForFieldName('name'))?.text ?? '');
+        const crate = node.childForFieldName('name');
+        const bound = unraw((node.childForFieldName('alias') ?? crate)?.text ?? '');
         if (bound !== '' && bound !== '_' && bound !== 'self')
-            out.push({ name: bound, line: node.startPosition.row + 1 });
+            out.push({ name: bound, crate: crate === null || crate.type !== 'identifier' || crate.text === 'self' ? undefined : unraw(crate.text), line: node.startPosition.row + 1 });
     }
     return out;
 }
@@ -662,7 +669,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 7,
+    rev: 8,
     declarations,
     uses,
 };

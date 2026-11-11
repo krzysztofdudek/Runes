@@ -8,7 +8,7 @@ cites: "Rust Reference — Extern crate declarations (`extern crate name as alia
 
 ## Rule
 
-`extern crate core_lib as cl;` links the in-repo path dependency `core_lib` and binds it under the local alias `cl`. The declaration itself names the crate, so it binds the crate's root file `crates/core-lib/src/lib.rs` (node `src`) on its own line. A later `use cl::Engine;` is rooted at the local alias, a name only the extern-crate binding introduces, so it stays silent: the dependency is already carried by the declaration line. `extern crate std as s;` names an external crate and stays silent too.
+`extern crate core_lib as cl;` links the in-repo path dependency `core_lib` and binds it under the local alias `cl`. The declaration itself names the crate, so it binds the crate's root file `crates/core-lib/src/lib.rs` (node `src`) on its own line. The package gives no edition, so it is edition 2015, where a `use` path is relative to the crate root: `use cl::Engine;` in the module `cmd::run` names a `cl` of the crate root, which binds none, so it stays silent. The dependency is carried by the declaration line. `extern crate std as s;` names an external crate and stays silent too.
 
 ## Files
 
@@ -46,4 +46,4 @@ extern crate std as s;
 
 ## Why
 
-The extern-crate declaration is the one place the real crate name appears. Following aliases would need a binding table the extractor does not keep, and the dependency is already recorded on the declaration line.
+The extern-crate declaration is the one place the real crate name appears, so it carries the edge. An alias bound in a module that is not the crate root is a name of that module alone, and an edition 2015 `use` path does not start there.

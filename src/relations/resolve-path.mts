@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
 import type { SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -78,6 +78,7 @@ export function makeResolvePathToFile(
       deps = {
         ...rustDeps,
         crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
+        externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
         rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))),
       };
       rustDepsByTable.set(table, deps);
@@ -189,7 +190,7 @@ export function makeResolvePathToFile(
 function makeRustResolveDeps(
   plain: FileSource,
   exists: (repoRelPosix: string) => boolean,
-): RustResolveDeps & { crateRootFor(fromFile: string, declaresModule?: RustModuleDeclared): RustCrateRoot | undefined } {
+): RustResolveDeps & { crateRootFor(fromFile: string, declaresModule?: RustModuleDeclared): RustCrateRoot | undefined; crateBoundBy(fromFile: string, binds: (crate: string) => boolean): RustCrateTree | undefined } {
   // Cache: directory (repo-rel POSIX, '' = root) → the Cargo.toml read there (null = none).
   const manifestByDir = new Map<string, CargoManifest | null>();
   // Cache: directory → the nearest Cargo.toml directory at or above it (null = none).
@@ -411,11 +412,8 @@ function makeRustResolveDeps(
     return (manifest.edition ?? '2015') === '2015';
   }
 
-  function dependencyFor(fromFile: string, name: string): { srcDir: string; rootFiles: string[] } | undefined {
-    const pkgDir = packageDirFrom(dirOf(toPosix(fromFile)));
-    if (pkgDir === undefined) return undefined;
-    const manifest = manifestAt(pkgDir);
-    if (manifest === undefined) return undefined;
+  /** The in-repo dependencies of the package at `pkgDir`: each with the name code uses for it and its library tree (undefined when the dependency has no library), in the manifest's order. A registry, git or out-of-repo dependency is none, unless a `[patch]` of the workspace root replaces it with a path. */
+  function* pathDependencies(pkgDir: string, manifest: CargoManifest): Generator<{ name: string; tree: () => RustCrateTree | undefined }> {
     for (const [key, spec] of manifest.dependencies) {
       let depDir: string | undefined;
       let rename = spec.package;
@@ -443,16 +441,38 @@ function makeRustResolveDeps(
       // A registry or git dependency that a `[patch]` of the workspace root replaces with a path: the package it is called by `package =`, else by its key. A dependency with a path of its own is not replaced.
       if (depDir === undefined && source.path === undefined && !source.workspace) depDir = patchedDir(pkgDir, rename ?? key, source);
       if (depDir === undefined) continue; // registry / git / out-of-repo → external
-      const depManifest = manifestAt(depDir);
+      const dir = depDir;
+      const depManifest = manifestAt(dir);
       if (depManifest === undefined) continue; // no Cargo.toml there → not a crate
       // The name code uses: the dependency key when renamed with `package =`, else the
       // target library's own crate name.
-      const codeName = rename !== undefined ? normalizeCrateName(key) : (depManifest.crateName ?? normalizeCrateName(key));
-      if (codeName !== name) continue;
-      const tree = libTreeOf(depDir, depManifest);
+      yield { name: rename !== undefined ? normalizeCrateName(key) : (depManifest.crateName ?? normalizeCrateName(key)), tree: () => libTreeOf(dir, depManifest) };
+    }
+  }
+
+  function dependencyFor(fromFile: string, name: string): RustCrateTree | undefined {
+    const pkgDir = packageDirFrom(dirOf(toPosix(fromFile)));
+    if (pkgDir === undefined) return undefined;
+    const manifest = manifestAt(pkgDir);
+    if (manifest === undefined) return undefined;
+    for (const dep of pathDependencies(pkgDir, manifest)) {
+      const tree = dep.name === name ? dep.tree() : undefined;
       if (tree !== undefined) return tree;
     }
     return undefined;
+  }
+
+  /** The library tree of the first crate the package of `fromFile` can name for which `binds` holds: its in-repo dependencies, in the manifest's order, then the package's own library. It answers which crate an `extern crate` stands for, where only a yes or no per crate name is at hand. */
+  function crateBoundBy(fromFile: string, binds: (crate: string) => boolean): RustCrateTree | undefined {
+    const pkgDir = packageDirFrom(dirOf(toPosix(fromFile)));
+    if (pkgDir === undefined) return undefined;
+    const manifest = manifestAt(pkgDir);
+    if (manifest === undefined) return undefined;
+    for (const dep of pathDependencies(pkgDir, manifest)) {
+      const tree = binds(dep.name) ? dep.tree() : undefined;
+      if (tree !== undefined) return tree;
+    }
+    return manifest.crateName !== undefined && binds(manifest.crateName) ? libTreeOf(pkgDir, manifest) : undefined;
   }
 
   /** The nearest directory at or above the package at `pkgDir` whose manifest is a workspace root; the package's own when it has none above, which makes it a workspace of its own. */
@@ -493,7 +513,7 @@ function makeRustResolveDeps(
     return rustFileDeclares(text, name);
   }
 
-  return { crateRootFor, dependencyFor, rootDeclares };
+  return { crateRootFor, dependencyFor, rootDeclares, crateBoundBy };
 }
 
 /** Whether `file` (repository-relative) declares, by name alone, the module at `modulePath` below its own module (`x`, `outer/x`): `always` when nothing can switch the declaration off, `cfg` when a `cfg` may remove it, undefined when the file is not known to declare it. It is what the Rust extractor reads from the file's parse tree and declares under `rustModuleFileKey`. */

@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -62,6 +62,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             deps = {
                 ...rustDeps,
                 crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
+                externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
                 rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))),
             };
             rustDepsByTable.set(table, deps);
@@ -404,13 +405,8 @@ function makeRustResolveDeps(plain, exists) {
         }
         return (manifest.edition ?? '2015') === '2015';
     }
-    function dependencyFor(fromFile, name) {
-        const pkgDir = packageDirFrom(dirOf(toPosix(fromFile)));
-        if (pkgDir === undefined)
-            return undefined;
-        const manifest = manifestAt(pkgDir);
-        if (manifest === undefined)
-            return undefined;
+    /** The in-repo dependencies of the package at `pkgDir`: each with the name code uses for it and its library tree (undefined when the dependency has no library), in the manifest's order. A registry, git or out-of-repo dependency is none, unless a `[patch]` of the workspace root replaces it with a path. */
+    function* pathDependencies(pkgDir, manifest) {
         for (const [key, spec] of manifest.dependencies) {
             let depDir;
             let rename = spec.package;
@@ -443,19 +439,43 @@ function makeRustResolveDeps(plain, exists) {
                 depDir = patchedDir(pkgDir, rename ?? key, source);
             if (depDir === undefined)
                 continue; // registry / git / out-of-repo → external
-            const depManifest = manifestAt(depDir);
+            const dir = depDir;
+            const depManifest = manifestAt(dir);
             if (depManifest === undefined)
                 continue; // no Cargo.toml there → not a crate
             // The name code uses: the dependency key when renamed with `package =`, else the
             // target library's own crate name.
-            const codeName = rename !== undefined ? normalizeCrateName(key) : (depManifest.crateName ?? normalizeCrateName(key));
-            if (codeName !== name)
-                continue;
-            const tree = libTreeOf(depDir, depManifest);
+            yield { name: rename !== undefined ? normalizeCrateName(key) : (depManifest.crateName ?? normalizeCrateName(key)), tree: () => libTreeOf(dir, depManifest) };
+        }
+    }
+    function dependencyFor(fromFile, name) {
+        const pkgDir = packageDirFrom(dirOf(toPosix(fromFile)));
+        if (pkgDir === undefined)
+            return undefined;
+        const manifest = manifestAt(pkgDir);
+        if (manifest === undefined)
+            return undefined;
+        for (const dep of pathDependencies(pkgDir, manifest)) {
+            const tree = dep.name === name ? dep.tree() : undefined;
             if (tree !== undefined)
                 return tree;
         }
         return undefined;
+    }
+    /** The library tree of the first crate the package of `fromFile` can name for which `binds` holds: its in-repo dependencies, in the manifest's order, then the package's own library. It answers which crate an `extern crate` stands for, where only a yes or no per crate name is at hand. */
+    function crateBoundBy(fromFile, binds) {
+        const pkgDir = packageDirFrom(dirOf(toPosix(fromFile)));
+        if (pkgDir === undefined)
+            return undefined;
+        const manifest = manifestAt(pkgDir);
+        if (manifest === undefined)
+            return undefined;
+        for (const dep of pathDependencies(pkgDir, manifest)) {
+            const tree = binds(dep.name) ? dep.tree() : undefined;
+            if (tree !== undefined)
+                return tree;
+        }
+        return manifest.crateName !== undefined && binds(manifest.crateName) ? libTreeOf(pkgDir, manifest) : undefined;
     }
     /** The nearest directory at or above the package at `pkgDir` whose manifest is a workspace root; the package's own when it has none above, which makes it a workspace of its own. */
     function workspaceRootOf(pkgDir) {
@@ -499,7 +519,7 @@ function makeRustResolveDeps(plain, exists) {
         }
         return rustFileDeclares(text, name);
     }
-    return { crateRootFor, dependencyFor, rootDeclares };
+    return { crateRootFor, dependencyFor, rootDeclares, crateBoundBy };
 }
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
