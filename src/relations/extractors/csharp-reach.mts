@@ -9,7 +9,7 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
  *
  * A PROJECT is a directory holding a `*.csproj` (several files in one directory are one project); the project of a `.cs` file is the nearest ancestor directory that holds one, as in the global-using scoping. The reference facts of a project come from its project files and from every `Directory.Build.props` and `Directory.Build.targets` above it (all of them: MSBuild imports the nearest and that one commonly imports the next, and reading every one can only add reach):
  *   - `<ProjectReference Include>`: a path relative to the file that holds it (and, in an imported file, to the project too: both readings are taken), or one that starts with `$(MSBuildThisFileDirectory)` or `$(MSBuildProjectDirectory)`; a wildcard is matched against the project files of the repository; a path with any other property is unresolvable, so the project is OPEN;
- *   - `<Reference Include="Name, Version=…">` with or without a `<HintPath>`: the in-repository project whose assembly name (its `<AssemblyName>`, or its file's name) equals the name or the HintPath's file name; no such project: an external assembly, nothing;
+ *   - `<Reference Include="Name, Version=…">` with or without a `HintPath` (a child element or an attribute): the in-repository project whose assembly name (its `<AssemblyName>`, or its file's name) equals the name or the HintPath's file name; no such project: an external assembly, nothing;
  *   - `<PackageReference Include="Id">` naming an in-repository project by its `<PackageId>` or assembly name: a repository that consumes its own packages;
  *   - `<Compile Include>` naming files outside the project's directory adds those files, and only those, to the project's compilation (a LINKED file, below); one whose path needs a property this reader does not know, or leaves the repository, could name anything, so the project is OPEN, as it is for an `<Import>` of a `.projitems` shared project and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups). An import of a file the view holds is read like the project file itself.
  *   - `<Compile Remove>`: a file of the project's directory that the item names is in no compilation of that project, so it declares nothing any caller can see. Only a removal that always applies is read: one under a condition (on the item, its `ItemGroup` or a `Choose` branch) or inside a `Target` may not, a file that a `<Compile Include>` of the same project names again is kept, whatever the order, and a project with a `<Compile Include>` this reader cannot place (a path with a property it does not know) keeps every file, because that include may put any of them back.
@@ -323,10 +323,11 @@ export function buildCsharpReachability(
 
       const references = new RegExp(`<Reference\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/Reference>)`, 'gi');
       while ((m = references.exec(text)) !== null) {
-        const hintPath = m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim();
+        // `HintPath` is item metadata: a child element, or an attribute of the item. Both are read, since each names an assembly the reference may stand for.
+        const hintPaths = [m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim(), attributes(m[1]).get('hintpath')];
         // The name is the part before the first comma; an Include that is the assembly's file path (`..\bin\Acme.Api.dll`) names it by the file name.
         const names = includes(m[1]).map((s) => s.split(',')[0].trim()).map((s) => (/[\\/]|\.(?:dll|exe)$/i.test(s) ? stem(s) : s));
-        if (hintPath !== undefined && hintPath !== '') names.push(stem(hintPath));
+        for (const hintPath of hintPaths) if (hintPath !== undefined && hintPath !== '') names.push(stem(hintPath));
         for (const name of names) for (const dir of projectDirsNamed(name)) addRef(dir, { types: true, follows: false, flows: false });
       }
 

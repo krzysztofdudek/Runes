@@ -641,3 +641,24 @@ describe('buildCsharpReachability — a raw > in a condition written before the 
     }
   });
 });
+
+describe('buildCsharpReachability — a HintPath written as an attribute', () => {
+  const others = { 'b/B.csproj': PROJECT, 'b/z.cs': '', 'c/C.csproj': PROJECT, 'c/w.cs': '' };
+
+  it('reads the attribute like the child element, and the child element over the attribute', () => {
+    for (const item of [
+      '<Reference Include="Other" HintPath="..\\b\\bin\\B.dll" />',
+      '<Reference HintPath="../b/bin/B.dll" Include="Other" />',
+      '<Reference Include="Other" HintPath="../c/bin/Nothing.dll"><HintPath>../b/bin/B.dll</HintPath></Reference>',
+    ]) {
+      const reach = reachOf({ 'a/A.csproj': withItems(item), 'a/x.cs': '', ...others });
+      expect(reach('a/x.cs', 'b/z.cs'), item).toBe('reachable');
+      expect(reach('a/x.cs', 'c/w.cs'), item).toBe('unreachable');
+    }
+  });
+
+  it('reads no assembly from an empty HintPath attribute', () => {
+    const reach = reachOf({ 'a/A.csproj': withItems('<Reference Include="Other" HintPath="" />'), 'a/x.cs': '', ...others });
+    expect(reach('a/x.cs', 'b/z.cs')).toBe('unreachable');
+  });
+});

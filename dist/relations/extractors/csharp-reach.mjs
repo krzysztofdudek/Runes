@@ -291,11 +291,13 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
             }
             const references = new RegExp(`<Reference\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/Reference>)`, 'gi');
             while ((m = references.exec(text)) !== null) {
-                const hintPath = m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim();
+                // `HintPath` is item metadata: a child element, or an attribute of the item. Both are read, since each names an assembly the reference may stand for.
+                const hintPaths = [m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim(), attributes(m[1]).get('hintpath')];
                 // The name is the part before the first comma; an Include that is the assembly's file path (`..\bin\Acme.Api.dll`) names it by the file name.
                 const names = includes(m[1]).map((s) => s.split(',')[0].trim()).map((s) => (/[\\/]|\.(?:dll|exe)$/i.test(s) ? stem(s) : s));
-                if (hintPath !== undefined && hintPath !== '')
-                    names.push(stem(hintPath));
+                for (const hintPath of hintPaths)
+                    if (hintPath !== undefined && hintPath !== '')
+                        names.push(stem(hintPath));
                 for (const name of names)
                     for (const dir of projectDirsNamed(name))
                         addRef(dir, { types: true, follows: false, flows: false });
