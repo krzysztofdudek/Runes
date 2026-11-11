@@ -659,3 +659,22 @@ describe('csharp: the bases of a file type', () => {
     });
   });
 });
+
+describe('csharp: the lists an extract names by place', () => {
+  it('writes the types that can hold an unseen member once, for every receiver and call of one type body', async () => {
+    await project({
+      'src/a/Use.cs': 'namespace App;\npublic partial class Use {\n  void A() { Guard.Check(); Guard.Check(1); Other.Run(); }\n  class Inner : Base { void B() { Guard.Check(); } }\n}\npublic class Plain { void C() { Guard.Check(); } }\n',
+    }, ({ files }) => {
+      const extract = extractCsharpRefs(files[0]);
+      expect(extract.lists).toEqual([['App.Use'], ['App.Use+Inner', 'App.Use']]);
+      expect(extract.receiverTypes).toBe(undefined);
+      const shape = extract.refs.filter((r) => r.kind === 'ext' || r.kind === 'receiver').map((r) => [r.kind, r.line, r.kind === 'ext' ? r.member.types : r.members, r.from]);
+      expect(shape).toEqual([
+        ['ext', 3, 0, 0], ['receiver', 3, 0, undefined], ['ext', 3, 0, 0], ['receiver', 3, 0, undefined], ['ext', 3, 0, 0], ['receiver', 3, 0, undefined],
+        ['ext', 4, 1, 1], ['receiver', 4, 1, undefined],
+        // A type that is neither partial nor lists a base: a receiver as it always was, and no extension group.
+        ['receiver', 6, undefined, undefined],
+      ]);
+    });
+  });
+});

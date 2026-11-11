@@ -1284,10 +1284,22 @@ export function extractCsharpRefs(file) {
     // Every value/member name this file declares (M16 shadow guard) and the names of the ordinary
     // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
     const { declaredNames, methodNames, openTypes, typedNames } = collectDeclaredNames(file.tree.rootNode, fileNs);
+    // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
+    const lists = [];
+    const listPlaces = new Map();
+    const listPlace = (list) => {
+        const key = list.join('\n');
+        let place = listPlaces.get(key);
+        if (place === undefined)
+            listPlaces.set(key, (place = lists.push(list) - 1));
+        return place;
+    };
+    const receiverTypes = [];
+    const receiverTypePlaces = new Map();
     /** The types around `node` in which its first name may be a member this file does not show (see the `receiver` descriptor's `members`). */
     const membersAround = (node) => {
         const members = (enclosingTypes(node).types ?? []).filter((t) => openTypes.has(t));
-        return members.length === 0 ? {} : { members };
+        return members.length === 0 ? {} : { members: listPlace(members) };
     };
     /** True when `node` sits inside a `nameof(…)` operand — a string producer, never a dependency. */
     const insideNameof = (node) => scopeOf(node).nameof;
@@ -1326,18 +1338,6 @@ export function extractCsharpRefs(file) {
         const from = enclosingTypes(inv).types;
         return { args: call.args, typeArgs: call.typeArgs, ...(from === undefined ? {} : { from: listPlace(from) }), ...receiver };
     };
-    // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
-    const lists = [];
-    const listPlaces = new Map();
-    const listPlace = (list) => {
-        const key = list.join('\n');
-        let place = listPlaces.get(key);
-        if (place === undefined)
-            listPlaces.set(key, (place = lists.push(list) - 1));
-        return place;
-    };
-    const receiverTypes = [];
-    const receiverTypePlaces = new Map();
     /** What the file says of the type of a call's receiver (see the `ext` descriptor): the enclosing type for `this`, the written types of the nearest declarations of a name for an identifier or `this.name`, or nothing where no type is written. */
     const receiverType = (receiver) => {
         if (receiver.type === 'this') {
@@ -2563,7 +2563,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
                 const rooted = r.rooted === true;
                 const before = out.length;
-                const unless = r.members === undefined ? undefined : [{ kind: 'member', types: r.members, name: r.chain[0] }];
+                const unless = r.members === undefined ? undefined : [{ kind: 'member', types: lists[r.members], name: r.chain[0] }];
                 for (let i = 1; i <= r.chain.length; i++)
                     pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types, unless);
                 mergeGroupsFrom(before, r.line);
@@ -2576,7 +2576,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 const unless = [];
                 // A receiver the file does not declare is a value only as a member of a type around the call.
                 if (r.member !== undefined)
-                    unless.push({ kind: 'no-member', types: r.member.types, name: r.member.name, ...(r.member.direct ? { call } : {}) });
+                    unless.push({ kind: 'no-member', types: lists[r.member.types], name: r.member.name, ...(r.member.direct ? { call } : {}) });
                 if (receivers.length > 0 || r.self !== undefined)
                     unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: r.self }) });
                 pushExtension(r.name, r.enclosingNs, r.line, r.at, unless);
@@ -2602,7 +2602,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 28,
+    rev: 29,
     declarations,
     uses,
 };

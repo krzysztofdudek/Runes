@@ -1272,17 +1272,17 @@ export type CsharpRefDescriptor =
   | { kind: 'target'; fqn: string; line: number; enclosingNs: string[]; at: number; outer?: OuterUsings[] }
   /** An attribute usage `[Foo]` / `[FooAttribute]` — TWO readings (`written` + the optional `Attribute`-suffixed form) merged into ONE ordered group on assembly (E9). `rooted` (a `global::`-qualified name, `[global::A.Foo]`) resolves both readings verbatim-only. `alias` (an attribute written after a using alias, `[S::Foo]`) rewrites both readings onto the namespace the merged alias map binds `S` to, each then resolved verbatim from the root as a type's `S::Tail` is; an alias the map does not bind (an extern or unknown alias) drops the attribute. */
   | { kind: 'attr'; written: string; suffixed?: string; line: number; enclosingNs: string[]; at: number; rooted?: boolean; alias?: string; types?: string[] }
-  /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. `members` are the keys of the types around the receiver, innermost first, that can hold a member this file does not show (a `partial` type, or one that lists a base): where the first name is such a member there, the receiver is a value and names no type. Absent when no type around it can. */
-  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean; types?: string[]; members?: string[] }
+  /** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. `members` names, by its place in the extract's `lists`, the keys of the types around the receiver, innermost first, that can hold a member this file does not show (a `partial` type, or one that lists a base): where the first name is such a member there, the receiver is a value and names no type. Absent when no type around it can. */
+  | { kind: 'receiver'; chain: string[]; line: number; enclosingNs: string[]; at: number; rooted?: boolean; types?: string[]; members?: number }
   /** An extension-method call `value.Name(…)` on an instance-like receiver: resolved against the
    *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
    *  its using directives import where the call stands (`at`), then the global namespace, then the
    *  namespaces the compilation unit's using directives import as one set.
    *  `args` and `typeArgs` count the call's arguments and its written type arguments: an instance method takes the call only when the counts fit it. They, and `from`, are written only on a call that carries a receiver type to ask (`on`, `self`, or a `member` that is the receiver alone): nothing reads them on any other.
-   *  `member` is set where the receiver's first name is one the file does not declare, written inside a type: the call is an extension call only when that name is a member of one of `member.types` (the types around the call, innermost first, that can hold a member this file does not show: a `partial` type, or one that lists a base), declared in another part or inherited, and a static call through a type otherwise, so the group is given only where such a type stands around the call; `direct` says the receiver is that name alone, so the member's own type is the receiver's.
+   *  `member` is set where the receiver's first name is one the file does not declare, written inside a type: the call is an extension call only when that name is a member of one of `member.types` (named by its place in the extract's `lists`: the types around the call, innermost first, that can hold a member this file does not show: a `partial` type, or one that lists a base), declared in another part or inherited, and a static call through a type otherwise, so the group is given only where such a type stands around the call; `direct` says the receiver is that name alone, so the member's own type is the receiver's.
    *  `from` names, by its place in the extract's `lists`, the keys of the types whose bodies hold the call, innermost first: a protected or a private method takes the call only from where it can be called.
    *  `on` names, by their places in the extract's `receiverTypes`, the written type of the receiver where the file declares it (a parameter, a field, a property or a local with a type of its own; several when declarations of the name in one scope differ), and `self` the key of the enclosing type for a call on `this`: an instance method of that name in such a type, or in a base of it, is what the call binds (C# spec §12.8.10.3), and the group then gives nothing. Both are absent where the receiver's type is not written (`var`, a call result, an inferred lambda parameter). */
-  | { kind: 'ext'; name: string; line: number; enclosingNs: string[]; at: number; args?: number; typeArgs?: number; on?: number[]; self?: string; from?: number; member?: { types: string[]; name: string; direct: boolean } };
+  | { kind: 'ext'; name: string; line: number; enclosingNs: string[]; at: number; args?: number; typeArgs?: number; on?: number[]; self?: string; from?: number; member?: { types: number; name: string; direct: boolean } };
 
 /**
  * The pure, alias-UNRESOLVED extract of one C# file — the cacheable fact (design §14 Correction
@@ -1302,7 +1302,7 @@ export interface CsharpExtract {
   refs: CsharpRefDescriptor[];
   /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
   fileLocalTypes: string[];
-  /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from`): a list many calls of one type body share is written once. Absent when no descriptor names one. */
+  /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent when no descriptor names one. */
   lists?: string[][];
   /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent when no call has one. */
   receiverTypes?: CsharpRefDescriptor[];
@@ -1479,10 +1479,22 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
   const { declaredNames, methodNames, openTypes, typedNames } = collectDeclaredNames(file.tree.rootNode, fileNs);
 
+  // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
+  const lists: string[][] = [];
+  const listPlaces = new Map<string, number>();
+  const listPlace = (list: string[]): number => {
+    const key = list.join('\n');
+    let place = listPlaces.get(key);
+    if (place === undefined) listPlaces.set(key, (place = lists.push(list) - 1));
+    return place;
+  };
+  const receiverTypes: CsharpRefDescriptor[] = [];
+  const receiverTypePlaces = new Map<number, number>();
+
   /** The types around `node` in which its first name may be a member this file does not show (see the `receiver` descriptor's `members`). */
-  const membersAround = (node: Node): { members?: string[] } => {
+  const membersAround = (node: Node): { members?: number } => {
     const members = (enclosingTypes(node).types ?? []).filter((t) => openTypes.has(t));
-    return members.length === 0 ? {} : { members };
+    return members.length === 0 ? {} : { members: listPlace(members) };
   };
 
   /** True when `node` sits inside a `nameof(…)` operand — a string producer, never a dependency. */
@@ -1522,18 +1534,6 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return { args: call.args, typeArgs: call.typeArgs, ...(from === undefined ? {} : { from: listPlace(from) }), ...receiver };
   };
 
-  // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
-  const lists: string[][] = [];
-  const listPlaces = new Map<string, number>();
-  const listPlace = (list: string[]): number => {
-    const key = list.join('\n');
-    let place = listPlaces.get(key);
-    if (place === undefined) listPlaces.set(key, (place = lists.push(list) - 1));
-    return place;
-  };
-  const receiverTypes: CsharpRefDescriptor[] = [];
-  const receiverTypePlaces = new Map<number, number>();
-
   /** What the file says of the type of a call's receiver (see the `ext` descriptor): the enclosing type for `this`, the written types of the nearest declarations of a name for an identifier or `this.name`, or nothing where no type is written. */
   const receiverType = (receiver: Node): { on?: number[]; self?: string } => {
     if (receiver.type === 'this') {
@@ -1564,7 +1564,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return { on };
   };
 
-  const extensionCall = (inv: Node): { name: string; receiver: Node; args: number; typeArgs: number; member?: { types: string[]; name: string; direct: boolean } } | undefined => {
+  const extensionCall = (inv: Node): { name: string; receiver: Node; args: number; typeArgs: number; member?: { types: number; name: string; direct: boolean } } | undefined => {
     const fn = inv.childForFieldName('function')!;
     let nameNode: Node;
     let receiver: Node;
@@ -2716,7 +2716,7 @@ export function assembleCsharpCandidates(
         // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
         const rooted = r.rooted === true;
         const before = out.length;
-        const unless: CsharpCondition[] | undefined = r.members === undefined ? undefined : [{ kind: 'member', types: r.members, name: r.chain[0] }];
+        const unless: CsharpCondition[] | undefined = r.members === undefined ? undefined : [{ kind: 'member', types: lists[r.members], name: r.chain[0] }];
         for (let i = 1; i <= r.chain.length; i++) pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types, unless);
         mergeGroupsFrom(before, r.line);
         break;
@@ -2727,7 +2727,7 @@ export function assembleCsharpCandidates(
         const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from: r.from === undefined ? [] : lists[r.from] };
         const unless: CsharpCondition[] = [];
         // A receiver the file does not declare is a value only as a member of a type around the call.
-        if (r.member !== undefined) unless.push({ kind: 'no-member', types: r.member.types, name: r.member.name, ...(r.member.direct ? { call } : {}) });
+        if (r.member !== undefined) unless.push({ kind: 'no-member', types: lists[r.member.types], name: r.member.name, ...(r.member.direct ? { call } : {}) });
         if (receivers.length > 0 || r.self !== undefined) unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: r.self }) });
         pushExtension(r.name, r.enclosingNs, r.line, r.at, unless);
         break;
@@ -2755,7 +2755,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 28,
+  rev: 29,
   declarations,
   uses,
 };
