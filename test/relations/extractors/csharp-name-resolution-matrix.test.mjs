@@ -384,7 +384,10 @@ describe('MATRIX — C# type positions in patterns', () => {
   it('csharp-pattern-qualified-type-edge', () => runCase('csharp-pattern-qualified-type-edge'));
   it('csharp-pattern-array-type-edge', () => runCase('csharp-pattern-array-type-edge'));
   it('csharp-pattern-generic-type-edge', () => runCase('csharp-pattern-generic-type-edge'));
-  it('csharp-pattern-enum-member-through-type-edge', () => runCase('csharp-pattern-enum-member-through-type-edge'));
+  it('csharp-pattern-constant-of-nearer-type-silence', () => runCase('csharp-pattern-constant-of-nearer-type-silence'));
+  it('csharp-pattern-switch-constants-of-nearer-type-edge', () => runCase('csharp-pattern-switch-constants-of-nearer-type-edge'));
+  it('csharp-pattern-constant-through-block-using-edge', () => runCase('csharp-pattern-constant-through-block-using-edge'));
+  it('csharp-pattern-nested-type-through-type-edge', () => runCase('csharp-pattern-nested-type-through-type-edge'));
 });
 
 describe('MATRIX — C# ref types, query range variable types and function pointer types', () => {
