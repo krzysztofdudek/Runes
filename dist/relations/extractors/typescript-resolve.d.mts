@@ -1,7 +1,7 @@
 import { type FileSource } from '../file-view.mjs';
 import { type DiagnosticSink, type Failure } from '../diagnostics.mjs';
-/** How a specifier was written when it is a call: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. */
-export type TsCallForm = 'require' | 'import';
+/** How a specifier was written when its form decides the condition: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. A type-only import or an import type whose `resolution-mode` attribute names `require` reads as a `require` does; one that names `import` is `'esm'`, the `import` condition wherever it stands, which a dynamic `import()` is not (the compiler may emit that as a `require`). */
+export type TsCallForm = 'require' | 'import' | 'esm';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *

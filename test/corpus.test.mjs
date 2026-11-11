@@ -157,6 +157,40 @@ describe('the corpus gate', () => {
     return PLUG_ENTRY;
   }
 
+  // A file no tsconfig covers. TypeScript's own default for it, node10, reads no `exports`: it would take `legacy.js` by the package's `main` and find nothing in a package that has only `exports`, so it could not check the conditions Runes enters for such a file. A dynamic import() in a CommonJS file enters `import`, as Node enters it, not the file's `require`.
+  test('the TypeScript oracle reads a package\'s exports for a file no tsconfig covers, with the conditions Node enters, and a relative path as before', () => {
+    const repo = join(tmp, 'conditions');
+    mkdirSync(repo);
+    git(repo, 'init', '-q');
+    put(repo, 'package.json', JSON.stringify({ name: 'root', private: true, workspaces: ['packages/*'] }));
+    put(repo, 'packages/lib/package.json', JSON.stringify({ name: 'lib', main: './legacy.js', exports: { '.': { 'react-server': './server.js', node: './node.js', default: './browser.js' } } }));
+    for (const file of ['legacy', 'server', 'node', 'browser']) put(repo, `packages/lib/${file}.js`, 'module.exports = 1;\n');
+    put(repo, 'packages/dual/package.json', JSON.stringify({ name: 'dual', exports: { '.': { import: './esm.mjs', require: './cjs.cjs' } } }));
+    put(repo, 'packages/dual/esm.mjs', 'export default 1;\n');
+    put(repo, 'packages/dual/cjs.cjs', 'module.exports = 1;\n');
+    put(repo, 'util.js', 'module.exports = 1;\n');
+    put(repo, 'app.js', "const lib = require('lib');\nconst dual = require('dual');\nconst util = require('./util');\nconst lazy = import('dual');\nmodule.exports = [lib, dual, util, lazy];\n");
+    put(repo, 'app.mjs', "import dual from 'dual';\nimport util from './util';\nexport default [dual, util];\n");
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'conditions');
+    manifest([{ id: 'conditions', url: pathToFileURL(repo).href, commit: git(repo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+    writeFileSync(join(work, 'explained.md'), '');
+    const made = corpus('update');
+    assert.equal(made.code, 0, made.out);
+    assert.deepEqual(readFileSync(join(work, 'goldens', 'conditions.edges'), 'utf8').split('\n').filter((l) => l !== '' && !l.startsWith('#')), [
+      'app.js:1\tpackages/lib/node.js',
+      'app.js:2\tpackages/dual/cjs.cjs',
+      'app.js:3\tutil.js',
+      'app.js:4\tpackages/dual/esm.mjs',
+      'app.mjs:1\tpackages/dual/esm.mjs',
+      'app.mjs:2\tutil.js',
+    ]);
+    const r = corpus('oracles');
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /ok {3}conditions .*checked: typescript 6; 0 disagreements/);
+    manifest([fixture()]);
+  });
+
   test('an explanation that matches no disagreement is named, and fails the run under --strict', () => {
     const entry = plugFixture();
     const stale = '- `plug` `typescript:false-edge` `app.js:7` `plug` `tools/plug/index.js` `unresolved in the repository`';

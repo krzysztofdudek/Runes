@@ -98,6 +98,28 @@ const TYPE_FORMS = {
   promiseArgument: "export function f(): Promise<import('lib').T> { return null as never; }",
   asserted: "export const t = x as unknown as import('lib').T;",
 };
+// The `resolution-mode` import attribute names the branch itself. The compiler reads it on a type-only import or export declaration and on an import type, and nowhere else: on a declaration that imports a value it reports the attribute and resolves by the file.
+const mode = (m, keyword = 'with') => `${keyword} { 'resolution-mode': '${m}' }`;
+const ATTRIBUTE_FORMS = Object.fromEntries(['import', 'require'].flatMap((m) => [
+  [`importType-${m}`, `import type { T } from 'lib' ${mode(m)};\nexport type U = T;`],
+  [`importTypeDoubleQuoted-${m}`, `import type { T } from "lib" with { "resolution-mode": "${m}" };\nexport type U = T;`],
+  [`importTypeDefault-${m}`, `import type D from 'lib' ${mode(m)};\nexport type U = D;`],
+  [`importTypeNamespace-${m}`, `import type * as N from 'lib' ${mode(m)};\nexport type U = N.T;`],
+  [`importTypeAssert-${m}`, `import type { T } from 'lib' ${mode(m, 'assert')};\nexport type U = T;`],
+  [`exportType-${m}`, `export type { T } from 'lib' ${mode(m)};`],
+  [`exportTypeStar-${m}`, `export type * from 'lib' ${mode(m)};`],
+  [`importTypeNode-${m}`, `export let v: import('lib', { with: { 'resolution-mode': '${m}' } }).T;`],
+  [`importTypeNodeAssert-${m}`, `export let v: import('lib', { assert: { 'resolution-mode': '${m}' } }).T;`],
+  [`typeofImportNode-${m}`, `export type M = typeof import('lib', { with: { 'resolution-mode': '${m}' } });`],
+  [`typeArgumentNode-${m}`, `export function f(): Promise<import('lib', { with: { 'resolution-mode': '${m}' } }).T> { return null as never; }`],
+  [`heritageNode-${m}`, `export class C extends B<import('lib', { with: { 'resolution-mode': '${m}' } }).T> {}`],
+  // Not type-only, so the attribute decides nothing.
+  [`valueImport-${m}`, `import { v } from 'lib' ${mode(m)};\nexport const x = v;`],
+  [`inlineTypeImport-${m}`, `import { type T } from 'lib' ${mode(m)};\nexport type U = T;`],
+  [`valueExport-${m}`, `export { v } from 'lib' ${mode(m)};`],
+  [`dynamicImportOptions-${m}`, `export const x = import('lib', { with: { 'resolution-mode': '${m}' } });`],
+  [`otherAttribute-${m}`, `import type { T } from 'lib' with { type: '${m}' };\nexport type U = T;`],
+]));
 const EXTENSIONS = ['ts', 'tsx', 'cts', 'mts', 'js', 'jsx', 'cjs', 'mjs'];
 const isTypeScriptFile = (ext) => ext === 'ts' || ext === 'tsx' || ext === 'cts' || ext === 'mts';
 const PACKAGE_TYPES = [undefined, 'module', 'commonjs'];
@@ -232,6 +254,18 @@ describe('the conditions Runes enters are the ones the compiler enters', () => {
     const { compared, mismatches } = await compare(SETTINGS, ['ts', 'tsx', 'cts', 'mts'], TYPE_FORMS);
     // 13 module kinds x 8 (file kind, package type) rows x 25 forms.
     expect(compared).toBeGreaterThanOrEqual(Math.floor(13 * 8 * Object.keys(TYPE_FORMS).length * 0.95));
+    expect(mismatches).toEqual([]);
+  });
+  it('for a type-only import, a type-only re-export and an import type that carry the resolution-mode attribute, in every module kind', async () => {
+    const { compared, mismatches } = await compare(SETTINGS, ['ts', 'tsx', 'cts', 'mts'], ATTRIBUTE_FORMS);
+    // 13 module kinds x 8 (file kind, package type) rows x the forms.
+    expect(compared).toBeGreaterThanOrEqual(Math.floor(13 * 8 * Object.keys(ATTRIBUTE_FORMS).length * 0.95));
+    expect(mismatches).toEqual([]);
+  });
+  it('for the resolution-mode attribute under a tsconfig that leaves the module settings to the defaults', async () => {
+    const { compared, mismatches } = await compare(DEFAULTED_SETTINGS, ['ts', 'tsx', 'cts', 'mts'], ATTRIBUTE_FORMS, false);
+    // The 4 settings that compute Classic resolve nothing.
+    expect(compared).toBe((DEFAULTED_SETTINGS.length - 4) * 8 * Object.keys(ATTRIBUTE_FORMS).length);
     expect(mismatches).toEqual([]);
   });
   it('for a tsconfig that leaves module, moduleResolution or both to the compiler\'s defaults, in every file kind, package type and form', async () => {

@@ -116,6 +116,10 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
   it('typescript-workspace-semver-range-linked-edge', () => runCase('typescript-workspace-semver-range-linked-edge'));
   it('typescript-workspace-pnpm-range-unlinked-silence', () => runCase('typescript-workspace-pnpm-range-unlinked-silence'));
+  it('typescript-workspace-pnpm-undeclared-member-silence', () => runCase('typescript-workspace-pnpm-undeclared-member-silence'));
+  it('typescript-workspace-pnpm-root-declared-member-edge', () => runCase('typescript-workspace-pnpm-root-declared-member-edge'));
+  it('typescript-workspace-pnpm-hoisted-undeclared-member-edge', () => runCase('typescript-workspace-pnpm-hoisted-undeclared-member-edge'));
+  it('typescript-workspace-undeclared-member-npm-edge', () => runCase('typescript-workspace-undeclared-member-npm-edge'));
   it('typescript-workspace-protocol-pnpm-edge', () => runCase('typescript-workspace-protocol-pnpm-edge'));
   it('typescript-workspace-range-unsatisfied-silence', () => runCase('typescript-workspace-range-unsatisfied-silence'));
   it('typescript-workspace-unknown-manager-range-edge', () => runCase('typescript-workspace-unknown-manager-range-edge'));
@@ -131,6 +135,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-unread-preset-own-preserve-edge', () => runCase('typescript-exports-unread-preset-own-preserve-edge'));
   it('typescript-package-entry-outdir-main-edge', () => runCase('typescript-package-entry-outdir-main-edge'));
   it('typescript-package-entry-outdir-exports-edge', () => runCase('typescript-package-entry-outdir-exports-edge'));
+  it('typescript-package-entry-outdir-bundler-dual-edge', () => runCase('typescript-package-entry-outdir-bundler-dual-edge'));
   it('typescript-package-entry-outdir-include-root-edge', () => runCase('typescript-package-entry-outdir-include-root-edge'));
   it('typescript-package-entry-outdir-configs-disagree-silence', () => runCase('typescript-package-entry-outdir-configs-disagree-silence'));
   it('typescript-package-entry-no-tsconfig-silence', () => runCase('typescript-package-entry-no-tsconfig-silence'));
@@ -146,6 +151,8 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-commonjs-module-dynamic-import-edge', () => runCase('typescript-exports-commonjs-module-dynamic-import-edge'));
   it('typescript-exports-preserve-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-preserve-dynamic-import-in-cts-file-edge'));
   it('typescript-exports-nodenext-typeof-import-in-cts-file-edge', () => runCase('typescript-exports-nodenext-typeof-import-in-cts-file-edge'));
+  it('typescript-exports-resolution-mode-type-only-import-edge', () => runCase('typescript-exports-resolution-mode-type-only-import-edge'));
+  it('typescript-exports-resolution-mode-import-type-edge', () => runCase('typescript-exports-resolution-mode-import-type-edge'));
   it('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-class-heritage-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-class-heritage-type-argument-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-call-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-call-type-argument-import-type-in-cts-file-edge'));

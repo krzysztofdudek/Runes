@@ -578,17 +578,22 @@ async function typescriptOracle(repoDir, result, findings) {
     }
     return top;
   };
-  const defaults = { cache: undefined, parsed: { options: { moduleResolution: ts.ModuleResolutionKind.Node10, module: ts.ModuleKind.CommonJS } } };
+  // A file no tsconfig covers is read as Node reads it, which TypeScript's own default (node10) does not do, for node10 reads no `exports`: Bundler with the `node` condition finds an extension and a directory index for a path and reads `exports` and `imports` with `types`, `node`, `default` and the `import` or `require` condition of the mode it is given, and the mode is the file's format as Node takes it (its extension, else the nearest package.json `type`), a `require()` reading `require` and an `import()` or a `resolution-mode` of import reading `import` whatever the file.
+  const uncoveredOptions = { moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext, customConditions: ['node'] };
+  const uncovered = { cache: ts.createModuleResolutionCache(repoDir, (s) => s, uncoveredOptions), parsed: { options: uncoveredOptions } };
+  const nodeFormatOptions = { moduleResolution: ts.ModuleResolutionKind.NodeNext, module: ts.ModuleKind.NodeNext };
+  const callModes = { require: ts.ModuleKind.CommonJS, import: ts.ModuleKind.ESNext, esm: ts.ModuleKind.ESNext };
   const sameStem = (a, b) => a.replace(TS_SOURCE_EXT, '') === b.replace(TS_SOURCE_EXT, '');
   let checked = 0;
   for (const r of deps) {
     const specifier = r.candidates[0].specifier;
-    const config = configFor(r.from) ?? defaults;
+    const covering = configFor(r.from);
+    const config = covering ?? uncovered;
     const options = { ...config.parsed.options, allowJs: true, resolveJsonModule: true, noEmit: true };
     const containing = path.join(repoDir, r.from);
     let mode;
     try {
-      mode = ts.getImpliedNodeFormatForFile(containing, config.cache?.getPackageJsonInfoCache?.(), host, options);
+      mode = covering === null ? (callModes[r.candidates[0].callForm] ?? ts.getImpliedNodeFormatForFile(containing, config.cache.getPackageJsonInfoCache(), host, nodeFormatOptions)) : ts.getImpliedNodeFormatForFile(containing, config.cache?.getPackageJsonInfoCache?.(), host, options);
     } catch {
       mode = undefined;
     }

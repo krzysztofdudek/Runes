@@ -1243,6 +1243,66 @@ describe('resolveTsPath — workspace membership', () => {
   });
 });
 
+describe('resolveTsPath — under pnpm a workspace member binds only where a project above the file declares it', () => {
+  // `plugin` imports `lib` and declares what `plugin` holds; `root` holds the manager's files and the root's own fields.
+  const ws = (root = {}, plugin = {}, from = 'packages/plugin/tests/fixture/input.ts', more = {}) => project({
+    'package.json': JSON.stringify({ name: 'root', private: true, ...(root['package.json'] ?? { packageManager: 'pnpm@9.11.0' }) }),
+    'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+    ...Object.fromEntries(Object.entries(root).filter(([k]) => k !== 'package.json')),
+    'packages/lib/package.json': '{ "name": "lib", "version": "2.0.0", "main": "./index.ts" }',
+    'packages/lib/index.ts': '',
+    'packages/eslint-config-acme/package.json': '{ "name": "eslint-config-acme", "version": "1.0.0", "main": "./index.ts" }',
+    'packages/eslint-config-acme/index.ts': '',
+    'packages/plugin/package.json': JSON.stringify({ name: 'plugin', ...plugin }),
+    ...more,
+  });
+  const hit = 'packages/lib/index.ts';
+  it('an undeclared member binds nothing, a declared one binds, in any dependency field', () => {
+    expect(ws()('lib', 'packages/plugin/tests/fixture/input.ts')).toBeUndefined();
+    expect(ws()('lib/index', 'packages/plugin/use.ts')).toBeUndefined();
+    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) expect(ws({}, { [field]: { lib: 'workspace:*' } })('lib', 'packages/plugin/use.ts')).toBe(hit);
+    // Known by its lockfile alone.
+    expect(ws({ 'package.json': {}, 'pnpm-lock.yaml': "lockfileVersion: '9.0'\n" })('lib', 'packages/plugin/use.ts')).toBeUndefined();
+  });
+  it('a member the root declares binds for every file under the root', () => {
+    const root = { 'package.json': { packageManager: 'pnpm@9.11.0', devDependencies: { lib: 'workspace:*' } } };
+    expect(ws(root)('lib', 'packages/plugin/use.ts')).toBe(hit);
+    expect(ws(root)('lib', 'scripts/build.ts')).toBe(hit);
+    expect(ws()('lib', 'scripts/build.ts')).toBeUndefined();
+  });
+  it('a package.json that is no project of the workspace declares nothing: nobody installs it', () => {
+    const fixture = { 'packages/plugin/tests/fixture/package.json': '{ "name": "fixture", "dependencies": { "lib": "workspace:*" } }' };
+    expect(ws({}, {}, undefined, fixture)('lib', 'packages/plugin/tests/fixture/input.ts')).toBeUndefined();
+  });
+  it('a package does not find itself by name without exports, and does with them', () => {
+    expect(ws()('lib', 'packages/lib/test/x.ts')).toBeUndefined();
+    const own = ws({}, { exports: './index.ts' }, undefined, { 'packages/plugin/index.ts': '' });
+    expect(own('plugin', 'packages/plugin/test/x.ts')).toBe('packages/plugin/index.ts');
+  });
+  it('public hoisting leaves an undeclared member bound: shamefully-hoist, the hoisted linker or a public-hoist-pattern, in .npmrc or pnpm-workspace.yaml', () => {
+    const yaml = (line) => ({ 'pnpm-workspace.yaml': `packages:\n  - 'packages/*'\n${line}\n` });
+    for (const root of [
+      { '.npmrc': 'shamefully-hoist=true\n' },
+      { '.npmrc': 'node-linker = hoisted\n' },
+      { '.npmrc': 'public-hoist-pattern[]=*types*\n' },
+      yaml('shamefullyHoist: true'),
+      yaml('nodeLinker: hoisted'),
+      yaml('publicHoistPattern:\n  - "*types*"'),
+    ]) expect(ws(root)('lib', 'packages/plugin/use.ts')).toBe(hit);
+    expect(ws({ '.npmrc': 'shamefully-hoist=false\nnode-linker=isolated\n' })('lib', 'packages/plugin/use.ts')).toBeUndefined();
+    expect(ws(yaml('shamefullyHoist: false'))('lib', 'packages/plugin/use.ts')).toBeUndefined();
+  });
+  it('before pnpm 10 the default public-hoist-pattern keeps a member named for eslint or prettier bound', () => {
+    const eslint = 'packages/eslint-config-acme/index.ts';
+    expect(ws()('eslint-config-acme', 'packages/plugin/use.ts')).toBe(eslint);
+    expect(ws({ 'package.json': {}, 'pnpm-lock.yaml': 'importers: {}\n' })('eslint-config-acme', 'packages/plugin/use.ts')).toBe(eslint);
+    expect(ws({ 'package.json': { packageManager: 'pnpm@10.4.0' } })('eslint-config-acme', 'packages/plugin/use.ts')).toBeUndefined();
+  });
+  it('npm, yarn and an unknown manager link every member at the root, declared or not', () => {
+    for (const root of [{ packageManager: 'npm@10.8.0' }, { packageManager: 'yarn@4.1.0' }, {}]) expect(ws({ 'package.json': root })('lib', 'packages/plugin/use.ts')).toBe(hit);
+  });
+});
+
 // Issue 010: a verdict must be a function of the commit, so a file the caller excludes (git-ignored build output, a generated config) acts as though it does not exist, for every probe and every configuration read: the result with it on disk equals the result without it.
 describe('resolveTsPath — a workspace member declared by a range binds only where the package manager links it', () => {
   // `app` declares `lib` as `spec`; `lib` is a member at `version` (null: none); `root` holds the manager's files.
@@ -1463,6 +1523,22 @@ describe('resolveTsPath — a package entry under outDir that is not in the repo
     expect(r('@acme/core/wrong', 'packages/app/a.ts')).toBeUndefined();
     expect(r('@acme/core/css', 'packages/app/a.ts')).toBeUndefined();
   });
+  it('reads .mjs, .d.mts, .cjs and .d.cts as a bundler writes them from a .ts or .tsx source, where the compiler\'s own source is not there', () => {
+    const dual = { exports: { '.': { import: { types: './dist/index.d.mts', default: './dist/index.mjs' }, require: { types: './dist/index.d.cts', default: './dist/index.cjs' } }, './view': { import: './dist/view.mjs', require: './dist/view.cjs' }, './both': { types: './dist/both.d.mts', default: './dist/both.mjs' }, './gone': './dist/gone.mjs' } };
+    const sources = { 'packages/core/src/view.tsx': '', 'packages/core/src/both.ts': '', 'packages/core/src/both.mts': '', 'packages/app/package.json': '{ "name": "app", "type": "module" }', 'packages/app/tsconfig.json': '{ "compilerOptions": { "module": "nodenext" } }' };
+    const r = project(pkg(dual, built, sources));
+    expect(r('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(r('@acme/core', 'packages/app/a.cts')).toBe('packages/core/src/index.ts');
+    expect(r('@acme/core/view', 'packages/app/a.ts')).toBe('packages/core/src/view.tsx');
+    expect(r('@acme/core/view', 'packages/app/a.cts')).toBe('packages/core/src/view.tsx');
+    // The compiler's own source wins where both are there.
+    expect(r('@acme/core/both', 'packages/app/a.ts')).toBe('packages/core/src/both.mts');
+    expect(r('@acme/core/gone', 'packages/app/a.ts')).toBeUndefined();
+    // Each field alone.
+    for (const manifest of [{ module: './dist/index.mjs' }, { types: './dist/index.d.mts' }, { main: './dist/index.cjs' }, { types: './dist/index.d.cts' }]) {
+      expect(project(pkg(manifest, built))('@acme/core', 'packages/app/a.ts'), JSON.stringify(manifest)).toBe('packages/core/src/index.ts');
+    }
+  });
   it('reads an entry with no extension as the file and then as the directory index', () => {
     expect(project(pkg({ main: './dist/index' }, built))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
     expect(project(pkg({ main: 'dist' }, built))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
@@ -1583,6 +1659,17 @@ describe('package-entry-missing', () => {
     expect(two.diagnostics.map((d) => d.code)).toEqual(['package-entry-missing']);
     expect(two.diagnostics[0].message).toContain('map it to different sources');
     expect(two.diagnostics[0].message).not.toContain('no tsconfig');
+  });
+  it('says nothing for a dual package whose .mjs and .d.mts entries a bundler builds from a .ts source', () => {
+    const dual = run({
+      ...base,
+      'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "import": { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" }, "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" } } } }',
+      'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }',
+      'packages/app/package.json': '{ "name": "app", "type": "module" }',
+      'packages/app/tsconfig.json': '{ "compilerOptions": { "module": "nodenext" } }',
+    }, ['@acme/core']);
+    expect(dual.hits).toEqual(['packages/core/src/index.ts']);
+    expect(dual.diagnostics).toEqual([]);
   });
   it('says nothing when the entry maps to its source, when a later entry binds, or when the package has no entry', () => {
     const mapped = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }', 'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }' }, ['@acme/core']);
