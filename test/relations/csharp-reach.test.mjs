@@ -381,6 +381,24 @@ describe('buildCsharpReachability — files a project takes out of its compilati
     expect(thisFile('web/Api.cs', 'web/Old/Deep/Line.cs')).toBe('unreachable');
   });
 
+  it('keeps every file of the project when a Compile Include of it cannot be placed: it may put a removed file back', () => {
+    for (const items of [['<Compile Remove="Old/**" />', '<Compile Include="Old/$(Flavor)/**/*.cs" />'], ['<Compile Include="$(Generated)/*.cs" />', '<Compile Remove="Old/**" />']]) {
+      const reach = layout(withItems(...items));
+      expect(reach('web/Api.cs', 'web/Old/Order.cs'), items.join('')).toBe('same');
+      expect(reach('web/Api.cs', 'web/Old/Deep/Line.cs'), items.join('')).toBe('same');
+      expect(reach('app/x.cs', 'web/Old/Order.cs'), items.join('')).toBe('reachable');
+    }
+  });
+
+  it('reads a condition that holds a raw > in its value, on the item or on its group, as a condition', () => {
+    for (const web of [
+      withItems('<Compile Remove="Old/**" Condition="\'$(LangVersion)\' > \'10\'" />'),
+      '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup Condition="\'$(LangVersion)\' > \'10\'"><Compile Remove="Old/**" /></ItemGroup></Project>',
+    ]) {
+      expect(layout(web)('web/Api.cs', 'web/Old/Order.cs'), web).toBe('same');
+    }
+  });
+
   it('ignores a removal it cannot place: one that needs an unknown property or leaves the repository', () => {
     for (const item of ['<Compile Remove="$(OldDir)/**" />', '<Compile Remove="../../Old/**" />']) {
       expect(layout(withItems(item))('web/Api.cs', 'web/Old/Order.cs'), item).toBe('same');
