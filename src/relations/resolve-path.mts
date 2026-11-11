@@ -262,18 +262,23 @@ function makeRustResolveDeps(
     // Cargo (edition 2015 only, `target_path` and `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found as neither or as more than one of `src/bin/<name>.rs`, `src/bin/<name>/main.rs` and (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`. A bin found twice that takes such a path is rooted there alone.
     // Cargo (`normalize_lib`, `autolib`): with `autolib = false` and no `[lib]` table the package has no library, and `src/lib.rs` is no root. `has_lib` is whether a library is configured (a `[lib]` table) or inferred, not whether a file stands at its path.
     const inferLib = manifest === undefined || !manifest.autolibOff || manifest.libDeclared;
-    const legacyBinPaths: string[] = [];
+    const legacyPaths: string[] = [];
     const sharedNameBins = new Set<string>();
     if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
       const hasLib = manifest.libDeclared || (inferLib && exists(at('src/lib.rs')));
       for (const named of manifest.namedTargets) {
+        // Cargo (edition 2015 only, `target_path` and `legacy_bench_path`): a `[[bench]]` named `bench` that gives no path and is found as neither or as more than one of `benches/bench.rs` and `benches/bench/main.rs` is built from `src/bench.rs`, when that file exists.
+        if (named === 'benches/bench') {
+          if (['benches/bench.rs', 'benches/bench/main.rs'].filter((p) => exists(at(p))).length !== 1 && exists(at('src/bench.rs'))) legacyPaths.push('src/bench.rs');
+          continue;
+        }
         if (!named.startsWith('src/bin/')) continue;
         const name = named.slice('src/bin/'.length);
         const inferred = [`${named}.rs`, `${named}/main.rs`, ...(name === manifest.packageName ? ['src/main.rs'] : [])].filter((p) => exists(at(p)));
         if (inferred.length === 1) continue;
         const legacy = [...(hasLib ? [] : [`src/${name}.rs`]), 'src/main.rs', 'src/bin/main.rs'].find((p) => exists(at(p)));
         if (legacy === undefined) continue;
-        legacyBinPaths.push(legacy);
+        legacyPaths.push(legacy);
         if (inferred.length > 1) sharedNameBins.add(named);
       }
     }
@@ -283,7 +288,7 @@ function makeRustResolveDeps(
     const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
     // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
     const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib, rel.startsWith('src/bin/') ? srcBinFiles(pkgDir) : [], buildScriptOf(manifest));
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib, rel.startsWith('src/bin/') ? srcBinFiles(pkgDir) : [], buildScriptOf(manifest));
     // Cargo compiles a file once per crate that declares it (`mod x;` from a crate root down), so with several roots in the tree the file's crates are those whose root declares the first module segment below the tree's directory: a root item named in the file is that root's, and when none or several do, no item binds (see `resolveFromModuleDir`).
     const existingRoots = target.rootFiles.filter((f) => exists(at(f)));
     const owningRoots = target.byDeclaration === true || (existingRoots.length > 1 && !target.fileIsRoot) ? rootsDeclaring(rel, target.srcDir, existingRoots, at) : undefined;

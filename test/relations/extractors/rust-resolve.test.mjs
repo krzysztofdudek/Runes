@@ -700,6 +700,31 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(parseCargoManifest('[package]\nbuild = true\n').build).toBeUndefined();
   });
 
+  it('roots a bench named bench at src/bench.rs in edition 2015 when benches/bench.rs and benches/bench/main.rs are not exactly one file', () => {
+    put('src/lib.rs', 'pub mod bench;\n');
+    put('src/bench.rs', 'mod helpers;\n');
+    put('src/helpers/mod.rs', '');
+    put('src/bench/helpers.rs', '');
+    const resolveWith = (manifest, spec, from) => {
+      put('Cargo.toml', manifest);
+      return makeResolvePathToFile(ws)(spec, from, 'rust');
+    };
+    const bench = (edition, name = 'bench') => `[package]\nname = "kit"\n${edition === undefined ? '' : `edition = "${edition}"\n`}[[bench]]\nname = "${name}"\n`;
+    // No benches/bench.rs: src/bench.rs is the bench's root, so `mod helpers;` is beside it and the library's `mod bench;` has not that file.
+    expect(resolveWith(bench(undefined), 'self::helpers', 'src/bench.rs')).toBe('src/helpers/mod.rs');
+    expect(resolveWith(bench('2015'), 'self::helpers', 'src/bench.rs')).toBe('src/helpers/mod.rs');
+    // From edition 2018, or for any other name, it stays a module of the library.
+    expect(resolveWith(bench('2018'), 'self::helpers', 'src/bench.rs')).toBe('src/bench/helpers.rs');
+    expect(resolveWith(bench(undefined, 'speed'), 'self::helpers', 'src/bench.rs')).toBe('src/bench/helpers.rs');
+    // One file under benches/ is where Cargo finds it; two files make the legacy path apply again.
+    put('benches/bench.rs', '');
+    expect(resolveWith(bench(undefined), 'self::helpers', 'src/bench.rs')).toBe('src/bench/helpers.rs');
+    put('benches/bench/main.rs', '');
+    expect(resolveWith(bench(undefined), 'self::helpers', 'src/bench.rs')).toBe('src/helpers/mod.rs');
+    // A bench that gives a path of its own is rooted there.
+    expect(resolveWith(`${bench(undefined)}path = "benches/bench.rs"\n`, 'self::helpers', 'src/bench.rs')).toBe('src/bench/helpers.rs');
+  });
+
   it('roots crate:: of a [[test]], [[example]] or [[bench]] path at that target, also below tests/ where no main.rs is (the zed shape)', () => {
     // Issue 173: those paths were ignored, so such a target's root was a module of the default tree and its modules resolved under src/ or under tests/.
     put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/integration/suite.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\nname = "perf"\npath = "perf/bench_main.rs"\n');
