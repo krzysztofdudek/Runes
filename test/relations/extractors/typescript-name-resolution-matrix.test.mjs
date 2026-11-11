@@ -139,7 +139,8 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-preserve-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-preserve-dynamic-import-in-cts-file-edge'));
   it('typescript-exports-nodenext-typeof-import-in-cts-file-edge', () => runCase('typescript-exports-nodenext-typeof-import-in-cts-file-edge'));
   it('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge'));
-  it('typescript-exports-nodenext-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-type-argument-import-type-in-cts-file-edge'));
+  it('typescript-exports-nodenext-class-heritage-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-class-heritage-type-argument-import-type-in-cts-file-edge'));
+  it('typescript-exports-nodenext-call-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-call-type-argument-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-keyof-and-parenthesized-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-keyof-and-parenthesized-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-template-literal-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-template-literal-import-type-in-cts-file-edge'));
   it('typescript-exports-nodenext-heritage-import-call-in-cts-file-edge', () => runCase('typescript-exports-nodenext-heritage-import-call-in-cts-file-edge'));
