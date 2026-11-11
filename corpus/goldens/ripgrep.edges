@@ -186,6 +186,7 @@ crates/ignore/src/walk.rs:2202	crates/ignore/src/lib.rs
 crates/ignore/src/walk.rs:23	crates/ignore/src/types.rs
 crates/ignore/tests/gitignore_matched_path_or_any_parents_tests.rs:3	crates/ignore/src/gitignore.rs
 crates/ignore/tests/gitignore_skip_bom.rs:1	crates/ignore/src/gitignore.rs
+crates/index/src/lib.rs:3	crates/index/src/index.rs
 crates/index/src/lib.rs:5	crates/index/src/index.rs
 crates/index/src/lib.rs:6	crates/index/src/literal.rs
 crates/matcher/src/lib.rs:39	crates/matcher/src/interpolate.rs
