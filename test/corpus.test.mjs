@@ -24,6 +24,8 @@ const put = (root, rel, text) => {
   writeFileSync(join(root, rel), text);
 };
 
+const PLUG_ENTRY = '- `plug` `typescript:false-edge` `app.js:1` `plug` `tools/plug/index.js` `unresolved in the repository`';
+
 let source;
 let commit;
 let work;
@@ -136,9 +138,13 @@ describe('the corpus gate', () => {
     writeFileSync(join(work, 'explained.md'), '');
   });
 
-  test('an oracle explanation names both answers and stops matching when either of them changes', () => {
-    // A `file:` dependency: npm links tools/plug into node_modules and Runes binds it; TypeScript reads no package manager manifest and finds nothing.
+  /** A `file:` dependency: npm links tools/plug into node_modules and Runes binds it; TypeScript reads no package manager manifest and finds nothing. Makes it the manifest and returns the entry that explains that one disagreement. */
+  function plugFixture() {
     const plugRepo = join(tmp, 'plug');
+    if (existsSync(plugRepo)) {
+      manifest([{ id: 'plug', url: pathToFileURL(plugRepo).href, commit: git(plugRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+      return PLUG_ENTRY;
+    }
     mkdirSync(plugRepo);
     git(plugRepo, 'init', '-q');
     put(plugRepo, 'package.json', JSON.stringify({ name: 'app', devDependencies: { plug: 'file:./tools/plug' } }));
@@ -148,7 +154,30 @@ describe('the corpus gate', () => {
     git(plugRepo, 'add', '.');
     git(plugRepo, 'commit', '-q', '-m', 'plug');
     manifest([{ id: 'plug', url: pathToFileURL(plugRepo).href, commit: git(plugRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
-    const entry = '- `plug` `typescript:false-edge` `app.js:1` `plug` `tools/plug/index.js` `unresolved in the repository`';
+    return PLUG_ENTRY;
+  }
+
+  test('an explanation that matches no disagreement is named, and fails the run under --strict', () => {
+    const entry = plugFixture();
+    const stale = '- `plug` `typescript:false-edge` `app.js:7` `plug` `tools/plug/index.js` `unresolved in the repository`';
+    writeFileSync(join(work, 'explained.md'), `${entry}: a file: dependency npm links and TypeScript does not read\n${stale}: a disagreement that is gone\n`);
+    const lax = corpus('oracles');
+    assert.equal(lax.code, 0, lax.out);
+    assert.match(lax.out, /ok {3}plug .*1 disagreements, 1 explained/);
+    assert.match(lax.out, /1 explanations of plug match no disagreement of this run:\n {4}UNUSED explained\.md:2: /);
+    const strict = corpus('oracles', '--strict');
+    assert.equal(strict.code, 1, strict.out);
+    assert.match(strict.out, /UNUSED explained\.md:2: /);
+    assert.match(strict.out, /--strict: an explanation that matches no disagreement fails the run/);
+    writeFileSync(join(work, 'explained.md'), `${entry}: a file: dependency npm links and TypeScript does not read\n`);
+    const clean = corpus('oracles', '--strict');
+    assert.equal(clean.code, 0, clean.out);
+    writeFileSync(join(work, 'explained.md'), '');
+    manifest([fixture()]);
+  });
+
+  test('an oracle explanation names both answers and stops matching when either of them changes', () => {
+    const entry = plugFixture();
     writeFileSync(join(work, 'explained.md'), '');
     const bare = corpus('oracles');
     assert.equal(bare.code, 1, bare.out);
