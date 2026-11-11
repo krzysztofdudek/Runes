@@ -8,13 +8,14 @@ cites: "The Cargo Book — Cargo Targets (the `path` field of the `[lib]` target
 
 ## Rule
 
-A package can place its library outside `src/`: `[lib] path = "core/lib.rs"`. `src/main.rs` is then still the default binary, auto-discovered, and a file under `src/` is a module of that binary, not of the library, whose directory does not hold it. So in `src/cli/run.rs`, `crate::Config` binds the binary root `src/main.rs` (node `src`), never the library's same-named `Config` in `core/lib.rs` (node `core`), and `crate::LibOnly`, an item only the library declares, binds nothing (line 2). The package's own name still addresses the library from the binary's modules: `shop::Engine` binds `core/lib.rs` (line 3).
+A package can place its library outside `src/`: `[lib] path = "core/lib.rs"`. `src/main.rs` is then still the default binary, auto-discovered, and a file under `src/` is a module of that binary, not of the library, whose directory does not hold it. So in `src/cli/run.rs`, `crate::Config` binds the binary root `src/main.rs` (node `src`), never the library's same-named `Config` in `core/lib.rs` (node `core`), and `crate::LibOnly`, an item only the library declares, binds nothing (line 2). The package's own name, which edition 2021 puts in scope without `extern crate`, still addresses the library from the binary's modules: `shop::Engine` binds `core/lib.rs` (line 3).
 
 ## Files
 
 ```toml path=Cargo.toml
 [package]
 name = "shop"
+edition = "2021"
 
 [lib]
 path = "core/lib.rs"

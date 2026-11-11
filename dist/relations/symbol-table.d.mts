@@ -8,6 +8,8 @@ export declare class SymbolTable {
     private readonly namespaces;
     /** `${namespace}\0${head}` → value → files, for every key written `<head>\t<value>`: a fact a file states about `head` that carries a value (see `declare`). */
     private readonly listed;
+    /** How many times `declare` has been called: an answer read from the table holds while this has not moved. */
+    private declarations;
     private key;
     declare(language: string, symbolKey: string, file: string): void;
     /** True when some `::`-qualified key ends in the segment `name` (e.g. `Admin::Order` for
@@ -39,3 +41,5 @@ export declare class SymbolTable {
      *  the resolver collapses by owner. Empty when no file declares into the package. */
     filesInPackage(language: string, packageFqn: string): string[];
 }
+/** How many declarations `table` has taken so far. An answer read from the table, kept by a resolver, holds while this has not moved. Internal to Runes: the package exports `SymbolTable` alone. */
+export declare function declarationCount(table: SymbolTable): number;

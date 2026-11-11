@@ -8,13 +8,14 @@ cites: "The Rust Book ch. 11.3 (tests/common/mod.rs shared helpers); The Cargo B
 
 ## Rule
 
-Each `tests/*.rs` file is the root of its own test crate, so `mod common;` in `tests/it.rs` resolves beside it: `tests/common/mod.rs` (node `common`). The library is reached from a test crate by its package name: `mycrate::api::Client` binds the library module `src/api/mod.rs` (node `api`).
+Each `tests/*.rs` file is the root of its own test crate, so `mod common;` in `tests/it.rs` resolves beside it: `tests/common/mod.rs` (node `common`). The library is reached from a test crate by its package name, which edition 2021 puts in scope without `extern crate`: `mycrate::api::Client` binds the library module `src/api/mod.rs` (node `api`).
 
 ## Files
 
 ```toml path=Cargo.toml
 [package]
 name = "mycrate"
+edition = "2021"
 ```
 
 ```rust path=src/api/mod.rs

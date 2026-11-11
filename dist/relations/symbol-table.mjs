@@ -18,10 +18,13 @@ export class SymbolTable {
     namespaces = new Set();
     /** `${namespace}\0${head}` → value → files, for every key written `<head>\t<value>`: a fact a file states about `head` that carries a value (see `declare`). */
     listed = new Map();
+    /** How many times `declare` has been called: an answer read from the table holds while this has not moved. */
+    declarations = 0;
     key(language, symbolKey) {
         return `${namespaceOf(language)}\0${symbolKey}`;
     }
     declare(language, symbolKey, file) {
+        this.declarations++;
         // A key with a tab is no name: `<head>\t<value>` states a value about `head` (the C# extractor records a type's base list this way), read back by `valuesOf` and by nothing else.
         const tab = symbolKey.indexOf('\t');
         if (tab !== -1) {
@@ -112,4 +115,8 @@ export class SymbolTable {
         const s = this.packageMembers.get(this.key(language, packageFqn));
         return s ? [...s] : [];
     }
+}
+/** How many declarations `table` has taken so far. An answer read from the table, kept by a resolver, holds while this has not moved. Internal to Runes: the package exports `SymbolTable` alone. */
+export function declarationCount(table) {
+    return table['declarations'];
 }

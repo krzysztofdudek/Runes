@@ -57,9 +57,7 @@ function resolveBare(segments, fromFile, exists, deps, crate) {
     const own = crate.crateName !== undefined && root === crate.crateName && crate.lib !== null ? (crate.lib ?? { srcDir: crate.srcDir, rootFiles: crate.rootFiles ?? [] }) : undefined;
     const declaresItem = (f, name) => (deps.rootDeclares?.(f, name, true) ?? true);
     if (crate.crateRelativeUses === true && deps.externCrateFor !== undefined) {
-        // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The package's own crate name aside, the first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, or a module or an item of its own. A path dependency that no root binds is not in reach of a `use`; the reserved crates stay external.
-        if (own !== undefined)
-            return into(own);
+        // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, the package's own library included, or a module or an item of its own. A crate that no root binds is not in reach of a `use`, a path dependency or the package's own library alike; the reserved crates stay external.
         const roots = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
         for (const file of roots) {
             if (!exists(file))
@@ -116,6 +114,10 @@ export function rustModuleFileKey(modulePath, conditional = false) {
 export function rustGlobKey(path) {
     return `glob:${path}`;
 }
+/** The symbol key the Rust extractor declares beside `rustGlobKey(path)` when a `cfg` in front of the glob's `use` may remove it (`#[cfg(unix)] pub use unix::*;`). Two globs that bring the same name in are ambiguous only when nothing can switch either off. The `glob?:` prefix can never be a Rust identifier. */
+export function rustConditionalGlobKey(path) {
+    return `glob?:${path}`;
+}
 /** The symbol key under which the Rust extractor declares, for a file, a module the file declares without a body (`mod x;`), whatever stands in front of it and also in a `cfg_if!` branch. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). It says that the name is a module with a file of its own, not where that file is. The `mod:` prefix can never be a Rust identifier. */
 export function rustModuleKey(modulePath) {
     return `mod:${modulePath}`;
@@ -158,8 +160,41 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     const crate = deps.crateRootFor(fromFile);
     if (crate === undefined)
         return undefined;
-    const srcDir = crate.srcDir;
     const fromPosix = toPosix(fromFile);
+    const loaders = deps.pathLoaders?.(fromPosix) ?? [];
+    // A file loaded through a `path` attribute is a child of the module of the file that loads it, wherever the two lie: its first `super` is that file's `self`. The same file may also be a module by its name, declared by the module above its place, which is then its parent as well: that parent is read first, as it was before loaders were known, and the loader only where it names nothing. Two loaders leave the parent untold. Each step spends one `super`, so the walk ends.
+    const lead = segments.findIndex((s) => s !== 'self' && s !== 'super');
+    const supers = segments.slice(0, lead === -1 ? segments.length : lead).filter((s) => s === 'super').length;
+    if (supers > 0 && loaders.length > 0 && crate.fileIsRoot !== true) {
+        const viaLoader = () => {
+            if (loaders.length > 1)
+                return undefined;
+            const rest = segments.slice(lead === -1 ? segments.length : lead);
+            const climb = [...new Array(supers - 1).fill('super'), ...rest];
+            const next = climb[0] === 'super' ? climb : ['self', ...climb];
+            return resolveRelative(next[0], next, loaders[0], exists, deps);
+        };
+        if (!declaredByName(fromPosix, crate, exists, deps))
+            return viaLoader();
+        return resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders) ?? viaLoader();
+    }
+    return resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders);
+}
+/** Whether the module above the place of `file` declares it by its name (`mod util;` in `src/lib.rs` for `src/util.rs`): the crate's root files where that module is the crate root, else its `<dir>.rs` or `<dir>/mod.rs`. */
+function declaredByName(file, crate, exists, deps) {
+    if (deps.moduleDeclared === undefined)
+        return false;
+    const dir = path.posix.dirname(file);
+    const baseName = path.posix.basename(file, '.rs');
+    const name = baseName === 'mod' ? path.posix.basename(dir) : baseName;
+    const above = baseName === 'mod' ? path.posix.dirname(dir) : dir;
+    const files = path.posix.normalize(above) === path.posix.normalize(crate.srcDir) ? (crate.rootFiles ?? []) : [above + '.rs', joinUnder(above, 'mod.rs')];
+    return files.some((f) => f !== undefined && exists(f) && deps.moduleDeclared(f, name) === true);
+}
+/** `resolveRelative` by the place of `fromPosix` on disk, a file loaded through a `path` attribute (`loaders`) owning the directory it lies in. */
+function resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders) {
+    const fromFile = fromPosix;
+    const srcDir = crate.srcDir;
     const fromDir = path.posix.dirname(fromPosix);
     const baseName = path.posix.basename(fromPosix, '.rs');
     // The module directory of the importing file: for `mod.rs` and for a crate ROOT file
@@ -197,8 +232,20 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir))
         return undefined;
     const crateRoot = rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared);
+    const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && loaders.length > 0;
+    // A name the module's file binds with `extern crate` (`extern crate util as u;` then `self::u::X`, or `super::u::X` from a child) is that crate. A module of the same name beside it would be a second definition, which Rust refuses.
+    const first = tail[0];
+    if (first !== undefined && deps.externCrateFor !== undefined) {
+        const atCrateRoot = path.posix.normalize(moduleDir) === path.posix.normalize(srcDir);
+        const files = pathLoaded ? [fromPosix] : atCrateRoot ? (crate.rootsShared === true ? [] : (crate.rootFiles ?? [])) : [moduleDir + '.rs', joinUnder(moduleDir, 'mod.rs')];
+        for (const file of files) {
+            const bound = file !== undefined && exists(file) ? deps.externCrateFor(fromFile, file, first) : undefined;
+            if (bound !== undefined)
+                return resolveFromModuleDir(bound.srcDir, tail.slice(1), exists, rootContext(bound.srcDir, bound.rootFiles, declaresOf(deps)), moduleCheckOf(deps));
+        }
+    }
     // A file loaded through a `path` attribute owns its directory, so what it names below itself lies beside it; the file itself holds its items. Where nothing beside it fits, the directory named after it is still read: the same file may be a module by its name as well.
-    if (!climbed && baseName !== 'mod' && !isRoot && deps.pathLoaded?.(fromPosix) === true) {
+    if (pathLoaded) {
         const beside = resolveFromModuleDir(fromDir, tail, exists, crateRoot, moduleCheckOf(deps), fromPosix);
         if (beside !== fromPosix)
             return beside;

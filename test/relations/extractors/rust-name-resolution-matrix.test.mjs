@@ -144,6 +144,7 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-custom-build-script-mod-edge', () => runCase('rust-custom-build-script-mod-edge'));
   it('rust-bin-dir-with-main-stays-crate-edge', () => runCase('rust-bin-dir-with-main-stays-crate-edge'));
   it('rust-bin-shared-module-two-bins-edge', () => runCase('rust-bin-shared-module-two-bins-edge'));
+  it('rust-bin-shared-module-plain-and-cfg-bins-edge', () => runCase('rust-bin-shared-module-plain-and-cfg-bins-edge'));
   it('rust-edition-2015-bin-shared-module-crate-relative-edge', () => runCase('rust-edition-2015-bin-shared-module-crate-relative-edge'));
   it('rust-bin-shared-common-module-edge', () => runCase('rust-bin-shared-common-module-edge'));
   it('rust-module-of-two-roots-root-item-edge', () => runCase('rust-module-of-two-roots-root-item-edge'));
@@ -151,6 +152,7 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-module-cfg-feature-in-library-and-plain-in-main-root-item-edge', () => runCase('rust-module-cfg-feature-in-library-and-plain-in-main-root-item-edge'));
   it('rust-module-in-cfg-inline-module-of-library-and-plain-in-main-root-item-edge', () => runCase('rust-module-in-cfg-inline-module-of-library-and-plain-in-main-root-item-edge'));
   it('rust-module-plain-in-library-and-cfg-in-main-root-item-edge', () => runCase('rust-module-plain-in-library-and-cfg-in-main-root-item-edge'));
+  it('rust-crate-head-cfg-attr-cfg-with-comment-root-item-edge', () => runCase('rust-crate-head-cfg-attr-cfg-with-comment-root-item-edge'));
   it('rust-edition-2018-bin-in-src-of-2015-package-bare-use-edge', () => runCase('rust-edition-2018-bin-in-src-of-2015-package-bare-use-edge'));
   it('rust-edition-2015-bin-in-src-of-2018-package-bare-use-edge', () => runCase('rust-edition-2015-bin-in-src-of-2018-package-bare-use-edge'));
   it('rust-module-no-root-declares-root-item-edge', () => runCase('rust-module-no-root-declares-root-item-edge'));
@@ -217,11 +219,19 @@ describe('MATRIX — what a crate root binds', () => {
   it('rust-edition-2015-root-extern-crate-alias-edge', () => runCase('rust-edition-2015-root-extern-crate-alias-edge'));
   it('rust-root-extern-crate-alias-edge', () => runCase('rust-root-extern-crate-alias-edge'));
   it('rust-module-extern-crate-alias-own-module-only-edge', () => runCase('rust-module-extern-crate-alias-own-module-only-edge'));
+  it('rust-module-extern-crate-alias-use-in-function-body-edge', () => runCase('rust-module-extern-crate-alias-use-in-function-body-edge'));
+  it('rust-inline-module-local-mod-over-root-extern-crate-alias-edge', () => runCase('rust-inline-module-local-mod-over-root-extern-crate-alias-edge'));
+  it('rust-edition-2015-self-super-through-module-extern-crate-alias-edge', () => runCase('rust-edition-2015-self-super-through-module-extern-crate-alias-edge'));
+  it('rust-cfg-if-extern-crate-binds-name-edge', () => runCase('rust-cfg-if-extern-crate-binds-name-edge'));
+  it('rust-cfg-attr-proc-macro-derive-root-item-edge', () => runCase('rust-cfg-attr-proc-macro-derive-root-item-edge'));
+  it('rust-edition-2015-crate-named-like-root-module-edge', () => runCase('rust-edition-2015-crate-named-like-root-module-edge'));
   it('rust-edition-2015-root-module-over-path-dependency-edge', () => runCase('rust-edition-2015-root-module-over-path-dependency-edge'));
   it('rust-edition-2015-path-dependency-without-extern-crate-silence', () => runCase('rust-edition-2015-path-dependency-without-extern-crate-silence'));
   it('rust-edition-2015-root-extern-crate-path-dependency-edge', () => runCase('rust-edition-2015-root-extern-crate-path-dependency-edge'));
   it('rust-edition-2015-extern-crate-elsewhere-root-module-edge', () => runCase('rust-edition-2015-extern-crate-elsewhere-root-module-edge'));
   it('rust-edition-2015-main-module-over-library-extern-crate-edge', () => runCase('rust-edition-2015-main-module-over-library-extern-crate-edge'));
+  it('rust-edition-2015-bin-own-crate-name-without-extern-crate-root-module-edge', () => runCase('rust-edition-2015-bin-own-crate-name-without-extern-crate-root-module-edge'));
+  it('rust-edition-2015-bin-extern-crate-own-library-edge', () => runCase('rust-edition-2015-bin-extern-crate-own-library-edge'));
   it('rust-module-extern-crate-alias-not-in-inline-module-edge', () => runCase('rust-module-extern-crate-alias-not-in-inline-module-edge'));
   it('rust-proc-macro-derive-function-in-own-crate-edge', () => runCase('rust-proc-macro-derive-function-in-own-crate-edge'));
 });
@@ -242,6 +252,7 @@ describe('MATRIX — a path through a glob re-export of a crate root', () => {
   it('rust-crate-root-glob-reexport-edge', () => runCase('rust-crate-root-glob-reexport-edge'));
   it('rust-crate-root-glob-reexport-spellings-edge', () => runCase('rust-crate-root-glob-reexport-spellings-edge'));
   it('rust-crate-root-two-globs-same-name-silence', () => runCase('rust-crate-root-two-globs-same-name-silence'));
+  it('rust-crate-root-globs-under-opposite-cfgs-edge', () => runCase('rust-crate-root-globs-under-opposite-cfgs-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,6 +287,8 @@ describe('MATRIX — the children of a file loaded through a path attribute', ()
   it('rust-file-module-children-under-own-directory-edge', () => runCase('rust-file-module-children-under-own-directory-edge'));
   it('rust-path-loaded-file-children-beside-it-edge', () => runCase('rust-path-loaded-file-children-beside-it-edge'));
   it('rust-path-loaded-file-relative-path-forms-edge', () => runCase('rust-path-loaded-file-relative-path-forms-edge'));
+  it('rust-path-loaded-file-super-is-declaring-module-edge', () => runCase('rust-path-loaded-file-super-is-declaring-module-edge'));
+  it('rust-file-declared-by-name-and-path-loaded-super-edge', () => runCase('rust-file-declared-by-name-and-path-loaded-super-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

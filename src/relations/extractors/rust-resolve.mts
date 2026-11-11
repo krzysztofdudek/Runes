@@ -24,7 +24,8 @@ import path from 'node:path';
  *
  * EDITION: in edition 2015 (also what Cargo assumes when `[package]` gives no edition) a `use` path
  * is relative to the crate root, so `use a::b;` names the module `a` the root declares
- * (`crateRelativeUses`), before any path dependency of that name. From edition 2018 on the same path names an external crate.
+ * (`crateRelativeUses`), before any path dependency of that name; a crate is in reach there only through an
+ * `extern crate` a root writes, the package's own library included. From edition 2018 on the same path names an external crate.
  *
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because
@@ -41,7 +42,8 @@ import path from 'node:path';
  * Written in the crate root it makes `b` name the crate `a` in every module of that crate
  * (`externCrateFor`). Written anywhere else it binds `b` in that scope only; the extractor,
  * which sees the scopes, emits a `use` path there that starts with `b` as
- * `extern::a::as::b::…`, and the declaration itself as `extern::a`. `extern` is a keyword, so
+ * `extern::a::as::b::…`, and the declaration itself as `extern::a`. A `self::` or `super::` path
+ * whose next name the file of the module it reaches binds that way names the crate too. `extern` is a keyword, so
  * no path of the source starts with it. An edition 2015 `use` path is relative to the crate
  * root, so there only the root's declarations count.
  *
@@ -71,10 +73,11 @@ import path from 'node:path';
  * pass) no file's modules are known and every fitting file is bound, as in 1.0.
  *
  * PATH-LOADED FILES: a file that a `#[path]` attribute on a `mod` outside inline modules loads
- * (`pathLoaded`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
+ * (`pathLoaders`) is treated by Rust as a mod-rs file, whatever its name: its own `mod x;` and
  * `self::x` lie beside it (`src/platform/epoll/mod.rs` for `src/platform/linux.rs`), not
- * under a directory named after it. Its `super` is not followed from there: the module above
- * it is the one that wrote the attribute, which its place on disk does not tell.
+ * under a directory named after it. Its `super` is the module of the file that loads it,
+ * whatever their places on disk: `super::x` there is `self::x` read from that file. Two files
+ * that load it make its parent a module that cannot be told, so such a path names nothing.
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
@@ -107,7 +110,7 @@ export interface RustCrateRoot {
   lib?: RustCrateTree | null;
   /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
   crateRelativeUses?: boolean;
-  /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or several are and each reads `crate::` and `super::` as its own root. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
+  /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or two or more certainly compile it (each through a chain of plain `mod` declarations no `cfg` can remove) and each reads `crate::` and `super::` as its own root. Binaries that declare it only under a `cfg` stand after the one that certainly compiles it in `rootFiles`, as the roots of one tree do. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
   unrooted?: boolean;
   /** True when every one of `rootFiles` is a crate that certainly compiles the file: each declares it through a chain of plain `mod` declarations that no `cfg` can remove. `crate::` then means a different root in each, so a root item binds none of them. Absent or false → `rootFiles` are in probe order and the first existing one that holds a name binds it; a root known to compile the file stands first, and one that may compile it under a `cfg` after it. */
   rootsShared?: boolean;
@@ -131,8 +134,8 @@ export interface RustResolveDeps {
   externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
   /** Does `file` declare, without a body, the module at `modulePath` below its own module (`x`, or `outer/x` through its inline module `outer`)? True when it does; false when every module the file declares is known and this is none of them; undefined when that is not known (the file is not in the pass's table, did not parse to the end, or invokes a macro that could declare one). Absent → never known. */
   moduleDeclared?(file: string, modulePath: string): boolean | undefined;
-  /** Is `file` loaded through a `path` attribute on a `mod` that some file writes outside inline modules? Such a file owns its directory as a `mod.rs` does. Absent → no file is known to be. */
-  pathLoaded?(file: string): boolean;
+  /** The files that load `file` through a `path` attribute on a `mod` they write outside inline modules; empty when none is known to. Such a file owns its directory as a `mod.rs` does, and its parent module is the module of the file that loads it. Absent → no file is known to be loaded that way. */
+  pathLoaders?(file: string): string[];
 }
 
 /** The crate-root lookup context handed to `resolveFromModuleDir`: when the module being
@@ -209,8 +212,7 @@ function resolveBare(segments: string[], fromFile: string, exists: (repoRelPosix
   const declaresItem = (f: string, name: string): boolean => (deps.rootDeclares?.(f, name, true) ?? true);
 
   if (crate.crateRelativeUses === true && deps.externCrateFor !== undefined) {
-    // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The package's own crate name aside, the first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, or a module or an item of its own. A path dependency that no root binds is not in reach of a `use`; the reserved crates stay external.
-    if (own !== undefined) return into(own);
+    // Edition 2015, with what each root binds at hand: the path is relative to the crate root. The first segment is what the first root that binds it makes of it: a crate it binds with `extern crate`, the package's own library included, or a module or an item of its own. A crate that no root binds is not in reach of a `use`, a path dependency or the package's own library alike; the reserved crates stay external.
     const roots = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
     for (const file of roots) {
       if (!exists(file)) continue;
@@ -269,6 +271,11 @@ export function rustModuleFileKey(modulePath: string, conditional = false): stri
 /** The symbol key under which the Rust extractor declares, for a file, a module whose names a top-level glob `use` of the file brings into the file's own module: `path` is the glob's path as written, without the `::*` and with `r#` stripped (`types`, `self::types`, `crate::a::b`). In a crate root, where `self` and `crate` are the same module and a bare first name is a module the root declares, the three spellings name the module at that path below the root. The `glob:` prefix can never be a Rust identifier. */
 export function rustGlobKey(path: string): string {
   return `glob:${path}`;
+}
+
+/** The symbol key the Rust extractor declares beside `rustGlobKey(path)` when a `cfg` in front of the glob's `use` may remove it (`#[cfg(unix)] pub use unix::*;`). Two globs that bring the same name in are ambiguous only when nothing can switch either off. The `glob?:` prefix can never be a Rust identifier. */
+export function rustConditionalGlobKey(path: string): string {
+  return `glob?:${path}`;
 }
 
 /** The symbol key under which the Rust extractor declares, for a file, a module the file declares without a body (`mod x;`), whatever stands in front of it and also in a `cfg_if!` branch. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). It says that the name is a module with a file of its own, not where that file is. The `mod:` prefix can never be a Rust identifier. */
@@ -330,9 +337,49 @@ function resolveRelative(
 ): string | undefined {
   const crate = deps.crateRootFor(fromFile);
   if (crate === undefined) return undefined;
-  const srcDir = crate.srcDir;
-
   const fromPosix = toPosix(fromFile);
+  const loaders = deps.pathLoaders?.(fromPosix) ?? [];
+
+  // A file loaded through a `path` attribute is a child of the module of the file that loads it, wherever the two lie: its first `super` is that file's `self`. The same file may also be a module by its name, declared by the module above its place, which is then its parent as well: that parent is read first, as it was before loaders were known, and the loader only where it names nothing. Two loaders leave the parent untold. Each step spends one `super`, so the walk ends.
+  const lead = segments.findIndex((s) => s !== 'self' && s !== 'super');
+  const supers = segments.slice(0, lead === -1 ? segments.length : lead).filter((s) => s === 'super').length;
+  if (supers > 0 && loaders.length > 0 && crate.fileIsRoot !== true) {
+    const viaLoader = (): string | undefined => {
+      if (loaders.length > 1) return undefined;
+      const rest = segments.slice(lead === -1 ? segments.length : lead);
+      const climb = [...new Array<string>(supers - 1).fill('super'), ...rest];
+      const next = climb[0] === 'super' ? climb : ['self', ...climb];
+      return resolveRelative(next[0]!, next, loaders[0]!, exists, deps);
+    };
+    if (!declaredByName(fromPosix, crate, exists, deps)) return viaLoader();
+    return resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders) ?? viaLoader();
+  }
+  return resolveByPlace(root, segments, fromPosix, exists, deps, crate, loaders);
+}
+
+/** Whether the module above the place of `file` declares it by its name (`mod util;` in `src/lib.rs` for `src/util.rs`): the crate's root files where that module is the crate root, else its `<dir>.rs` or `<dir>/mod.rs`. */
+function declaredByName(file: string, crate: RustCrateRoot, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): boolean {
+  if (deps.moduleDeclared === undefined) return false;
+  const dir = path.posix.dirname(file);
+  const baseName = path.posix.basename(file, '.rs');
+  const name = baseName === 'mod' ? path.posix.basename(dir) : baseName;
+  const above = baseName === 'mod' ? path.posix.dirname(dir) : dir;
+  const files = path.posix.normalize(above) === path.posix.normalize(crate.srcDir) ? (crate.rootFiles ?? []) : [above + '.rs', joinUnder(above, 'mod.rs')];
+  return files.some((f) => f !== undefined && exists(f) && deps.moduleDeclared!(f, name) === true);
+}
+
+/** `resolveRelative` by the place of `fromPosix` on disk, a file loaded through a `path` attribute (`loaders`) owning the directory it lies in. */
+function resolveByPlace(
+  root: string,
+  segments: string[],
+  fromPosix: string,
+  exists: (repoRelPosix: string) => boolean,
+  deps: RustResolveDeps,
+  crate: RustCrateRoot,
+  loaders: string[],
+): string | undefined {
+  const fromFile = fromPosix;
+  const srcDir = crate.srcDir;
   const fromDir = path.posix.dirname(fromPosix);
   const baseName = path.posix.basename(fromPosix, '.rs');
 
@@ -370,8 +417,19 @@ function resolveRelative(
   // A module of a crate that cannot be told reaches the crate root by climbing out of the tree's first level, and which crate's root that is, is not known; below it the path is the same in every crate.
   if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir)) return undefined;
   const crateRoot = rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared);
+  const pathLoaded = !climbed && baseName !== 'mod' && !isRoot && loaders.length > 0;
+  // A name the module's file binds with `extern crate` (`extern crate util as u;` then `self::u::X`, or `super::u::X` from a child) is that crate. A module of the same name beside it would be a second definition, which Rust refuses.
+  const first = tail[0];
+  if (first !== undefined && deps.externCrateFor !== undefined) {
+    const atCrateRoot = path.posix.normalize(moduleDir) === path.posix.normalize(srcDir);
+    const files = pathLoaded ? [fromPosix] : atCrateRoot ? (crate.rootsShared === true ? [] : (crate.rootFiles ?? [])) : [moduleDir + '.rs', joinUnder(moduleDir, 'mod.rs')];
+    for (const file of files) {
+      const bound = file !== undefined && exists(file) ? deps.externCrateFor(fromFile, file, first) : undefined;
+      if (bound !== undefined) return resolveFromModuleDir(bound.srcDir, tail.slice(1), exists, rootContext(bound.srcDir, bound.rootFiles, declaresOf(deps)), moduleCheckOf(deps));
+    }
+  }
   // A file loaded through a `path` attribute owns its directory, so what it names below itself lies beside it; the file itself holds its items. Where nothing beside it fits, the directory named after it is still read: the same file may be a module by its name as well.
-  if (!climbed && baseName !== 'mod' && !isRoot && deps.pathLoaded?.(fromPosix) === true) {
+  if (pathLoaded) {
     const beside = resolveFromModuleDir(fromDir, tail, exists, crateRoot, moduleCheckOf(deps), fromPosix);
     if (beside !== fromPosix) return beside;
   }

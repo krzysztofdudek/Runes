@@ -2,7 +2,7 @@ import type { Node } from 'web-tree-sitter';
 import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
-import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 
 /**
  * Rust dependency extractor.
@@ -44,7 +44,8 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGl
  * `cargo fix` rewrites it to `r#gen`). The `r#` prefix is stripped from every segment so
  * `mod r#gen;` and `crate::r#gen::X` probe `gen.rs`, the file rustc loads.
  *
- * EXTERN CRATE: `extern crate name [as alias];` emits `extern::name`. `extern` is a keyword, so
+ * EXTERN CRATE: `extern crate name [as alias];` emits `extern::name`, also in a branch of a
+ * `cfg_if!` among a module's items, where it binds its name as one outside the macro does. `extern` is a keyword, so
  * no path of the source starts with it: the form says the path names a crate for certain,
  * which in edition 2015 no `use` path does. The resolver binds it only when `name` is an
  * in-repo path dependency of the importing crate or the package's own library; `std`,
@@ -52,8 +53,9 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGl
  * alias, else the crate) in the module or block that writes it, and nowhere else. A `use`
  * declaration of that same scope whose path starts with the bound name is therefore emitted as
  * `extern::name::as::bound::…`: the crate, and the path as written, which is what an edition
- * 2015 crate reads instead. A `use` in an inline module or a block inside that scope is
- * another scope and is emitted as written. For the crate root, whose `extern crate` names
+ * 2015 crate reads instead. A `use` in a function body or a block of that scope sees the
+ * name too, unless a module or another `use` of a nearer scope binds it; a `use` in an inline
+ * module is another module and is emitted as written. For the crate root, whose `extern crate` names
  * reach every module of the crate, `declarations()` records which crate each name stands for.
  *
  * NAMES IN SCOPE: from edition 2018 a `use` path may start with a name in scope where it is
@@ -255,8 +257,6 @@ function uses(file: ParsedFile): DetectedDep[] {
   // The blocks and item lists around the node being visited, innermost first, carried down the walk.
   let lexical: LexicalScope | null = null;
 
-  // While a `use` declaration is read: the crates the `extern crate` declarations of its own scope bind, by bound name.
-  let externs: ReadonlyMap<string, string> | null = null;
   const externsByScope = new Map<number, ReadonlyMap<string, string>>();
   const externsOf = (scope: Node): ReadonlyMap<string, string> => {
     let bound = externsByScope.get(scope.id);
@@ -311,12 +311,23 @@ function uses(file: ParsedFile): DetectedDep[] {
     return specifier;
   };
 
+  /** The crate an `extern crate` declaration binds as `name` where `decl`, a `use` declaration, stands: the declaration's own scope, then the blocks around it, outward, and the module around them, the first that binds `name` deciding. A scope where another `use`, a module or another item of the type namespace binds the name hides a declaration farther out, and an outer module is not in scope. */
+  const externCrateFor = (name: string, decl: Node, from: LexicalScope | null): string | undefined => {
+    for (let scope = from; scope !== null; scope = scope.outer) {
+      const crate = externsOf(scope.node).get(name);
+      if (crate !== undefined) return crate;
+      if ((namesOf(scope).get(name) ?? []).some((n) => n.decl?.id !== decl.id) || scope.module) return undefined;
+      if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name)) return undefined;
+    }
+    return undefined;
+  };
+
   const emit = (raw: string | undefined, node: Node): void => {
     if (raw === undefined || raw === '') return;
     const written = unrawPath(raw);
     let specifier = written;
     const root = specifier.split('::', 1)[0]!;
-    const crate = externs?.get(root);
+    const crate = useDecl === null ? undefined : externCrateFor(root, useDecl, lexical);
     // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
     const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
     if (crate !== undefined) specifier = `extern::${crate}::as::${specifier}`;
@@ -420,12 +431,9 @@ function uses(file: ParsedFile): DetectedDep[] {
     }
     if (node.type === 'use_declaration') {
       const arg = node.childForFieldName('argument');
-      const scope = node.parent; // one step: the item list the declaration stands in
-      externs = scope === null ? null : externsOf(scope);
       useDecl = node;
       useFromRoot = arg !== null && arg.text.startsWith('::');
       if (arg !== null) handleArgument(arg, '');
-      externs = null;
       useDecl = null;
       return false; // do not descend into the use tree again
     }
@@ -450,6 +458,7 @@ function uses(file: ParsedFile): DetectedDep[] {
       const body = cfgIfBody(node, parent());
       if (body === null) return undefined;
       for (const mod of cfgIfModules(body)) if (!mod.moved) emit(`self::${mod.names.join('::')}`, mod.at);
+      for (const e of cfgIfExternCrates(body)) if (e.crate !== undefined) emit(`extern::${e.crate}`, e.at);
       return false;
     }
 
@@ -592,7 +601,8 @@ function join(prefix: string, tail: string | undefined): string | undefined {
  * with the name resolve to the crate.
  *
  * Every module whose names a top-level glob `use` brings in is declared under
- * `rustGlobKey(path)` (`glob:<path>`), read by `topLevelGlobs`: with the item keys of that
+ * `rustGlobKey(path)` (`glob:<path>`), and under `rustConditionalGlobKey(path)` (`glob?:<path>`)
+ * as well when a `cfg` may remove that `use`, read by `topLevelGlobs`: with the item keys of that
  * module's file, this is what tells the resolver that a crate root re-exports a name it does
  * not write.
  *
@@ -635,7 +645,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     out.push({ symbolKey: rustExternNameKey(name), line });
     if (crate !== undefined) out.push({ symbolKey: rustExternBindingKey(name, crate), line });
   }
-  for (const { path, line } of topLevelGlobs(root)) out.push({ symbolKey: rustGlobKey(path), line });
+  for (const { path, line, conditional } of topLevelGlobs(root)) {
+    out.push({ symbolKey: rustGlobKey(path), line });
+    if (conditional) out.push({ symbolKey: rustConditionalGlobKey(path), line });
+  }
   for (const { path, line, conditional } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
   const modules = declaredModules(root);
   for (const { path, line } of modules.declared) out.push({ symbolKey: rustModuleKey(path), line });
@@ -780,14 +793,57 @@ function attributesBefore(item: Node): Node[] {
   return out;
 }
 
-/** Whether an attribute may remove what it stands on: a `cfg`, or a `cfg_attr` whose text applies one (`cfg_attr(a, cfg(b))`; a `doc(cfg(…))` inside one counts too, which errs toward conditional). */
+/** Whether an attribute may remove what it stands on: a `cfg`, or a `cfg_attr` that applies one (`cfg_attr(a, cfg(b))`, also through a nested `cfg_attr`), read from its tokens, so a comment inside it changes nothing. A `cfg_attr` whose tokens cannot be read counts, which errs toward conditional. */
 function attributeIsCfg(item: Node): boolean {
-  const id = item.namedChildren.find((c) => c !== null && c.type === 'attribute')?.namedChild(0) ?? null;
-  if (id === null || id.type !== 'identifier') return false;
-  return id.text === 'cfg' || (id.text === 'cfg_attr' && /\bcfg\s*\(/.test(item.text));
+  const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
+  const id = attr?.namedChild(0) ?? null;
+  if (attr === null || id === null || id.type !== 'identifier') return false;
+  if (id.text === 'cfg') return true;
+  if (id.text !== 'cfg_attr') return false;
+  const applied = cfgAttrApplies(attr);
+  return applied === undefined || applied.includes('cfg');
 }
 
-/** Whether an `attribute_item` (in front of an item) or an `inner_attribute_item` (`inner`, at the head of a file or an inline module) is one of the compiler's inert attributes or a tool's. An inner `cfg_attr` is inert unless it names a `path`: no attribute macro stands in that place. */
+/** The names of the attributes a `cfg_attr` applies when its predicate holds (see `cfgAttrParts`). */
+function cfgAttrApplies(attr: Node): string[] | undefined {
+  return cfgAttrParts(attr)?.map((p) => p.name);
+}
+
+/** The attributes a `cfg_attr` applies when its predicate holds, read from its tokens (`attr` is the `attribute` node, or the token tree of a `cfg_attr` nested in one): each attribute after the predicate, by its path (`cfg`, `path`, `rustfmt::skip`) and with the token tree of its arguments when it has one, and those of a `cfg_attr` nested among them. Comments are passed over. Undefined when the tokens do not read as a predicate followed by attributes. */
+function cfgAttrParts(attr: Node): Array<{ name: string; args: Node | undefined }> | undefined {
+  const args = attr.type === 'token_tree' ? attr : attr.childForFieldName('arguments');
+  if (args === null || args.type !== 'token_tree') return undefined;
+  const tokens = args.children.filter((c): c is Node => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+  const parts: Node[][] = [[]];
+  for (const t of tokens) {
+    if (t.type === ',') parts.push([]);
+    else parts[parts.length - 1]!.push(t);
+  }
+  if (parts.length < 2 || parts[0]!.length === 0) return undefined;
+  const out: Array<{ name: string; args: Node | undefined }> = [];
+  for (const part of parts.slice(1)) {
+    if (part.length === 0) continue;
+    let i = 0;
+    const names: string[] = [];
+    while (part[i]?.type === 'identifier') {
+      names.push(part[i]!.text);
+      if (part[i + 1]?.type !== '::') break;
+      i += 2;
+    }
+    if (names.length === 0) return undefined;
+    const name = names.join('::');
+    const after = part[2 * names.length - 1];
+    const args = after?.type === 'token_tree' ? after : undefined;
+    if (name === 'cfg_attr') {
+      const nested = args === undefined ? undefined : cfgAttrParts(args);
+      if (nested === undefined) return undefined;
+      out.push(...nested);
+    } else out.push({ name, args });
+  }
+  return out;
+}
+
+/** Whether an `attribute_item` (in front of an item) or an `inner_attribute_item` (`inner`, at the head of a file or an inline module) is one of the compiler's inert attributes or a tool's. An inner `cfg_attr` is inert unless it applies a `path`, or its tokens cannot be read: no attribute macro stands in that place. */
 function attributeIsInert(item: Node, inner: boolean): boolean {
   const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
   const id = attr?.namedChild(0) ?? null;
@@ -795,12 +851,17 @@ function attributeIsInert(item: Node, inner: boolean): boolean {
   if (id.type === 'identifier') {
     if (INERT_MOD_ATTRIBUTES.has(id.text)) return true;
     if (!inner) return false;
-    return INERT_INNER_ATTRIBUTES.has(id.text) || (id.text === 'cfg_attr' && !/\bpath\b/.test(item.text));
+    if (INERT_INNER_ATTRIBUTES.has(id.text)) return true;
+    const applied = id.text === 'cfg_attr' ? cfgAttrApplies(attr!) : undefined;
+    return applied !== undefined && !applied.includes('path');
   }
   if (id.type !== 'scoped_identifier') return false;
   const tool = id.childForFieldName('path');
   return tool !== null && tool.type === 'identifier' && TOOL_ATTRIBUTES.has(tool.text);
 }
+
+/** The item kinds that bind their `name` in the type namespace, where a path's first segment is looked for. */
+const TYPE_NAMESPACE_ITEMS = new Set(['mod_item', 'struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item']);
 
 /** The item kinds whose `name` field a file's top level binds as an item. */
 const NAMED_ITEMS = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item', 'function_item', 'function_signature_item', 'const_item', 'static_item', 'mod_item', 'macro_definition']);
@@ -847,13 +908,15 @@ export function topLevelItemNames(root: Node): Array<{ name: string; line: numbe
   return out;
 }
 
-/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it: `Name`, the attribute's first argument. It is one more item of the crate root, beside the function, which stays an item inside its own crate; the names in `attributes(…)` are helper attributes, no items. Undefined for any other function, and for an attribute whose first argument is no name. */
+/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it, or a `cfg_attr` there applies one: `Name`, the attribute's first argument. It is one more item of the crate root, beside the function, which stays an item inside its own crate; the names in `attributes(…)` are helper attributes, no items. Undefined for any other function, and for an attribute whose first argument is no name. */
 function deriveMacroName(fn: Node): string | undefined {
   for (const item of attributesBefore(fn)) {
     const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
     const id = attr?.namedChild(0) ?? null;
-    if (attr === null || id === null || id.type !== 'identifier' || id.text !== 'proc_macro_derive') continue;
-    const first = attr.childForFieldName('arguments')?.namedChild(0) ?? null;
+    if (attr === null || id === null || id.type !== 'identifier') continue;
+    const args = id.text === 'proc_macro_derive' ? attr.childForFieldName('arguments') : id.text === 'cfg_attr' ? cfgAttrParts(attr)?.find((p) => p.name === 'proc_macro_derive')?.args : undefined;
+    if (args === undefined) continue;
+    const first = args?.namedChildren.find((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment') ?? null;
     return first !== null && first.type === 'identifier' ? first.text : undefined;
   }
   return undefined;
@@ -864,10 +927,13 @@ export function topLevelExternCrates(root: Node): Array<{ name: string; crate: s
   return externCratesIn(root);
 }
 
-/** The `extern crate` declarations among the items of `scope` itself (a file, the body of an inline module, a block), as `topLevelExternCrates` gives them for a file. */
+/** The `extern crate` declarations among the items of `scope` itself (a file, the body of an inline module, a block), as `topLevelExternCrates` gives them for a file, those in the branches of a `cfg_if!` among the items of a module included. */
 function externCratesIn(scope: Node): Array<{ name: string; crate: string | undefined; line: number }> {
   const out: Array<{ name: string; crate: string | undefined; line: number }> = [];
   for (const node of scope.namedChildren) {
+    const call = node?.type === 'expression_statement' ? node.namedChild(0) : node;
+    const body = node !== null && call?.type === 'macro_invocation' ? cfgIfBody(call, call === node ? scope : node) : null;
+    if (body !== null) out.push(...cfgIfExternCrates(body));
     if (node === null || node.type !== 'extern_crate_declaration') continue;
     const crate = node.childForFieldName('name');
     const bound = unraw((node.childForFieldName('alias') ?? crate)?.text ?? '');
@@ -876,27 +942,27 @@ function externCratesIn(scope: Node): Array<{ name: string; crate: string | unde
   return out;
 }
 
-/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
-export function topLevelGlobs(root: Node): Array<{ path: string; line: number }> {
-  const out: Array<{ path: string; line: number }> = [];
-  const visit = (arg: Node, prefix: string, line: number): void => {
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. `conditional` is true when a `cfg` in front of the `use`, or a `cfg_attr` there that applies one, may remove it; whether its predicate holds is not read. */
+export function topLevelGlobs(root: Node): Array<{ path: string; line: number; conditional: boolean }> {
+  const out: Array<{ path: string; line: number; conditional: boolean }> = [];
+  const visit = (arg: Node, prefix: string, line: number, conditional: boolean): void => {
     if (arg.type === 'use_wildcard') {
       const pre = prefixNode(arg);
       const path = pre === null ? undefined : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
-      if (path !== undefined) out.push({ path: unrawPath(path), line });
+      if (path !== undefined) out.push({ path: unrawPath(path), line, conditional });
     } else if (arg.type === 'scoped_use_list') {
       const pre = prefixNode(arg);
       const groupPrefix = pre === null ? prefix : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
       const list = arg.childForFieldName('list');
-      if (groupPrefix !== undefined && list !== null) visit(list, groupPrefix, line);
+      if (groupPrefix !== undefined && list !== null) visit(list, groupPrefix, line, conditional);
     } else if (arg.type === 'use_list') {
-      for (const item of arg.namedChildren) if (item !== null) visit(item, prefix, line);
+      for (const item of arg.namedChildren) if (item !== null) visit(item, prefix, line, conditional);
     }
   };
   for (const node of root.namedChildren) {
     if (node === null || node.type !== 'use_declaration') continue;
     const arg = node.childForFieldName('argument');
-    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', node.startPosition.row + 1);
+    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', node.startPosition.row + 1, attributesBefore(node).some(attributeIsCfg));
   }
   return out;
 }
@@ -979,6 +1045,36 @@ export function cfgIfModules(body: Node): Array<{ names: string[]; at: Node; mov
   return out;
 }
 
+/** The `extern crate` declarations of a `cfg_if!` body: each in a braced branch or in a `cfg_if!` nested in one, never one inside an inline `mod` or a function body written there, as `topLevelExternCrates` gives them (the name bound, the crate, `r#` stripped, none for `as _` or `self` alone), with `at`, the `extern` token. Every branch is listed, since each is the module's on some target. */
+export function cfgIfExternCrates(body: Node): Array<{ name: string; crate: string | undefined; line: number; at: Node }> {
+  const out: Array<{ name: string; crate: string | undefined; line: number; at: Node }> = [];
+  const braced = (tree: Node | undefined): tree is Node => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+  const branches = (tree: Node): void => {
+    for (const c of tree.namedChildren) if (c !== null && braced(c)) items(c);
+  };
+  const items = (tree: Node): void => {
+    const tokens = tree.children.filter((c): c is Node => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i]!;
+      if (t.type === 'identifier' && t.text === 'cfg_if' && tokens[i + 1]?.type === '!' && tokens[i + 2]?.type === 'token_tree') {
+        branches(tokens[i + 2]!);
+        i += 2;
+      } else if (t.type === 'identifier' && t.text === 'extern' && tokens[i + 1]?.type === 'crate') {
+        const target = tokens[i + 2];
+        const alias = tokens[i + 3]?.type === 'as' ? tokens[i + 4] : undefined;
+        const end = alias === undefined ? i + 3 : i + 5;
+        if (tokens[end]?.type !== ';' || (target?.type !== 'identifier' && target?.type !== 'self') || (alias !== undefined && alias.type !== 'identifier' && alias.type !== '_')) continue;
+        const crate = target.type === 'identifier' ? unraw(target.text) : undefined;
+        const bound = alias === undefined ? (crate ?? '') : alias.type === 'identifier' ? unraw(alias.text) : '';
+        if (bound !== '' && bound !== 'self') out.push({ name: bound, crate, line: t.startPosition.row + 1, at: t });
+        i = end;
+      }
+    }
+  };
+  branches(body);
+  return out;
+}
+
 /** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
 function cfgIfItems(body: Node): string[] {
   return body.namedChildren.flatMap((c) => (c !== null && c.type === 'token_tree' && c.child(0)?.type === '{' ? tokenItems(c) : []));
@@ -1022,7 +1118,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 18,
+  rev: 22,
   declarations,
   uses,
 };
