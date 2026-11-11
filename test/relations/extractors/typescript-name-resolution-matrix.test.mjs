@@ -134,6 +134,10 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-node16-require-call-in-esm-package-edge', () => runCase('typescript-exports-node16-require-call-in-esm-package-edge'));
   it('typescript-exports-versioned-types-key-out-of-range-edge', () => runCase('typescript-exports-versioned-types-key-out-of-range-edge'));
   it('typescript-exports-versioned-types-key-in-range-edge', () => runCase('typescript-exports-versioned-types-key-in-range-edge'));
+  it('typescript-exports-bundler-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-bundler-dynamic-import-in-cts-file-edge'));
+  it('typescript-exports-commonjs-module-dynamic-import-edge', () => runCase('typescript-exports-commonjs-module-dynamic-import-edge'));
+  it('typescript-exports-preserve-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-preserve-dynamic-import-in-cts-file-edge'));
+  it('typescript-exports-nodenext-typeof-import-in-cts-file-edge', () => runCase('typescript-exports-nodenext-typeof-import-in-cts-file-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
   it('typescript-workspace-member-beats-fixture-edge', () => runCase('typescript-workspace-member-beats-fixture-edge'));

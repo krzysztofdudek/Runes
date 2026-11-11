@@ -84,6 +84,30 @@ describe('typescript extractor — uses()', () => {
       [{ kind: 'path', specifier: './c', callForm: 'import' }, 3],
     ]);
   });
+  it('marks no call form on an import type, which is read by the format of its file like an import statement', async () => {
+    const { uses } = await run(
+      [
+        `type M = typeof import('./m');`,
+        `let v: import('./t').T;`,
+        `type A = import('./a').T | null;`,
+        `type B = Array<import('./b').T>;`,
+        `const w = {} as import('./w').T;`,
+        `const s = x satisfies import('./s').T;`,
+        `const f = vi.fn<() => typeof import('./f')>();`,
+        `function g<T extends import('./g1').T = import('./g2').T>() {}`,
+        `class C implements import('./c').B {}`,
+        `let a = <import('./cast').T>x;`,
+        `const d = import('./value');`,
+        `const e = (await import('./value2')) as import('./e').T;`,
+        `import type R = require('./r');`,
+      ].join('\n'),
+    );
+    const form = new Map(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm]));
+    for (const typed of ['./m', './t', './a', './b', './w', './s', './f', './g1', './g2', './c', './cast', './e']) expect(form.get(typed), typed).toBeUndefined();
+    expect(form.get('./value')).toBe('import');
+    expect(form.get('./value2')).toBe('import');
+    expect(form.get('./r')).toBe('require');
+  });
   it('javascript: detects require + import, no crash on no-type-syntax', async () => {
     const { uses } = await run(`import x from './x';\nconst y = require('./y');`, '.js', 'javascript');
     expect(uses).toHaveLength(2);

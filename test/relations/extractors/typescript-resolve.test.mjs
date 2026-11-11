@@ -364,11 +364,30 @@ describe('resolveTsPath — the call form selects require or import', () => {
     expect(r('lib', 'esm/a.ts', 'require')).toBe('lib/cjs/index.cts');
     expect(r('lib', 'esm/a.mts', 'require')).toBe('lib/cjs/index.cts');
   });
-  it('under Bundler the call form decides as well', () => {
+  it('under Bundler a require() reads require, and an import() reads import unless the compiler rewrites it into a require', () => {
     const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
     expect(r('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
     expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
-    expect(r('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.mts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.cts', 'import')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.cjs', 'import')).toBe('lib/cjs/index.cts');
+  });
+  it('an import() is a require wherever the compiler emits it as one: a module setting that is not a Node one or preserve, in a file that is emitted as CommonJS', () => {
+    const cjs = withConfig({ module: 'commonjs', moduleResolution: 'bundler' });
+    expect(cjs('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
+    expect(cjs('lib', 'app/a.js', 'import')).toBe('lib/cjs/index.cts');
+    expect(cjs('lib', 'app/a.mts', 'import')).toBe('lib/esm/index.ts');
+    for (const module of ['amd', 'umd', 'system', 'none']) {
+      const r = withConfig({ module, moduleResolution: 'bundler' });
+      expect(r('lib', 'app/a.ts', 'import'), module).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.ts'), module).toBe('lib/esm/index.ts');
+    }
+    const preserve = withConfig({ module: 'preserve' });
+    expect(preserve('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    expect(preserve('lib', 'app/a.cts')).toBe('lib/cjs/index.cts');
+    const node = withConfig({ module: 'nodenext' });
+    expect(node('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
   });
   it('for a file no tsconfig covers the call form decides too', () => {
     const r = project(lib);
