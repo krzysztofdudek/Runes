@@ -436,4 +436,9 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-file-local-type-other-file-hides-nothing-edge', () => runCase('csharp-file-local-type-other-file-hides-nothing-edge'));
   it('csharp-file-local-nested-type-in-own-file-silence', () => runCase('csharp-file-local-nested-type-in-own-file-silence'));
   it('csharp-alias-colon-colon-generic-middle-arity-edge', () => runCase('csharp-alias-colon-colon-generic-middle-arity-edge'));
+  it('csharp-base-class-nested-type-edge', () => runCase('csharp-base-class-nested-type-edge'));
+  it('csharp-base-class-nested-type-through-derived-name-edge', () => runCase('csharp-base-class-nested-type-through-derived-name-edge'));
+  it('csharp-base-class-nested-type-deep-partial-edge', () => runCase('csharp-base-class-nested-type-deep-partial-edge'));
+  it('csharp-base-class-nested-type-own-first-edge', () => runCase('csharp-base-class-nested-type-own-first-edge'));
+  it('csharp-interface-nested-type-not-inherited-edge', () => runCase('csharp-interface-nested-type-not-inherited-edge'));
 });

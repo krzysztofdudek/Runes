@@ -279,6 +279,34 @@ export const IMPLICIT_PROGRAM_KEY = '<Program>$';
 export function internalKey(symbolKey) {
     return `internal:${symbolKey}`;
 }
+/**
+ * The head of the key that records one base of the type `typeKey`: `base:<key>`. A type declaration with a base list declares, for each base it lists, the key `base:<key>\t<value>`, the value (`encodeBase`) holding the base's written name and its readings where the declaration stands. The symbol table lists such a key under its head (`SymbolTable.valuesOf`) and never as a name, and every part of a partial type adds its own. The colon and the tab are in no C# name.
+ */
+export function baseListKey(typeKey) {
+    return `base:${typeKey}`;
+}
+/** The marker key of an interface: `interface:<key>`, declared beside the type key of every interface declaration. A class inherits the nested types of its base class and of no interface it implements, and the base list of a class does not say which of its names is which. */
+export function interfaceKey(typeKey) {
+    return `interface:${typeKey}`;
+}
+/** The value of a base record (see `baseListKey`). A CS0104 set many readings share is written once. */
+export function encodeBase(base) {
+    const sets = [];
+    const readings = base.readings.map(({ kind: _kind, set, ...rest }) => {
+        if (set === undefined)
+            return rest;
+        let index = sets.indexOf(set);
+        if (index < 0)
+            index = sets.push(set) - 1;
+        return { ...rest, set: index };
+    });
+    return JSON.stringify({ name: base.name, readings, sets });
+}
+/** The base a record's value holds (see `encodeBase`). */
+export function decodeBase(value) {
+    const { name, readings, sets } = JSON.parse(value);
+    return { name, readings: readings.map(({ set, ...rest }) => ({ kind: 'symbol', ...rest, ...(set === undefined ? {} : { set: sets[set] }) })) };
+}
 /** The access modifiers a declaration node carries. */
 function accessModifiers(node) {
     const out = new Set();
@@ -458,8 +486,16 @@ function declarations(file) {
         out.push({ symbolKey, line: node.startPosition.row + 1 });
         if (typeSeen(node, scope.typeDecl) === 'assembly')
             out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
+        if (node.type === 'interface_declaration')
+            out.push({ symbolKey: interfaceKey(symbolKey), line: node.startPosition.row + 1 });
         return undefined;
     });
+    // The base list of each type (see `baseListKey`): each base read where the declaration stands, as a reference to it is, with the usings and aliases of this file alone. A base only a project-wide using of another file reaches is recorded with the readings this file gives, which then bind nothing.
+    const { bases, ...extract } = extractCsharp(file, true);
+    for (const base of bases) {
+        const readings = base.ref === undefined ? [] : (assembleCsharpCandidates({ ...extract, refs: [base.ref] })[0]?.candidates ?? []);
+        out.push({ symbolKey: `${baseListKey(base.type)}\t${encodeBase({ name: base.ref?.kind === 'plain' ? base.ref.ref : '', readings: readings })}`, line: base.line });
+    }
     // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
     const firstStatement = firstTopLevelStatement(file.tree.rootNode);
     if (firstStatement && !out.some((d) => d.symbolKey === 'Program')) {
@@ -880,6 +916,13 @@ function collectDeclaredNames(root) {
  * type-position walk — is preserved exactly; `assembleCsharpCandidates` replays it in order.
  */
 export function extractCsharpRefs(file) {
+    const { bases: _bases, ...extract } = extractCsharp(file, false);
+    return extract;
+}
+/** The declarations that may list bases other types inherit through: an enum's list names its underlying type. */
+const BASE_LIST_OWNERS = new Set([...TYPE_DECLARATION_TYPES].filter((t) => t !== 'enum_declaration'));
+/** The extract of one C# file (`extractCsharpRefs`), or, with `basesOnly`, the bases its type declarations list in place of its references: one walk reads either, with the same reading of a type name. */
+function extractCsharp(file, basesOnly) {
     const scope = buildUsingScope(file);
     const info = fileNsInfo(file.tree.rootNode);
     const fileNs = info.fileNs;
@@ -913,7 +956,7 @@ export function extractCsharpRefs(file) {
     const emitted = new Set();
     // Every value/member name this file declares (M16 shadow guard) and the names of the ordinary
     // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
-    const { declaredNames, methodNames } = collectDeclaredNames(file.tree.rootNode);
+    const { declaredNames, methodNames } = basesOnly ? { declaredNames: new Set(), methodNames: new Set() } : collectDeclaredNames(file.tree.rootNode);
     /** True when `node` sits inside a `nameof(…)` operand — a string producer, never a dependency. */
     const insideNameof = (node) => scopeOf(node).nameof;
     /** True when a call's receiver is a VALUE rather than a type name: its leftmost element is a
@@ -1263,6 +1306,29 @@ export function extractCsharpRefs(file) {
     function emitDirectiveArguments(generic, directive) {
         for (const arg of findChild(generic, 'type_argument_list').namedChildren)
             emitDirectiveType(arg, directive);
+    }
+    if (basesOnly) {
+        const bases = [];
+        walkCs(file.tree.rootNode, (node, own) => {
+            if (!BASE_LIST_OWNERS.has(node.type) || isFileLocalType(node, own))
+                return undefined;
+            const type = declaredTypeKey(node, own, fileNs);
+            const list = findChild(node, 'base_list');
+            if (type === undefined || list === null)
+                return undefined;
+            for (const entry of list.namedChildren) {
+                // `class C(int x) : Base(x)`: the base's type is the first child of the entry, its arguments follow.
+                const typeNode = entry.type === 'primary_constructor_base_type' ? entry.namedChild(0) : entry;
+                if (typeNode === null || typeNode.type === 'argument_list')
+                    continue;
+                const before = refs.length;
+                emitTypeNode(typeNode);
+                bases.push({ type, ref: refs[before], line: node.startPosition.row + 1 });
+                refs.length = before;
+            }
+            return undefined;
+        });
+        return { fileNs, scope, refs: [], fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs), bases };
     }
     // ── `using static N.C;` / `global using static N.C;` TARGET edge (A8/A11) ────────────────
     // The directive imports the static MEMBERS of the concrete type `N.C`; the type itself is a real dependency of this file (never a namespace prefix: a sibling `N.Baz` is never imported). C# resolves it as a using alias target (spec §14.5.4, §14.5.2), so it is read where the directive stands: a directive below `namespace App;` or inside a namespace block reads `App.N.C` before `N.C`, one in the compilation unit reads from the global namespace, and no using directive beside it takes part. A generic type (`using static Repo<Order>;`) gives the edge to `Repo` and to each type argument. Emitted FIRST so the descriptor order, and thus the final edge order, is kept.
@@ -1617,7 +1683,7 @@ export function extractCsharpRefs(file) {
         }
         return undefined;
     });
-    return { fileNs, scope, refs, fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs) };
+    return { fileNs, scope, refs, fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs), bases: [] };
 }
 /**
  * Assemble the final `DetectedDep[]` from a pure C# extract plus the LIVE project-global scope.
@@ -1892,7 +1958,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
             return;
         }
         // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
-        const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}` }));
+        const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: t }));
         // A nested type of a file-local type is found there, before any namespace: the group ends at it.
         const localNested = nestedReadings.findIndex((h) => isFileLocalReading(h.symbolKey));
         if (localNested >= 0)
@@ -2101,7 +2167,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 19,
+    rev: 20,
     declarations,
     uses,
 };

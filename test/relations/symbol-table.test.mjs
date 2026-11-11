@@ -68,3 +68,23 @@ describe('SymbolTable.hasNamespace', () => {
     expect(st.hasNamespace('java', 'A')).toBe(false); // per language
   });
 });
+
+describe('SymbolTable.valuesOf', () => {
+  it('lists the values declared about a head with their files, and keeps such a key out of the names', () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'base:App.Order\tfirst', 'a.cs');
+    st.declare('csharp', 'base:App.Order\tfirst', 'b.cs');
+    st.declare('csharp', 'base:App.Order\tsecond', 'a.cs');
+    st.declare('csharp', 'base:App.Order\tfirst', 'a.cs');
+    expect(st.valuesOf('csharp', 'base:App.Order')).toEqual([
+      { value: 'first', files: ['a.cs', 'b.cs'] },
+      { value: 'second', files: ['a.cs'] },
+    ]);
+    expect(st.valuesOf('csharp', 'base:App.Other')).toEqual([]);
+    expect(st.valuesOf('java', 'base:App.Order')).toEqual([]); // per language
+    expect(st.has('csharp', 'base:App.Order\tfirst')).toBe(false);
+    expect(st.has('csharp', 'base:App.Order')).toBe(false);
+    expect(st.hasNamespace('csharp', 'base:App')).toBe(false);
+    expect(st.filesInPackage('csharp', 'base:App')).toEqual([]);
+  });
+});

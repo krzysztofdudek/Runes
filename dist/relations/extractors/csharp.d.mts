@@ -1,4 +1,4 @@
-import type { DependencyExtractor, DetectedDep, ParsedFile } from './types.mjs';
+import type { DependencyExtractor, DetectedDep, ParsedFile, TargetHint } from './types.mjs';
 /**
  * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). A resolver given the reference graph (`ResolverDeps.reach`) reads the explicit and the implicit class as ONE name instead, as the compiler does, and chooses among those the referencing project can see, as long as the graph can say something about each of them. `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
  */
@@ -7,6 +7,21 @@ export declare const IMPLICIT_PROGRAM_KEY = "<Program>$";
  * The marker key of a declaration only its own assembly sees: `internal:<key>`, declared beside `<key>` by the same file. A type whose effective accessibility stops at its assembly (`internal`, `private`, `private protected`, a top-level type with no access modifier, which C# makes internal, or a type nested in one of those), and an extension method that is not public or whose static class is not, carry it; a resolver given the reference graph drops such a definer for a caller of another compilation unless the defining project grants that caller its internals (`InternalsVisibleTo`). The colon puts the key in a string space no C# name can produce. A `partial` type part without an access modifier is not marked: another part may make it public.
  */
 export declare function internalKey(symbolKey: string): string;
+/**
+ * The head of the key that records one base of the type `typeKey`: `base:<key>`. A type declaration with a base list declares, for each base it lists, the key `base:<key>\t<value>`, the value (`encodeBase`) holding the base's written name and its readings where the declaration stands. The symbol table lists such a key under its head (`SymbolTable.valuesOf`) and never as a name, and every part of a partial type adds its own. The colon and the tab are in no C# name.
+ */
+export declare function baseListKey(typeKey: string): string;
+/** The marker key of an interface: `interface:<key>`, declared beside the type key of every interface declaration. A class inherits the nested types of its base class and of no interface it implements, and the base list of a class does not say which of its names is which. */
+export declare function interfaceKey(typeKey: string): string;
+/** One base of a type as its declaration records it: the written name (type arguments as their arity, a `global::` qualifier stripped; empty for a name led by a using alias) and its readings in C# lookup order where the declaration stands, read with the usings and aliases of the declaring file alone. */
+export interface CsharpBase {
+    name: string;
+    readings: SymbolHint[];
+}
+/** The value of a base record (see `baseListKey`). A CS0104 set many readings share is written once. */
+export declare function encodeBase(base: CsharpBase): string;
+/** The base a record's value holds (see `encodeBase`). */
+export declare function decodeBase(value: string): CsharpBase;
 interface UsingScope {
     /** Namespace prefixes from plain `using Foo.Bar;` directives (file-local). */
     prefixes: string[];
@@ -66,6 +81,10 @@ interface OuterUsings {
     aliases: string[];
     statics: string[];
 }
+/** A symbol hint, the only kind the C# extractor emits. */
+type SymbolHint = Extract<TargetHint, {
+    kind: 'symbol';
+}>;
 /**
  * Collect the `global using Foo.Bar;` namespace prefixes a C# file declares (project-wide
  * imports). Used by the cross-file pre-pass in the consumer's relation pass to aggregate the global usings of every

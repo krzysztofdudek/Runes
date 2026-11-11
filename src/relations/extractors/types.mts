@@ -27,6 +27,8 @@ export type TargetHint =
       set?: SymbolSetMember[];
       /** C#: the dotted names of nearer namespaces or types the language's lookup would stop at before it reaches this reading. When the repository declares any of them, as a namespace (some declared key lies inside it) or as a type, the reading binds nothing and the walk goes on to the next candidate. Absent = no such name. */
       shadow?: string[];
+      /** C#: the key of a type whose body holds the reference. `symbolKey` is `<within>+<name>`, the nested type of that type as the reference names it. The resolver reads it in that type and, when the type declares none, among the nested types of its base classes declared in the repository, nearest first (C# spec §7.6.1). Absent = `symbolKey` is read as it stands. */
+      within?: string;
       /** Ruby only: a lexical nesting candidate `N::A::B` carries its first-segment name
        *  `N::A`. When `N::A` has an in-repo definition but the candidate itself has none, Ruby
        *  has already committed to `N::A` and will not look further out, so the reference is

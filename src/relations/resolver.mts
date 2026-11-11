@@ -4,6 +4,7 @@ import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
 import { IMPLICIT_PROGRAM_KEY, internalKey } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
+import { makeCsharpTypeLookup, type CsharpTypeLookup } from './extractors/csharp-resolve.mjs';
 
 /**
  * Who owns a repository file: the unit a resolved reference is attributed to (a module, a package, a directory, whatever the caller groups files by). `undefined` means the file is not owned by any unit, which the resolver treats as the non-event of an unmapped target.
@@ -266,19 +267,34 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   const shadowed = (language: string, shadow: readonly string[] | undefined): boolean =>
     shadow !== undefined && shadow.some((name) => deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name));
 
+  /**
+   * The keys one C# reading may bind. A reading inside a type (`within`) is the nested type of that type or of its base classes, each name of a dotted reading read in what the name before it gave. Any other reading is the key as written, unless `nestedOnly`, and for each dot that follows a declared type the nested type the rest names there, inherited ones included (`Derived.Options` is the `Options` its base class declares).
+   */
+  const csharpKeys = (key: string, nestedOnly: boolean, within: string | undefined): string[] => {
+    if (within !== undefined) return csharp().path(within, key.slice(within.length + 1).split('.'));
+    const keys = nestedOnly ? [] : [key];
+    const segs = key.split('.');
+    for (let k = 1; k < segs.length; k++) {
+      const prefix = segs.slice(0, k).join('.');
+      if (deps.symbolTable.has('csharp', prefix)) keys.push(...csharp().path(prefix, segs.slice(k)));
+    }
+    return keys;
+  };
+
   /** The declared keys one symbol-set member reads, honoring `nestedOnly` (R4): a
    *  `nestedOnly` member reads ONLY its guarded `+`-split keys, never the verbatim
    *  dotted reading. A plain member reads the verbatim key + all guarded splits. */
-  const memberKeys = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined): string[] => {
+  const memberKeys = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within?: string): string[] => {
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
     if (shadowed(language, shadow)) return [];
+    if (language === 'csharp') return csharpKeys(key, nestedOnly, within);
     return nestedOnly ? nestedOnlySplitKeys(deps.symbolTable, language, key) : nestedSplitKeys(deps.symbolTable, language, key);
   };
 
   /** The distinct defining files of one symbol-set member: the files of every key it reads. */
-  const memberFiles = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined): Set<string> => {
+  const memberFiles = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within?: string): Set<string> => {
     const files = new Set<string>();
-    for (const k of memberKeys(language, key, nestedOnly, shadow)) {
+    for (const k of memberKeys(language, key, nestedOnly, shadow, within)) {
       for (const f of deps.symbolTable.filesFor(language, k)) files.add(f);
     }
     return files;
@@ -287,6 +303,12 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   /** True when every declaration `file` gives of `keys` is internal to its assembly (the extractor's `internal:<key>` marker beside it). */
   const assemblyOnlyIn = (language: string, keys: readonly string[], file: string): boolean =>
     keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || deps.symbolTable.filesFor(language, internalKey(k)).includes(file));
+
+  /** Every key a symbol hint reads: those of each member of its set, or its own. */
+  const hintKeys = (hint: Extract<TargetHint, { kind: 'symbol' }>, language: string): string[] =>
+    hint.set !== undefined
+      ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
+      : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within);
 
   /** The distinct files a symbol HINT maps to: the union across its `set` members (each honoring
    *  its own `nestedOnly`) when a set is present, else the single `symbolKey` honoring the hint's
@@ -303,12 +325,10 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
         for (const f of memberFiles(language, m.symbolKey, m.nestedOnly === true, m.shadow)) files.add(f);
       }
     } else {
-      files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow);
+      files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within);
     }
     if (language !== 'csharp' || deps.reach === undefined) return files;
-    const keys = hint.set !== undefined
-      ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
-      : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow);
+    const keys = hintKeys(hint, language);
     if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
       // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
       const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
@@ -317,6 +337,19 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
     return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
   };
+
+  /** The key of the one C# type an ordered group of readings binds for `fromFile`: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
+  const bindCsharpType = (readings: Array<Extract<TargetHint, { kind: 'symbol' }>>, fromFile: string): string | undefined => {
+    for (const hint of readings) {
+      const files = hintFiles(hint, 'csharp', fromFile);
+      if (files.size === 0) continue;
+      const keys = [...new Set(hintKeys(hint, 'csharp'))].filter((k) => deps.symbolTable.filesFor('csharp', k).some((f) => files.has(f)));
+      return keys.length === 1 ? keys[0] : undefined;
+    }
+    return undefined;
+  };
+  let csharpLookup: CsharpTypeLookup | undefined;
+  const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, bindCsharpType));
 
   /**
    * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import
