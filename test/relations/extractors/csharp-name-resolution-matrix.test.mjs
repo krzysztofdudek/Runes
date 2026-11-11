@@ -410,6 +410,7 @@ describe('MATRIX — using static: nested types and extension methods at the lev
   it('csharp-using-static-extension-method-namespace-body-edge', () => runCase('csharp-using-static-extension-method-namespace-body-edge'));
   it('csharp-global-using-static-extension-method-edge', () => runCase('csharp-global-using-static-extension-method-edge'));
   it('csharp-using-static-extension-method-other-class-silence', () => runCase('csharp-using-static-extension-method-other-class-silence'));
+  it('csharp-using-static-extension-class-named-like-namespace-silence', () => runCase('csharp-using-static-extension-class-named-like-namespace-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
