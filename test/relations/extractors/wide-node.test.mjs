@@ -85,6 +85,14 @@ describe('a node with very many children is read in time linear in their number'
     assert.equal(declarations.length, 0);
   });
 
+  // Dotted names of three segments in the run. The whole name is one reference; the walk then comes to the qualified name inside it (`A.B` of `A.B.C`), which no type position has taken, and reads it against its parent to see that it is part of a longer name. That read is the one that asked the tree for the parent: a name of two segments never reaches it, and with it this input took 204 seconds, 24 times its quarter.
+  it('malformed C# of 388 000 characters whose lines hold dotted names of three segments', async () => {
+    const line = 'A.B.C c(\n';
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(line, SIZE * scale));
+    assert.equal(uses.length, Math.floor(SIZE / line.length));
+    assert.equal(declarations.length, 0);
+  });
+
   // A deconstruction with no right side, line after line: each element is a declaration expression, read against the tuple it stands in and against what that tuple stands in. The extractor asked each of them for its parent, and its parent's, and the full input took 29 seconds.
   it('malformed C# of 388 000 characters whose lines are tuple deconstructions', async () => {
     const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo('(A a, B b) =\n', SIZE * scale));
