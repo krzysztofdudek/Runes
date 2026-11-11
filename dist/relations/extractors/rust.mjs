@@ -49,8 +49,9 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGl
  * alias, else the crate) in the module or block that writes it, and nowhere else. A `use`
  * declaration of that same scope whose path starts with the bound name is therefore emitted as
  * `extern::name::as::bound::…`: the crate, and the path as written, which is what an edition
- * 2015 crate reads instead. A `use` in an inline module or a block inside that scope is
- * another scope and is emitted as written. For the crate root, whose `extern crate` names
+ * 2015 crate reads instead. A `use` in a function body or a block of that scope sees the
+ * name too, unless a module or another `use` of a nearer scope binds it; a `use` in an inline
+ * module is another module and is emitted as written. For the crate root, whose `extern crate` names
  * reach every module of the crate, `declarations()` records which crate each name stands for.
  *
  * NAMES IN SCOPE: from edition 2018 a `use` path may start with a name in scope where it is
@@ -238,8 +239,6 @@ function uses(file) {
     let mods = null;
     // The blocks and item lists around the node being visited, innermost first, carried down the walk.
     let lexical = null;
-    // While a `use` declaration is read: the crates the `extern crate` declarations of its own scope bind, by bound name.
-    let externs = null;
     const externsByScope = new Map();
     const externsOf = (scope) => {
         let bound = externsByScope.get(scope.id);
@@ -296,13 +295,26 @@ function uses(file) {
         }
         return specifier;
     };
+    /** The crate an `extern crate` declaration binds as `name` where `decl`, a `use` declaration, stands: the declaration's own scope, then the blocks around it, outward, and the module around them, the first that binds `name` deciding. A scope where another `use`, a module or another item of the type namespace binds the name hides a declaration farther out, and an outer module is not in scope. */
+    const externCrateFor = (name, decl, from) => {
+        for (let scope = from; scope !== null; scope = scope.outer) {
+            const crate = externsOf(scope.node).get(name);
+            if (crate !== undefined)
+                return crate;
+            if ((namesOf(scope).get(name) ?? []).some((n) => n.decl?.id !== decl.id) || scope.module)
+                return undefined;
+            if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name))
+                return undefined;
+        }
+        return undefined;
+    };
     const emit = (raw, node) => {
         if (raw === undefined || raw === '')
             return;
         const written = unrawPath(raw);
         let specifier = written;
         const root = specifier.split('::', 1)[0];
-        const crate = externs?.get(root);
+        const crate = useDecl === null ? undefined : externCrateFor(root, useDecl, lexical);
         // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
         const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
         if (crate !== undefined)
@@ -414,13 +426,10 @@ function uses(file) {
         }
         if (node.type === 'use_declaration') {
             const arg = node.childForFieldName('argument');
-            const scope = node.parent; // one step: the item list the declaration stands in
-            externs = scope === null ? null : externsOf(scope);
             useDecl = node;
             useFromRoot = arg !== null && arg.text.startsWith('::');
             if (arg !== null)
                 handleArgument(arg, '');
-            externs = null;
             useDecl = null;
             return false; // do not descend into the use tree again
         }
@@ -865,6 +874,8 @@ function attributeIsInert(item, inner) {
     const tool = id.childForFieldName('path');
     return tool !== null && tool.type === 'identifier' && TOOL_ATTRIBUTES.has(tool.text);
 }
+/** The item kinds that bind their `name` in the type namespace, where a path's first segment is looked for. */
+const TYPE_NAMESPACE_ITEMS = new Set(['mod_item', 'struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item']);
 /** The item kinds whose `name` field a file's top level binds as an item. */
 const NAMED_ITEMS = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item', 'function_item', 'function_signature_item', 'const_item', 'static_item', 'mod_item', 'macro_definition']);
 /** The item macros whose expansion Runes can read from their tokens: each defines items at the top level of its body (`thread_local!`, `lazy_static!`, `bitflags!`), or, for `cfg_if!`, in each braced branch. A top-level invocation of any other macro defines nothing Runes can tell, so its names stay unknown (a lost edge, never a false one). */
@@ -1119,7 +1130,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 19,
+    rev: 20,
     declarations,
     uses,
 };

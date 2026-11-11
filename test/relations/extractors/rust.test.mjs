@@ -213,7 +213,7 @@ describe('rust extractor — uses()', () => {
 
 describe('rust extractor — inline modules rebase self/super to the file module', () => {
 
-  it('emits a use that starts with a name an extern crate of its own scope binds as the crate and the path as written, and leaves every other scope alone', async () => {
+  it('emits a use that starts with a name an extern crate of its own scope, or of a block or the module around it, binds as the crate and the path as written, and leaves another module and a nearer name alone', async () => {
     const code = [
       'extern crate core_lib as cl;',
       'extern crate r#plain;',
@@ -230,7 +230,18 @@ describe('rust extractor — inline modules rebase self/super to the file module
       'fn f() {',
       '    extern crate local as l;',
       '    use l::Thing;',
-      '    use cl::NotHere;',
+      '    use cl::InBody;',
+      '    {',
+      '        use l::Nested;',
+      '        mod cl {}',
+      '        use cl::Shadowed;',
+      '    }',
+      '    {',
+      '        use somewhere::l;',
+      '        use l::Rebound;',
+      '        enum r#cl { V }',
+      '        use cl::V;',
+      '    }',
       '}',
       'use t::Outside;',
     ].join('\n');
@@ -239,7 +250,7 @@ describe('rust extractor — inline modules rebase self/super to the file module
       'extern::core_lib', 'extern::plain',
       'extern::core_lib::as::cl::Engine', 'extern::plain::as::plain::A', 'extern::plain::as::plain::deep::B', 'me::Own', 'other::X',
       'cl::Hidden', 'extern::tools', 'extern::tools::as::t::Wrench',
-      'extern::local', 'extern::local::as::l::Thing', 'cl::NotHere',
+      'extern::local', 'extern::local::as::l::Thing', 'extern::core_lib::as::cl::InBody', 'extern::local::as::l::Nested', 'cl::Shadowed', 'somewhere::l', 'use::2::somewhere::l::l::Rebound', 'cl::V',
       't::Outside',
     ]);
   });
