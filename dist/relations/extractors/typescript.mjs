@@ -259,7 +259,7 @@ function importCallOf(node) {
     return cur !== null && cur.type === 'call_expression' && cur.childForFieldName('function')?.type === 'import' ? cur : undefined;
 }
 /**
- * The import() calls a node's own children make import types where the grammar does not say so: the one type argument of `B<import('x').T>` read as `B < import('x').T > …` (a class heritage, a tagged template, a call, whose `>` and parameters come as an ERROR node beside the comparison), an import chain in the pattern of a parameter, where a parenthesized type `(import('x').T)` was read as an arrow function's parameters, and a chain after a token that only introduces a type inside an ERROR node (`keyof`, a template literal type's `${`).
+ * The import() calls a node's own children make import types where the grammar does not say so: the one type argument of `B<import('x').T>` read as `B < import('x').T > …` (a class heritage, a tagged template, a call, whose `>` and parameters come as an ERROR node beside the comparison, found among the children of the node that holds both), an import chain in the pattern of a parameter, where a parenthesized type `(import('x').T)` was read as an arrow function's parameters, and a chain after a token that only introduces a type inside an ERROR node (`keyof`, a template literal type's `${`).
  */
 function misreadImportTypes(node) {
     const found = [];
@@ -273,21 +273,23 @@ function misreadImportTypes(node) {
         if (left !== null && left.type === 'binary_expression' && left.childForFieldName('operator')?.type === '<')
             add(left.childForFieldName('right'));
     }
-    else if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '<') {
-        // `g<import('x').T>()`: the `>` and the empty parameters that follow are an ERROR node beside the comparison.
-        if (node.nextSibling?.type === 'ERROR' && node.nextSibling.child(0)?.type === '>')
-            add(node.childForFieldName('right'));
-    }
     else if (node.type === 'required_parameter' || node.type === 'optional_parameter') {
         add(node.namedChild(0));
     }
-    else if (node.type === 'ERROR') {
-        const children = node.children;
-        for (let i = 1; i < children.length; i++) {
-            const before = children[i - 1];
-            if (before !== null && !before.isNamed && TYPE_INTRODUCERS.has(before.type))
-                add(children[i]);
-        }
+    // Only a node that holds an ERROR node can hold either shape below, so a file that parses cleanly lists no children here.
+    if (!node.hasError)
+        return found;
+    const children = node.children;
+    for (let i = 1; i < children.length; i++) {
+        const before = children[i - 1];
+        const here = children[i];
+        if (before === null || here === null)
+            continue;
+        // `g<import('x').T>()`: the `>` and the empty parameters that follow are an ERROR node beside the comparison. Read from the parent, because tree-sitter finds a node's next sibling by searching down from the root.
+        if (here.type === 'ERROR' && before.type === 'binary_expression' && here.child(0)?.type === '>' && before.childForFieldName('operator')?.type === '<')
+            add(before.childForFieldName('right'));
+        if (node.type === 'ERROR' && !before.isNamed && TYPE_INTRODUCERS.has(before.type))
+            add(here);
     }
     return found;
 }
