@@ -289,18 +289,20 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                         facts.open = true;
                 }
             }
-            const references = /<Reference\b([^>]*?)(?:\/>|>([\s\S]*?)<\/Reference>)/gi;
+            const references = new RegExp(`<Reference\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/Reference>)`, 'gi');
             while ((m = references.exec(text)) !== null) {
-                const hintPath = m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim();
+                // `HintPath` is item metadata: a child element, or an attribute of the item. Both are read, since each names an assembly the reference may stand for.
+                const hintPaths = [m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim(), attributes(m[1]).get('hintpath')];
                 // The name is the part before the first comma; an Include that is the assembly's file path (`..\bin\Acme.Api.dll`) names it by the file name.
                 const names = includes(m[1]).map((s) => s.split(',')[0].trim()).map((s) => (/[\\/]|\.(?:dll|exe)$/i.test(s) ? stem(s) : s));
-                if (hintPath !== undefined && hintPath !== '')
-                    names.push(stem(hintPath));
+                for (const hintPath of hintPaths)
+                    if (hintPath !== undefined && hintPath !== '')
+                        names.push(stem(hintPath));
                 for (const name of names)
                     for (const dir of projectDirsNamed(name))
                         addRef(dir, { types: true, follows: false, flows: false });
             }
-            const packageRefs = /<PackageReference\b([^>]*?)\/?>/gi;
+            const packageRefs = new RegExp(`<PackageReference\\b${ATTRS}\\/?>`, 'gi');
             while ((m = packageRefs.exec(text)) !== null) {
                 for (const id of includes(m[1]))
                     for (const dir of projectDirsNamed(id))
@@ -331,11 +333,11 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                         facts.removed.push(globToRegExp(r.path));
                 }
             }
-            const friends = /<InternalsVisibleTo\b([^>]*?)\/?>/gi;
+            const friends = new RegExp(`<InternalsVisibleTo\\b${ATTRS}\\/?>`, 'gi');
             while ((m = friends.exec(text)) !== null)
                 for (const name of includes(m[1]))
                     addFriend(name);
-            const assemblyAttributes = /<AssemblyAttribute\b([^>]*?)(?:\/>|>([\s\S]*?)<\/AssemblyAttribute>)/gi;
+            const assemblyAttributes = new RegExp(`<AssemblyAttribute\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/AssemblyAttribute>)`, 'gi');
             while ((m = assemblyAttributes.exec(text)) !== null) {
                 if (!includes(m[1]).some((n) => /(?:^|\.)InternalsVisibleTo(?:Attribute)?$/i.test(n)))
                     continue;
@@ -345,7 +347,7 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                 else
                     addFriend(parameter);
             }
-            const imports = /<Import\b([^>]*?)\/?>/gi;
+            const imports = new RegExp(`<Import\\b${ATTRS}\\/?>`, 'gi');
             while ((m = imports.exec(text)) !== null) {
                 const attrs = attributes(m[1]);
                 const target = attrs.get('project');

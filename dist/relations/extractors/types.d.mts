@@ -15,16 +15,25 @@ export interface SymbolSetMember {
  *
  * `member`: the reading is a type read for the receiver of a member access whose first name is `name`, written inside the types `types` (their keys, innermost first; only the types that can hold a member their file does not show, a `partial` type or one that lists a base). C# reads every member of the types around a simple name before any namespace (§12.8.4). The condition holds when the nearest of `types` that knows the name has it as a member that is no type: a field, property, event or method the type declares in any part, or one of a base class in the repository that a derived type can see. A nested type of that name found first leaves the reading standing.
  *
- * `no-member`: the reading is an extension method of a call whose receiver's first name `name` the file does not declare, so the receiver is a value only as such a member. The condition holds when the nearest of `types` that knows the name has it as a nested type, or none of them knows it: the call is then a static call through a type. With `call` (the receiver is that name alone), it also holds when the member is a field or a property whose written type has an instance method the call fits, as `instance-method` reads it.
+ * `no-member`: the reading is an extension method of a call whose receiver's first name `name` the file does not declare, so the receiver is a value only as such a member. The condition holds when the nearest of `types` that knows the name has it as a nested type, or none of them knows it: the call is then a static call through a type. With `call` (the receiver is that name alone), it also holds when the member is a field or a property whose written type has an instance method the call fits, as `instance-method` reads it. With `own` (the receiver is written `this.<name>`), the name is a member for certain, so the condition holds only in that last way: where no type of `types` knows the name (a member of a base outside the repository), the reading stands.
  *
  * A type of `self`, `from` and `types` that is a C#11 `file` type of the referencing file is written `file:<key>`, as in `TargetHint.within`: the resolver reads for it the bases that file records for its `file` type, and nothing a published type of the same name declares.
+ *
+ * `fileReceivers`, on `instance-method`, holds each receiver whose written type's readings end at a C#11 `file` type of the referencing file: `type` is that type (`file:<key>`), the receiver's type unless one of the nearer `readings` names a declaration, which then decides as a reading of `receivers` does.
+ *
+ * `argTypes`, on `instance-method` and on the `call` of `no-member`, is what the file writes of the type of each argument, in order (`CsharpArgType`). An instance method the call fits by its counts does not take the call when the type of one argument is one the parameter there cannot take, as far as the written types say for certain; an argument or a parameter whose type is not known takes part in nothing.
  */
 export type CsharpCondition = {
     kind: 'instance-method';
     method: string;
     args: number;
     typeArgs: number;
+    argTypes?: CsharpArgType[];
     receivers: TargetHint[][];
+    fileReceivers?: Array<{
+        readings: TargetHint[];
+        type: string;
+    }>;
     self?: string;
     from: string[];
 } | {
@@ -39,9 +48,23 @@ export type CsharpCondition = {
         method: string;
         args: number;
         typeArgs: number;
+        argTypes?: CsharpArgType[];
         from: string[];
     };
+    own?: true;
 };
+/**
+ * What a C# file writes of the type of one argument of a call: the keyword of a predefined type (`string`); `type`, the ordered group of readings of the written type of the parameter, field, property or local the argument is; `member`, the readings of the type a member is read through (`ImageType.Primary`), which is the argument's type when that type is an enum, and says nothing where the first name is a member of one of `unless.types` (the types around the call that can hold a member the file does not show); or null where the file writes none.
+ */
+export type CsharpArgType = string | {
+    type: TargetHint[];
+} | {
+    member: TargetHint[];
+    unless?: {
+        types: string[];
+        name: string;
+    };
+} | null;
 export type TargetHint = {
     kind: 'path';
     specifier: string;
@@ -71,6 +94,11 @@ export type TargetHint = {
     attribute?: {
         written: TargetHint[];
         suffixed?: TargetHint[];
+    };
+    /** C#: the counts of the call an extension-method reading stands for, its arguments beside the receiver and its written type arguments. Where the reading would bind, the resolver asks whether the owner it binds declares, under the reading's key, an extension method that can take them (the `shapes:<key>` records of the bound files and of the other files of their owner, read from the records themselves and only as far as the calling file sees each: no file of a project out of reach, no method internal to another assembly; a bound file without a record takes any call): when none can, the reading binds nothing, as a name the repository does not declare. A reading that names two owners stays ambiguous. Absent = the reading binds whatever the call passes. */
+    takes?: {
+        args: number;
+        typeArgs: number;
     };
     /** C#: conditions under which the reading binds nothing (`CsharpCondition`). Where one holds, the resolver reads the candidate as it reads a name the repository does not declare: `classify` answers `absent`, `resolve` and `resolveFile` nothing. Every reading of a group that depends on a condition carries it, so the group binds nothing and ends in silence, and no outcome is an ambiguity. Absent = the reading stands. */
     unless?: CsharpCondition[];

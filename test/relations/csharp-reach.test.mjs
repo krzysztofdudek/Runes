@@ -596,3 +596,69 @@ describe('buildCsharpReachability — open projects', () => {
     }
   });
 });
+
+describe('buildCsharpReachability — a raw > in a condition written before the other attributes', () => {
+  const COND = `Condition="'$(LangVersion)' > '10'"`;
+  const others = { 'b/B.csproj': PROJECT, 'b/z.cs': '', 'c/C.csproj': PROJECT, 'c/w.cs': '' };
+
+  it('follows a ProjectReference and an Import whose condition comes first', () => {
+    const byReference = reachOf({ 'a/A.csproj': withItems(`<ProjectReference ${COND} Include="../b/B.csproj" />`), 'a/x.cs': '', ...others });
+    expect(byReference('a/x.cs', 'b/z.cs')).toBe('reachable');
+    expect(byReference('a/x.cs', 'c/w.cs')).toBe('unreachable');
+    const byElement = reachOf({ 'a/A.csproj': withItems(`<ProjectReference ${COND} Include="../b/B.csproj"><Private>true</Private></ProjectReference>`), 'a/x.cs': '', ...others });
+    expect(byElement('a/x.cs', 'b/z.cs')).toBe('reachable');
+    const byImport = reachOf({
+      'a/A.csproj': `<Project Sdk="Microsoft.NET.Sdk"><Import ${COND} Project="../shared/refs.props" /></Project>`,
+      'a/x.cs': '',
+      'shared/refs.props': withItems(projectRef('$(MSBuildThisFileDirectory)../b/B.csproj')),
+      ...others,
+    });
+    expect(byImport('a/x.cs', 'b/z.cs')).toBe('reachable');
+    expect(byImport('a/x.cs', 'c/w.cs')).toBe('unreachable');
+  });
+
+  it('reads a Reference, a PackageReference, an InternalsVisibleTo and an AssemblyAttribute whose condition comes first', () => {
+    for (const item of [
+      `<Reference ${COND} Include="B" />`,
+      `<Reference ${COND} Include="Other"><HintPath>../b/bin/B.dll</HintPath></Reference>`,
+      `<PackageReference ${COND} Include="B" Version="1.0.0" />`,
+    ]) {
+      const reach = reachOf({ 'a/A.csproj': withItems(item), 'a/x.cs': '', ...others });
+      expect(reach('a/x.cs', 'b/z.cs'), item).toBe('reachable');
+      expect(reach('a/x.cs', 'c/w.cs'), item).toBe('unreachable');
+    }
+    for (const item of [
+      `<InternalsVisibleTo ${COND} Include="A" />`,
+      `<AssemblyAttribute ${COND} Include="System.Runtime.CompilerServices.InternalsVisibleTo"><_Parameter1>A</_Parameter1></AssemblyAttribute>`,
+    ]) {
+      const reach = reachOf({
+        'a/A.csproj': withItems(projectRef('../b/B.csproj')), 'a/x.cs': '',
+        'b/B.csproj': withItems(item), 'b/z.cs': '',
+        'c/C.csproj': withItems(projectRef('../b/B.csproj')), 'c/w.cs': '',
+      });
+      expect(reach.internalsVisible('a/x.cs', 'b/z.cs'), item).toBe(true);
+      expect(reach.internalsVisible('c/w.cs', 'b/z.cs'), item).toBe(false);
+    }
+  });
+});
+
+describe('buildCsharpReachability — a HintPath written as an attribute', () => {
+  const others = { 'b/B.csproj': PROJECT, 'b/z.cs': '', 'c/C.csproj': PROJECT, 'c/w.cs': '' };
+
+  it('reads the attribute like the child element, and the child element over the attribute', () => {
+    for (const item of [
+      '<Reference Include="Other" HintPath="..\\b\\bin\\B.dll" />',
+      '<Reference HintPath="../b/bin/B.dll" Include="Other" />',
+      '<Reference Include="Other" HintPath="../c/bin/Nothing.dll"><HintPath>../b/bin/B.dll</HintPath></Reference>',
+    ]) {
+      const reach = reachOf({ 'a/A.csproj': withItems(item), 'a/x.cs': '', ...others });
+      expect(reach('a/x.cs', 'b/z.cs'), item).toBe('reachable');
+      expect(reach('a/x.cs', 'c/w.cs'), item).toBe('unreachable');
+    }
+  });
+
+  it('reads no assembly from an empty HintPath attribute', () => {
+    const reach = reachOf({ 'a/A.csproj': withItems('<Reference Include="Other" HintPath="" />'), 'a/x.cs': '', ...others });
+    expect(reach('a/x.cs', 'b/z.cs')).toBe('unreachable');
+  });
+});

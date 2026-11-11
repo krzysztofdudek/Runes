@@ -1,10 +1,14 @@
 import type { DependencyExtractor, DetectedDep, ParsedFile, TargetHint } from './types.mjs';
 /**
+ * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`). A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
+ */
+export declare function extensionShapesKey(key: string): string;
+/**
  * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). A resolver given the reference graph (`ResolverDeps.reach`) reads the explicit and the implicit class as ONE name instead, as the compiler does, and chooses among those the referencing project can see, as long as the graph can say something about each of them. `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
  */
 export declare const IMPLICIT_PROGRAM_KEY = "<Program>$";
 /**
- * The marker key of a declaration only its own assembly sees: `internal:<key>`, declared beside `<key>` by the same file. A type whose effective accessibility stops at its assembly (`internal`, `private`, `private protected`, a top-level type with no access modifier, which C# makes internal, or a type nested in one of those), and an extension method that is not public or whose static class is not, carry it; a resolver given the reference graph drops such a definer for a caller of another compilation unless the defining project grants that caller its internals (`InternalsVisibleTo`). The colon puts the key in a string space no C# name can produce. A `partial` type part without an access modifier is not marked: another part may make it public.
+ * The marker key of a declaration only its own assembly sees: `internal:<key>`, declared beside `<key>` by the same file. A type whose effective accessibility stops at its assembly (`internal`, `private`, `private protected`, a top-level type with no access modifier, which C# makes internal, or a type nested in one of those), and an extension method that is not public or whose static class is not, carry it; a resolver given the reference graph drops such a definer for a caller of another compilation unless the defining project grants that caller its internals (`InternalsVisibleTo`). The colon puts the key in a string space no C# name can produce. A `partial` type part without an access modifier is not marked, since another part may make it public: the resolver reads it as internal where a part of the same compilation is marked.
  */
 export declare function internalKey(symbolKey: string): string;
 /**
@@ -13,6 +17,8 @@ export declare function internalKey(symbolKey: string): string;
 export declare function baseListKey(typeKey: string): string;
 /** The head of the key that records one base of a C#11 `file` type of the key `typeKey`: `file-base:<key>`, with a value like a base record's. Such a type has no published key and belongs to its file alone, so its bases are kept apart from those of a published type of the same name, and each record is read only for the `file` type of a file that declares it (`fileTypeRef`): a published type, or a `file` type of another file, may share the key and is another type. */
 export declare function fileBaseListKey(typeKey: string): string;
+/** The marker key of a C#11 `file` interface of the key `typeKey`: `file-interface:<key>`, declared by the file that declares the interface and read for that file's type alone, as its base records are (`fileBaseListKey`). An interface inherits from its base interfaces, a class from none of the interfaces it lists, and a `file` type publishes no `interface:` mark. */
+export declare function fileInterfaceKey(typeKey: string): string;
 /** What leads the key of a C#11 `file` type where a reading names the type whose body holds it (`fileTypeRef`). The colon is in no C# name, so no published key starts with it. */
 export declare const FILE_TYPE_REF = "file:";
 /** The key `typeKey` as a reading written inside the `file` type of that key names it: `file:<key>`, in `TargetHint.within` and in the type lists of a `CsharpCondition`. A published type, or a `file` type of another file, may have the same full name, so the reading says which it stands in, and the resolver reads for it what the referencing file alone records: its `file-base:` records, and nothing recorded under the published key. */
@@ -25,15 +31,20 @@ export declare const USINGS_KEY = "usings";
 export declare function interfaceKey(typeKey: string): string;
 /** The head of the key that records the instance methods of the type `typeKey`: `methods:<key>`. A part of a type that declares any declares `methods:<key>\t<value>` once, the value (`decodeMethods`) listing each overload by name, shape (`methodShape`) and reach, listed under the head like a base record (`baseListKey`). A static method, an explicit interface implementation (callable through the interface alone) and an extension method are not listed, and a private method only in a `partial` type, whose other parts can call it. The colon is in no C# name. */
 export declare function methodsKey(typeKey: string): string;
-/** One instance method of a type as its record lists it: `reach` says who can call it, any code (`public`, which stands for `internal` and `protected internal` too: an assembly is not told apart here), the type and the types derived from it (`protected`), or the type alone (`private`). */
+/** One instance method of a type as its record lists it: `reach` says who can call it, any code (`public`, which stands for `internal` and `protected internal` too: an assembly is not told apart here), the type and the types derived from it (`protected`), or the type alone (`private`). `params`, where the record holds it, is the written type of each parameter in order: a predefined type by its keyword (`string`), a named type as a record writes one (`<offset>:<name>`, see `encodeWritten`), and the empty string for a parameter whose type says nothing here (an array, a tuple, a type parameter, a parameter with a modifier such as `ref` or `params`). A nullable type is written as the type under it. */
 export interface CsharpMethod {
     name: string;
     shape: string;
     reach: 'public' | 'protected' | 'private';
+    params?: string[];
 }
-/** The methods a `methods` record's value lists: entries `<mark><name>:<shape>` joined by a space, the mark `~` for a protected method and `-` for a private one. */
+/** The methods a `methods` record's value lists: entries `<mark><name>:<shape>` joined by a space, the mark `~` for a protected method and `-` for a private one, each followed by `(<type>,<type>,…)` where the declaration writes a parameter type the record can hold (`CsharpMethod.params`). */
 export declare function decodeMethods(value: string): CsharpMethod[];
-/** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers. */
+/** The marker key of an enum: `enum:<key>`, declared beside the type key of every enum declaration. A member of an enum has the enum's type, and an enum value converts to no other type of the repository, which is what tells an overload that takes it from one that does not. */
+export declare function enumKey(typeKey: string): string;
+/** The marker key of a type that declares an implicit conversion operator: `converts:<key>`. A value converts to such a type, or such a type to another, in ways its base list does not show, so nothing is concluded from the types of an argument and a parameter where one of them carries the mark. */
+export declare function convertsKey(typeKey: string): string;
+/** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers, and a shape that leaves its type parameters open (`*`) takes any. */
 export declare function shapeTakes(shape: string, typeArguments: number, args: number): boolean;
 /** The head of the key that records the members of the type `typeKey` that are no types: `members:<key>`. A part of a type declares `members:<key>\t<value>` once, the value (`decodeMembers`) listing each field, constant, property, event and method by name, static ones included, and the written type of a field or a property. C# reads the members of the types around a simple name, inherited ones included, before any namespace (spec §12.8.4), so such a name is that member and no type of a namespace. Only a type whose members code outside its declaration can read by a simple name lists them (`givesMembers`), a private member only in a `partial` type, and a field or a property named as its own type (`Color Color`) never: where a type fits, C# reads that name as the type (spec §12.8.7.2). */
 export declare function membersKey(typeKey: string): string;
@@ -224,7 +235,7 @@ export type CsharpRefDescriptor =
     alias?: string;
     types?: string[];
 }
-/** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, concatenated in that order into ONE group — C# binds the leftmost simple name first and only reads further segments when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. `members` names, by its place in the extract's `lists`, the keys of the types around the receiver, innermost first, that can hold a member this file does not show (a `partial` type, or one that lists a base): where the first name is such a member there, the receiver is a value and names no type. Absent when no type around it can. */
+/** The receiver of a member access through a TYPE name (`Guard.NotNull(x)`, `OrderStatus.Paid`, `Shop.Core.Guard.NotNull(x)`): `chain` is the dotted receiver, leftmost first, without the accessed member. On assembly each prefix (`Shop`, `Shop.Core`, `Shop.Core.Guard`) is one reading, and the readings of all of them make ONE group in the order of the lookup: at each step (an enclosing type, an enclosing namespace, what its usings import, and so on outward) every prefix, shortest first, before any reading of a step farther out. C# binds the leftmost simple name at the nearest step that knows it and reads further segments only when it names a namespace. Emitted only when the leftmost identifier is not a name this file declares (a local, parameter, field, property, method…), so a value that shadows a type name never manufactures a type edge. `rooted` (a receiver written after `global::`, `global::X.Run()`) reads every prefix verbatim-only, and no declared name shadows it. `members` names, by its place in the extract's `lists`, the keys of the types around the receiver, innermost first, that can hold a member this file does not show (a `partial` type, or one that lists a base): where the first name is such a member there, the receiver is a value and names no type. Absent when no type around it can. */
  | {
     kind: 'receiver';
     chain: string[];
@@ -239,9 +250,10 @@ export type CsharpRefDescriptor =
  *  extension-method keys (`<ns>.Name()`) of the enclosing namespaces, each followed by the namespaces
  *  its using directives import where the call stands (`at`), then the global namespace, then the
  *  namespaces the compilation unit's using directives import as one set.
- *  `args` and `typeArgs` count the call's arguments and its written type arguments: an instance method takes the call only when the counts fit it. They, and `from`, are written only on a call that carries a receiver type to ask (`on`, `self`, or a `member` that is the receiver alone): nothing reads them on any other.
- *  `member` is set where the receiver's first name is one the file does not declare, written inside a type: the call is an extension call only when that name is a member of one of `member.types` (named by its place in the extract's `lists`: the types around the call, innermost first, that can hold a member this file does not show: a `partial` type, or one that lists a base), declared in another part or inherited, and a static call through a type otherwise, so the group is given only where such a type stands around the call; `direct` says the receiver is that name alone, so the member's own type is the receiver's.
+ *  `args` and `typeArgs` count the call's arguments and its written type arguments: an extension method, and an instance method, takes the call only when the counts fit it. A count of zero may be left out, and is on a call that carries no receiver type to ask (`on`, `self`, or a `member` that is the receiver alone); `from` is written only on a call that carries one.
+ *  `member` is set where the receiver's first name is one the file does not declare, written inside a type: the call is an extension call only when that name is a member of one of `member.types` (named by its place in the extract's `lists`: the types around the call, innermost first, that can hold a member this file does not show: a `partial` type, or one that lists a base), declared in another part or inherited, and a static call through a type otherwise, so the group is given only where such a type stands around the call; `direct` says the receiver is that name alone, so the member's own type is the receiver's. `own` says the receiver is written `this.<name>` with a name the file does not declare as a member: it is a member for certain, of the type around the call (the one type `member.types` then lists) in another part or from a base, so the call is an extension call unless that member's written type has an instance method the call fits.
  *  `from` names, by its place in the extract's `lists`, the keys of the types whose bodies hold the call, innermost first: a protected or a private method takes the call only from where it can be called.
+ *  `argTypes` is written on such a call where the file writes the type of an argument: in the order of the arguments, the keyword of a predefined type (`string`), the place in the extract's `receiverTypes` of the written type of a parameter, a field, a property or a local, `[place]` for a member read through a type name (`ImageType.Primary`: the type at that place, which is the argument's type when it is an enum), with a second number, the place in `lists` of the types around the call in which that first name may be a member this file does not show, and null for any other argument; trailing nulls are left out, and the whole list when a call names an argument (`name: value`) or writes no such type. An instance method takes the call only when no argument's type is one its parameter cannot take.
  *  `on` names, by their places in the extract's `receiverTypes`, the written type of the receiver where the file declares it (a parameter, a field, a property or a local with a type of its own; several when declarations of the name in one scope differ), and `self` the key of the enclosing type for a call on `this`: an instance method of that name in such a type, or in a base of it, is what the call binds (C# spec §12.8.10.3), and the group then gives nothing. Both are absent where the receiver's type is not written (`var`, a call result, an inferred lambda parameter). */
  | {
     kind: 'ext';
@@ -251,6 +263,7 @@ export type CsharpRefDescriptor =
     at: number;
     args?: number;
     typeArgs?: number;
+    argTypes?: Array<number | string | [number] | [number, number] | null>;
     on?: number[];
     self?: string;
     from?: number;
@@ -258,6 +271,7 @@ export type CsharpRefDescriptor =
         types: number;
         name: string;
         direct: boolean;
+        own?: true;
     };
 };
 /**

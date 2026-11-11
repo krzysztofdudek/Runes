@@ -296,12 +296,12 @@ describe('csharp: an extension call gives way to an instance method of the recei
       const listed = Object.fromEntries(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:')).map((k) => k.slice('methods:'.length).split('\t')));
       expect(listed).toEqual({
         // A private method is listed only in a partial type, whose other parts can call it.
-        'App.Order': 'Save:0:0:0 Save:0:1:1 -Hidden:0:0:0 ~Shared:0:0:0 ~Derived:0:0:0 Wide:0:0:0 Inside:0:0:0 -Secret:0:0:0 -Outer:0:0:0',
+        'App.Order': 'Save:0:0:0 Save:0:1:1(int) -Hidden:0:0:0 ~Shared:0:0:0 ~Derived:0:0:0 Wide:0:0:0 Inside:0:0:0 -Secret:0:0:0 -Outer:0:0:0',
         'App.Order+Line': 'Total:0:0:0',
         'App.IOrder': 'Explicit:0:0:0',
         'App.Money': 'Round:0:0:0',
       });
-      expect(decodeMethods(listed['App.Order']).slice(1, 4)).toEqual([{ name: 'Save', shape: '0:1:1', reach: 'public' }, { name: 'Hidden', shape: '0:0:0', reach: 'private' }, { name: 'Shared', shape: '0:0:0', reach: 'protected' }]);
+      expect(decodeMethods(listed['App.Order']).slice(1, 4)).toEqual([{ name: 'Save', shape: '0:1:1', reach: 'public', params: ['int'] }, { name: 'Hidden', shape: '0:0:0', reach: 'private' }, { name: 'Shared', shape: '0:0:0', reach: 'protected' }]);
       expect(methodsKey('App.Order')).toBe('methods:App.Order');
     });
   });
@@ -310,7 +310,7 @@ describe('csharp: an extension call gives way to an instance method of the recei
     await project({
       'src/a/Types.cs': 'public class Bag {\n  public void Put(int a) { }\n  public void Put<T>(T a, int b = 0) { }\n  public void Put(string format, params object[] rest) { }\n  public void Put(int a, int b, int c) { }\n}\n',
     }, ({ keys, table, resolver }) => {
-      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:'))).toEqual(['methods:Bag\tPut:0:1:1 Put:1:1:2 Put:0:1:* Put:0:3:3']);
+      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:'))).toEqual(['methods:Bag\tPut:0:1:1(int) Put:1:1:2(,int) Put:0:1:*(string) Put:0:3:3(int,int,int)']);
       for (const [shape, typeArgs, args, fits] of [
         ['0:1:1', 0, 1, true], ['0:1:1', 0, 0, false], ['0:1:1', 0, 2, false], ['0:1:1', 1, 1, false],
         ['1:1:2', 0, 1, true], ['1:1:2', 1, 2, true], ['1:1:2', 2, 1, false], ['1:1:2', 0, 3, false],
@@ -738,6 +738,324 @@ describe('csharp: what is recorded for a file type is read for the type of that 
       expect(keys('src/one/Tool.cs').map((k) => k.split('\t')[0])).toEqual(['file-base:App.Jobs.Outer', 'file-base:App.Jobs.Outer+Inner', USINGS_KEY]);
       // Line 3: `Part` is the nested type Outer inherits from Holder. Line 4: Inner inherits Part's Options.
       expect(edges('src/one/Tool.cs')).toEqual(['2->core', '3->core', '4->core']);
+    });
+  });
+});
+
+describe('csharp: an extension method takes a call only by its counts', () => {
+  it('an ext descriptor writes each count that is not zero, and both where a receiver type is asked', async () => {
+    await project({ 'src/web/Use.cs': 'class Use { void M(Order typed) { var s = Make(); s.Add(1, 2); s.Get<int>(); s.Run(); typed.Run(); } }\n' }, ({ files }) => {
+      const calls = extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map(({ args, typeArgs }) => [args, typeArgs]);
+      expect(calls).toEqual([[2, undefined], [undefined, 1], [undefined, undefined], [0, 0]]);
+    });
+  });
+
+  it('a reading binds nothing where its definer cannot take the call, the walk goes on outward, and a definer without a shapes record takes any call', async () => {
+    await project({
+      'src/lib/E.cs': 'namespace Lib;\npublic static class E { public static void Add(this object o, int a) { } }\n',
+      'src/kit/E.cs': 'namespace App.Web;\npublic static class E { public static void Add(this object o, int a, int b) { } }\n',
+      'src/web/Use.cs': 'using Lib;\nnamespace App.Web;\nclass Use {\n  void M() {\n    var s = Make();\n    s.Add(1);\n    s.Add(1, 2);\n    s.Add(1, 2, 3);\n  }\n}\n',
+    }, ({ edges, edgesThrough, declared, resolver, files }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['6->lib', '7->kit']);
+      // The three answers agree: the nearer reading of the call of one argument is absent to `classify`, and nothing to `resolve` and `resolveFile`.
+      const nearer = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Use.cs')).find((u) => u.line === 6).candidates[0];
+      expect(nearer.symbolKey).toBe('App.Web.Add()');
+      expect(resolver.classify(nearer, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
+      expect(resolver.resolve(nearer, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      expect(resolver.resolveFile(nearer, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      // A table built from a store that kept no shapes record reads the definer of the nearer key for every call, as before.
+      const bare = new SymbolTable();
+      for (const [file, keys] of declared) for (const d of keys) if (!d.symbolKey.startsWith('shapes:')) bare.declare('csharp', d.symbolKey, file);
+      expect(edgesThrough(bare, 'src/web/Use.cs')).toEqual(['6->kit', '7->kit', '8->kit']);
+    });
+  });
+
+  it('reads the shapes of the bound owner from the records themselves: a table that keeps one file per owner for a name gives the same edge', async () => {
+    await project({
+      'src/core/Order.cs': 'public class Order { }\n',
+      'src/ext/A.cs': 'public static class A { public static void Tag(this Order o) { } }\n',
+      'src/ext/B.cs': 'public static class B { public static void Tag(this Order o, string k) { } }\n',
+      'src/web/Page.cs': 'class Page {\n  void M() {\n    var o = Make();\n    o.Tag("k");\n    o.Tag("k", 1, 2);\n  }\n}\n',
+    }, ({ edges, edgesThrough, declared }) => {
+      expect(edges('src/web/Page.cs')).toEqual(['4->ext']);
+      // A consumer that keeps the first file of each owner for a name key, and every key with a tab whole: the method that takes the call sits in the file the name key no longer lists.
+      const compacted = new SymbolTable();
+      const kept = new Set();
+      for (const [file, keys] of declared) {
+        for (const { symbolKey } of keys) {
+          const once = `${symbolKey}\0${file.split('/').at(-2)}`;
+          if (!symbolKey.includes('\t') && kept.has(once)) continue;
+          kept.add(once);
+          compacted.declare('csharp', symbolKey, file);
+        }
+      }
+      expect(compacted.filesFor('csharp', 'Tag()')).toEqual(['src/ext/A.cs']);
+      expect(edgesThrough(compacted, 'src/web/Page.cs')).toEqual(['4->ext']);
+    });
+  });
+
+  it('counts a sibling file of the bound owner only as far as the calling file sees it', async () => {
+    await project({
+      'src/core/Order.cs': 'namespace App;\npublic class Order { }\n',
+      'src/lib/L.cs': 'namespace App;\npublic static class L { public static void Tag(this Order o, string k) { } }\n',
+      'src/ext/A.cs': 'namespace App.Web;\npublic static class A { public static void Tag(this Order o) { } }\n',
+      'src/ext/B.cs': 'namespace App.Web;\ninternal static class B { public static void Tag(this Order o, string k) { } }\n',
+      'src/web/Page.cs': 'namespace App.Web;\nclass Page {\n  void M() {\n    var o = Make();\n    o.Tag("k");\n  }\n}\n',
+    }, ({ table, files }) => {
+      const ownerOf = (file) => file.split('/').at(-2);
+      const uses = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Page.cs'));
+      const through = (reach) => resolveDetectedEdges(uses, makeResolver({ ownerIndex: { ownerOf }, symbolTable: table, resolvePathToFile: () => undefined, reach }), 'src/web/Page.cs', 'csharp').map((e) => `${e.line}->${e.owner}`);
+      const sameOrReachable = (from, to) => (ownerOf(from) === ownerOf(to) ? 'same' : 'reachable');
+      // B's method is internal to its assembly: it counts for a friend, and for a graph that reads no internals, and for no other caller.
+      expect(through(Object.assign((from, to) => sameOrReachable(from, to), { internalsVisible: () => false }))).toEqual(['5->lib']);
+      expect(through(Object.assign((from, to) => sameOrReachable(from, to), { internalsVisible: () => true }))).toEqual(['5->ext']);
+      expect(through((from, to) => sameOrReachable(from, to))).toEqual(['5->ext']);
+      // A file of a project out of reach has no say; one the graph knows nothing about counts.
+      expect(through((from, to) => (to === 'src/ext/B.cs' ? 'unreachable' : sameOrReachable(from, to)))).toEqual(['5->lib']);
+      expect(through((from, to) => (to === 'src/ext/B.cs' ? 'unknown' : sameOrReachable(from, to)))).toEqual(['5->ext']);
+    });
+  });
+
+  it('two owners that declare the name at one level stay an ambiguity, whatever their shapes', async () => {
+    await project({
+      'src/lib/E.cs': 'namespace Lib;\npublic static class E { public static void Add(this object o, int a) { } }\n',
+      'src/kit/E.cs': 'namespace Kit;\npublic static class E { public static void Add(this object o, int a, int b) { } }\n',
+      'src/web/Use.cs': 'using Lib;\nusing Kit;\nclass Use {\n  void M() {\n    var s = Make();\n    s.Add(1);\n  }\n}\n',
+    }, ({ edges, resolver, files }) => {
+      expect(edges('src/web/Use.cs')).toEqual([]);
+      const group = csharpExtractor.uses(files[2]).find((u) => u.line === 6).candidates;
+      expect(group.map((c) => resolver.classify(c, 'src/web/Use.cs', 'csharp').kind)).toEqual(['absent', 'ambiguous', 'ambiguous']);
+    });
+  });
+});
+
+describe('csharp: an instance method takes a call only when its parameters can take the written types of the arguments', () => {
+  // One row per call: the parameter type of the instance method, the argument as the call writes it, and whether the instance method refuses it (the extension method of that name then takes the call).
+  const ROWS = [
+    ['long', 'i', false, 'an int widens to a long'],
+    ['int', 's', true, 'a string converts to no int'],
+    ['string', 'i', true, 'an int converts to no string'],
+    ['object', 'o', false, 'object takes everything'],
+    ['string', 'o', true, 'a class whose bases are all read, none with a conversion operator'],
+    ['string', 'e', false, 'a class with a base outside the repository may convert'],
+    ['string', 'k', true, 'an enum value converts to no string'],
+    ['string', 'm', false, 'a class that declares an implicit conversion operator may convert'],
+    ['Base', 'd', false, 'a derived class'],
+    ['IThing', 't', false, 'an implemented interface'],
+    ['Base', 'o', true, 'an unrelated class'],
+    ['Base', 'e', false, 'an unrelated class with a base outside the repository'],
+    ['Base', 's', true, 'a string converts to no class without a conversion operator'],
+    ['Money', 's', false, 'a parameter type with a conversion operator'],
+    ['Money', 'o', false, 'a parameter type with a conversion operator takes a class too'],
+    ['Guid', 's', true, 'a framework struct takes no string'],
+    ['Guid?', 's', true, 'a nullable type is read as the type under it'],
+    ['Guid', 'k', true, 'a framework struct takes no enum value'],
+    ['IComparable', 'k', false, 'an interface System.Enum implements'],
+    ['IComparable', 's', false, 'a framework type that is no known struct'],
+    ['Al', 'k', false, 'a using alias may name anything'],
+    ['Twin', 'k', false, 'a name two imported namespaces declare is not known to be outside'],
+    ['long', 'n', false, 'a native integer is not read'],
+    ['nint', 'i', false, 'a native integer parameter is not read'],
+    ['int', 'dy', false, 'a dynamic argument is bound at run time'],
+    ['int', 'ref s', false, 'an argument passed by reference is not read'],
+    ['int', 'a: s', false, 'a named argument leaves every argument unread'],
+    ['string', 'Kind.A', true, 'an enum member has the enum\'s type'],
+    ['string', 'Flags.On', false, 'a member of a type that is no enum says nothing'],
+    ['string', 'v', false, 'a var local writes no type'],
+    ['int', 'q', false, 'two declarations of one name in one scope leave its type open'],
+    ['Kind', 'Kind.A', false, 'the enum itself'],
+    ['Kind', 'o', true, 'an enum takes no class'],
+    ['Base', 'k', true, 'a class takes no enum value'],
+    ['int[]', 's', false, 'an array parameter is not read'],
+  ];
+  const sources = () => ({
+    'src/a/Twin.cs': 'namespace A;\npublic class Twin { }\n',
+    'src/b/Twin.cs': 'namespace B;\npublic class Twin { }\n',
+    'src/core/IBag.cs': [
+      'using System;', 'using A;', 'using B;', 'using Al = System.Guid;', 'namespace App;',
+      'public class Base { }', 'public class Derived : Base { }', 'public class Other { }', 'public class Odd : Exception { }',
+      'public class Money { public static implicit operator Money(string s) => null; }',
+      'public interface IThing { }', 'public class Thing : IThing { }', 'public enum Kind { A }', 'public static class Flags { public const int On = 1; }',
+      'public interface IBag {',
+      ...ROWS.map(([param], n) => `  void P${n}(${param} a);`),
+      '  void Wide(int a, params string[] rest);',
+      '  void Open<T>(T a);',
+      '}',
+    ].join('\n'),
+    'src/ext/BagExtensions.cs': ['namespace App;', 'public static class BagExtensions {', ...ROWS.map((_, n) => `  public static void P${n}(this IBag b, object a) { }`), '  public static void Wide(this IBag b, object a, object c) { }', '  public static void Open(this IBag b, object a) { }', '}'].join('\n'),
+    'src/web/Use.cs': [
+      'using System;', 'namespace App;', 'public class Use {', '  private readonly IBag _bag;',
+      '  public void M(int i, string s, Derived d, Other o, Odd e, Thing t, Kind k, Money m, dynamic dy, nint n) {',
+      '    var v = Make();', '    int q = 1, r = 2; { string q2 = s; }',
+      ...ROWS.map(([, arg], n) => `    _bag.P${n}(${arg});`),
+      '    _bag.Wide(i, o);',
+      '    _bag.Open(s);',
+      '  }', '}',
+    ].join('\n'),
+  });
+  const FIRST_CALL = 8;
+
+  it('refuses a parameter only where the written types say for certain that it cannot take the argument', async () => {
+    await project(sources(), ({ edges }) => {
+      const toExt = new Set(edges('src/web/Use.cs').filter((e) => e.endsWith('->ext')).map((e) => Number(e.split('->')[0])));
+      const answered = ROWS.map(([param, arg, , why], n) => [`${param} <- ${arg}`, toExt.has(FIRST_CALL + n), why]);
+      expect(answered).toEqual(ROWS.map(([param, arg, refused, why]) => [`${param} <- ${arg}`, refused, why]));
+      // A params parameter and a type parameter take any argument.
+      expect([toExt.has(FIRST_CALL + ROWS.length), toExt.has(FIRST_CALL + ROWS.length + 1)]).toEqual([false, false]);
+    });
+  });
+
+  it('a member read through a name that a type around the call holds as a member is a value: its type is not read', async () => {
+    await project({
+      ...sources(),
+      'src/core/HasKind.cs': 'namespace App;\npublic class HasKind { protected Other Kind; }\n',
+      'src/web/Sub.cs': 'namespace App;\npublic class Sub : HasKind {\n  private readonly IBag _bag;\n  void M() {\n    _bag.P3(Kind.A);\n  }\n}\npublic class Free : Base {\n  private readonly IBag _bag;\n  void M() {\n    _bag.P4(Kind.A);\n  }\n}\n',
+    }, ({ edges }) => {
+      // P3 takes an object, P4 a string: in `Free` the name is the enum and the string parameter refuses it; in `Sub` it is the inherited field, whose members' types are not written here.
+      expect(edges('src/web/Sub.cs').filter((e) => e.endsWith('->ext'))).toEqual(['11->ext']);
+    });
+  });
+
+  it('records the written type of each parameter, the enum mark and the conversion mark, and writes the argument types on a call that carries a receiver type', async () => {
+    await project(sources(), ({ keys, files }) => {
+      const core = keys('src/core/IBag.cs');
+      expect(core.filter((k) => k.startsWith('enum:') || k.startsWith('converts:'))).toEqual(['converts:App.Money', 'enum:App.Kind']);
+      const methods = decodeMethods(core.find((k) => k.startsWith('methods:App.IBag\t')).split('\t')[1]);
+      expect(methods.find((m) => m.name === 'P0').params).toEqual(['long']);
+      expect(methods.find((m) => m.name === 'P8').params.map((t) => t.split(':')[1])).toEqual(['Base']);
+      expect(methods.find((m) => m.name === 'Wide').params).toEqual(['int']);
+      expect(methods.find((m) => m.name === 'Open').params).toBe(undefined);
+      const extract = extractCsharpRefs(files.find((f) => f.path === 'src/web/Use.cs'));
+      const call = (name) => extract.refs.find((r) => r.kind === 'ext' && r.name === name);
+      expect(call('P0').argTypes).toEqual(['int']);
+      expect(extract.receiverTypes[call('P8').argTypes[0]].ref).toBe('Derived');
+      expect(call('P24').argTypes).toBe(undefined); // dynamic
+      expect(call('P25').argTypes).toBe(undefined); // ref
+      expect(call('P26').argTypes).toBe(undefined); // a named argument
+      expect(extract.receiverTypes[call('P27').argTypes[0][0]].ref).toBe('Kind');
+      expect(call('Wide').argTypes.length).toBe(2);
+    });
+  });
+
+  it('an extract stored without the receiver types its argument types name reads those arguments as unknown', async () => {
+    await project(sources(), ({ files, table }) => {
+      const file = files.find((f) => f.path === 'src/web/Use.cs');
+      const { receiverTypes, ...stored } = extractCsharpRefs(file);
+      const kept = { ...stored, refs: stored.refs.map((r) => (r.kind === 'ext' ? { ...r, on: undefined, self: 'App.Use' } : r)), receiverTypes: [] };
+      expect(receiverTypes.length > 0).toBe(true);
+      const resolver = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: table, resolvePathToFile: () => undefined });
+      expect(() => resolveDetectedEdges(assembleCsharpCandidates(kept), resolver, 'src/web/Use.cs', 'csharp')).not.toThrow();
+    });
+  });
+});
+
+describe('csharp: a call on this.<name> reads the member another part or a base declares', () => {
+  const shared = {
+    'src/core/IConfig.cs': 'namespace App;\npublic interface IConfig { object Get(string key); }\npublic interface IPlain { }\n',
+    'src/ext/E.cs': 'namespace App;\npublic static class E {\n  public static object Get(this IConfig c, string key) => null;\n  public static object Get(this IPlain c, string key) => null;\n}\n',
+  };
+
+  it('gives no extension edge where the member\'s written type has an instance method the call fits, in another part or in a base class', async () => {
+    await project({
+      ...shared,
+      'src/core/Page.cs': 'namespace App;\npublic partial class Page { private readonly IConfig _config; }\npublic class PageBase { protected IConfig Inherited; }\n',
+      'src/web/Page.Render.cs': 'namespace App;\npublic partial class Page {\n  object A(string key) => this._config.Get(key);\n}\npublic class Derived : PageBase {\n  object B(string key) => this.Inherited.Get(key);\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Page.Render.cs')).toEqual(['5->core']); // the base class, and no extension edge
+      const member = extractCsharpRefs(files.find((f) => f.path === 'src/web/Page.Render.cs')).refs.filter((r) => r.kind === 'ext').map((r) => r.member);
+      expect(member.map((m) => [m.name, m.direct, m.own])).toEqual([['_config', true, true], ['Inherited', true, true]]);
+    });
+  });
+
+  it('keeps the extension edge where the member\'s type has no such method, where no type of the repository declares the member, and where a nested type has the name', async () => {
+    await project({
+      ...shared,
+      'src/core/Page.cs': 'namespace App;\npublic partial class Page { private readonly IPlain _plain; public class Nested { } }\n',
+      'src/web/Page.Render.cs': [
+        'namespace App;',
+        'public partial class Page {',
+        '  object A(string key) => this._plain.Get(key);',
+        '  object B(string key) => this.Nested.Get(key);',
+        '}',
+        'public class Framed : System.Exception {',
+        '  object C(string key) => this.Data.Get(key);',
+        '}',
+        '',
+      ].join('\n'),
+    }, ({ edges }) => {
+      expect(edges('src/web/Page.Render.cs')).toEqual(['3->ext', '4->ext', '7->ext']);
+    });
+  });
+
+  it('reads a member the file itself declares, and a call inside a type that can hold no unseen member, as before', async () => {
+    await project({
+      ...shared,
+      'src/web/Use.cs': 'namespace App;\npublic partial class Use {\n  private readonly IConfig _config;\n  object A(string key) => this._config.Get(key);\n}\npublic sealed class Closed {\n  object B(string key) => this.Missing.Get(key);\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['3->core', '7->ext']); // the field's type, and the one call whose receiver nothing declares
+      expect(extractCsharpRefs(files.find((f) => f.path === 'src/web/Use.cs')).refs.filter((r) => r.kind === 'ext').map((r) => r.member)).toEqual([undefined, undefined]);
+    });
+  });
+});
+
+describe('csharp: a file type is read as a type of its file in three more places', () => {
+  const core = {
+    'src/core/Order.cs': 'namespace App;\npublic class Order { public bool Validate() => true; public class Options { public static void Parse() { } } }\npublic interface IBase { public class Settings { } }\n',
+    'src/ext/Checks.cs': 'namespace App;\npublic static class Checks { public static bool Validate(this object o) => false; public static bool Other(this object o) => false; }\n',
+  };
+
+  it('a receiver written as a file type has the instance methods the type inherits, and no others', async () => {
+    await project({
+      ...core,
+      'src/web/Rush.cs': 'namespace App;\nfile class Rush : Order { }\nfile class Plain { }\npublic class Desk {\n  bool A(Rush r) => r.Validate();\n  bool B(Rush r) => r.Other();\n  bool C(Plain p) => p.Validate();\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Rush.cs').filter((e) => e.endsWith('->ext'))).toEqual(['6->ext', '7->ext']);
+      const condition = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Rush.cs')).find((u) => u.line === 5 && u.candidates[0].symbolKey.endsWith('()')).candidates[0].unless[0];
+      // The nested type of the enclosing class is the one nearer reading; nothing declares it, so the file type is the receiver's.
+      expect([condition.receivers, condition.fileReceivers]).toEqual([[], [{ readings: [{ kind: 'symbol', symbolKey: 'App.Desk+Rush', within: 'App.Desk' }], type: 'file:App.Rush' }]]);
+    });
+  });
+
+  it('a receiver whose type is written after a using alias is read through the alias, as before', async () => {
+    await project({
+      ...core,
+      'src/web/Use.cs': 'using S = App;\nnamespace Web;\npublic class Use {\n  bool A(S::Order o) => o.Validate();\n  bool B(S::Order o) => o.Other();\n}\n',
+      'src/ext/More.cs': 'namespace Web;\npublic static class More { public static bool Validate(this object o) => false; public static bool Other(this object o) => false; }\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Use.cs').filter((e) => e.endsWith('->ext'))).toEqual(['5->ext']);
+    });
+  });
+
+  it('a nearer type of the same name than the file type is the receiver\'s type', async () => {
+    await project({
+      ...core,
+      // Inside `Desk`, `Rush` names the nested class, which has no Validate; the file type of the namespace is farther out.
+      'src/web/Rush.cs': 'namespace App;\nfile class Rush : Order { }\npublic partial class Desk {\n  bool A(Rush r) => r.Validate();\n}\n',
+      'src/web/Desk.Rush.cs': 'namespace App;\npublic partial class Desk { public class Rush { } }\n',
+    }, ({ edges }) => {
+      expect(edges('src/web/Rush.cs').filter((e) => e.endsWith('->ext'))).toEqual(['4->ext']);
+    });
+  });
+
+  it('a file interface inherits the nested types of its base interfaces, and a file class none of an interface it lists', async () => {
+    await project({
+      ...core,
+      'src/legacy/Settings.cs': 'namespace App;\npublic class Settings { }\n',
+      'src/web/Derived.cs': 'namespace App;\nfile interface IDerived : IBase {\n  Settings Read();\n}\nfile class Impl : IBase {\n  Settings _s;\n}\n',
+    }, ({ edges, keys }) => {
+      expect(edges('src/web/Derived.cs')).toEqual(['2->core', '3->core', '5->core', '6->legacy']);
+      expect(keys('src/web/Derived.cs').filter((k) => k.startsWith('file-interface:'))).toEqual(['file-interface:App.IDerived']);
+    });
+  });
+
+  it('a dotted name through a file type reads what the type inherits, and nothing the file type nests itself', async () => {
+    await project({
+      ...core,
+      'src/web/Worker.cs': 'namespace App;\nfile class Worker : Order { public class Own { } }\npublic class Host {\n  Worker.Options _a;\n  Worker.Own _b;\n  Worker.Missing _c;\n}\n',
+    }, ({ edges, files }) => {
+      expect(edges('src/web/Worker.cs')).toEqual(['2->core', '4->core']);
+      const readings = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Worker.cs')).filter((u) => u.line >= 4 && u.line <= 6).map((u) => u.candidates.map((c) => [c.symbolKey, c.within]));
+      expect(readings).toEqual([[['App.Host+Worker.Options', 'App.Host'], ['App.Worker+Options', 'file:App.Worker']], [['App.Host+Worker.Own', 'App.Host']], [['App.Host+Worker.Missing', 'App.Host'], ['App.Worker+Missing', 'file:App.Worker']]]);
     });
   });
 });

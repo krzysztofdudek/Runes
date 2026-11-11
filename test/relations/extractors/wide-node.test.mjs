@@ -99,6 +99,48 @@ describe('a node with very many children is read in time linear in their number'
     assert.equal(declarations.length, 0);
   });
 
+  // Dotted names of three segments in the run. The whole name is one reference; the walk then comes to the qualified name inside it (`A.B` of `A.B.C`) and reads it against its parent to see that it is part of a longer name. A name of two segments reaches the same read of the parent for the name itself, so the input above guards that read as well; this one guards the path through a nested qualifier. With the parent asked of the tree, a quarter of this input took 7 seconds and the whole of it 152.
+  it('malformed C# of 388 000 characters whose lines hold dotted names of three segments', async () => {
+    const line = 'A.B.C c(\n';
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(line, SIZE * scale));
+    assert.equal(uses.length, Math.floor(SIZE / line.length));
+    assert.equal(declarations.length, 0);
+  });
+
+  // Type declarations inside one flat run of errors: an `#if` that is never closed leaves every later line in the run, and each `class A { }` in it keeps its body. The body is read against its parent, to see that it is the body of a type. With the parent asked of the tree, a quarter of this input took 1.3 seconds and the whole of it 25.
+  it('malformed C# of 388 000 characters whose lines are an open #if and a class', async () => {
+    const lines = '#if X\nclass A { }\n';
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(lines, SIZE * scale));
+    assert.equal(uses.length, 0);
+    assert.equal(declarations.filter((d) => d.symbolKey === 'A').length, Math.floor(SIZE / lines.length));
+  });
+
+  // A deconstruction with no right side, line after line: each element is a declaration expression, read against the tuple it stands in and against what that tuple stands in. The extractor asked each of them for its parent, and its parent's, and the full input took 29 seconds.
+  it('malformed C# of 388 000 characters whose lines are tuple deconstructions', async () => {
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo('(A a, B b) =\n', SIZE * scale));
+    assert.deepEqual([uses.length, declarations.length], [0, 0]);
+  });
+
+  // The grammar reads each line as comparisons around a tuple of declaration expressions; each named element's type and the generic that holds the tuple give their references.
+  it('malformed C# of 388 000 characters whose lines create a generic of a named tuple', async () => {
+    const line = 'new List<(Order Item, int Index)>(\n';
+    const { uses, declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => repeatTo(line, SIZE * scale));
+    assert.equal(uses.length, 2 * Math.floor(SIZE / line.length));
+    assert.equal(declarations.length, 0);
+  });
+
+  // The members of the misread C# 14 extension block are local functions, each read against the constructor two steps above it; the parameters of a primary constructor are read against the type their list belongs to.
+  it('a C# extension block of 30 000 methods', async () => {
+    const method = 'void F() { }\n';
+    const { declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => `static class X { extension(Order o) {\n${repeatTo(method, SIZE * scale)}} }\n`);
+    assert.equal(declarations.filter((d) => d.symbolKey === 'F()').length, Math.floor(SIZE / method.length));
+  });
+
+  it('a C# primary constructor of 55 000 parameters', async () => {
+    const { declarations } = await readsLinearly(relations.csharpExtractor, 'A.cs', 'csharp', (scale) => `partial class C(\n${repeatTo('int a,\n', SIZE * scale)}int z) { }\n`);
+    assert.deepEqual(declarations.map((d) => d.symbolKey), ['C', 'members:C\t-a -z']);
+  });
+
   // Kotlin recovery reads a damaged file one top-level declaration at a time. A file of many damaged declarations re-reads each of them; a file whose first declaration never closes its bracket is one declaration as long as the file, on which the grammar's own error recovery re-reads its input a number of times that grows with the square of its length.
   describe('malformed Kotlin of 80 000 characters, each line damaged', () => {
     const KOTLIN_SIZE = 80_000;

@@ -65,6 +65,11 @@ describe('MATRIX — qualified-reference & nested-type keying', () => {
   it('csharp-enclosing-nested-type-before-namespace-silence', () => runCase('csharp-enclosing-nested-type-before-namespace-silence'));
   it('csharp-enclosing-nested-type-before-using-silence', () => runCase('csharp-enclosing-nested-type-before-using-silence'));
   it('csharp-enclosing-nested-enum-receiver-silence', () => runCase('csharp-enclosing-nested-enum-receiver-silence'));
+  it('csharp-file-type-receiver-inherited-instance-method-silence', () => runCase('csharp-file-type-receiver-inherited-instance-method-silence'));
+  it('csharp-file-interface-base-interface-nested-type-edge', () => runCase('csharp-file-interface-base-interface-nested-type-edge'));
+  it('csharp-file-type-dotted-name-inherited-nested-type-edge', () => runCase('csharp-file-type-dotted-name-inherited-nested-type-edge'));
+  it('csharp-explicit-interface-implementation-type-receiver-edge', () => runCase('csharp-explicit-interface-implementation-type-receiver-edge'));
+  it('csharp-receiver-nearer-namespace-before-global-type-edge', () => runCase('csharp-receiver-nearer-namespace-before-global-type-edge'));
   it('csharp-enclosing-nested-type-other-part-silence', () => runCase('csharp-enclosing-nested-type-other-part-silence'));
   it('csharp-enclosing-nested-type-before-global-alias-edge', () => runCase('csharp-enclosing-nested-type-before-global-alias-edge'));
   it('csharp-enclosing-nested-type-other-node-edge', () => runCase('csharp-enclosing-nested-type-other-node-edge'));
@@ -321,6 +326,8 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
   it('csharp-extension-referenced-project-edge', () => runCase('csharp-extension-referenced-project-edge'));
   it('csharp-transitive-project-reference-edge', () => runCase('csharp-transitive-project-reference-edge'));
   it('csharp-hintpath-reference-edge', () => runCase('csharp-hintpath-reference-edge'));
+  it('csharp-hintpath-attribute-reference-edge', () => runCase('csharp-hintpath-attribute-reference-edge'));
+  it('csharp-reference-condition-raw-greater-than-edge', () => runCase('csharp-reference-condition-raw-greater-than-edge'));
   it('csharp-project-reference-without-output-assembly-edge', () => runCase('csharp-project-reference-without-output-assembly-edge'));
   it('csharp-project-reference-without-output-assembly-element-edge', () => runCase('csharp-project-reference-without-output-assembly-element-edge'));
   it('csharp-project-reference-without-output-assembly-conditional-silence', () => runCase('csharp-project-reference-without-output-assembly-conditional-silence'));
@@ -344,9 +351,12 @@ describe('MATRIX — C# what a project compiles and what another project may see
   it('csharp-compile-remove-beside-unresolved-include-edge', () => runCase('csharp-compile-remove-beside-unresolved-include-edge'));
   it('csharp-linked-shared-file-opens-only-that-file-edge', () => runCase('csharp-linked-shared-file-opens-only-that-file-edge'));
   it('csharp-internal-type-other-project-not-candidate-edge', () => runCase('csharp-internal-type-other-project-not-candidate-edge'));
+  it('csharp-internal-partial-type-unmarked-part-not-candidate-edge', () => runCase('csharp-internal-partial-type-unmarked-part-not-candidate-edge'));
   it('csharp-internal-type-internals-visible-to-attribute-silence', () => runCase('csharp-internal-type-internals-visible-to-attribute-silence'));
   it('csharp-internal-type-internals-visible-to-item-edge', () => runCase('csharp-internal-type-internals-visible-to-item-edge'));
   it('csharp-internal-extension-other-project-not-candidate-edge', () => runCase('csharp-internal-extension-other-project-not-candidate-edge'));
+  it('csharp-extension-internal-sibling-method-not-counted-edge', () => runCase('csharp-extension-internal-sibling-method-not-counted-edge'));
+  it('csharp-extension-unreferenced-sibling-method-not-counted-edge', () => runCase('csharp-extension-unreferenced-sibling-method-not-counted-edge'));
 });
 
 describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {
@@ -458,6 +468,13 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-private-base-member-hides-no-type-edge', () => runCase('csharp-private-base-member-hides-no-type-edge'));
   it('csharp-derived-class-type-receiver-edge', () => runCase('csharp-derived-class-type-receiver-edge'));
   it('csharp-extension-beside-instance-method-of-other-shape-edge', () => runCase('csharp-extension-beside-instance-method-of-other-shape-edge'));
+  it('csharp-extension-dynamic-parameter-instance-method-silence', () => runCase('csharp-extension-dynamic-parameter-instance-method-silence'));
+  it('csharp-extension-constant-argument-instance-method-silence', () => runCase('csharp-extension-constant-argument-instance-method-silence'));
+  it('csharp-this-field-of-other-part-instance-method-silence', () => runCase('csharp-this-field-of-other-part-instance-method-silence'));
+  it('csharp-extension-argument-type-beside-instance-method-edge', () => runCase('csharp-extension-argument-type-beside-instance-method-edge'));
+  it('csharp-extension-enum-argument-beside-instance-overloads-edge', () => runCase('csharp-extension-enum-argument-beside-instance-overloads-edge'));
+  it('csharp-extension-other-argument-count-silence', () => runCase('csharp-extension-other-argument-count-silence'));
+  it('csharp-extension-argument-count-fits-edge', () => runCase('csharp-extension-argument-count-fits-edge'));
   it('csharp-member-named-as-its-type-receiver-edge', () => runCase('csharp-member-named-as-its-type-receiver-edge'));
   it('csharp-extension-beside-explicit-interface-method-edge', () => runCase('csharp-extension-beside-explicit-interface-method-edge'));
   it('csharp-extension-beside-default-interface-method-edge', () => runCase('csharp-extension-beside-default-interface-method-edge'));

@@ -1,5 +1,5 @@
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
-import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey } from './extractors/csharp.mjs';
+import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey, shapeTakes } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
 import { attributeReading, makeCsharpTypeLookup } from './extractors/csharp-resolve.mjs';
 /**
@@ -229,8 +229,20 @@ export function makeResolver(deps) {
         }
         return files;
     };
-    /** True when every declaration `file` gives of `keys` is internal to its assembly (the extractor's `internal:<key>` marker beside it). */
-    const assemblyOnlyIn = (language, keys, file) => keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || deps.symbolTable.filesFor(language, internalKey(k)).includes(file));
+    /** True when the declaration `file` gives of `key` is internal to its assembly: the file marks it so (the extractor's `internal:<key>` marker beside it), or, for a type, a file of the same compilation marks the type or a type around it. The parts of a partial type are one type with one accessibility (C# spec §15.2.7), so a part without an access modifier, which its own file cannot mark, takes what another part of its compilation says. An extension method's key names every method of that name in its namespace, each with its own modifier, so only its own file speaks for it. */
+    const internalIn = (language, key, file) => {
+        if (deps.symbolTable.filesFor(language, internalKey(key)).includes(file))
+            return true;
+        if (key.endsWith('()'))
+            return false;
+        for (let end = key.length; end !== -1; end = key.lastIndexOf('+', end - 1)) {
+            if (deps.symbolTable.filesFor(language, internalKey(key.slice(0, end))).some((part) => part !== file && deps.reach?.(file, part) === 'same'))
+                return true;
+        }
+        return false;
+    };
+    /** True when every declaration `file` gives of `keys` is internal to its assembly (`internalIn`). */
+    const assemblyOnlyIn = (language, keys, file) => keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || internalIn(language, k, file));
     /** Every key a symbol hint reads: those of each member of its set, or its own. */
     const hintKeys = (hint, language, fromFile) => hint.set !== undefined
         ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
@@ -267,6 +279,36 @@ export function makeResolver(deps) {
         // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
         return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
     };
+    /**
+     * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. Such a file counts only as far as the calling file sees it, as the reach filter reads a definer: a file of a project out of reach has no say, and neither has a method only its own assembly sees (a shape led by `-`) for a caller of another compilation that is no friend. True when one of the shapes left takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
+     */
+    const takesCall = (hint, files, language, fromFile) => {
+        const takes = hint.takes;
+        if (takes === undefined || language !== 'csharp')
+            return true;
+        const owners = new Set();
+        for (const f of files) {
+            const owner = deps.ownerIndex.ownerOf(f);
+            if (owner !== undefined)
+                owners.add(owner);
+        }
+        const recorded = new Set();
+        for (const key of new Set(hintKeys(hint, language, fromFile))) {
+            for (const [file, shapes] of csharp().extensionShapes(key)) {
+                const owner = files.has(file) ? undefined : deps.ownerIndex.ownerOf(file);
+                if (!files.has(file) && (owner === undefined || !owners.has(owner)))
+                    continue;
+                const seen = deps.reach?.(fromFile, file);
+                if (seen === 'unreachable')
+                    continue;
+                const friend = seen !== 'reachable' || deps.reach?.internalsVisible === undefined || deps.reach.internalsVisible(fromFile, file);
+                if (shapes.some((shape) => (shape.startsWith('-') ? friend && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shapeTakes(shape, takes.typeArgs, takes.args))))
+                    return true;
+                recorded.add(file);
+            }
+        }
+        return [...files].some((f) => !recorded.has(f));
+    };
     /** The one C# type an ordered group of readings binds for `fromFile`, with the files in reach that declare it: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
     const bindCsharpType = (readings, fromFile) => {
         for (const hint of readings) {
@@ -281,7 +323,7 @@ export function makeResolver(deps) {
         return undefined;
     };
     let csharpLookup;
-    const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
+    const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key, (readings, fromFile) => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0)));
     /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
     const held = new WeakMap();
     const holds = (condition, fromFile) => {
@@ -301,6 +343,12 @@ export function makeResolver(deps) {
                 || condition.receivers.some((readings) => {
                     const bound = bindCsharpType(readings, fromFile);
                     return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from, fromFile);
+                })
+                || (condition.fileReceivers ?? []).some(({ readings, type }) => {
+                    // A nearer reading that names a declaration decides; else the receiver is the `file` type of the referencing file.
+                    const nearer = readings.some((hint) => hint.kind === 'symbol' && hintFiles(hint, 'csharp', fromFile).size > 0);
+                    const key = nearer ? bindCsharpType(readings, fromFile)?.key : type;
+                    return key !== undefined && csharp().hasMethod(key, condition, condition.from, fromFile);
                 });
         }
         // The nearest type around the name that knows it decides what the name is there.
@@ -310,13 +358,14 @@ export function makeResolver(deps) {
                 continue;
             if (condition.kind === 'member')
                 return found === 'member';
+            // A nested type of that name: the call is a static call through it, unless the receiver is written `this.<name>`, which names no type.
             if (found === 'type')
-                return true;
+                return condition.own !== true;
             // A member: a value, whose written type may have the called method itself.
             const call = condition.call;
             return call !== undefined && csharp().memberTypes(type, condition.name, fromFile).some((key) => csharp().hasMethod(key, call, call.from, fromFile));
         }
-        return condition.kind === 'no-member';
+        return condition.kind === 'no-member' && condition.own !== true;
     };
     /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
     const attributeBinding = (attribute, fromFile) => {
@@ -467,7 +516,7 @@ export function makeResolver(deps) {
                 return undefined;
             const outcome = symbolOutcome(files);
             // absent / ambiguous (2+ owners) → silence; resolved (one file, or one owner) → edge.
-            return outcome.kind === 'resolved' ? { owner: outcome.owner, resolvedFile: outcome.resolvedFile } : undefined;
+            return outcome.kind === 'resolved' && takesCall(hint, files, language, fromFile) ? { owner: outcome.owner, resolvedFile: outcome.resolvedFile } : undefined;
         }
         const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
         if (!file) {
@@ -508,7 +557,8 @@ export function makeResolver(deps) {
                 if (forced !== undefined)
                     return { kind: forced };
             }
-            return symbolOutcome(files);
+            const outcome = symbolOutcome(files);
+            return outcome.kind === 'resolved' && !takesCall(hint, files, language, fromFile) ? { kind: 'absent' } : outcome;
         }
         // Path axis (PHP/Java/TS/JS/Py/Go/Rust/C/C++): resolution maps to AT MOST ONE file,
         // so the path probe itself has no `ambiguous` outcome — only resolved or absent. The one
@@ -532,7 +582,7 @@ export function makeResolver(deps) {
             const files = hintFiles(hint, language, fromFile);
             if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined)
                 return undefined;
-            return files.size === 1 ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
+            return files.size === 1 && takesCall(hint, files, language, fromFile) ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
         }
         const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
         if (file)

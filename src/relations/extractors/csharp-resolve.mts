@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
-import type { TargetHint } from './types.mjs';
-import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes } from './csharp.mjs';
+import type { TargetHint, CsharpArgType } from './types.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, fileInterfaceKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes, extensionShapesKey, enumKey, convertsKey } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -19,10 +19,12 @@ export interface CsharpTypeLookup {
   path(typeKey: string, segments: readonly string[], fromFile?: string): string[];
   /** Whether the type `typeKey` is an attribute class: `yes` when its base classes, followed through the repository, reach `System.Attribute`; `no` when it is an interface, or every base of it lies in the repository and none reaches `System.Attribute` (a type that lists no base among them); `maybe` when a base leaves the repository under another name, which may or may not derive from it. */
   attributeClass(typeKey: string): 'yes' | 'no' | 'maybe';
-  /** True when a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, written inside the types `from`, finds an instance method it fits by those counts (`shapeTakes`) and can reach: one the type declares, in any part, or one of its base classes in the repository, to any depth (for an interface, its base interfaces). A protected method counts where one of `from` is the type that declares it or derives from it and `typeKey` is that calling type or derives from it, a private one where one of `from` is the type that declares it. */
-  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number }, from: readonly string[], fromFile?: string): boolean;
+  /** True when a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, written inside the types `from`, finds an instance method it fits by those counts (`shapeTakes`), whose parameters can take the arguments as far as `argTypes` and the method's record say (see `CsharpArgType`; read only with `fromFile`), and that it can reach: one the type declares, in any part, or one of its base classes in the repository, to any depth (for an interface, its base interfaces). A protected method counts where one of `from` is the type that declares it or derives from it and `typeKey` is that calling type or derives from it, a private one where one of `from` is the type that declares it. */
+  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number; argTypes?: CsharpArgType[] }, from: readonly string[], fromFile?: string): boolean;
   /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
   memberTypes(typeKey: string, name: string, fromFile?: string): string[];
+  /** The shapes of the extension methods each file declares under the extension key `key`, by file: what the `shapes:<key>` records hold. They are read from the records themselves, never through the files the table lists under `key`: a consumer may keep one file per owner for a name and still keeps every record whole. */
+  extensionShapes(key: string): ReadonlyMap<string, readonly string[]>;
 }
 
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
@@ -39,10 +41,33 @@ export function attributeReading(written: 'yes' | 'no' | 'maybe' | undefined, su
 
 const LANGUAGE = 'csharp';
 
+/** The predefined types a value of each predefined numeric type converts to implicitly (C# spec §10.2.3), beside its own. A variable converts as its type says; only a constant converts further. */
+const NUMERIC_WIDENING: Record<string, readonly string[]> = {
+  sbyte: ['short', 'int', 'long', 'float', 'double', 'decimal'],
+  byte: ['short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'decimal'],
+  short: ['int', 'long', 'float', 'double', 'decimal'],
+  ushort: ['int', 'uint', 'long', 'ulong', 'float', 'double', 'decimal'],
+  int: ['long', 'float', 'double', 'decimal'],
+  uint: ['long', 'ulong', 'float', 'double', 'decimal'],
+  long: ['float', 'double', 'decimal'],
+  ulong: ['float', 'double', 'decimal'],
+  char: ['ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'decimal'],
+  float: ['double'],
+};
+
+/** The predefined types whose conversions are all in the language: a value of one converts to another only as `NUMERIC_WIDENING` says. `nint`, `nuint` and `dynamic` are left out, and so nothing is concluded for them. */
+const CLOSED_PREDEFINED = new Set(['bool', 'byte', 'sbyte', 'char', 'decimal', 'double', 'float', 'int', 'uint', 'long', 'ulong', 'short', 'ushort', 'string', 'object']);
+
+/** Framework structs that take no value of a predefined type and no enum value: none declares an implicit conversion from one. */
+const FRAMEWORK_STRUCTS = new Set(['Guid', 'DateTime', 'DateTimeOffset', 'TimeSpan', 'DateOnly', 'TimeOnly', 'CancellationToken']);
+
+/** The framework types an enum value converts to: its base classes, the interfaces `System.Enum` implements, and its own nullable form. */
+const ENUM_TAKERS = new Set(['Object', 'ValueType', 'Enum', 'IComparable', 'IFormattable', 'IConvertible', 'ISpanFormattable', 'IUtf8SpanFormattable', 'Nullable']);
+
 /**
- * The lookup over one symbol table. `bind` gives the key of the one type an ordered group of readings binds for the file that wrote it, or undefined when it binds none or more than one; the resolver passes its own reading of a hint, so a base is found exactly as a reference to it is.
+ * The lookup over one symbol table. `bind` gives the key of the one type an ordered group of readings binds for the file that wrote it, or undefined when it binds none or more than one; the resolver passes its own reading of a hint, so a base is found exactly as a reference to it is. `declared` says whether some reading of such a group names a declaration that file can see at all: where `bind` gives nothing and `declared` answers no, the name is a type from outside the repository. Without it every unbound name may be a type of the repository.
  */
-export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: SymbolHint[], fromFile: string) => string | undefined): CsharpTypeLookup {
+export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: SymbolHint[], fromFile: string) => string | undefined, declared: (readings: SymbolHint[], fromFile: string) => boolean = () => true): CsharpTypeLookup {
   const memo = new Map<string, CsharpBases>();
 
   /** What each file reads a written name with (its `usings` record), read from the table when first asked. */
@@ -95,7 +120,12 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return result;
   };
 
-  const isInterface = (typeKey: string): boolean => table.has(LANGUAGE, interfaceKey(typeKey));
+  /** Whether the type `id` is an interface: the mark of a published type, or for a `file` type the mark its own file declares (`fileInterfaceKey`). */
+  const isInterface = (id: string): boolean => {
+    const tab = id.indexOf('\t');
+    if (tab === -1) return table.has(LANGUAGE, interfaceKey(id));
+    return table.filesFor(LANGUAGE, fileInterfaceKey(referencedTypeKey(id.slice(0, tab)))).includes(id.slice(tab + 1));
+  };
 
   /** The bases a type inherits nested types from: its base class, or for an interface its base interfaces. */
   const inherited = (typeKey: string): string[] => {
@@ -177,12 +207,95 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return answer;
   };
 
-  const methodsMemo = new Map<string, CsharpMethod[]>();
-  const methodsOf = (typeKey: string): CsharpMethod[] => {
+  /** The instance methods of a type with the file each record is read in (its first: parts that write the same record write the same types). */
+  const methodsMemo = new Map<string, Array<CsharpMethod & { file: string }>>();
+  const methodsOf = (typeKey: string): Array<CsharpMethod & { file: string }> => {
     let listed = methodsMemo.get(typeKey);
-    if (listed === undefined) methodsMemo.set(typeKey, (listed = table.valuesOf(LANGUAGE, methodsKey(typeKey)).flatMap(({ value }) => decodeMethods(value))));
+    if (listed === undefined) methodsMemo.set(typeKey, (listed = table.valuesOf(LANGUAGE, methodsKey(typeKey)).flatMap(({ value, files }) => decodeMethods(value).map((m) => ({ ...m, file: files[0] })))));
     return listed;
   };
+
+  const isEnum = (typeKey: string): boolean => table.has(LANGUAGE, enumKey(typeKey));
+  const converts = (typeKey: string): boolean => table.has(LANGUAGE, convertsKey(typeKey));
+
+  /** What is known of the type of one argument: a predefined type, a type of the repository, or nothing. */
+  type Arg = { predefined: string } | { key: string } | undefined;
+  const argOf = (arg: CsharpArgType, fromFile: string): Arg => {
+    if (arg === null) return undefined;
+    if (typeof arg === 'string') return CLOSED_PREDEFINED.has(arg) ? { predefined: arg } : undefined;
+    if ('type' in arg) {
+      const key = bind(arg.type as SymbolHint[], fromFile);
+      return key === undefined ? undefined : { key };
+    }
+    // A member read through a name: where the nearest type around the call that knows the name has it as a member, the name is a value and its type is not written here.
+    for (const type of arg.unless?.types ?? []) {
+      const found = simpleName(idOf(type, fromFile), arg.unless!.name);
+      if (found === 'member') return undefined;
+      if (found === 'type') break;
+    }
+    const key = bind(arg.member as SymbolHint[], fromFile);
+    return key !== undefined && isEnum(key) ? { key } : undefined;
+  };
+  const argsMemo = new WeakMap<CsharpArgType[], Map<string, Arg[]>>();
+  const argsOf = (argTypes: CsharpArgType[], fromFile: string): Arg[] => {
+    let byFile = argsMemo.get(argTypes);
+    if (byFile === undefined) argsMemo.set(argTypes, (byFile = new Map()));
+    let args = byFile.get(fromFile);
+    if (args === undefined) byFile.set(fromFile, (args = argTypes.map((a) => argOf(a, fromFile))));
+    return args;
+  };
+
+  /** Every type of the repository `typeKey` derives from or implements, to any depth, and whether its conversions are all known: no base of it leaves the repository, and neither it nor a base declares an implicit conversion operator. */
+  const ancestryMemo = new Map<string, { all: Set<string>; closed: boolean }>();
+  const ancestry = (typeKey: string): { all: Set<string>; closed: boolean } => {
+    let known = ancestryMemo.get(typeKey);
+    if (known !== undefined) return known;
+    const all = new Set<string>();
+    let closed = true;
+    const pending = [typeKey];
+    for (let i = 0; i < pending.length; i++) {
+      const { inside, outside } = bases(pending[i]);
+      if (outside.length > 0 || converts(pending[i])) closed = false;
+      for (const b of inside) {
+        if (all.has(b) || b === typeKey) continue;
+        all.add(b);
+        pending.push(b);
+      }
+    }
+    ancestryMemo.set(typeKey, (known = { all, closed }));
+    return known;
+  };
+
+  /** True when a parameter written `param` in the record of a method of `holder` (read in `file`) cannot take an argument of the type `arg`, for certain: every answer that needs something this reader does not know is no. */
+  const cannotTake = (param: string, arg: NonNullable<Arg>, holder: string, file: string): boolean => {
+    if (!param.includes(':')) {
+      // A predefined parameter type: `object` takes everything, the others what the language's own conversions give.
+      if (!CLOSED_PREDEFINED.has(param) || param === 'object') return false;
+      if ('predefined' in arg) return arg.predefined !== param && !(NUMERIC_WIDENING[arg.predefined] ?? []).includes(param);
+      return isEnum(arg.key) || ancestry(arg.key).closed;
+    }
+    const written = decodeWritten(param);
+    const usings = usingsOf(file);
+    const readings = writtenReadings(written, holder, true, usings);
+    const key = bind(readings, file);
+    if (key !== undefined) {
+      // A type of the repository: it takes what derives from it or implements it, and what an implicit conversion operator of either side turns into it.
+      if (converts(key)) return false;
+      if ('predefined' in arg) return true;
+      if (arg.key === key || ancestry(arg.key).all.has(key)) return false;
+      return isEnum(arg.key) || ancestry(arg.key).closed;
+    }
+    // A name that binds no one type: it may be a type of the repository after all (two declarations), or an alias, and then nothing is concluded.
+    const lead = written.name.split(/[.:]/)[0];
+    if (declared(readings, file) || usings.scope.aliasDecls.has(lead)) return false;
+    const simple = written.name.split(/[.:]/).pop()!.replace(/`\d+$/, '');
+    if ('predefined' in arg) return FRAMEWORK_STRUCTS.has(simple);
+    return isEnum(arg.key) && !ENUM_TAKERS.has(simple);
+  };
+
+  /** True when the method `method` of `holder` cannot take one of `args` (see `cannotTake`). */
+  const refuses = (method: CsharpMethod & { file: string }, holder: string, args: Arg[]): boolean =>
+    method.params !== undefined && args.some((arg, i) => arg !== undefined && (method.params![i] ?? '') !== '' && cannotTake(method.params![i], arg, holder, method.file));
 
   /** The type `typeKey` and what it inherits members from, nearest first: its base classes, or for an interface its base interfaces. */
   const lineage = (typeKey: string): string[] => {
@@ -196,10 +309,11 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return [...seen];
   };
 
-  const hasMethod = (typeKey: string, call: { method: string; args: number; typeArgs: number }, from: readonly string[]): boolean => {
+  const hasMethod = (typeKey: string, call: { method: string; args: number; typeArgs: number; argTypes?: CsharpArgType[] }, from: readonly string[], fromFile?: string): boolean => {
+    const args = call.argTypes === undefined || fromFile === undefined ? [] : argsOf(call.argTypes, fromFile);
     for (const declaring of lineage(typeKey)) {
       for (const method of methodsOf(declaring)) {
-        if (method.name !== call.method || !shapeTakes(method.shape, call.typeArgs, call.args)) continue;
+        if (method.name !== call.method || !shapeTakes(method.shape, call.typeArgs, call.args) || refuses(method, declaring, args)) continue;
         if (method.reach === 'public') return true;
         // A protected method is reached through an instance only when the instance's type is the calling type or derives from it (C# spec §7.5.4, CS1540).
         if (method.reach === 'private' ? from.includes(declaring) : from.some((type) => lineage(type).includes(declaring) && lineage(typeKey).includes(type))) return true;
@@ -219,13 +333,26 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return keys;
   };
 
+  const shapesMemo = new Map<string, Map<string, string[]>>();
+  const extensionShapes = (key: string): Map<string, string[]> => {
+    let byFile = shapesMemo.get(key);
+    if (byFile === undefined) {
+      shapesMemo.set(key, (byFile = new Map()));
+      for (const { value, files } of table.valuesOf(LANGUAGE, extensionShapesKey(key))) {
+        for (const f of files) byFile.set(f, [...(byFile.get(f) ?? []), ...value.split(' ')]);
+      }
+    }
+    return byFile;
+  };
+
   return {
+    extensionShapes,
     bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
     nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
     simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),
     path: (typeKey, segments, fromFile) => path(idOf(typeKey, fromFile), segments),
     attributeClass,
-    hasMethod: (typeKey, call, from, fromFile) => hasMethod(idOf(typeKey, fromFile), call, from.map((type) => idOf(type, fromFile))),
+    hasMethod: (typeKey, call, from, fromFile) => hasMethod(idOf(typeKey, fromFile), call, from.map((type) => idOf(type, fromFile)), fromFile),
     memberTypes: (typeKey, name, fromFile) => memberTypes(idOf(typeKey, fromFile), name),
   };
 }

@@ -176,7 +176,45 @@ describe('csharp extractor — a using static imports nested types and extension
 
   it('declares each extension method under its namespace and under its class, and the global namespace\'s class as the bare class name', async () => {
     const { declarations } = await run('namespace N { public static class E { public static void M(this int x) { } } }\npublic static class G { public static void K(this int x) { } }\n');
-    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()']);
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()', 'shapes:N.M()\t0:0:0', 'shapes:N.E#M()\t0:0:0', 'shapes:K()\t0:0:0', 'shapes:G#K()\t0:0:0']);
+  });
+
+  it('records the shape of each extension method of a key without its receiver: defaults, a params list, type parameters, and a member of an extension block with its type parameters left open', async () => {
+    const shapesOf = (declarations) => Object.fromEntries(declarations.filter((d) => d.symbolKey.startsWith('shapes:')).map((d) => d.symbolKey.slice('shapes:'.length).split('\t')));
+    const classic = await run('public static class E {\n  public static void M(this int x, string a, int b = 1) { }\n  public static void M<T>(this int x) { }\n  public static void M(this int x, params string[] rest) { }\n  public static void M(this long x) { }\n}\n');
+    expect(shapesOf(classic.declarations)).toEqual({ 'M()': '0:1:2 1:0:0 0:0:* 0:0:0', 'E#M()': '0:1:2 1:0:0 0:0:* 0:0:0' });
+    const hidden = await run('public static class E {\n  public static void M(this int x) { }\n  internal static void M(this int x, int a) { }\n}\ninternal static class F { public static void K(this int x) { } }\n');
+    expect(shapesOf(hidden.declarations)).toEqual({ 'M()': '0:0:0 -0:1:1', 'E#M()': '0:0:0 -0:1:1', 'K()': '-0:0:0', 'F#K()': '-0:0:0' });
+    const block = await run('public static class E {\n  extension(Order o) {\n    public void Ship(int a, int b = 2) { }\n  }\n}\n');
+    expect(shapesOf(block.declarations)).toEqual({ 'Ship()': '*:1:2', 'E#Ship()': '*:1:2' });
+  });
+
+  it('an extension call carries its counts on every reading', async () => {
+    const { uses } = await run('using Lib;\nclass C { void M() { var s = Make(); s.Add(1, 2); s.Get<int>(); s.Run(); } }\n');
+    expect(uses.map((u) => u.candidates.map((c) => c.takes))).toEqual([
+      [{ args: 2, typeArgs: 0 }, { args: 2, typeArgs: 0 }],
+      [{ args: 0, typeArgs: 1 }, { args: 0, typeArgs: 1 }],
+      [{ args: 0, typeArgs: 0 }, { args: 0, typeArgs: 0 }],
+    ]);
+  });
+});
+
+describe('csharp extractor — an explicit interface implementation declares no name of its class', () => {
+  const keysOf = (uses) => uses.map((u) => u.candidates.map((c) => c.symbolKey));
+
+  it('a receiver named like an explicitly implemented property or event is read as a type', async () => {
+    const { uses } = await run('class C : I {\n  int I.Settings => 1;\n  event System.Action I.Changed { add { } remove { } }\n  void M() { Settings.Get(); Changed.Raise(); }\n}\n');
+    expect(keysOf(uses).filter((g) => g.includes('Settings') || g.includes('Changed'))).toEqual([['C+Settings', 'Settings'], ['C+Changed', 'Changed']]);
+  });
+
+  it('a call named like an explicitly implemented method is an extension call, and one named like an ordinary method is not', async () => {
+    const { uses } = await run('class C : I {\n  void I.Run() { }\n  void Walk() { }\n  void M(object o) { o.Run(); o.Walk(); }\n}\n');
+    expect(keysOf(uses).filter((g) => g.some((k) => k.endsWith('()')))).toEqual([['Run()']]);
+  });
+
+  it('a property the class declares itself still shadows a type of its name', async () => {
+    const { uses } = await run('class C {\n  int Settings => 1;\n  void M() { Settings.Get(); }\n}\n');
+    expect(keysOf(uses).filter((g) => g.includes('Settings'))).toEqual([]);
   });
 });
 
