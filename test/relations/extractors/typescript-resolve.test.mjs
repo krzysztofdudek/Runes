@@ -251,16 +251,138 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
   });
   it('keeps the earlier reading, the first target that names a file, wherever the settings do not decide', () => {
     for (const [options, from] of [
-      [{ moduleResolution: 'bundler' }, 'app/a.ts'], // module unset: its default moved between TypeScript 5 and 6
-      [{ module: 'esnext' }, 'app/a.ts'], // resolution unset and not implied
       [{ module: 'esnext', moduleResolution: 'node10' }, 'app/a.ts'], // Node10 reads no exports, which Runes does not model
-      [{ module: 'esnext', moduleResolution: 'nodenext' }, 'app/a.ts'], // a Node resolution with a non-Node module, which tsc rejects
-      [{ module: 'nodenext', moduleResolution: 'bundler' }, 'app/a.ts'], // and the reverse
-      [{ module: 7, moduleResolution: 'bundler' }, 'app/a.ts'], // a value of another type is unset
+      [{ module: 'amd' }, 'app/a.ts'], // Classic, implied, reads none either
       [{ module: 'esnext', moduleResolution: 'bundler' }, 'app/a.vue'], // a component's format is not read
     ]) expect(withConfig(options)('lib', from), JSON.stringify(options)).toBe('lib/cjs/index.cts');
-    // A tsconfig that sets nothing decides nothing either.
-    expect(project({ ...lib, 'app/tsconfig.json': '{ "compilerOptions": { "strict": true } }' })('lib/types', 'app/a.ts')).toBe('lib/v99.d.ts');
+  });
+  it('binds nothing under the earlier reading when no target names a file', () => {
+    const r = project({ 'lib/package.json': '{ "name": "lib", "exports": { ".": { "import": "./gone.mjs", "require": "./gone.cjs" } } }', 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }' });
+    expect(r('lib', 'app/a.vue')).toBeUndefined();
+  });
+  it('reads an unset module from target and an unset moduleResolution from module, as TypeScript 6 computes them', () => {
+    // No module: an ES kind, except under target es5, which gives commonjs. No resolution: Bundler.
+    for (const options of [{}, { strict: true }, { target: 'ES2020' }, { target: 'es3' }, { module: 'esnext' }, { moduleResolution: 'bundler' }, { target: 'es5', module: 'es2015' }, { module: 7, moduleResolution: 'bundler' }]) { // a value of another type is unset
+      const r = withConfig(options);
+      expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.cts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.ts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib/types', 'app/a.ts'), JSON.stringify(options)).toBe('lib/t.d.ts');
+    }
+    for (const options of [{ target: 'ES5' }, { module: 'commonjs' }, { target: 'es5', moduleResolution: 'bundler' }]) {
+      const r = withConfig(options);
+      expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.mts'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+    }
+  });
+  it('an extends Runes cannot read leaves module and moduleResolution unknown, not unset', () => {
+    // An installed preset (@tsconfig/node18) is not in the repository: what it sets is not known, so the compiler's defaults do not apply.
+    const preset = (options, bases = '@tsconfig/node18/tsconfig.json', extra = {}) => project({ ...lib, 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': JSON.stringify({ extends: bases, compilerOptions: options }), ...extra });
+    for (const options of [{}, { strict: true }, { target: 'es2022' }, { module: 'esnext' }, { module: 'commonjs' }, { moduleResolution: 'bundler' }, { moduleResolution: 'nodenext' }]) {
+      const r = preset(options);
+      // With neither a module nor a Node resolution of its own, the format of a .ts file and the fate of an import() depend on the preset: the first listed target.
+      if (options.module === undefined && options.moduleResolution !== 'nodenext') {
+        expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+        expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+        expect(r('lib', 'app/a.cts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      }
+      // The file kind and the call form fix their branch whatever the preset sets.
+      expect(r('lib', 'app/a.mts'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.mjs', 'import'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.cts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.mts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.ts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+    }
+    // What the config sets itself is known, and with both settings everything is.
+    expect(preset({ module: 'esnext', moduleResolution: 'bundler' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    const typed = (type) => ({ 'app/package.json': JSON.stringify({ name: 'app', type }) });
+    // The same package with `import` listed first: which one binds says a condition was entered, not that it was listed first.
+    const importFirst = { 'lib/package.json': '{ "name": "lib", "exports": { ".": { "import": "./esm/index.ts", "require": "./cjs/index.cts" } } }' };
+    // A module the config sets fixes the resolution, since the compiler accepts a Node module only with a Node resolution and any other module only with Bundler. A Node module: the package type decides a .ts file, and an import() stays an import.
+    for (const module of ['node16', 'node18', 'node20', 'nodenext']) {
+      expect(preset({ module }, undefined, importFirst)('lib', 'app/a.ts'), module).toBe('lib/cjs/index.cts');
+      expect(preset({ module }, undefined, typed('module'))('lib', 'app/a.ts'), module).toBe('lib/esm/index.ts');
+      expect(preset({ module })('lib', 'app/a.ts', 'import'), module).toBe('lib/esm/index.ts');
+    }
+    // Any other module: Bundler, which does not read the package type; commonjs requires, also through an import(), and an ES module or preserve imports.
+    expect(preset({ module: 'commonjs' }, undefined, { ...importFirst, ...typed('module') })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'commonjs' }, undefined, importFirst)('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'esnext' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'es2015' })('lib', 'app/a.cts', 'import')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'preserve' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'preserve' })('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    // A Node resolution the config sets means a Node module: the package type decides, and an import() stays an import.
+    for (const moduleResolution of ['node16', 'nodenext']) {
+      expect(preset({ moduleResolution }, undefined, importFirst)('lib', 'app/a.ts'), moduleResolution).toBe('lib/cjs/index.cts');
+      expect(preset({ moduleResolution }, undefined, typed('module'))('lib', 'app/a.ts'), moduleResolution).toBe('lib/esm/index.ts');
+      expect(preset({ moduleResolution })('lib', 'app/a.cts', 'import'), moduleResolution).toBe('lib/esm/index.ts');
+    }
+    // Bundler alone leaves the module open between commonjs, an ES kind and preserve: an import() in a .cts file is rewritten under the first two only.
+    expect(preset({ moduleResolution: 'bundler' }, undefined, importFirst)('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    expect(preset({ moduleResolution: 'bundler' })('lib', 'app/a.cts', 'import')).toBe('lib/cjs/index.cts');
+    // A module only Node10 and Classic take, or one that is no module kind, decides nothing: the first target that names a file, whatever the file kind.
+    expect(preset({ module: 'amd' })('lib', 'app/a.mts')).toBe('lib/cjs/index.cts');
+    expect(preset({ module: 'bogus' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    // Among several bases a later one wins: a readable base after the preset decides, the preset after a readable base does not.
+    const base = { 'base.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }' };
+    expect(preset({}, ['@tsconfig/node18/tsconfig.json', '../base.json'], base)('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({}, ['../base.json', '@tsconfig/node18/tsconfig.json'], base)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    // A readable base that sets neither leaves the preset's settings unknown.
+    expect(preset({}, ['@tsconfig/node18/tsconfig.json', '../base.json'], { 'base.json': '{ "compilerOptions": { "strict": true } }' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+  });
+  it('under Bundler with a Node module a file imports unless its extension says it requires, and an import() stays an import', () => {
+    const r = withConfig({ module: 'nodenext', moduleResolution: 'bundler' }, { 'app/package.json': '{ "name": "app", "type": "commonjs" }' });
+    expect(r('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.cts')).toBe('lib/cjs/index.cts');
+    expect(r('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
+    expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
+  });
+  it('under an unread preset a lookup binds the file every reading names, and where they differ the first listed target that one of them names', () => {
+    const files = (exportsMap, options = {}, type) => project({
+      'lib/package.json': JSON.stringify({ name: 'lib', exports: exportsMap }),
+      'lib/a.ts': '', 'lib/b.ts': '', 'lib/c.ts': '',
+      'app/package.json': JSON.stringify({ name: 'app', type }),
+      'app/tsconfig.json': JSON.stringify({ extends: '@tsconfig/node18/tsconfig.json', compilerOptions: options }),
+    });
+    // `node` is entered under a Node resolution and not under Bundler; a custom key by whatever the preset lists.
+    expect(files({ '.': { node: './a.ts', default: './b.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts'); // differ: the first listed
+    expect(files({ '.': { default: './b.ts', node: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts');
+    expect(files({ '.': { node: './a.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts');
+    expect(files({ '.': { node: './missing.ts', default: './b.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts');
+    expect(files({ '.': { custom: './b.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts'); // differ: the first listed
+    expect(files({ '.': { custom: null, default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts'); // differ: nothing or a file, so the file
+    expect(files({ '.': { import: { custom: './b.ts', default: './a.ts' }, default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/b.ts');
+    // The config's own customConditions are known, so a key outside them is passed over.
+    expect(files({ '.': { custom: './b.ts', default: './a.ts' } }, { customConditions: ['other'] })('lib', 'app/x.mts')).toBe('lib/a.ts');
+    expect(files({ '.': { other: './b.ts', default: './a.ts' } }, { customConditions: ['other'] })('lib', 'app/x.mts')).toBe('lib/b.ts');
+    // A standard key is never a custom one: `require` is passed over in a file that imports.
+    expect(files({ '.': { require: './b.ts', 'types@>=99': './b.ts', default: './a.ts' } })('lib', 'app/x.mts')).toBe('lib/a.ts');
+    // Where the readings differ, a target none of them reaches is not the answer, though it is listed first: a require() never enters `import`.
+    expect(files({ '.': { node: { import: './a.ts', require: './b.ts' }, default: './c.ts' } })('lib', 'app/x.ts', 'require')).toBe('lib/b.ts');
+    expect(files({ '.': { import: './a.ts', node: './b.ts', default: './c.ts' } })('lib', 'app/x.cts')).toBe('lib/b.ts');
+    expect(files({ '.': { import: './missing.ts', require: './missing.ts' } })('lib', 'app/x.ts')).toBeUndefined();
+    // A Node module of the config's own enters `node` in every reading, and this CommonJS package requires: `import` under it is passed over.
+    expect(files({ '.': { node: { import: './a.ts' }, default: './b.ts' } }, { module: 'nodenext' })('lib', 'app/x.ts')).toBe('lib/b.ts');
+    // The branch and `node` are read together. In an ES package a Node resolution imports, so no reading enters `node` and `require` at once, and all three that remain (Node importing, Bundler importing, Bundler requiring) name one file.
+    expect(files({ '.': { node: { require: './c.ts', default: './a.ts' }, default: './a.ts' } }, {}, 'module')('lib', 'app/x.ts')).toBe('lib/a.ts');
+    // In a CommonJS package the Node reading does enter both, so the readings differ: the first listed target one of them names.
+    expect(files({ '.': { node: { require: './c.ts', default: './a.ts' }, default: './a.ts' } })('lib', 'app/x.ts')).toBe('lib/c.ts');
+  });
+  it('under a Node resolution with a module that is not a Node one, the package type decides, then the module', () => {
+    const typed = (type) => ({ 'app/package.json': JSON.stringify({ name: 'app', type }) });
+    const es = { moduleResolution: 'nodenext' };
+    expect(withConfig(es)('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(withConfig(es, typed('commonjs'))('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(withConfig(es, typed('commonjs'))('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
+    expect(withConfig(es, typed('commonjs'))('lib', 'app/a.mts')).toBe('lib/esm/index.ts');
+    expect(withConfig(es)('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
+    const cjs = { moduleResolution: 'node16', module: 'commonjs' };
+    expect(withConfig(cjs)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(withConfig(cjs, typed('module'))('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(withConfig(cjs, typed('module'))('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
+    // Under preserve a dynamic import() stays an import in a file that requires.
+    expect(withConfig({ moduleResolution: 'node16', module: 'preserve' })('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
   });
   it('stops at a null target, skips a versioned types key the compiler fails, and reads an array entry by entry', () => {
     const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
@@ -395,7 +517,7 @@ describe('resolveTsPath — the call form selects require or import', () => {
     expect(r('lib', 'esm/a.ts', 'require')).toBe('lib/cjs/index.cts');
   });
   it('a call form changes nothing where the settings decide no conditions', () => {
-    const r = withConfig({ module: 'esnext' });
+    const r = withConfig({ module: 'esnext', moduleResolution: 'node10' });
     expect(r('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
     expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
   });
@@ -1304,5 +1426,175 @@ describe('resolveTsPath — configuration files with a byte order mark', () => {
       'packages/core/src/index.js': '',
     });
     expect(r('@acme/core', 'packages/app/src/index.js')).toBe('packages/core/src/index.js');
+  });
+});
+
+describe('resolveTsPath — a package entry under outDir that is not in the repository maps back to its source', () => {
+  const pkg = (manifest, tsconfig, extra = {}) => ({
+    'package.json': '{ "name": "root", "workspaces": ["packages/*"] }',
+    'packages/core/package.json': JSON.stringify({ name: '@acme/core', ...manifest }),
+    ...(tsconfig === undefined ? {} : { 'packages/core/tsconfig.json': JSON.stringify(tsconfig) }),
+    'packages/core/src/index.ts': '',
+    ...extra,
+  });
+  const built = { compilerOptions: { rootDir: 'src', outDir: 'dist' } };
+  it('maps main, types, typings, module and each exports branch, and leaves a file that is there alone', () => {
+    for (const manifest of [{ main: './dist/index.js' }, { types: './dist/index.d.ts' }, { typings: 'dist/index.d.ts' }, { module: './dist/index.js' }, { exports: './dist/index.js' }, { exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } } }]) {
+      expect(project(pkg(manifest, built))('@acme/core', 'packages/app/a.ts'), JSON.stringify(manifest)).toBe('packages/core/src/index.ts');
+    }
+    const committed = project(pkg({ main: './dist/index.js' }, built, { 'packages/core/dist/index.js': '' }));
+    expect(committed('@acme/core', 'packages/app/a.ts')).toBe('packages/core/dist/index.js');
+  });
+  it('gives the same answer when the output is on disk and the caller excludes it', () => {
+    const files = pkg({ main: './dist/index.js', types: './dist/index.d.ts' }, built, { 'packages/core/dist/index.js': '', 'packages/core/dist/index.d.ts': '' });
+    const r = project(files, (p) => p.startsWith('packages/core/dist/'));
+    expect(r('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('reads each output extension as the compiler writes it', () => {
+    const sources = { 'packages/core/src/view.tsx': '', 'packages/core/src/esm.mts': '', 'packages/core/src/cjs.cts': '' };
+    const manifest = { exports: { './view': './dist/view.jsx', './esm': { types: './dist/esm.d.mts', default: './dist/esm.mjs' }, './cjs': { types: './dist/cjs.d.cts', default: './dist/cjs.cjs' }, './esm-js': './dist/esm.mjs', './cjs-js': './dist/cjs.cjs', './wrong': './dist/esm.js', './css': './dist/a.css' } };
+    const r = project(pkg(manifest, built, sources));
+    expect(r('@acme/core/view', 'packages/app/a.ts')).toBe('packages/core/src/view.tsx');
+    expect(r('@acme/core/esm', 'packages/app/a.ts')).toBe('packages/core/src/esm.mts');
+    expect(r('@acme/core/cjs', 'packages/app/a.ts')).toBe('packages/core/src/cjs.cts');
+    expect(r('@acme/core/esm-js', 'packages/app/a.ts')).toBe('packages/core/src/esm.mts');
+    expect(r('@acme/core/cjs-js', 'packages/app/a.ts')).toBe('packages/core/src/cjs.cts');
+    // esm.mts is emitted as esm.mjs, never as esm.js; a stylesheet is no compiler output.
+    expect(r('@acme/core/wrong', 'packages/app/a.ts')).toBeUndefined();
+    expect(r('@acme/core/css', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('reads an entry with no extension as the file and then as the directory index', () => {
+    expect(project(pkg({ main: './dist/index' }, built))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: 'dist' }, built))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './dist/nothing' }, built))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('maps a declaration through declarationDir when it is set, and JavaScript through outDir', () => {
+    const config = { compilerOptions: { rootDir: 'src', outDir: 'dist', declarationDir: 'types' } };
+    expect(project(pkg({ types: './types/index.d.ts' }, config))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ types: './dist/index.d.ts' }, config))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(pkg({ main: './dist/index.js' }, config))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './types/index.js' }, config))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('maps to a JavaScript source only under allowJs, which checkJs turns on unless allowJs is set off', () => {
+    const js = (options) => pkg({ main: './dist/lib.js' }, { compilerOptions: { rootDir: 'src', outDir: 'dist', ...options } }, { 'packages/core/src/lib.js': '' });
+    expect(project(js({}))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(js({ allowJs: true }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/lib.js');
+    expect(project(js({ checkJs: true }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/lib.js');
+    expect(project(js({ checkJs: true, allowJs: false }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('without rootDir tries the root each compiler version computes, and is silent when they name different files', () => {
+    const config = { compilerOptions: { outDir: 'dist' }, include: ['src'] };
+    // TypeScript 6 roots the output at the tsconfig's directory: dist/src/index.js.
+    expect(project(pkg({ main: './dist/src/index.js' }, config))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    // Before 6 the root is the common directory of the sources: dist/index.js.
+    expect(project(pkg({ main: './dist/index.js' }, config))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './dist/src/index.js' }, config, { 'packages/core/src/src/index.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    // Sources in the tsconfig's own directory: one root, whichever the version.
+    expect(project(pkg({ main: './dist/top.js' }, { compilerOptions: { outDir: 'dist' } }, { 'packages/core/top.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/top.ts');
+    // Declaration files and excluded files do not move the common root.
+    const noisy = project(pkg({ main: './dist/index.js' }, config, { 'packages/core/src/deep/x.ts': '', 'packages/core/src/sub/y.ts': '', 'packages/core/globals.d.ts': '', 'packages/core/node_modules/dep/index.ts': '', 'packages/core/.cache/z.ts': '', 'packages/core/gen/g.ts': '' }), (p) => p.startsWith('packages/core/gen/'));
+    expect(noisy('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('is silent where the root cannot be known: sources listed outside the tsconfig directory, no source at all, a rootDir outside the repository', () => {
+    const outside = { compilerOptions: { outDir: 'dist' }, include: ['src', '../shared'] };
+    expect(project(pkg({ main: './dist/index.js' }, outside))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    const empty = { compilerOptions: { outDir: 'dist' }, include: ['lib'] };
+    expect(project(pkg({ main: './dist/index.js' }, empty))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    const away = { compilerOptions: { outDir: 'dist', rootDir: '../../../elsewhere' } };
+    expect(project(pkg({ main: './dist/index.js' }, away))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('is silent for a source the project does not hold, a target outside outDir and a config with no outDir', () => {
+    const excluding = { compilerOptions: { rootDir: 'src', outDir: 'dist' }, exclude: ['src/index.ts'] };
+    expect(project(pkg({ main: './dist/index.js' }, excluding))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(pkg({ main: './lib/index.js' }, built))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(pkg({ main: './dist/index.js' }, { compilerOptions: { rootDir: 'src' } }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+  });
+  it('asks every tsconfig of the package: one that maps is enough, two that agree bind, one that cannot be read silences', () => {
+    const build = { 'packages/core/tsconfig.build.json': JSON.stringify(built) };
+    expect(project(pkg({ main: './dist/index.js' }, { compilerOptions: { noEmit: true } }, build))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './dist/index.js' }, built, build))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './dist/index.js' }, built, { 'packages/core/tsconfig.broken.json': '{ "compilerOptions": ' }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    // An excluded tsconfig acts as though it were not there.
+    const r = project(pkg({ main: './dist/index.js' }, built, { 'packages/core/tsconfig.broken.json': '{ "compilerOptions": ' }), (p) => p.endsWith('tsconfig.broken.json'));
+    expect(r('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('gives no vote to a tsconfig that compiles no files or sets noEmit', () => {
+    const build = { 'packages/core/tsconfig.build.json': JSON.stringify(built) };
+    // A solution-style tsconfig.json that holds nothing, with an outDir and no rootDir.
+    expect(project(pkg({ main: './dist/index.js' }, { compilerOptions: { outDir: 'dist' }, files: [] }, build))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './dist/index.js' }, { compilerOptions: { outDir: 'dist' }, include: ['nothing'] }, build))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    // A type-checking tsconfig.json with noEmit writes no output, whatever its rootDir says.
+    const check = { compilerOptions: { rootDir: '.', outDir: 'dist', noEmit: true } };
+    expect(project(pkg({ main: './dist/index.js' }, check, { ...build, 'packages/core/index.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+    expect(project(pkg({ main: './dist/other.js' }, check, { 'packages/core/other.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBeUndefined();
+    expect(project(pkg({ main: './dist/other.js' }, { compilerOptions: { rootDir: '.', outDir: 'dist' } }, { 'packages/core/other.ts': '' }))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/other.ts');
+    // noEmit set off again by the inheriting config, as a build config does.
+    const emitting = { 'packages/core/tsconfig.build.json': JSON.stringify({ extends: './tsconfig.json', compilerOptions: { rootDir: 'src', noEmit: false } }) };
+    expect(project(pkg({ main: './dist/index.js' }, { compilerOptions: { outDir: 'dist', noEmit: true } }, emitting))('@acme/core', 'packages/app/a.ts')).toBe('packages/core/src/index.ts');
+  });
+  it('maps an outDir at the repository root and a package at the repository root', () => {
+    const r = project({ 'package.json': '{ "name": "solo", "exports": "./out/index.js" }', 'tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "out" } }', 'src/index.ts': '' });
+    expect(r('solo', 'test/a.ts')).toBe('src/index.ts');
+    const flat = project({ 'package.json': '{ "name": "solo", "exports": "./index.js" }', 'tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "." }, "exclude": [] }', 'src/index.ts': '' });
+    expect(flat('solo', 'test/a.ts')).toBe('src/index.ts');
+  });
+  it('maps the entry of a directory imported by a relative path', () => {
+    const r = project({ 'vendor/lib/package.json': '{ "main": "./dist/index.js" }', 'vendor/lib/tsconfig.json': JSON.stringify(built), 'vendor/lib/src/index.ts': '' });
+    expect(r('./vendor/lib', 'a.ts')).toBe('vendor/lib/src/index.ts');
+  });
+  it('maps under the first-target reading too, for a file whose format is not read', () => {
+    const r = project(pkg({ exports: { '.': { import: './dist/index.js' } } }, built, { 'packages/app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }' }));
+    expect(r('@acme/core', 'packages/app/a.vue')).toBe('packages/core/src/index.ts');
+  });
+});
+
+describe('package-entry-missing', () => {
+  const run = (files, specs) => {
+    const root = materialize(files);
+    const diagnostics = [];
+    const resolve = makeResolvePathToFile(root, undefined, undefined, { onDiagnostic: (d) => diagnostics.push(d) });
+    return { hits: specs.map((s) => resolve(s, 'packages/app/a.ts', 'typescript')), diagnostics };
+  };
+  const base = { 'package.json': '{ "name": "root", "workspaces": ["packages/*"] }', 'packages/core/src/index.ts': '' };
+  it('reports a package whose entry names no file and maps to no source, once, with the entry it names', () => {
+    const { hits, diagnostics } = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "types": "./dist/index.d.ts", "main": "./dist/index.js" }' }, ['@acme/core', '@acme/core', '@acme/core']);
+    expect(hits).toEqual([undefined, undefined, undefined]);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ code: 'package-entry-missing', file: 'packages/core/package.json' });
+    expect(diagnostics[0].message).toContain('packages/core/dist/index.d.ts');
+  });
+  it('reports an exports entry the same way, and a package at the repository root under its own package.json', () => {
+    const { diagnostics } = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "types": "./dist/index.d.ts" } } }' }, ['@acme/core']);
+    expect(diagnostics.map((d) => [d.code, d.file])).toEqual([['package-entry-missing', 'packages/core/package.json']]);
+    const rootPkg = run({ 'package.json': '{ "name": "solo", "main": "./dist/index.js" }' }, ['solo']);
+    expect(rootPkg.diagnostics.map((d) => [d.code, d.file])).toEqual([['package-entry-missing', 'package.json']]);
+  });
+  it('says which of the two holds: no tsconfig maps the entry, or the tsconfigs map it to different sources', () => {
+    const one = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }' }, ['@acme/core']);
+    expect(one.diagnostics[0].message).toContain('no tsconfig of the package maps it to a source');
+    const two = run({
+      ...base,
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }',
+      'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }',
+      'packages/core/tsconfig.legacy.json': '{ "compilerOptions": { "rootDir": "legacy", "outDir": "dist" } }',
+      'packages/core/legacy/index.ts': '',
+    }, ['@acme/core']);
+    expect(two.hits).toEqual([undefined]);
+    expect(two.diagnostics.map((d) => d.code)).toEqual(['package-entry-missing']);
+    expect(two.diagnostics[0].message).toContain('map it to different sources');
+    expect(two.diagnostics[0].message).not.toContain('no tsconfig');
+  });
+  it('says nothing when the entry maps to its source, when a later entry binds, or when the package has no entry', () => {
+    const mapped = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }', 'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }' }, ['@acme/core']);
+    expect(mapped.hits).toEqual(['packages/core/src/index.ts']);
+    expect(mapped.diagnostics).toEqual([]);
+    const later = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "types": "./dist/index.d.ts", "main": "./src/index.ts" }' }, ['@acme/core']);
+    expect(later.hits).toEqual(['packages/core/src/index.ts']);
+    expect(later.diagnostics).toEqual([]);
+    const index = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }', 'packages/core/index.ts': '' }, ['@acme/core']);
+    expect(index.hits).toEqual(['packages/core/index.ts']);
+    expect(index.diagnostics).toEqual([]);
+    const none = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core" }' }, ['@acme/core']);
+    expect(none.diagnostics).toEqual([]);
   });
 });

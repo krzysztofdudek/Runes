@@ -1,6 +1,6 @@
-/** A fact about the repository that resolution met and that explains an absence of edges: a configuration file it consulted and could not read. Delivered through `ResolvePathOptions.onDiagnostic`. */
+/** A fact about the repository that resolution met and that explains an absence of edges: a configuration file it consulted and could not read, or a package entry that names a file the repository does not hold. Delivered through `ResolvePathOptions.onDiagnostic`. */
 export interface RelationDiagnostic {
-    /** A stable code, a string rather than a union so a later minor can add one. Today `config-unreadable`. */
+    /** A stable code, a string rather than a union so a later minor can add one. Today `config-unreadable` and `package-entry-missing`. */
     code: string;
     /** The repository-relative POSIX path of the file the diagnostic is about. */
     file: string;
@@ -18,6 +18,8 @@ export type DiagnosticSink = (code: string, file: string, message: string, offse
 }) => void;
 /** The code for a configuration file that was consulted and does not parse. */
 export declare const CONFIG_UNREADABLE = "config-unreadable";
+/** The code for a package.json whose entry names a file that is not in the repository and gives no source: no tsconfig of the package maps it to one, or its tsconfigs map it to different sources. */
+export declare const PACKAGE_ENTRY_MISSING = "package-entry-missing";
 /**
  * A sink that hands each `(code, file)` pair to `onDiagnostic` once, synchronously, however often resolution consults the file again. One sink belongs to one resolver instance, like the resolver's other caches. Without a callback there is no sink, and the resolvers do not describe a failure (they ask the parsers for no position).
  */
