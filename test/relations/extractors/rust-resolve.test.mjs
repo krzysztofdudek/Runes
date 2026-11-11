@@ -622,10 +622,10 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::Opts', 'src/cli.rs', 'rust')).toBe('src/cli.rs');
   });
 
-  it('reads the modules of a crate root through its comments, literals and macros, and leaves a module to the first root when a root holds a declaration it cannot follow', () => {
+  it('reads the modules of a crate root through its comments, literals and macros, and leaves every module to the first root when a root cannot be read to the end', () => {
     const lib = 'src/lib.rs';
     const scenarios = [
-      // [lib.rs text, the module file, the file `crate::Opts` binds there: the library when the reader sees it declare the module or cannot tell, none when no root does]
+      // [lib.rs text, the module file, the file `crate::Opts` binds there, main.rs text]: the library when the reader sees it declare the module or a root cannot be read to the end, none when every root was read and none declares it
       ['mod a;\n', 'a', lib],
       ['/* mod a; /* nested */ mod b; */\nmod c;\n', 'a', undefined],
       ['/* mod a; /* nested */ mod b; */\nmod c;\n', 'c', lib],
@@ -646,17 +646,42 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       ['#![cfg_attr(unix, path = "x.rs")]\nmod a;\n', 'b', lib],
       ['macro_rules! decl { ($n:ident) => { mod $n; }; }\ndecl!(b);\n', 'b', lib],
       ['macro_rules! decl { ($n:ident) => { mod a; mod $n; }; }\n', 'a', lib],
-      ['macro_rules! plain { () => { 1 }; }\nconst X: u8 = plain!();\nmod a;\n', 'b', undefined],
+      ['macro_rules! plain { () => { 1 }; }\nconst X: u8 = plain!();\nmod a;\n', 'b', lib],
+      ['thread_local! { static X: u8 = 1; }\nmod a;\n', 'b', lib],
+      ['mod a;\n#[macro_export]\nlazy_static::lazy_static! { static ref X: u8 = 1; }\n', 'b', lib],
+      ['#[macro_use]\nmod macros;\ndecl_mods!(b);\n', 'b', lib],
+      ['include!("mods.rs");\n', 'b', lib],
+      ['macro decl($n:ident) { mod $n; }\ndecl!(b);\n', 'b', lib],
+      ['cfg_if! { if #[cfg(unix)] { mod a; other_macro!(b); } }\n', 'b', lib],
+      ['fn broken( {\n}\nmod a;\n', 'b', lib],
+      ['mod a;\nfn f( { ) }\n', 'b', lib],
+      ['mod a;\n}\n', 'b', lib],
+      ['mod a;\nfn f() {\n', 'b', lib],
+      // Macro invocations that stand in an expression, a block or a cfg_if! body are no item of the root.
+      ['const S: &str = concat!("a", "b");\nstatic V: u8 = size!();\nmod a;\n', 'b', undefined],
+      ['fn f() { println!("{}", 1); }\nimpl T { const N: u8 = n!(); }\nmod a;\n', 'b', undefined],
+      ['cfg_if::cfg_if! { if #[cfg(unix)] { mod a; } }\n', 'b', undefined],
+      ['#[cfg(unix)]\nmod a;\n#[derive(Debug)] struct S;\n', 'b', undefined],
+      // A shebang line is no code; an inner attribute at the start is, and a C raw string is a string.
+      ['#!/usr/bin/env run-script {\nconst X: u8 = 1;\nmod a;\n', 'a', lib],
+      ['#![allow(dead_code)]\nmod a;\n', 'a', lib],
+      ['const C: &core::ffi::CStr = cr#"say " {"#;\nconst D: &core::ffi::CStr = c"{";\nmod a;\n', 'a', lib],
+      // One root that cannot be read leaves every module to the first root, also one the other root declares.
+      ['#[path = "imp/thing.rs"]\nmod thing;\n', 'imp', lib, 'mod imp;\n'],
+      ['macro_rules! m { () => {}; }\n', 'b', lib, 'mod b;\n'],
+      ['mod a;\n', 'b', lib, 'include!("x.rs");\nmod b;\n'],
+      ['mod a;\n', 'b', 'src/main.rs', 'mod b;\n'],
+      ['mod a;\n', 'a', lib, 'mod b;\n'],
       // Unterminated forms end at the end of the file.
       ['mod a;\nconst S: &str = "open', 'a', lib],
       ['mod a;\nconst S: &str = r#"open', 'a', lib],
       ["mod a;\nconst C: char = '\\", 'a', lib],
       ['mod a;\n/* open', 'a', lib],
     ];
-    scenarios.forEach(([libText, mod, expected], n) => {
+    scenarios.forEach(([libText, mod, expected, mainText = ''], n) => {
       put(`s${n}/Cargo.toml`, '[package]\nname = "app"\nedition = "2021"\n');
       put(`s${n}/src/lib.rs`, `${libText}pub struct Opts;\n`);
-      put(`s${n}/src/main.rs`, 'struct Opts;\nfn main() {}\n');
+      put(`s${n}/src/main.rs`, `${mainText}struct Opts;\nfn main() {}\n`);
       put(`s${n}/src/${mod}/mod.rs`, '');
       const found = makeResolvePathToFile(ws)('crate::Opts', `s${n}/src/${mod}/mod.rs`, 'rust');
       expect(found, `${JSON.stringify(libText)} → ${mod}`).toBe(expected === undefined ? undefined : `s${n}/${expected}`);

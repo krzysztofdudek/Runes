@@ -190,7 +190,7 @@ function makeRustResolveDeps(
   const packageDirByDir = new Map<string, string | null>();
   // Cache: crate-root file → its text with comments stripped ('' when unreadable).
   const rootTextByFile = new Map<string, string>();
-  // Cache: crate-root file → the modules it declares at its top level, and whether it holds a declaration the reader cannot follow.
+  // Cache: crate-root file → the modules it declares at its top level, and whether it can be read to the end.
   const modulesByFile = new Map<string, RustRootModules>();
 
   function manifestAt(dir: string): CargoManifest | undefined {
@@ -296,8 +296,8 @@ function makeRustResolveDeps(
     const declaring = target.byDeclaration === true || (existingRoots.length > 1 && !target.fileIsRoot) ? rootsDeclaring(rel, target.srcDir, existingRoots, at) : undefined;
     // A module of the binaries of `src/bin/` belongs to the one that declares it; with none or several, `crate::` names no root we can tell.
     const unrooted = target.byDeclaration === true && declaring?.roots.length !== 1;
-    // No root declares the module, but one holds a declaration the reader cannot follow (a path attribute, a macro that writes a `mod`): the file may be a module of any root, and the first root that holds a name binds it, as when only the library was read.
-    const undecided = target.byDeclaration !== true && declaring !== undefined && declaring.roots.length === 0 && declaring.opaque;
+    // A root that cannot be read to the end (see `readRustRootModules`) may declare any module, so no module is told from the names of the others: every module is left to the first root that holds a name, as when only the library was read.
+    const undecided = target.byDeclaration !== true && declaring !== undefined && declaring.unreadable;
     const owningRoots = declaring === undefined || undecided ? undefined : declaring.roots;
     return {
       srcDir: at(target.srcDir),
@@ -322,12 +322,12 @@ function makeRustResolveDeps(
     return (plain.list(joinRel(pkgDir, 'src/bin')) ?? []).filter((e) => e.kind === 'file' && e.name.endsWith('.rs')).map((e) => `src/bin/${e.name}`);
   }
 
-  /** The roots among `roots` that declare the module `file` lies in, below the tree directory `srcDir` (all package-relative, `at` makes a path repository-relative), and whether any root holds a declaration the reader cannot follow. All the roots when `file` lies outside that directory, which tells nothing: one declaring root owns the file, several are the crates it belongs to, none means no crate compiles it unless a root is opaque. */
-  function rootsDeclaring(file: string, srcDir: string, roots: string[], at: (sub: string) => string): { roots: string[]; opaque: boolean } {
+  /** The roots among `roots` that declare the module `file` lies in, below the tree directory `srcDir` (all package-relative, `at` makes a path repository-relative), and whether any root cannot be read to the end. All the roots when `file` lies outside that directory, which tells nothing: one declaring root owns the file, several are the crates it belongs to, none means no crate compiles it, as long as every root was read to the end. */
+  function rootsDeclaring(file: string, srcDir: string, roots: string[], at: (sub: string) => string): { roots: string[]; unreadable: boolean } {
     const below = srcDir === '' ? file : file.startsWith(`${srcDir}/`) ? file.slice(srcDir.length + 1) : undefined;
-    if (below === undefined) return { roots, opaque: false };
+    if (below === undefined) return { roots, unreadable: false };
     const first = below.split('/')[0].replace(/\.rs$/, '');
-    return { roots: roots.filter((r) => rootModules(at(r)).declared.has(first)), opaque: roots.some((r) => rootModules(at(r)).opaque) };
+    return { roots: roots.filter((r) => rootModules(at(r)).declared.has(first)), unreadable: roots.some((r) => rootModules(at(r)).unreadable) };
   }
 
   /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
@@ -1001,11 +1001,14 @@ function stripRustComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
-/** Rust source with its comments, string literals (raw and byte ones too) and character literals blanked, so what is left is the code a bracket count can follow: `'{'` and `r#"a " {"#` open nothing, and a lifetime (`'a`) is not a character literal. */
-function rustCodeOnly(text: string): string {
+/** Rust source with its comments, string literals (raw, byte and C ones too), character literals and shebang line blanked, so what is left is the code a bracket count can follow: `'{'` and `r#"a " {"#` open nothing, and a lifetime (`'a`) is not a character literal. `complete` is false when a comment or literal is left open at the end of the text. */
+function rustCodeOnly(text: string): { code: string; complete: boolean } {
   let rawEnd: number | undefined;
+  let complete = true;
   let out = '';
   let i = 0;
+  // A first line `#!…` is a shebang unless it begins an inner attribute (`#![…]`).
+  if (text.startsWith('#!') && !/^#!\s*\[/.test(text)) while (i < text.length && text[i] !== '\n') i++;
   while (i < text.length) {
     const c = text[i];
     if (c === '/' && text[i + 1] === '/') {
@@ -1019,18 +1022,22 @@ function rustCodeOnly(text: string): string {
         else if (text.startsWith('*/', i)) (depth--, (i += 2));
         else i++;
       }
+      if (depth > 0) complete = false;
       out += ' ';
     } else if (c === '"') {
       i++;
       while (i < text.length && text[i] !== '"') i += text[i] === '\\' ? 2 : 1;
+      if (i >= text.length) complete = false;
       i++;
       out += '""';
-    } else if ((c === 'r' || c === 'b') && !/[A-Za-z0-9_]/.test(text[i - 1] ?? '') && (rawEnd = rawStringEnd(text, i)) !== undefined) {
-      i = rawEnd;
+    } else if ((c === 'r' || c === 'b' || c === 'c') && !/[A-Za-z0-9_]/.test(text[i - 1] ?? '') && (rawEnd = rawStringEnd(text, i)) !== undefined) {
+      if (rawEnd < 0) complete = false;
+      i = Math.abs(rawEnd);
       out += '""';
     } else if (c === "'") {
       if (text[i + 1] === '\\') {
         const end = text.indexOf("'", i + 3);
+        if (end === -1) complete = false;
         i = end === -1 ? text.length : end + 1;
         out += "''";
       } else {
@@ -1048,47 +1055,55 @@ function rustCodeOnly(text: string): string {
       i++;
     }
   }
-  return out;
+  return { code: out, complete };
 }
 
-/** The index just past the raw string literal (`r"…"`, `r#"…"#`, `br"…"`) that starts at `i`, or undefined when none does. */
+/** The index just past the raw string literal (`r"…"`, `r#"…"#`, `br"…"`, `cr"…"`) that starts at `i`, negated when it is left open at the end of the text; undefined when none starts there. */
 function rawStringEnd(text: string, i: number): number | undefined {
-  const open = /b?r(#*)"/y;
+  const open = /[bc]?r(#*)"/y;
   open.lastIndex = i;
   const m = open.exec(text);
   if (m === null) return undefined;
   const close = `"${m[1]}`;
   const end = text.indexOf(close, open.lastIndex);
-  return end === -1 ? text.length : end + close.length;
+  return end === -1 ? -text.length : end + close.length;
 }
 
-/** The modules a crate-root file declares: `declared` holds those written as `mod x;` or `mod x { … }` at its top level, or inside a macro invocation there (`cfg_if! { … }`), never inside another module's braces or a function body; `opaque` says the file holds a declaration whose module the names do not tell: a `path` attribute, or a `macro_rules!` body that writes a `mod`. */
+/** The modules a crate-root file declares, and whether the file could be read to the end. `declared` holds those written as `mod x;` or `mod x { … }` at its top level, or inside a `cfg_if!` invocation there, never inside another module's braces or a function body. `unreadable` says the file holds something that can declare a module the names do not tell: a macro invocation at item level other than `cfg_if!` (`include!` and a macro defined in another file among them), any macro definition (`macro_rules!` or `macro`), a `path` attribute, brackets that do not balance, or a comment or literal left open. */
 interface RustRootModules {
   declared: Set<string>;
-  opaque: boolean;
+  unreadable: boolean;
 }
 
 function readRustRootModules(source: string): RustRootModules {
-  const text = rustCodeOnly(source);
+  const { code, complete } = rustCodeOnly(source);
   const declared = new Set<string>();
-  let opaque = /#\s*!?\s*\[[^\]]*\bpath\s*=/.test(text);
-  // What each open bracket belongs to: a macro invocation (`macro`) or the definition of one (`macrodef`), the body of an inline module (`mod`), or any other block (`other`). A bracket inside a macro belongs to it as well.
-  const stack: string[] = [];
-  const inMacro = (): boolean => stack.every((kind) => kind === 'macro');
-  const top = (): string | undefined => stack[stack.length - 1];
+  let unreadable = !complete || /#\s*!?\s*\[[^\]]*\bpath\s*=/.test(code);
+  // What each open bracket belongs to: a `cfg_if!` or other macro invocation (`macro`), a macro definition (`macrodef`), the body of an inline module (`mod`), or any other block (`other`); a bracket inside a macro belongs to it as well.
+  const stack: { kind: string; close: string }[] = [];
+  const top = (): string | undefined => stack[stack.length - 1]?.kind;
+  const atItemLevel = (): boolean => stack.every((frame) => frame.kind === 'macro');
   const inner = (invocation: boolean): string => (top() === 'macro' || top() === 'macrodef' ? top()! : invocation && top() === undefined ? 'macro' : 'other');
-  for (const m of text.matchAll(/\bmacro_rules\s*!\s*(?:r#)?\w+\s*[({[]|\bmod\s+(?:r#)?(\w+)\s*([;{])|\w+\s*!\s*[({[]|[)}\]]|[({[]|\bmod\b/g)) {
-    if (m[0].startsWith('macro_rules')) stack.push('macrodef');
-    else if (m[1] !== undefined) {
-      if (stack.includes('macrodef')) opaque = true;
-      else if (inMacro()) declared.add(m[1]);
-      if (m[2] === '{') stack.push('mod');
-    } else if (m[0] === 'mod') {
-      if (stack.includes('macrodef')) opaque = true;
-    } else if (/^[)}\]]$/.test(m[0])) stack.pop();
-    else stack.push(inner(m[0].length > 1));
+  const CLOSE: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  // An invocation stands for an item where an item could start: at the start of the text, or after the `;`, `}`, `]` or `{` that ends the item or attribute before it.
+  const startsItem = (at: number): boolean => /(^|[;}\]{])\s*$/.test(code.slice(0, at));
+  const parts = /\bmacro_rules\s*!\s*(?:r#)?\w+\s*(?<def>[({[])|\bmacro\s+(?:r#)?\w+\s*(?<def2>[({[])|\bmod\s+(?:r#)?(?<mod>\w+)\s*(?<modEnd>[;{])|(?<path>(?:\w+\s*::\s*)*)(?<name>\w+)\s*!\s*(?<call>[({[])|(?<closer>[)}\]])|(?<open>[({[])/g;
+  for (const m of code.matchAll(parts)) {
+    const g = m.groups!;
+    if (g.def !== undefined || g.def2 !== undefined) {
+      unreadable = true;
+      stack.push({ kind: 'macrodef', close: CLOSE[g.def ?? g.def2] });
+    } else if (g.mod !== undefined) {
+      if (atItemLevel()) declared.add(g.mod);
+      if (g.modEnd === '{') stack.push({ kind: 'mod', close: '}' });
+    } else if (g.call !== undefined) {
+      if (atItemLevel() && g.name !== 'cfg_if' && startsItem(m.index)) unreadable = true;
+      stack.push({ kind: inner(true), close: CLOSE[g.call] });
+    } else if (g.closer !== undefined) {
+      if (stack.pop()?.close !== g.closer) unreadable = true;
+    } else stack.push({ kind: inner(false), close: CLOSE[g.open] });
   }
-  return { declared, opaque };
+  return { declared, unreadable: unreadable || stack.length > 0 };
 }
 
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
