@@ -2582,7 +2582,10 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
                 const rooted = r.rooted === true;
                 const before = out.length;
-                const unless = r.members === undefined ? undefined : [{ kind: 'member', types: lists[r.members], name: r.chain[0] }];
+                const members = r.members === undefined ? undefined : lists[r.members];
+                if (r.members !== undefined && members === undefined)
+                    break;
+                const unless = members === undefined ? undefined : [{ kind: 'member', types: members, name: r.chain[0] }];
                 for (let i = 1; i <= r.chain.length; i++)
                     pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types, unless);
                 mergeGroupsFrom(before, r.line);
@@ -2592,14 +2595,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // The receiver's written type, where the file gives one, is a condition on every reading of the group: an instance method of that name there takes the call.
                 const written = (r.on ?? []).map(receiverReadings);
                 const from = r.from === undefined ? [] : lists[r.from];
-                if (from === undefined || written.includes(undefined))
+                const holders = r.member === undefined ? [] : lists[r.member.types];
+                if (from === undefined || holders === undefined || written.includes(undefined))
                     break;
                 const receivers = written.filter((g) => g.length > 0);
                 const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from };
                 const unless = [];
                 // A receiver the file does not declare is a value only as a member of a type around the call.
                 if (r.member !== undefined)
-                    unless.push({ kind: 'no-member', types: lists[r.member.types], name: r.member.name, ...(r.member.direct ? { call } : {}) });
+                    unless.push({ kind: 'no-member', types: holders, name: r.member.name, ...(r.member.direct ? { call } : {}) });
                 if (receivers.length > 0 || r.self !== undefined)
                     unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
                 pushExtension(r.name, r.enclosingNs, r.line, r.at, unless);

@@ -1,6 +1,7 @@
 // What the C# extractor records of a type beyond its key (the bases it lists) and what the resolver reads through it.
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
+import { listCases, loadCaseDoc } from '../reference-case-runner.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
 import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, assembleCsharpCandidates, methodsKey, decodeMethods, membersKey, decodeMembers, shapeTakes } from '../../helpers/internal/relations.mjs';
 
@@ -785,5 +786,43 @@ describe('csharp: an extract stored without the lists its refs name by place', (
       // A copy that keeps both parts reads as the extract in memory does.
       expect(edgesOf(stored(extract, ['lists', 'receiverTypes']), resolver)).toEqual(['3->core', '3->ext', '4->legacy']);
     });
+  });
+  it('gives no edge for a receiver, or a call on a member the file does not show, whose type list is lost, and throws nothing', async () => {
+    await project({ ...shared, 'src/web/Use.cs': 'namespace App;\npublic class Use : Base {\n  void A(Order order) { }\n  int B() => Settings.Read();\n  int C() => Settings.Inner.Read();\n  void D() { Guard.Check(); }\n}\n' }, ({ files, resolver }) => {
+      const extract = extractCsharpRefs(files.find((f) => f.path === 'src/web/Use.cs'));
+      // Line 2: the base class. Line 3: the parameter's type. Lines 4 and 5: the extension call on the inherited property and on a member of it. Line 6: the static class.
+      expect(edgesOf(extract, resolver)).toEqual(['2->core', '3->core', '4->ext', '5->ext', '6->legacy']);
+      // Each receiver names the types that can hold an unseen member by place, and so does each call on a name the file does not declare; the call on the name alone names the types around it too.
+      expect(extract.refs.filter((r) => r.kind === 'receiver').map((r) => [r.line, r.members])).toEqual([[4, 0], [5, 0], [6, 0]]);
+      expect(extract.refs.filter((r) => r.kind === 'ext').map((r) => [r.line, r.member.types, r.from])).toEqual([[4, 0, 0], [5, 0, undefined], [6, 0, 0]]);
+      expect([extract.lists, extract.receiverTypes]).toEqual([[['App.Use']], undefined]);
+      // The lists lost: no receiver and no such call binds, and the plain references stand.
+      expect(edgesOf(stored(extract), resolver)).toEqual(['2->core', '3->core']);
+      expect(edgesOf(stored(extract, ['lists']), resolver)).toEqual(['2->core', '3->core', '4->ext', '5->ext', '6->legacy']);
+    });
+  });
+  it('reads every C# case of the catalogue from such a copy without a throw, and only ever loses edges', async () => {
+    let withParts = 0;
+    let lost = 0;
+    for (const { id, mdPath } of listCases().filter((c) => c.language === 'csharp')) {
+      const sources = Object.fromEntries(loadCaseDoc(id, mdPath).files.filter((f) => f.language === 'csharp').map((f) => [f.path, f.code]));
+      await project(sources, ({ files, resolver }) => {
+        for (const file of files) {
+          const extract = extractCsharpRefs(file);
+          if (extract.lists === undefined && extract.receiverTypes === undefined) continue;
+          withParts++;
+          const edges = (of) => resolveDetectedEdges(assembleCsharpCandidates(of), resolver, file.path, 'csharp').map((e) => `${e.line}->${e.owner}`);
+          const full = edges(extract);
+          for (const keep of [[], ['lists'], ['receiverTypes']]) {
+            const kept = edges(stored(extract, keep));
+            expect(kept.filter((e) => !full.includes(e))).toEqual([]);
+            lost += full.length - kept.length;
+          }
+        }
+      });
+    }
+    // The catalogue holds files that use the parts (36 when this was written), and a copy without them does lose edges: the check above is not empty.
+    expect(withParts >= 30).toBe(true);
+    expect(lost > 0).toBe(true);
   });
 });
