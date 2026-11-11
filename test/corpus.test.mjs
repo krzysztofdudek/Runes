@@ -249,6 +249,38 @@ describe('the corpus gate', () => {
     });
   }
 
+  const CC_STUB = (message) => [
+    '#!/usr/bin/env node',
+    "if (process.argv.includes('--version')) process.exit(0);",
+    `process.stderr.write(process.argv[process.argv.length - 1] + ${JSON.stringify(message)} + '\\nsecond line\\n');`,
+    'process.exit(1);',
+    '',
+  ].join('\n');
+
+  for (const [compiler, message] of [['gcc', ':1:2: error: #error "stop here"'], ['clang', ':1:2: error: "stop here"'], ['a compiler that does not quote it', ':1:2: error: stop here']]) {
+    test(`a preprocessor that stops at an #error gives one answer on every compiler (${compiler})`, { skip: process.platform === 'win32' && 'the stub is a script with a shebang' }, () => {
+      const cRepo = join(tmp, 'c-error');
+      if (!existsSync(cRepo)) {
+        mkdirSync(cRepo);
+        git(cRepo, 'init', '-q');
+        put(cRepo, 'a.c', '#include "a.h"\n');
+        put(cRepo, 'a.h', '#define A 1\n');
+        git(cRepo, 'add', '.');
+        git(cRepo, 'commit', '-q', '-m', 'c');
+      }
+      manifest([{ id: 'cerr', url: pathToFileURL(cRepo).href, commit: git(cRepo, 'rev-parse', 'HEAD'), tier: 'routine', c: { include: [''] } }]);
+      writeFileSync(join(work, 'explained.md'), '- `cerr` `c:unreadable` `a.c:0` `a.c` `not compared` `cc -MM failed: a.c:1:2: error: stop here`: the preprocessor stops at an #error here\n');
+      const bin = join(tmp, `cc-stub-bin-${compiler.replace(/\W+/g, '-')}`);
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, 'cc'), CC_STUB(message), { mode: 0o755 });
+      const r = spawnSync(process.execPath, [SCRIPT, 'oracles', '--manifest', join(work, 'manifest.json'), '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache')], { env: { ...ENV, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /ok {3}cerr .*1 disagreements, 1 explained/);
+      writeFileSync(join(work, 'explained.md'), '');
+      manifest([fixture()]);
+    });
+  }
+
   test('a golden made at another commit than the pin fails verify and is replaced by update', () => {
     writeFileSync(goldenFile(), `# runes corpus golden: fixture at ${'0'.repeat(40)}\n`);
     const v = corpus('verify');
