@@ -116,6 +116,10 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-inline-package-table-crate-name-edge', () => runCase('rust-inline-package-table-crate-name-edge'));
   it('rust-reexported-extern-crate-edge', () => runCase('rust-reexported-extern-crate-edge'));
   it('rust-extern-crate-alias-edge', () => runCase('rust-extern-crate-alias-edge'));
+  it('rust-bin-dir-with-main-stays-crate-edge', () => runCase('rust-bin-dir-with-main-stays-crate-edge'));
+  it('rust-bin-shared-module-two-bins-edge', () => runCase('rust-bin-shared-module-two-bins-edge'));
+  it('rust-edition-2015-bin-shared-module-crate-relative-edge', () => runCase('rust-edition-2015-bin-shared-module-crate-relative-edge'));
+  it('rust-bin-shared-common-module-edge', () => runCase('rust-bin-shared-common-module-edge'));
   it('rust-module-of-two-roots-or-none-root-item-edge', () => runCase('rust-module-of-two-roots-or-none-root-item-edge'));
   it('rust-bin-path-in-src-module-root-item-edge', () => runCase('rust-bin-path-in-src-module-root-item-edge'));
   it('rust-main-and-lib-module-result-alias-edge', () => runCase('rust-main-and-lib-module-result-alias-edge'));
