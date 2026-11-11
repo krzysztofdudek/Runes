@@ -256,6 +256,10 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
       [{ module: 'esnext', moduleResolution: 'bundler' }, 'app/a.vue'], // a component's format is not read
     ]) expect(withConfig(options)('lib', from), JSON.stringify(options)).toBe('lib/cjs/index.cts');
   });
+  it('binds nothing under the earlier reading when no target names a file', () => {
+    const r = project({ 'lib/package.json': '{ "name": "lib", "exports": { ".": { "import": "./gone.mjs", "require": "./gone.cjs" } } }', 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }' });
+    expect(r('lib', 'app/a.vue')).toBeUndefined();
+  });
   it('reads an unset module from target and an unset moduleResolution from module, as TypeScript 6 computes them', () => {
     // No module: an ES kind, except under target es5, which gives commonjs. No resolution: Bundler.
     for (const options of [{}, { strict: true }, { target: 'ES2020' }, { target: 'es3' }, { module: 'esnext' }, { moduleResolution: 'bundler' }, { target: 'es5', module: 'es2015' }, { module: 7, moduleResolution: 'bundler' }]) { // a value of another type is unset
