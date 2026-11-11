@@ -273,6 +273,11 @@ export function rustGlobKey(path: string): string {
   return `glob:${path}`;
 }
 
+/** The symbol key the Rust extractor declares beside `rustGlobKey(path)` when a `cfg` in front of the glob's `use` may remove it (`#[cfg(unix)] pub use unix::*;`). Two globs that bring the same name in are ambiguous only when nothing can switch either off. The `glob?:` prefix can never be a Rust identifier. */
+export function rustConditionalGlobKey(path: string): string {
+  return `glob?:${path}`;
+}
+
 /** The symbol key under which the Rust extractor declares, for a file, a module the file declares without a body (`mod x;`), whatever stands in front of it and also in a `cfg_if!` branch. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). It says that the name is a module with a file of its own, not where that file is. The `mod:` prefix can never be a Rust identifier. */
 export function rustModuleKey(modulePath: string): string {
   return `mod:${modulePath}`;

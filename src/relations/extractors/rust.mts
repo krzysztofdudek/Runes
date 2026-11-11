@@ -2,7 +2,7 @@ import type { Node } from 'web-tree-sitter';
 import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
-import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 
 /**
  * Rust dependency extractor.
@@ -601,7 +601,8 @@ function join(prefix: string, tail: string | undefined): string | undefined {
  * with the name resolve to the crate.
  *
  * Every module whose names a top-level glob `use` brings in is declared under
- * `rustGlobKey(path)` (`glob:<path>`), read by `topLevelGlobs`: with the item keys of that
+ * `rustGlobKey(path)` (`glob:<path>`), and under `rustConditionalGlobKey(path)` (`glob?:<path>`)
+ * as well when a `cfg` may remove that `use`, read by `topLevelGlobs`: with the item keys of that
  * module's file, this is what tells the resolver that a crate root re-exports a name it does
  * not write.
  *
@@ -644,7 +645,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     out.push({ symbolKey: rustExternNameKey(name), line });
     if (crate !== undefined) out.push({ symbolKey: rustExternBindingKey(name, crate), line });
   }
-  for (const { path, line } of topLevelGlobs(root)) out.push({ symbolKey: rustGlobKey(path), line });
+  for (const { path, line, conditional } of topLevelGlobs(root)) {
+    out.push({ symbolKey: rustGlobKey(path), line });
+    if (conditional) out.push({ symbolKey: rustConditionalGlobKey(path), line });
+  }
   for (const { path, line, conditional } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
   const modules = declaredModules(root);
   for (const { path, line } of modules.declared) out.push({ symbolKey: rustModuleKey(path), line });
@@ -938,27 +942,27 @@ function externCratesIn(scope: Node): Array<{ name: string; crate: string | unde
   return out;
 }
 
-/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
-export function topLevelGlobs(root: Node): Array<{ path: string; line: number }> {
-  const out: Array<{ path: string; line: number }> = [];
-  const visit = (arg: Node, prefix: string, line: number): void => {
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. `conditional` is true when a `cfg` in front of the `use`, or a `cfg_attr` there that applies one, may remove it; whether its predicate holds is not read. */
+export function topLevelGlobs(root: Node): Array<{ path: string; line: number; conditional: boolean }> {
+  const out: Array<{ path: string; line: number; conditional: boolean }> = [];
+  const visit = (arg: Node, prefix: string, line: number, conditional: boolean): void => {
     if (arg.type === 'use_wildcard') {
       const pre = prefixNode(arg);
       const path = pre === null ? undefined : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
-      if (path !== undefined) out.push({ path: unrawPath(path), line });
+      if (path !== undefined) out.push({ path: unrawPath(path), line, conditional });
     } else if (arg.type === 'scoped_use_list') {
       const pre = prefixNode(arg);
       const groupPrefix = pre === null ? prefix : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
       const list = arg.childForFieldName('list');
-      if (groupPrefix !== undefined && list !== null) visit(list, groupPrefix, line);
+      if (groupPrefix !== undefined && list !== null) visit(list, groupPrefix, line, conditional);
     } else if (arg.type === 'use_list') {
-      for (const item of arg.namedChildren) if (item !== null) visit(item, prefix, line);
+      for (const item of arg.namedChildren) if (item !== null) visit(item, prefix, line, conditional);
     }
   };
   for (const node of root.namedChildren) {
     if (node === null || node.type !== 'use_declaration') continue;
     const arg = node.childForFieldName('argument');
-    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', node.startPosition.row + 1);
+    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', node.startPosition.row + 1, attributesBefore(node).some(attributeIsCfg));
   }
   return out;
 }
@@ -1114,7 +1118,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 21,
+  rev: 22,
   declarations,
   uses,
 };

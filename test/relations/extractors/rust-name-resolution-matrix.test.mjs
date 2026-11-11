@@ -251,6 +251,7 @@ describe('MATRIX — a path through a glob re-export of a crate root', () => {
   it('rust-crate-root-glob-reexport-edge', () => runCase('rust-crate-root-glob-reexport-edge'));
   it('rust-crate-root-glob-reexport-spellings-edge', () => runCase('rust-crate-root-glob-reexport-spellings-edge'));
   it('rust-crate-root-two-globs-same-name-silence', () => runCase('rust-crate-root-two-globs-same-name-silence'));
+  it('rust-crate-root-globs-under-opposite-cfgs-edge', () => runCase('rust-crate-root-globs-under-opposite-cfgs-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

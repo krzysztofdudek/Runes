@@ -962,6 +962,23 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     });
   });
 
+  it('binds a root for a name two of its globs bring in when a cfg may remove all but one of them', async () => {
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n');
+    const order = 'pub struct Order;\n';
+    for (const m of ['plain', 'unix', 'win', 'also']) put(`src/${m}.rs`, order);
+    const lib = (globs) => `mod plain;\nmod unix;\nmod win;\nmod also;\n${globs}`;
+    const check = async (globs) => {
+      put('src/lib.rs', lib(globs));
+      return makeResolvePathToFile(ws)('crate::Order', 'src/plain.rs', 'rust', false, await tableNow());
+    };
+    // Under opposite cfgs, and one certain beside one under a cfg: on no target are two certain.
+    expect(await check('#[cfg(unix)]\npub use unix::*;\n#[cfg(windows)]\npub use win::*;\n')).toBe('src/lib.rs');
+    expect(await check('pub use plain::*;\n#[cfg(windows)]\npub use win::*;\n')).toBe('src/lib.rs');
+    // Two that nothing can switch off are ambiguous, a module also written under a cfg included.
+    expect(await check('pub use plain::*;\npub use also::*;\n')).toBeUndefined();
+    expect(await check('pub use plain::*;\n#[cfg(unix)]\npub use self::also::*;\npub use also::*;\n')).toBeUndefined();
+  });
+
   it('reads a self:: or super:: path through a name the module\'s file binds with extern crate as that crate', async () => {
     put('util/Cargo.toml', '[package]\nname = "util"\nedition = "2021"\n');
     put('util/src/lib.rs', 'pub struct Marker;\n');

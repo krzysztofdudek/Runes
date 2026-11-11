@@ -44,10 +44,11 @@ export declare function topLevelExternCrates(root: Node): Array<{
     crate: string | undefined;
     line: number;
 }>;
-/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. `conditional` is true when a `cfg` in front of the `use`, or a `cfg_attr` there that applies one, may remove it; whether its predicate holds is not read. */
 export declare function topLevelGlobs(root: Node): Array<{
     path: string;
     line: number;
+    conditional: boolean;
 }>;
 /**
  * The file-backed modules a `cfg_if!` body declares: each `mod x;` in a braced branch, in a `cfg_if!` nested in one, and in an inline `mod y { … }` written there, which adds its name in front (`names`, `r#` stripped: `x`, or `y`, `x`). `at` is the `mod` keyword. `moved` is true when a `path` attribute stands in front of the `mod` or of an inline module around it, behind a visibility, comments or other attributes: the file is then not where the names put it. Every branch is listed, since each is the crate's on some target.

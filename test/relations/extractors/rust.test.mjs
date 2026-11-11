@@ -372,6 +372,11 @@ describe('rust extractor — the globs of a file', () => {
     const { declarations } = await run('pub use types::*;\nuse self::a::{b::*, C, d::{e::*}};\nuse crate::r#gen::*;\nuse ::kit::*;\nuse {f::*};\nmod inner { use hidden::*; }\nfn f() { use local::*; }');
     expect(declarations.filter((d) => d.symbolKey.startsWith('glob:')).map((d) => `${d.symbolKey}@${d.line}`)).toEqual(['glob:types@1', 'glob:self::a::b@2', 'glob:self::a::d::e@2', 'glob:crate::gen@3', 'glob:f@5']);
   });
+
+  it('declares a glob that a cfg may remove under a key of its own as well', async () => {
+    const { declarations } = await run('#[cfg(unix)]\npub use unix::*;\n/// Doc.\n#[cfg_attr(docsrs, cfg(docsrs))]\npub use docs::{a::*, b::*};\n#[cfg_attr(docsrs, doc(cfg(unix)))]\npub use shown::*;\n#[allow(unused)]\npub use plain::*;');
+    expect(declarations.filter((d) => d.symbolKey.startsWith('glob')).map((d) => `${d.symbolKey}@${d.line}`)).toEqual(['glob:unix@2', 'glob?:unix@2', 'glob:docs::a@5', 'glob?:docs::a@5', 'glob:docs::b@5', 'glob?:docs::b@5', 'glob:shown@7', 'glob:plain@9']);
+  });
 });
 
 describe('rust extractor — a use path that starts with ::', () => {

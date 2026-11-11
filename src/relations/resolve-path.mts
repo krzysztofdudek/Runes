@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
 import type { SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -75,21 +75,24 @@ export function makeResolvePathToFile(
     if (deps === undefined) {
       const declared = (file: string, key: string): boolean => table.has('rust', key) && table.filesFor('rust', key).includes(file);
       const declaresModule: RustModuleDeclared = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
-      // Whether exactly one module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines). The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used.
+      // Whether a module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines), and no second one does through a glob as certain as its own. The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used, unless a `cfg` may remove all but one of their globs (`#[cfg(unix)] pub use unix::*;` beside `#[cfg(windows)] pub use windows::*;`), where on any one target at most one may be there.
       const globBrings = (rootFile: string, name: string): boolean => {
         const key = rustTopLevelItemKey(name);
         if (!table.has('rust', key)) return false;
         const dir = path.posix.dirname(rootFile) === '.' ? '' : path.posix.dirname(rootFile);
-        const modules = new Set<string>();
+        // Module path → whether a glob that nothing can switch off brings it in.
+        const modules = new Map<string, boolean>();
         for (const file of table.filesFor('rust', key)) {
           const below = file === rootFile || !file.endsWith('.rs') ? undefined : dir === '' ? file : file.startsWith(`${dir}/`) ? file.slice(dir.length + 1) : undefined;
           if (below === undefined) continue;
           const names = below.slice(0, -'.rs'.length).split('/');
           if (names[names.length - 1] === 'mod') names.pop();
           const modulePath = names.join('::');
-          if (modulePath !== '' && [modulePath, `self::${modulePath}`, `crate::${modulePath}`].some((spelling) => declared(rootFile, rustGlobKey(spelling)))) modules.add(modulePath);
+          if (modulePath === '') continue;
+          const spellings = [modulePath, `self::${modulePath}`, `crate::${modulePath}`].filter((spelling) => declared(rootFile, rustGlobKey(spelling)));
+          if (spellings.length > 0) modules.set(modulePath, (modules.get(modulePath) ?? false) || spellings.some((spelling) => !declared(rootFile, rustConditionalGlobKey(spelling))));
         }
-        return modules.size === 1;
+        return modules.size === 1 || (modules.size > 1 && [...modules.values()].filter(Boolean).length <= 1);
       };
       deps = {
         ...rustDeps,
