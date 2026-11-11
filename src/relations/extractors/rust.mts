@@ -520,7 +520,7 @@ const ITEM_MACROS = new Set(['thread_local', 'lazy_static', 'bitflags']);
 const ITEM_KEYWORDS = new Set(['struct', 'enum', 'union', 'trait', 'type', 'fn', 'const', 'static', 'mod']);
 
 /**
- * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
+ * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`; for a function with `#[proc_macro_derive(Name, …)]` in front of it the derive `Name` in place of the function's own name), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
  */
 export function topLevelItemNames(root: Node): Array<{ name: string; line: number }> {
   const out: Array<{ name: string; line: number }> = [];
@@ -532,7 +532,7 @@ export function topLevelItemNames(root: Node): Array<{ name: string; line: numbe
   for (const node of root.namedChildren) {
     if (node === null) continue;
     if (NAMED_ITEMS.has(node.type)) {
-      add(node.childForFieldName('name')?.text, node);
+      add((node.type === 'function_item' ? deriveMacroName(node) : undefined) ?? node.childForFieldName('name')?.text, node);
     } else if (node.type === 'foreign_mod_item') {
       for (const item of node.childForFieldName('body')?.namedChildren ?? []) {
         if (item !== null && item.type !== 'macro_invocation') add(item.childForFieldName('name')?.text, item);
@@ -552,6 +552,18 @@ export function topLevelItemNames(root: Node): Array<{ name: string; line: numbe
     }
   }
   return out;
+}
+
+/** The derive macro the function `fn` defines, when a `#[proc_macro_derive(Name, …)]` stands in front of it: `Name`, the attribute's first argument. That is the item the crate root gains; the function itself cannot be named from outside a proc-macro crate, and the names in `attributes(…)` are helper attributes, no items. An attribute whose first argument is no name gives the empty string, so nothing is bound. Undefined for any other function. */
+function deriveMacroName(fn: Node): string | undefined {
+  for (const item of attributesBefore(fn)) {
+    const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
+    const id = attr?.namedChild(0) ?? null;
+    if (attr === null || id === null || id.type !== 'identifier' || id.text !== 'proc_macro_derive') continue;
+    const first = attr.childForFieldName('arguments')?.namedChild(0) ?? null;
+    return first !== null && first.type === 'identifier' ? first.text : '';
+  }
+  return undefined;
 }
 
 /** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate), with `r#` stripped. `extern crate a as _;` binds none. */
@@ -637,7 +649,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 6,
+  rev: 7,
   declarations,
   uses,
 };

@@ -1484,6 +1484,16 @@ path = "..\u002fmore"
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
   });
 
+  it('takes the derive a `proc_macro_derive` function defines as the item, in place of the function\'s own name, and no helper attribute', async () => {
+    expect(await itemsOf('#[proc_macro_derive(Builder)]\npub fn builder(input: TokenStream) -> TokenStream { input }')).toEqual(['Builder']);
+    expect(await itemsOf('/// Doc.\n#[proc_macro_derive(r#Builder, attributes(setter, skip))]\n#[allow(dead_code)]\npub fn derive_builder(input: TokenStream) -> TokenStream { input }')).toEqual(['Builder']);
+    // The other kinds of procedural macro are named by their function.
+    expect(await itemsOf('#[proc_macro]\npub fn make(input: TokenStream) -> TokenStream { input }\n#[proc_macro_attribute]\npub fn route(a: TokenStream, b: TokenStream) -> TokenStream { b }')).toEqual(['make', 'route']);
+    // An attribute with no name to read binds nothing; one on another kind of item is not read.
+    expect(await itemsOf('#[proc_macro_derive()]\npub fn a(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive]\npub fn b(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive("C")]\npub fn c(input: TokenStream) -> TokenStream { input }')).toEqual([]);
+    expect(await itemsOf('#[proc_macro_derive(Builder)]\nstruct S;\n#[some::proc_macro_derive(X)]\nfn plain() {}')).toEqual(['S', 'plain']);
+  });
+
   it('reads the names the top level binds with `extern crate` from the parse tree: the alias when renamed, else the crate, and none below the top level', async () => {
     const externsOf = (code) => withParsedFile('x.rs', code, (tree) => topLevelExternCrates(tree.rootNode).map((x) => x.name));
     expect(await externsOf('pub extern crate grep_printer as printer;\n#[macro_use]\nextern crate log;\nextern crate r#async as r#await ;\nextern crate self as facade;')).toEqual(['printer', 'log', 'await', 'facade']);
