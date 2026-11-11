@@ -853,9 +853,19 @@ describe('csharp — member-access receivers and extension calls (M16, m27)', ()
   const groups = (uses) =>
     uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
 
-  it('a dotted receiver emits ONE group of its prefixes, leftmost first', async () => {
+  it('a dotted receiver emits ONE group of its prefixes, step by step of the lookup and shortest prefix first at each', async () => {
     const { uses } = await run(['class C { void M(object o) { Shop.Core.Guard.NotNull(o); } }', ''].join('\n'));
-    expect(groups(uses)).toEqual([['C+Shop', 'Shop', 'C+Shop.Core', 'Shop.Core', 'C+Shop.Core.Guard', 'Shop.Core.Guard']]); // each prefix after the nested reading of the enclosing type C
+    expect(groups(uses)).toEqual([['C+Shop', 'C+Shop.Core', 'C+Shop.Core.Guard', 'Shop', 'Shop.Core', 'Shop.Core.Guard']]); // every prefix inside the enclosing type C, then every prefix in the global namespace
+  });
+  it('a dotted receiver reads every prefix at a nearer namespace, and at what its usings import, before any at a farther one', async () => {
+    const { uses } = await run(['using Lib;', 'namespace App.Web { using Kit; class C { void M() { Data.Row.Parse(); } } }', ''].join('\n'));
+    expect(groups(uses)).toEqual([[
+      'App.Web.C+Data', 'App.Web.C+Data.Row',
+      'App.Web.Data', 'App.Web.Data.Row', 'App.Web.Kit.Data', 'App.Kit.Data', 'Kit.Data', 'App.Web.Kit.Data.Row', 'App.Kit.Data.Row', 'Kit.Data.Row',
+      'App.Data', 'App.Data.Row',
+      'Data', 'Data.Row',
+      'Lib.Data', 'Lib.Data.Row',
+    ]]);
   });
   it('a receiver inside nameof(…) emits nothing', async () => {
     const { uses } = await run(['class C { string M() => nameof(Guard.NotNull); }', ''].join('\n'));

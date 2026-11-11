@@ -1619,19 +1619,20 @@ export function extractCsharpRefs(file) {
             }
         };
         if (!collect(access) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], scopeOf(access))))
-            return;
+            return false;
         const line = access.startPosition.row + 1;
         if (alias !== undefined)
             refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: nsChain(access), at: access.startIndex });
         else if (asReceiver) {
             if (namesOwnProgram(segs[0]))
-                return;
+                return true;
             refs.push({ kind: 'receiver', chain: segs, line, enclosingNs: nsChain(access), at: access.startIndex, rooted, ...(rooted ? {} : { ...enclosingTypes(access), ...membersAround(access) }) });
         }
         else
             pushRef(segs.join('.'), access, line, rooted);
         for (const g of generics)
             emitTypeArguments(g);
+        return true;
     }
     /** A qualified name's plain dotted name, its type-argument lists stripped (`Shop.Core.Repository<int>` → `Shop.Core.Repository`, because declaration keys carry no arity), the using alias that leads it (`S::Core.Order` → `S`, with the tail `Core.Order`; a `global::` qualifier is not an alias and is stripped), and its generic segments, whose type arguments are references of their own. */
     function qualifiedNameParts(q) {
@@ -1825,8 +1826,9 @@ export function extractCsharpRefs(file) {
             if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name'))
                 emitTypeNode(expr);
             // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
-            else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)))
-                emitMemberAccessType(expr, true);
+            // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace).
+            else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)) && emitMemberAccessType(expr, true))
+                return false;
             return undefined;
         }
         // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
@@ -2341,7 +2343,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *   - a using-prefix candidate on a MULTI-segment ref is `nestedOnly` (R4): `using A;` + `B.T`
      *     may bind `A.B+T` (B a type, T nested) but NEVER the dotted `A.B.T` (B a sub-namespace).
      */
-    const pushRef = (ref, enclosingNs, line, rooted, at, types = [], unless) => {
+    const pushRef = (ref, enclosingNs, line, rooted, at, types = [], unless, steps) => {
         // A `global::`-rooted reference (R12) is resolved as a fully-qualified name FROM THE ROOT —
         // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
         // candidate.
@@ -2353,6 +2355,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
             if (ref === 'Program')
                 candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
             out.push({ candidates, kind: 'import', line });
+            steps?.push(...candidates.map(() => 0));
             return false;
         }
         // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
@@ -2366,11 +2369,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
             // M7: an alias with 2+ project-wide targets → silence, unless a nested type of an enclosing type, which comes before every alias, binds.
             if (nestedReadings.length > 0)
                 out.push({ candidates: nestedReadings, kind: 'import', line });
+            steps?.push(...nestedReadings.keys());
             return localNested >= 0;
         }
         const multi = ref.includes('.');
         const aliasView = viewAlias(lead, enclosingNs, at);
         const candidates = [...nestedReadings];
+        // The step of the lookup each candidate is read at (`steps`, when asked for): one per enclosing type, then for each enclosing namespace its own members and then what its using directives import, then the compilation unit's alias, the global namespace, the compilation unit's usings and the implicit `Program`. The steps depend on where the reference stands and on its first name alone, so the readings of `A` and of `A.B` at one place can be laid side by side (a receiver, read one prefix at a time). No reading stands behind a nearer namespace of the first name (`shadow`): whether the calling project sees that namespace is not known here, so a prefix that binds nothing at a step lets the next step be read.
+        let step = nestedReadings.length;
+        steps?.push(...nestedReadings.keys());
         const pushed = new Set();
         // Set once a reading names a file-local type: nothing farther is a candidate.
         let ended = localNested >= 0;
@@ -2387,6 +2394,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 pushed.add(hint.symbolKey);
             }
             candidates.push(hint);
+            steps?.push(step);
         };
         const addSet = (set) => {
             if (set.some((m) => isFileLocalReading(m.symbolKey)))
@@ -2413,18 +2421,23 @@ export function assembleCsharpCandidates(extract, options = {}) {
             if (aliasView !== undefined && aliasView.bodyNs === ns)
                 pushAlias(aliasView);
             add({ kind: 'symbol', symbolKey: `${ns}.${ref}` });
+            step++;
             const k = levels.findIndex((o) => o.ns === ns);
             if (k >= 0)
                 addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => `${p}.${ref}`, multi, [], { key: (t) => `${t}.${ref}`, nestedOnly: true }));
+            step++;
         }
         // An alias of the compilation unit, or a project-wide `global using` alias, comes after every enclosing namespace.
         if (aliasView !== undefined && aliasView.bodyNs === undefined)
             pushAlias(aliasView);
+        step++;
         // The global namespace's own member (the verbatim reading), before the using directives of the compilation unit, which is the declaration of the global namespace (C# spec §7.8.1): `using Lib;` beside a global `Order` leaves `Order` the global type.
         add({ kind: 'symbol', symbolKey: ref });
+        step++;
         // The using-prefix expansions of the compilation unit and the project (one CS0104 set), the last of the explicit readings, with the nested types the using static directives of the compilation unit and the project import (a type read from the global namespace).
         addSet([...usingPrefixes.map((p) => ({ symbolKey: `${p}.${ref}`, nestedOnly: multi })), ...compilationUnitStatics.map((t) => ({ symbolKey: `${t}.${ref}`, nestedOnly: true }))]);
         // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
+        step++;
         if (ref === 'Program')
             add({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
         // Where the name stands as a value's would (the receiver of a member access), every reading holds only while the name is no member of a type around it (`unless`).
@@ -2579,16 +2592,32 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 break;
             }
             case 'receiver': {
-                // Each dotted prefix of the receiver is one reading, leftmost first, merged into ONE group; a `global::` receiver reads each from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
+                // Each dotted prefix of the receiver is one reading, merged into ONE group in the order of the lookup: C# binds the first name at the nearest step that knows it (a type around the receiver, an enclosing namespace, its usings, and so on outward) and reads the next names in what it found, so at each step the prefixes are read shortest first, before any reading of a step farther out. `Data.Row.Parse()` in `namespace App.Web` reads `App.Data.Row` before a class `Data` of the global namespace. A `global::` receiver reads each prefix from the root only, where no alias applies. A first name that is an ambiguous project-wide alias leaves only the nested types of the enclosing types (`pushRef`).
                 const rooted = r.rooted === true;
-                const before = out.length;
                 const members = r.members === undefined ? undefined : lists[r.members];
                 if (r.members !== undefined && members === undefined)
                     break;
                 const unless = members === undefined ? undefined : [{ kind: 'member', types: members, name: r.chain[0] }];
-                for (let i = 1; i <= r.chain.length; i++)
-                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types, unless);
-                mergeGroupsFrom(before, r.line);
+                const readings = [];
+                for (let i = 1; i <= r.chain.length; i++) {
+                    const before = out.length;
+                    const steps = [];
+                    pushRef(r.chain.slice(0, i).join('.'), r.enclosingNs, r.line, rooted, r.at, r.types, unless, steps);
+                    for (const [k, hint] of (out.splice(before)[0]?.candidates ?? []).entries())
+                        readings.push({ hint, step: steps[k] });
+                }
+                const merged = [];
+                const seen = new Set();
+                // A stable sort: within a step the prefixes keep their order, shortest first.
+                for (const { hint } of readings.sort((a, b) => a.step - b.step)) {
+                    const key = hint.symbolKey;
+                    if (seen.has(key))
+                        continue;
+                    seen.add(key);
+                    merged.push(hint);
+                }
+                if (merged.length > 0)
+                    out.push({ candidates: merged, kind: 'import', line: r.line });
                 break;
             }
             case 'ext': {
@@ -2629,7 +2658,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 30,
+    rev: 31,
     declarations,
     uses,
 };
