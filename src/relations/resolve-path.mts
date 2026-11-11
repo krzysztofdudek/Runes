@@ -5,7 +5,7 @@ import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
 import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
-import type { SymbolTable } from './symbol-table.mjs';
+import { declarationCount, type SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -87,17 +87,17 @@ export function makeResolvePathToFile(
       };
       const declaresModule: RustModuleDeclared = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
       // Whether a module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines), and no second one does through a glob as certain as its own. The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used, unless a `cfg` may remove all but one of their globs (`#[cfg(unix)] pub use unix::*;` beside `#[cfg(windows)] pub use windows::*;`), where on any one target at most one may be there.
-      // The answer for a root and a name, kept while no file has declared the name since: the files of a name every file brings in with a `use` are many, and the question is asked again for each path that ends in the name.
-      const globAnswers = new Map<string, { count: number; brings: boolean }>();
+      // The answer for a root and a name, kept while the table has taken no declaration since: the files of a name every file brings in with a `use` are many, and the question is asked again for each path that ends in the name. The answer reads the name's files and the root's glob keys, so any declaration renews it.
+      const globAnswers = new Map<string, { declarations: number; brings: boolean }>();
       const globBrings = (rootFile: string, name: string): boolean => {
         const key = rustTopLevelItemKey(name);
-        const count = table.defCount('rust', key);
-        if (count === 0) return false;
+        if (!table.has('rust', key)) return false;
+        const declarations = declarationCount(table);
         const memo = `${rootFile}\0${name}`;
         const known = globAnswers.get(memo);
-        if (known !== undefined && known.count === count) return known.brings;
+        if (known !== undefined && known.declarations === declarations) return known.brings;
         const brings = globModulesBring(rootFile, key);
-        globAnswers.set(memo, { count, brings });
+        globAnswers.set(memo, { declarations, brings });
         return brings;
       };
       const globModulesBring = (rootFile: string, key: string): boolean => {

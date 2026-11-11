@@ -4,7 +4,7 @@ import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile, makeResolver, SymbolTable, listedFileView } from '@chrisdudek/runes/relations';
 import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey, declaredModules, rustModuleKey, RUST_MODULES_KNOWN_KEY, pathModules } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
@@ -977,6 +977,20 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // Two that nothing can switch off are ambiguous, a module also written under a cfg included.
     expect(await check('pub use plain::*;\npub use also::*;\n')).toBeUndefined();
     expect(await check('pub use plain::*;\n#[cfg(unix)]\npub use self::also::*;\npub use also::*;\n')).toBeUndefined();
+  });
+
+  it('asks the table again for a root\'s globs once it has taken a declaration since', () => {
+    const files = new Map([['Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n'], ['src/lib.rs', ''], ['src/types.rs', ''], ['src/other.rs', '']]);
+    const table = new SymbolTable();
+    table.declare('rust', 'item:Order', 'src/types.rs');
+    const resolve = makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(files.keys(), (p) => files.get(p)) });
+    expect(resolve('crate::Order', 'src/other.rs', 'rust', false, table)).toBeUndefined();
+    // The root's glob comes in after the first question: the name has gained no file, and the answer changes all the same.
+    table.declare('rust', 'glob:types', 'src/lib.rs');
+    expect(resolve('crate::Order', 'src/other.rs', 'rust', false, table)).toBe('src/lib.rs');
+    table.declare('rust', 'glob:other', 'src/lib.rs');
+    table.declare('rust', 'item:Order', 'src/other.rs');
+    expect(resolve('crate::Order', 'src/types.rs', 'rust', false, table)).toBeUndefined();
   });
 
   it('reads a self:: or super:: path through a name the module\'s file binds with extern crate as that crate', async () => {

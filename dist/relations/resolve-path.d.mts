@@ -1,4 +1,4 @@
-import type { SymbolTable } from './symbol-table.mjs';
+import { type SymbolTable } from './symbol-table.mjs';
 import { type FileView } from './file-view.mjs';
 import { type RelationDiagnostic } from './diagnostics.mjs';
 /** What `makeResolvePathToFile` takes besides the root and the owner and exclusion lookups. Every field is optional; a minor release may add more. */
