@@ -57,13 +57,37 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return rustDeps;
         let deps = rustDepsByTable.get(table);
         if (deps === undefined) {
-            const declared = (file, key) => table.has('rust', key) && table.filesFor('rust', key).includes(file);
+            // Whether `file` declares `key`, in constant time: nearly every file declares some keys (`mods:all`), so a search of the key's list would make a pass grow with the square of its files. The set of a key is made again when the key has gained files since.
+            const filesOf = new Map();
+            const declared = (file, key) => {
+                const count = table.defCount('rust', key);
+                if (count === 0)
+                    return false;
+                let known = filesOf.get(key);
+                if (known === undefined || known.count !== count) {
+                    known = { count, files: new Set(table.filesFor('rust', key)) };
+                    filesOf.set(key, known);
+                }
+                return known.files.has(file);
+            };
             const declaresModule = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
             // Whether a module that a top-level glob of `rootFile` names declares `name` at its own top level (`mod types; pub use types::*;` brings in what `types` defines), and no second one does through a glob as certain as its own. The module is a file of the root's own tree, which starts in the root's directory, and the root names it by its path from there, bare or after `self` or `crate`. Two such modules make the name ambiguous, which Rust refuses where it is used, unless a `cfg` may remove all but one of their globs (`#[cfg(unix)] pub use unix::*;` beside `#[cfg(windows)] pub use windows::*;`), where on any one target at most one may be there.
+            // The answer for a root and a name, kept while no file has declared the name since: the files of a name every file brings in with a `use` are many, and the question is asked again for each path that ends in the name.
+            const globAnswers = new Map();
             const globBrings = (rootFile, name) => {
                 const key = rustTopLevelItemKey(name);
-                if (!table.has('rust', key))
+                const count = table.defCount('rust', key);
+                if (count === 0)
                     return false;
+                const memo = `${rootFile}\0${name}`;
+                const known = globAnswers.get(memo);
+                if (known !== undefined && known.count === count)
+                    return known.brings;
+                const brings = globModulesBring(rootFile, key);
+                globAnswers.set(memo, { count, brings });
+                return brings;
+            };
+            const globModulesBring = (rootFile, key) => {
                 const dir = path.posix.dirname(rootFile) === '.' ? '' : path.posix.dirname(rootFile);
                 // Module path → whether a glob that nothing can switch off brings it in.
                 const modules = new Map();
