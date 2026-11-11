@@ -663,6 +663,25 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(bare('crate::MainOpts', 'src/main_only/mod.rs', 'rust')).toBe('src/main.rs');
   });
 
+  it('reads the edition of a module of the library as before when a [[bin]] in src/ has an edition of its own', async () => {
+    // Edition 2015 by default: `use shapes::Circle;` in a module of the library is relative to the crate root. A binary declared in src/ with another edition is one more root of the tree, and it does not change how the library's modules read.
+    put('Cargo.toml', '[package]\nname = "app"\n[[bin]]\nname = "cli"\npath = "src/cli.rs"\nedition = "2021"\n');
+    put('src/lib.rs', 'mod shapes;\nmod api;\n');
+    put('src/cli.rs', 'mod args;\nfn main() {}\n');
+    put('src/shapes.rs', '');
+    put('src/args.rs', '');
+    put('src/api/mod.rs', 'mod client;\n');
+    put('src/api/client.rs', '');
+    put('src/loose.rs', '');
+    const table = await tableNow();
+    const resolve = (spec, from) => makeResolvePathToFile(ws)(spec, from, 'rust', false, table);
+    expect(resolve('shapes::Circle', 'src/api/client.rs')).toBe('src/shapes.rs');
+    expect(resolve('shapes::Circle', 'src/loose.rs')).toBe('src/shapes.rs');
+    expect(resolve('shapes::Circle', 'src/lib.rs')).toBe('src/shapes.rs');
+    // The binary's own root reads its own edition.
+    expect(resolve('shapes::Circle', 'src/cli.rs')).toBeUndefined();
+  });
+
   it('takes a root for certain only from a plain mod item of the parse tree, and keeps the usual order for every other way a module can be written', async () => {
     const lib = 'src/lib.rs';
     const main = 'src/main.rs';
