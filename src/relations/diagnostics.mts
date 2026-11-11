@@ -18,7 +18,7 @@ export type DiagnosticSink = (code: string, file: string, message: string, offse
 /** The code for a configuration file that was consulted and does not parse. */
 export const CONFIG_UNREADABLE = 'config-unreadable';
 
-/** The code for a package.json whose entry names a file that is not in the repository and that no tsconfig of the package maps to a source. */
+/** The code for a package.json whose entry names a file that is not in the repository and gives no source: no tsconfig of the package maps it to one, or its tsconfigs map it to different sources. */
 export const PACKAGE_ENTRY_MISSING = 'package-entry-missing';
 
 /**
