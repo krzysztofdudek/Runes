@@ -643,19 +643,100 @@ describe('csharp: a table must hold the usings record of every file that declare
   });
 });
 
-describe('csharp: the bases of a file type', () => {
-  it('are recorded apart from a published type of the same name, and followed only while one file declares such a type', async () => {
-    const base = { 'src/core/Base.cs': 'namespace App;\npublic class Base { public class Options { } }\npublic class Other { public class Options { } }\n', 'src/cfg/Options.cs': 'namespace App.Jobs;\npublic class Options { }\n' };
-    const worker = (of) => `namespace App.Jobs;\nfile class Worker : ${of} {\n  Options _o;\n}\n`;
-    await project({ ...base, 'src/one/Worker.cs': worker('Base') }, ({ edges, keys, table }) => {
+describe('csharp: what is recorded for a file type is read for the type of that file alone', () => {
+  const base = { 'src/core/Base.cs': 'namespace App;\npublic class Base { public class Options { } }\npublic class Other { public class Options { } }\n', 'src/cfg/Options.cs': 'namespace App.Jobs;\npublic class Options { }\n' };
+  const worker = (of) => `namespace App.Jobs;\nfile class Worker${of === '' ? '' : ` : ${of}`} {\n  Options _o;\n}\n`;
+  const lookupOver = (table, resolver) => makeCsharpTypeLookup(table, (readings, fromFile) => readings.find((hint) => resolver.resolveFile(hint, fromFile, 'csharp') !== undefined)?.symbolKey);
+
+  it('records the bases apart from a published type of the same name, and each file type reads its own', async () => {
+    await project({ ...base, 'src/one/Worker.cs': worker('Base') }, ({ edges, keys, table, files }) => {
       expect(keys('src/one/Worker.cs').map((k) => k.split('\t')[0])).toEqual(['file-base:App.Jobs.Worker', USINGS_KEY]);
       expect(table.has('csharp', 'App.Jobs.Worker')).toBe(false);
       expect(edges('src/one/Worker.cs')).toEqual(['2->core', '3->core']);
+      // The reading inside the file type names it as such; the key it would have stays the start of the reading's own key.
+      const nested = csharpExtractor.uses(files.find((f) => f.path === 'src/one/Worker.cs')).flatMap((d) => d.candidates).filter((c) => c.within !== undefined);
+      expect(nested.map((c) => [c.symbolKey, c.within])).toEqual([['App.Jobs.Worker+Options', 'file:App.Jobs.Worker']]);
     });
-    // Two files each declare a file type of that key with another base: neither is followed, and the reading is the namespace's.
-    await project({ ...base, 'src/one/Worker.cs': worker('Base'), 'src/two/Worker.cs': worker('Other') }, ({ edges }) => {
-      expect(edges('src/one/Worker.cs')).toEqual(['2->core', '3->cfg']);
-      expect(edges('src/two/Worker.cs')).toEqual(['2->core', '3->cfg']);
+    // Two files each declare a file type of that key with another base, and a third with none: each reads the base list of its own file.
+    await project({ ...base, 'src/one/Worker.cs': worker('Base'), 'src/two/Worker.cs': worker('Other'), 'src/three/Worker.cs': worker('') }, ({ edges, table, resolver }) => {
+      expect(edges('src/one/Worker.cs')).toEqual(['2->core', '3->core']);
+      expect(edges('src/two/Worker.cs')).toEqual(['2->core', '3->core']);
+      expect(edges('src/three/Worker.cs')).toEqual(['3->cfg']);
+      const lookup = lookupOver(table, resolver);
+      expect(lookup.bases('file:App.Jobs.Worker', 'src/one/Worker.cs')).toEqual({ inside: ['App.Base'], outside: [] });
+      expect(lookup.bases('file:App.Jobs.Worker', 'src/two/Worker.cs')).toEqual({ inside: ['App.Other'], outside: [] });
+      expect(lookup.bases('file:App.Jobs.Worker', 'src/three/Worker.cs')).toEqual({ inside: [], outside: [] });
+      expect(lookup.nested('file:App.Jobs.Worker', 'Options', 'src/two/Worker.cs')).toEqual(['App.Other+Options']);
+      // The published key has no base, and a file type asked about without its file has none either.
+      expect(lookup.bases('App.Jobs.Worker')).toEqual({ inside: [], outside: [] });
+      expect(lookup.bases('file:App.Jobs.Worker')).toEqual({ inside: [], outside: [] });
+    });
+  });
+
+  it('reads nothing a published type of the same name declares: no base, nested type, member or method', async () => {
+    await project({
+      'src/core/Base.cs': 'namespace App;\npublic class Base { public class Options { } }\npublic class Bag { public int Get(int k) => k; }\n',
+      'src/cfg/Options.cs': 'namespace App.Jobs;\npublic class Options { }\npublic class Inner { }\n',
+      'src/legacy/Settings.cs': 'namespace App.Jobs;\npublic static class Settings { public static int Get(int k) => k; }\n',
+      'src/ext/Ext.cs': 'namespace App.Jobs;\npublic static class Ext { public static void Run(this object o) { } }\n',
+      // The published Worker: a base, a nested type, a property and a method.
+      'src/pub/Worker.cs': 'namespace App.Jobs;\npublic partial class Worker : Base {\n  public class Inner { }\n  protected Bag Settings { get; }\n  public void Run() { }\n}\n',
+      // The file type of the same name has none of them.
+      'src/one/Tool.cs': 'namespace App.Jobs;\nfile partial class Worker {\n  Options _o;\n  Inner _i;\n  int M() => Settings.Get(1);\n  void N() { this.Run(); }\n}\n',
+    }, ({ edges, table, resolver }) => {
+      // Line 3: the namespace's Options, not Base's. Line 4: the namespace's Inner, not the published Worker's. Line 5: the static class, not the property. Line 6: the extension method, not the published Worker's Run.
+      expect(edges('src/one/Tool.cs')).toEqual(['3->cfg', '4->cfg', '5->legacy', '6->ext']);
+      const lookup = lookupOver(table, resolver);
+      expect(lookup.simpleName('App.Jobs.Worker', 'Settings')).toBe('member');
+      expect(lookup.simpleName('file:App.Jobs.Worker', 'Settings', 'src/one/Tool.cs')).toBe('none');
+      expect(lookup.nested('App.Jobs.Worker', 'Options')).toEqual(['App.Base+Options']);
+      expect(lookup.nested('file:App.Jobs.Worker', 'Options', 'src/one/Tool.cs')).toEqual([]);
+      expect(lookup.path('file:App.Jobs.Worker', ['Inner'], 'src/one/Tool.cs')).toEqual([]);
+      expect(lookup.memberTypes('file:App.Jobs.Worker', 'Settings', 'src/one/Tool.cs')).toEqual([]);
+      expect(lookup.hasMethod('App.Jobs.Worker', { method: 'Run', args: 0, typeArgs: 0 }, [])).toBe(true);
+      expect(lookup.hasMethod('file:App.Jobs.Worker', { method: 'Run', args: 0, typeArgs: 0 }, ['file:App.Jobs.Worker'], 'src/one/Tool.cs')).toBe(false);
+    });
+  });
+
+  it('gives a file type what its own base hands down: a member, its written type and a protected method', async () => {
+    await project({
+      'src/core/Base.cs': 'namespace App;\npublic class Bag { public int Get(int k) => k; }\npublic class Base { protected Bag Settings { get; } protected void Run() { } }\n',
+      'src/legacy/Settings.cs': 'namespace App.Jobs;\npublic static class Settings { public static int Get(int k) => k; }\n',
+      'src/ext/Ext.cs': 'namespace App.Jobs;\npublic static class Ext { public static void Run(this object o) { } public static int Get(this object o, int k) => k; public static int Read(this object o) => 0; }\n',
+      'src/one/Tool.cs': 'namespace App.Jobs;\nfile class Worker : Base {\n  int M() => Settings.Get(1);\n  void N() { this.Run(); }\n  int P() => Settings.Read();\n}\n',
+    }, ({ edges, table, resolver }) => {
+      // Line 3: the inherited property, whose type has Get: no type edge and no extension edge. Line 4: the inherited protected Run, reached from the file type. Line 5: Bag has no Read, so the extension method.
+      expect(edges('src/one/Tool.cs')).toEqual(['2->core', '5->ext']);
+      const lookup = lookupOver(table, resolver);
+      expect(lookup.simpleName('file:App.Jobs.Worker', 'Settings', 'src/one/Tool.cs')).toBe('member');
+      expect(lookup.memberTypes('file:App.Jobs.Worker', 'Settings', 'src/one/Tool.cs')).toEqual(['App.Bag']);
+      expect(lookup.hasMethod('file:App.Jobs.Worker', { method: 'Run', args: 0, typeArgs: 0 }, ['file:App.Jobs.Worker'], 'src/one/Tool.cs')).toBe(true);
+      // The same file type asked from another file is another type, with no base.
+      expect(lookup.hasMethod('file:App.Jobs.Worker', { method: 'Run', args: 0, typeArgs: 0 }, ['file:App.Jobs.Worker'], 'src/two/Other.cs')).toBe(false);
+    });
+  });
+
+  it('follows no base that is itself a file type of the file: the reading stays the namespace\'s', async () => {
+    await project({
+      'src/core/Base.cs': 'namespace App;\npublic class Base { public class Options { } }\n',
+      'src/cfg/Options.cs': 'namespace App.Jobs;\npublic class Options { }\n',
+      // A published Mid of the same name, with a nested Options of its own, is another type and is not followed either.
+      'src/pub/Mid.cs': 'namespace App.Jobs;\npublic class Mid { public class Options { } }\n',
+      'src/one/Tool.cs': 'namespace App.Jobs;\nfile class Mid : Base { }\nfile class Worker : Mid {\n  Options _o;\n}\n',
+    }, ({ edges }) => {
+      expect(edges('src/one/Tool.cs')).toEqual(['2->core', '4->cfg']);
+    });
+  });
+
+  it('reads the base of a type nested in a file type through the file type around it', async () => {
+    await project({
+      'src/core/Holder.cs': 'namespace App;\npublic class Holder { public class Part { public class Options { } } }\n',
+      'src/cfg/Options.cs': 'namespace App.Jobs;\npublic class Options { }\n',
+      'src/one/Tool.cs': 'namespace App.Jobs;\nfile class Outer : Holder {\n  class Inner : Part {\n    Options _o;\n  }\n}\n',
+    }, ({ edges, keys }) => {
+      expect(keys('src/one/Tool.cs').map((k) => k.split('\t')[0])).toEqual(['file-base:App.Jobs.Outer', 'file-base:App.Jobs.Outer+Inner', USINGS_KEY]);
+      // Line 3: `Part` is the nested type Outer inherits from Holder. Line 4: Inner inherits Part's Options.
+      expect(edges('src/one/Tool.cs')).toEqual(['2->core', '3->core', '4->core']);
     });
   });
 });

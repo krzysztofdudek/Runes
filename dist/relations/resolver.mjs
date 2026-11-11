@@ -1,5 +1,5 @@
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
-import { IMPLICIT_PROGRAM_KEY, internalKey } from './extractors/csharp.mjs';
+import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
 import { attributeReading, makeCsharpTypeLookup } from './extractors/csharp-resolve.mjs';
 /**
@@ -195,11 +195,11 @@ export function makeResolver(deps) {
     /** True when the repository declares one of `shadow`'s names, as a type or as a namespace a key lies in: a nearer name C#'s lookup stops at, so a reading behind it binds nothing. */
     const shadowed = (language, shadow) => shadow !== undefined && shadow.some((name) => deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name));
     /**
-     * The keys one C# reading may bind. A reading inside a type (`within`) is the nested type of that type or of its base classes, each name of a dotted reading read in what the name before it gave. Any other reading is the key as written, unless `nestedOnly`, and for each dot that follows a declared type the nested type the rest names there, inherited ones included (`Derived.Options` is the `Options` its base class declares).
+     * The keys one C# reading may bind. A reading inside a type (`within`) is the nested type of that type or of its base classes, each name of a dotted reading read in what the name before it gave; `fromFile` says whose a `file` type is. Any other reading is the key as written, unless `nestedOnly`, and for each dot that follows a declared type the nested type the rest names there, inherited ones included (`Derived.Options` is the `Options` its base class declares).
      */
-    const csharpKeys = (key, nestedOnly, within) => {
+    const csharpKeys = (key, nestedOnly, within, fromFile) => {
         if (within !== undefined)
-            return csharp().path(within, key.slice(within.length + 1).split('.'));
+            return csharp().path(within, key.slice(referencedTypeKey(within).length + 1).split('.'), fromFile);
         const keys = nestedOnly ? [] : [key];
         const segs = key.split('.');
         for (let k = 1; k < segs.length; k++) {
@@ -212,18 +212,18 @@ export function makeResolver(deps) {
     /** The declared keys one symbol-set member reads, honoring `nestedOnly` (R4): a
      *  `nestedOnly` member reads ONLY its guarded `+`-split keys, never the verbatim
      *  dotted reading. A plain member reads the verbatim key + all guarded splits. */
-    const memberKeys = (language, key, nestedOnly, shadow, within) => {
+    const memberKeys = (language, key, nestedOnly, shadow, within, fromFile) => {
         // A reading behind a nearer namespace or type the lookup stops at binds nothing.
         if (shadowed(language, shadow))
             return [];
         if (language === 'csharp')
-            return csharpKeys(key, nestedOnly, within);
+            return csharpKeys(key, nestedOnly, within, fromFile);
         return nestedOnly ? nestedOnlySplitKeys(deps.symbolTable, language, key) : nestedSplitKeys(deps.symbolTable, language, key);
     };
     /** The distinct defining files of one symbol-set member: the files of every key it reads. */
-    const memberFiles = (language, key, nestedOnly, shadow, within) => {
+    const memberFiles = (language, key, nestedOnly, shadow, within, fromFile) => {
         const files = new Set();
-        for (const k of memberKeys(language, key, nestedOnly, shadow, within)) {
+        for (const k of memberKeys(language, key, nestedOnly, shadow, within, fromFile)) {
             for (const f of deps.symbolTable.filesFor(language, k))
                 files.add(f);
         }
@@ -232,9 +232,9 @@ export function makeResolver(deps) {
     /** True when every declaration `file` gives of `keys` is internal to its assembly (the extractor's `internal:<key>` marker beside it). */
     const assemblyOnlyIn = (language, keys, file) => keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || deps.symbolTable.filesFor(language, internalKey(k)).includes(file));
     /** Every key a symbol hint reads: those of each member of its set, or its own. */
-    const hintKeys = (hint, language) => hint.set !== undefined
+    const hintKeys = (hint, language, fromFile) => hint.set !== undefined
         ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
-        : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within);
+        : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
     /** The distinct files a symbol HINT maps to: the union across its `set` members (each honoring
      *  its own `nestedOnly`) when a set is present, else the single `symbolKey` honoring the hint's
      *  own `nestedOnly`. ≥2 distinct files anywhere = a real ambiguity (CS0104 / co-definition). */
@@ -253,11 +253,11 @@ export function makeResolver(deps) {
             }
         }
         else {
-            files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within);
+            files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
         }
         if (language !== 'csharp' || deps.reach === undefined)
             return files;
-        const keys = hintKeys(hint, language);
+        const keys = hintKeys(hint, language, fromFile);
         if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
             // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
             const both = new Set([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
@@ -275,7 +275,7 @@ export function makeResolver(deps) {
             const files = hintFiles(hint, 'csharp', fromFile);
             if (files.size === 0)
                 continue;
-            const keys = [...new Set(hintKeys(hint, 'csharp'))].filter((k) => deps.symbolTable.filesFor('csharp', k).some((f) => files.has(f)));
+            const keys = [...new Set(hintKeys(hint, 'csharp', fromFile))].filter((k) => deps.symbolTable.filesFor('csharp', k).some((f) => files.has(f)));
             return keys.length === 1 ? { key: keys[0], files: new Set(deps.symbolTable.filesFor('csharp', keys[0]).filter((f) => files.has(f))) } : undefined;
         }
         return undefined;
@@ -297,15 +297,15 @@ export function makeResolver(deps) {
     };
     const conditionHolds = (condition, fromFile) => {
         if (condition.kind === 'instance-method') {
-            return (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from))
+            return (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from, fromFile))
                 || condition.receivers.some((readings) => {
                     const bound = bindCsharpType(readings, fromFile);
-                    return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from);
+                    return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from, fromFile);
                 });
         }
         // The nearest type around the name that knows it decides what the name is there.
         for (const type of condition.types) {
-            const found = csharp().simpleName(type, condition.name);
+            const found = csharp().simpleName(type, condition.name, fromFile);
             if (found === 'none')
                 continue;
             if (condition.kind === 'member')
@@ -314,7 +314,7 @@ export function makeResolver(deps) {
                 return true;
             // A member: a value, whose written type may have the called method itself.
             const call = condition.call;
-            return call !== undefined && csharp().memberTypes(type, condition.name).some((key) => csharp().hasMethod(key, call, call.from));
+            return call !== undefined && csharp().memberTypes(type, condition.name, fromFile).some((key) => csharp().hasMethod(key, call, call.from, fromFile));
         }
         return condition.kind === 'no-member';
     };

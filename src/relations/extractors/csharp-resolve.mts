@@ -1,28 +1,28 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { USINGS_KEY, baseListKey, fileBaseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
 /** The bases one C# type declares, over every part of it: `inside` the keys of those the repository declares, `outside` the written names of those it does not (a framework type, or a name this reader cannot bind to one type). */
 export interface CsharpBases { inside: string[]; outside: string[] }
 
-/** What the resolver reads of C# types beyond their keys: the base lists the extractor records (`baseListKey`) and what a type inherits through them. */
+/** What the resolver reads of C# types beyond their keys: the base lists the extractor records (`baseListKey`) and what a type inherits through them. A type is named by its key, or as a reading written inside a C#11 `file` type names that type (`fileTypeRef`), and then `fromFile` says whose it is: such a type has the bases its own file records (`fileBaseListKey`) and nothing a published type of the same name declares. */
 export interface CsharpTypeLookup {
   /** The bases of the type `typeKey`, classes and interfaces alike. */
-  bases(typeKey: string): CsharpBases;
+  bases(typeKey: string, fromFile?: string): CsharpBases;
   /** The keys of the nested type `name` of `typeKey`: the type's own, or else the one its nearest base class in the repository declares (C# spec §7.6.1: the nested types of a type's base classes are its members). An interface inherits those of its base interfaces. Empty when none. */
-  nested(typeKey: string, name: string): string[];
+  nested(typeKey: string, name: string, fromFile?: string): string[];
   /** What the simple name `name` is inside the type `typeKey`, where a value's name may stand: `member` when the type, in any part, declares a member of that name that is no type, or its nearest base class in the repository that knows the name declares one a derived type can see; `type` when a nested type of that name is found first (`nested`); `none` when neither the type nor a base class in the repository knows the name. */
-  simpleName(typeKey: string, name: string): 'member' | 'type' | 'none';
+  simpleName(typeKey: string, name: string, fromFile?: string): 'member' | 'type' | 'none';
   /** `nested` along a dotted path: `segments[0]` in `typeKey`, the next in what that gave. */
-  path(typeKey: string, segments: readonly string[]): string[];
+  path(typeKey: string, segments: readonly string[], fromFile?: string): string[];
   /** Whether the type `typeKey` is an attribute class: `yes` when its base classes, followed through the repository, reach `System.Attribute`; `no` when it is an interface, or every base of it lies in the repository and none reaches `System.Attribute` (a type that lists no base among them); `maybe` when a base leaves the repository under another name, which may or may not derive from it. */
   attributeClass(typeKey: string): 'yes' | 'no' | 'maybe';
   /** True when a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, written inside the types `from`, finds an instance method it fits by those counts (`shapeTakes`) and can reach: one the type declares, in any part, or one of its base classes in the repository, to any depth (for an interface, its base interfaces). A protected method counts where one of `from` is the type that declares it or derives from it and `typeKey` is that calling type or derives from it, a private one where one of `from` is the type that declares it. */
-  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number }, from: readonly string[]): boolean;
+  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number }, from: readonly string[], fromFile?: string): boolean;
   /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
-  memberTypes(typeKey: string, name: string): string[];
+  memberTypes(typeKey: string, name: string, fromFile?: string): string[];
 }
 
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
@@ -66,17 +66,27 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return files.map((file) => ({ name, key: bind(writtenReadings(written, holder, false, usingsOf(file)), file) }));
   };
 
+  /** A type as this lookup holds it: the key of a published type, or for a `file` type its reference and its file, parted by a tab. No key of the table has that form, so nothing recorded under the published key of the same name (a nested type, a member, a method, the interface mark) is ever read for a `file` type. */
+  const idOf = (type: string, fromFile: string | undefined): string => (type.startsWith(FILE_TYPE_REF) ? `${type}\t${fromFile ?? ''}` : type);
+
+  /** The base records of the type `id` with the files each is read in: those of every part of a published type, and for a `file` type those its own file declares (see `fileBaseListKey`), read as that file reads a name. `holder` is the key the type declares. */
+  const baseRecords = (id: string): { holder: string; records: Array<{ value: string; files: readonly string[] }> } => {
+    const tab = id.indexOf('\t');
+    if (tab === -1) return { holder: id, records: table.valuesOf(LANGUAGE, baseListKey(id)) };
+    const holder = referencedTypeKey(id.slice(0, tab));
+    const file = id.slice(tab + 1);
+    return { holder, records: table.valuesOf(LANGUAGE, fileBaseListKey(holder)).filter(({ files }) => files.includes(file)).map(({ value }) => ({ value, files: [file] })) };
+  };
+
   const bases = (typeKey: string): CsharpBases => {
     const known = memo.get(typeKey);
     if (known !== undefined) return known;
     const result: CsharpBases = { inside: [], outside: [] };
     // Set before the bases are bound: a base list that names its own type through itself ends here.
     memo.set(typeKey, result);
-    // The bases of a `file` type of that key count only while one file declares them (see `fileBaseListKey`).
-    const ofFileType = table.valuesOf(LANGUAGE, fileBaseListKey(typeKey));
-    const oneFile = new Set(ofFileType.flatMap(({ files }) => files)).size === 1;
-    for (const { value, files } of [...table.valuesOf(LANGUAGE, baseListKey(typeKey)), ...(oneFile ? ofFileType : [])]) {
-      for (const { name, key } of boundIn(value, files, typeKey)) {
+    const { holder, records } = baseRecords(typeKey);
+    for (const { value, files } of records) {
+      for (const { name, key } of boundIn(value, files, holder)) {
         if (key === undefined) {
           if (!result.outside.includes(name)) result.outside.push(name);
         } else if (!result.inside.includes(key)) result.inside.push(key);
@@ -209,5 +219,13 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return keys;
   };
 
-  return { bases, nested, simpleName, path, attributeClass, hasMethod, memberTypes };
+  return {
+    bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
+    nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
+    simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),
+    path: (typeKey, segments, fromFile) => path(idOf(typeKey, fromFile), segments),
+    attributeClass,
+    hasMethod: (typeKey, call, from, fromFile) => hasMethod(idOf(typeKey, fromFile), call, from.map((type) => idOf(type, fromFile))),
+    memberTypes: (typeKey, name, fromFile) => memberTypes(idOf(typeKey, fromFile), name),
+  };
 }

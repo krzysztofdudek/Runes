@@ -1,4 +1,4 @@
-import { USINGS_KEY, baseListKey, fileBaseListKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -37,6 +37,17 @@ export function makeCsharpTypeLookup(table, bind) {
         const name = written.name.startsWith('global::') ? written.name.slice('global::'.length) : written.name;
         return files.map((file) => ({ name, key: bind(writtenReadings(written, holder, false, usingsOf(file)), file) }));
     };
+    /** A type as this lookup holds it: the key of a published type, or for a `file` type its reference and its file, parted by a tab. No key of the table has that form, so nothing recorded under the published key of the same name (a nested type, a member, a method, the interface mark) is ever read for a `file` type. */
+    const idOf = (type, fromFile) => (type.startsWith(FILE_TYPE_REF) ? `${type}\t${fromFile ?? ''}` : type);
+    /** The base records of the type `id` with the files each is read in: those of every part of a published type, and for a `file` type those its own file declares (see `fileBaseListKey`), read as that file reads a name. `holder` is the key the type declares. */
+    const baseRecords = (id) => {
+        const tab = id.indexOf('\t');
+        if (tab === -1)
+            return { holder: id, records: table.valuesOf(LANGUAGE, baseListKey(id)) };
+        const holder = referencedTypeKey(id.slice(0, tab));
+        const file = id.slice(tab + 1);
+        return { holder, records: table.valuesOf(LANGUAGE, fileBaseListKey(holder)).filter(({ files }) => files.includes(file)).map(({ value }) => ({ value, files: [file] })) };
+    };
     const bases = (typeKey) => {
         const known = memo.get(typeKey);
         if (known !== undefined)
@@ -44,11 +55,9 @@ export function makeCsharpTypeLookup(table, bind) {
         const result = { inside: [], outside: [] };
         // Set before the bases are bound: a base list that names its own type through itself ends here.
         memo.set(typeKey, result);
-        // The bases of a `file` type of that key count only while one file declares them (see `fileBaseListKey`).
-        const ofFileType = table.valuesOf(LANGUAGE, fileBaseListKey(typeKey));
-        const oneFile = new Set(ofFileType.flatMap(({ files }) => files)).size === 1;
-        for (const { value, files } of [...table.valuesOf(LANGUAGE, baseListKey(typeKey)), ...(oneFile ? ofFileType : [])]) {
-            for (const { name, key } of boundIn(value, files, typeKey)) {
+        const { holder, records } = baseRecords(typeKey);
+        for (const { value, files } of records) {
+            for (const { name, key } of boundIn(value, files, holder)) {
                 if (key === undefined) {
                     if (!result.outside.includes(name))
                         result.outside.push(name);
@@ -189,5 +198,13 @@ export function makeCsharpTypeLookup(table, bind) {
         }
         return keys;
     };
-    return { bases, nested, simpleName, path, attributeClass, hasMethod, memberTypes };
+    return {
+        bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
+        nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
+        simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),
+        path: (typeKey, segments, fromFile) => path(idOf(typeKey, fromFile), segments),
+        attributeClass,
+        hasMethod: (typeKey, call, from, fromFile) => hasMethod(idOf(typeKey, fromFile), call, from.map((type) => idOf(type, fromFile))),
+        memberTypes: (typeKey, name, fromFile) => memberTypes(idOf(typeKey, fromFile), name),
+    };
 }

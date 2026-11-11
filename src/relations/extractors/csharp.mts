@@ -349,9 +349,22 @@ export function baseListKey(typeKey: string): string {
   return `base:${typeKey}`;
 }
 
-/** The head of the key that records one base of a C#11 `file` type of the key `typeKey`: `file-base:<key>`, with a value like a base record's. Such a type has no published key and belongs to its file alone, so its bases are kept apart from those of a published type of the same name, and they are followed only while one file declares a `file` type of that key: two files may each declare an unrelated one, and a record does not say which of them a reader stands in. */
+/** The head of the key that records one base of a C#11 `file` type of the key `typeKey`: `file-base:<key>`, with a value like a base record's. Such a type has no published key and belongs to its file alone, so its bases are kept apart from those of a published type of the same name, and each record is read only for the `file` type of a file that declares it (`fileTypeRef`): a published type, or a `file` type of another file, may share the key and is another type. */
 export function fileBaseListKey(typeKey: string): string {
   return `file-base:${typeKey}`;
+}
+
+/** What leads the key of a C#11 `file` type where a reading names the type whose body holds it (`fileTypeRef`). The colon is in no C# name, so no published key starts with it. */
+export const FILE_TYPE_REF = 'file:';
+
+/** The key `typeKey` as a reading written inside the `file` type of that key names it: `file:<key>`, in `TargetHint.within` and in the type lists of a `CsharpCondition`. A published type, or a `file` type of another file, may have the same full name, so the reading says which it stands in, and the resolver reads for it what the referencing file alone records: its `file-base:` records, and nothing recorded under the published key. */
+export function fileTypeRef(typeKey: string): string {
+  return `${FILE_TYPE_REF}${typeKey}`;
+}
+
+/** The key a type reference of a reading names: the reference itself, or the key behind the mark of a `file` type (`fileTypeRef`). */
+export function referencedTypeKey(ref: string): string {
+  return ref.startsWith(FILE_TYPE_REF) ? ref.slice(FILE_TYPE_REF.length) : ref;
 }
 
 /** The head of the key that records the using directives of a file: `usings`. A file that records a written type (`encodeWritten`) declares `usings\t<value>` once, the value (`encodeUsings`) holding what a name written in that file is read with, so each record holds a name and no reading of its own. */
@@ -2261,6 +2274,8 @@ export function assembleCsharpCandidates(
     }
     return false;
   };
+  /** A type around a reference as its readings name it: a type the file keeps to itself says so (`fileTypeRef`). */
+  const typeRef = (typeKey: string): string => (fileLocal.has(typeKey) ? fileTypeRef(typeKey) : typeKey);
 
   // Project-wide `global using` aliases (A12): a `global using Alias = N.Type;` declared in ANY
   // file is usable in EVERY file. Merge the aggregated set BELOW this file's own aliases — a
@@ -2499,7 +2514,7 @@ export function assembleCsharpCandidates(
     }
 
     // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
-    const nestedReadings: TargetHint[] = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: t, ...(unless === undefined ? {} : { unless }) }));
+    const nestedReadings: TargetHint[] = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: typeRef(t), ...(unless === undefined ? {} : { unless }) }));
     // A nested type of a file-local type is found there, before any namespace: the group ends at it.
     const localNested = nestedReadings.findIndex((h) => isFileLocalReading((h as SymbolHint).symbolKey));
     if (localNested >= 0) nestedReadings.length = localNested;
@@ -2660,7 +2675,7 @@ export function assembleCsharpCandidates(
   };
 
   /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it. */
-  const lists = extract.lists ?? [];
+  const lists = (extract.lists ?? []).map((list) => list.map(typeRef));
   const receiverGroups = new Map<number, TargetHint[]>();
   const receiverReadings = (place: number): TargetHint[] => {
     let group = receiverGroups.get(place);
@@ -2730,7 +2745,7 @@ export function assembleCsharpCandidates(
         const unless: CsharpCondition[] = [];
         // A receiver the file does not declare is a value only as a member of a type around the call.
         if (r.member !== undefined) unless.push({ kind: 'no-member', types: lists[r.member.types], name: r.member.name, ...(r.member.direct ? { call } : {}) });
-        if (receivers.length > 0 || r.self !== undefined) unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: r.self }) });
+        if (receivers.length > 0 || r.self !== undefined) unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
         pushExtension(r.name, r.enclosingNs, r.line, r.at, unless);
         break;
       }
@@ -2757,7 +2772,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 29,
+  rev: 30,
   declarations,
   uses,
 };
