@@ -1230,6 +1230,7 @@ export function makeTsResolveDeps(
     // The nearest workspace declaration above the importer, then each enclosing one while the declaring directory is a member of it: npm and pnpm install a member from the enclosing root and ignore its own declaration, and yarn links nested worktrees into one project, so the enclosing members are linked too. A name two of them bind to different packages is ambiguous (npm takes the enclosing one, yarn refuses the pair). A declaration that is no member of the one above is a project installed on its own, whose node_modules may hold a registry package under any name, so nothing above it is looked at.
     let found: TsPackage | 'ambiguous' | undefined;
     let declared: string | undefined;
+    const workspaces: Array<{ root: string; globs: string[] }> = [];
     for (const dir of ancestors(fromFile)) {
       const globs = workspaceGlobs(dir);
       if (globs === undefined) continue;
@@ -1238,10 +1239,21 @@ export function makeTsResolveDeps(
       if (hit !== undefined && found !== undefined && hit !== found) return 'ambiguous';
       found ??= hit;
       declared = dir;
+      workspaces.push({ root: dir, globs });
     }
     if (declared === undefined) return packageIndex().get(lookup);
     // A member declared by a range (not `workspace:`, not a local path) is linked only where the package manager links by range; otherwise the install takes it from the registry. A peer dependency is not installed by the package that declares it (yarn 1 never installs peers, npm 7 and later and pnpm with auto-install-peers install them by rules of their own), so a member declared only as a peer stays bound, as before.
     if (found !== undefined && found !== 'ambiguous' && typeof spec === 'string' && !spec.startsWith('workspace:') && field !== own!.manifest.peerDependencies && linksByRange(declared, spec, found) === false) return undefined;
+    // pnpm links a member only into the node_modules of a project that declares it, and the lookup of Node and TypeScript walks the node_modules of every directory above the file: with no project above the file declaring the name, nothing is linked under it. A project is the root of a workspace met above or one of its members; a package.json of any other directory is installed by nobody. npm and yarn link every workspace at the root, so there a declaration decides nothing, and under an unknown manager the member stays bound, as before.
+    if (found !== undefined && found !== 'ambiguous' && managerAt(declared)?.name === 'pnpm' && !pnpmMayHoist(declared, name, managerAt(declared)!)) {
+      const declares = (dir: string): boolean => {
+        const manifest = packageAt(dir)?.manifest;
+        if (manifest === undefined || !workspaces.some((w) => isMemberDir(w.root, w.globs, dir))) return false;
+        return DEPENDENCY_FIELDS.some((f) => isRecord(manifest[f]) && Object.hasOwn(manifest[f], name));
+      };
+      const above = ancestors(fromFile);
+      if (!above.slice(0, above.indexOf(declared) + 1).some(declares)) return undefined;
+    }
     return found;
   };
 
@@ -1290,6 +1302,14 @@ export function makeTsResolveDeps(
     ].filter((v) => v !== undefined);
     if (values.length > 0) return values.every((v) => v === values[0]) ? values[0] : undefined;
     return major === undefined ? undefined : major < 9;
+  };
+  // Whether pnpm may link a member named `name` into the node_modules of the workspace root although the root does not declare it. pnpm hoists the dependencies of every project there, workspace members among them (`hoistWorkspacePackages`, on by default), when `shamefully-hoist` is on, when the linker is `hoisted`, or for the names a `public-hoist-pattern` matches; before pnpm 10 that pattern defaulted to `*eslint*` and `*prettier*`. The settings are read from .npmrc and pnpm-workspace.yaml, whichever the version reads; a pattern that is set is not matched against the name, it leaves the answer open.
+  const pnpmMayHoist = (root: string, name: string, manager: Manager): boolean => {
+    const at = (file: string): string => (root === '' ? file : `${root}/${file}`);
+    const text = (file: string): string => (isFile(at(file)) ? (files.read(at(file)) ?? '') : '');
+    if (/^\s*(?:shamefully-hoist\s*=\s*['"]?true|node-linker\s*=\s*['"]?hoisted|public-hoist-pattern(?:\[\])?\s*=)/m.test(text('.npmrc'))) return true;
+    if (/^(?:shamefullyHoist\s*:\s*['"]?true|nodeLinker\s*:\s*['"]?hoisted|publicHoistPattern\s*:)/m.test(text('pnpm-workspace.yaml'))) return true;
+    return (manager.major === undefined || manager.major < 10) && /eslint|prettier/.test(name);
   };
   // Whether the package manager of the workspace rooted at `root` links `member` for a dependency declared as `spec` (a range or a tag, not `workspace:` and not a local path): false when it installs that dependency from the registry, undefined when the manager is not known (the member stays bound, as before). npm's arborist links a workspace when "the workspace node will satisfy the edge", `*` and the empty spec always, a range by `semver.satisfies(version, range, true)`, a tag never (it is valid only with a registry resolution). pnpm links by range only with link-workspace-packages on, and then picks by `resolveWorkspaceRange`: `*`, `^`, `~` and the empty spec match any version, a tag matches as `*` does, a range as `semver.maxSatisfying(versions, range, { loose: true })`. yarn 2 and later accept a pure semver range when `enableTransparentWorkspaces` (default true) is on and the workspace has a version (`Workspace.accepts`); yarn 1 links when `semver.satisfies(workspace version, range)`. Any other spec (`npm:` aliases, URLs, git) is never the member.
   const linksByRange = (root: string, spec: string, member: TsPackage): boolean | undefined => {
