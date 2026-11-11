@@ -1338,3 +1338,29 @@ describe('csharp — the generic arity is part of every type key', () => {
     expect(keys).toContain('Lib.Box`1');
   });
 });
+
+describe('csharp — a type named in a pattern or after `is`', () => {
+  const keysOf = (uses) => uses.flatMap((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : [])));
+
+  it('a dotted name in a constant pattern is read as the type it spells, a generic segment and a `global::` lead included', async () => {
+    const { uses } = await run(['class C { bool A(object o) => o is Lib.Order; bool B(object o) => o is Lib.Box<int>.Item; bool D(object o) => o is global::Lib.Credit; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).toContain('Lib.Order');
+    expect(keys).toContain('Lib.Box`1.Item');
+    expect(keys).toContain('Lib.Credit');
+  });
+  it('a dotted name led by a value this file declares is no type', async () => {
+    const { uses } = await run(['class C { Mode Config; bool A(object o) => o is Config.Limit; bool B(object o) => o is Lib.Limit; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).not.toContain('Config.Limit');
+    expect(keys).toContain('Lib.Limit');
+  });
+  it('a generic name, a nullable type and an array type after `is` give the generic with its arity, each type argument and the element type', async () => {
+    const { uses } = await run(['class C { bool A(object o) => o is Box<Item>; bool B(object o) => o is Note?; bool D(object o) => o is Card[]; bool E(object o) => o is Lib::Slip; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).toContain('Box`1');
+    expect(keys).toContain('Item');
+    expect(keys).toContain('Note');
+    expect(keys).toContain('Card');
+  });
+});

@@ -581,6 +581,13 @@ function dottedName(node: Node): string | undefined {
   return head !== undefined && tail.type === 'identifier' ? `${head}.${tail.text}` : undefined;
 }
 
+/** The leftmost identifier of a chain of member accesses (`App` of `App.Models.Order`), or the empty string when the chain starts with anything else, a `global::` name included, which no name this file declares can shadow. */
+function leftmostName(node: Node): string {
+  let cur = node;
+  while (cur.type === 'member_access_expression') cur = cur.childForFieldName('expression')!;
+  return cur.type === 'identifier' ? cur.text : '';
+}
+
 /** Strip a leading `global::` alias qualifier (R12): `global::A.B.Base` → `A.B.Base`, resolved
  *  as a fully-qualified name from the root. A NON-`global` extern/using alias qualifier
  *  (`Lib::A.B`) is left intact — its `::` text never matches a dot-only declaration key, so it
@@ -1446,7 +1453,14 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
       // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
       const expr = node.namedChild(0);
-      if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name')) emitTypeNode(expr);
+      if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name')) emitTypeNode(expr);
+      // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, read as the type it spells. It may also be a constant of a type (`Status.Active`): the receiver reading of the access still gives the type, and a type of the spelled name exists only where the repository declares one, so no type is named after the member.
+      else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr))) emitMemberAccessType(expr);
+      return undefined;
+    }
+    // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
+    if (node.type === 'is_expression') {
+      emitTypeNode(node.childForFieldName('right'));
       return undefined;
     }
     // Generic constraint `where T : Constraint`.
