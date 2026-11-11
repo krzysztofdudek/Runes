@@ -330,6 +330,16 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
   it('csharp-extension-overload-own-project-silence', () => runCase('csharp-extension-overload-own-project-silence'));
 });
 
+describe('MATRIX — C# what a project compiles and what another project may see of it', () => {
+  it('csharp-compile-remove-excluded-file-edge', () => runCase('csharp-compile-remove-excluded-file-edge'));
+  it('csharp-compile-remove-beside-unresolved-include-edge', () => runCase('csharp-compile-remove-beside-unresolved-include-edge'));
+  it('csharp-linked-shared-file-opens-only-that-file-edge', () => runCase('csharp-linked-shared-file-opens-only-that-file-edge'));
+  it('csharp-internal-type-other-project-not-candidate-edge', () => runCase('csharp-internal-type-other-project-not-candidate-edge'));
+  it('csharp-internal-type-internals-visible-to-attribute-silence', () => runCase('csharp-internal-type-internals-visible-to-attribute-silence'));
+  it('csharp-internal-type-internals-visible-to-item-edge', () => runCase('csharp-internal-type-internals-visible-to-item-edge'));
+  it('csharp-internal-extension-other-project-not-candidate-edge', () => runCase('csharp-internal-extension-other-project-not-candidate-edge'));
+});
+
 describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {
   it('csharp-top-level-program-two-entries-referenced-edge', () => runCase('csharp-top-level-program-two-entries-referenced-edge'));
 });

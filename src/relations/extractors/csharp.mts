@@ -160,7 +160,7 @@ interface CsScope {
   /** The enclosing-TYPE chain of the types whose BODY holds the node, joined by `+` as `chain` is. A member of a type, a nested type included, is in scope in that type's body only, never in its attributes, its base list or its constraint clauses (C# spec §7.7.1), so a type's own header is read with the chain of the types around the type, not with its own name. */
   readonly bodyChain: string;
   /** The nearest type declaration around the node, or null. */
-  readonly typeDecl: { readonly node: Node; readonly nested: boolean; readonly fileLocal: boolean } | null;
+  readonly typeDecl: { readonly node: Node; readonly nested: boolean; readonly fileLocal: boolean; readonly seen: TypeSeen } | null;
   /** True when a type around the node carries the C#11 `file` modifier: a type nested in one cannot escape the file either. */
   readonly fileLocal: boolean;
   /** The type parameters in scope for the node. */
@@ -218,7 +218,7 @@ function csBelow(node: Node, own: CsScope): CsScope | undefined {
     const name = declaredTypeName(node);
     if (name !== '') chain = chain === '' ? name : `${chain}+${name}`;
     fileLocal = own.fileLocal || hasFileModifier(node);
-    typeDecl = { node, nested: own.typeDecl !== null, fileLocal };
+    typeDecl = { node, nested: own.typeDecl !== null, fileLocal, seen: typeSeen(node, own.typeDecl) };
     extBelow = false;
     changed = true;
   }
@@ -323,6 +323,47 @@ function extensionKey(ns: string, name: string): string {
  */
 export const IMPLICIT_PROGRAM_KEY = '<Program>$';
 
+/**
+ * The marker key of a declaration only its own assembly sees: `internal:<key>`, declared beside `<key>` by the same file. A type whose effective accessibility stops at its assembly (`internal`, `private`, `private protected`, a top-level type with no access modifier, which C# makes internal, or a type nested in one of those), and an extension method that is not public or whose static class is not, carry it; a resolver given the reference graph drops such a definer for a caller of another compilation unless the defining project grants that caller its internals (`InternalsVisibleTo`). The colon puts the key in a string space no C# name can produce. A `partial` type part without an access modifier is not marked: another part may make it public.
+ */
+export function internalKey(symbolKey: string): string {
+  return `internal:${symbolKey}`;
+}
+
+/** The access modifiers a declaration node carries. */
+function accessModifiers(node: Node): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (c !== null && c.type === 'modifier' && /^(?:public|internal|protected|private|partial)$/.test(c.text)) out.add(c.text);
+  }
+  return out;
+}
+
+/** How far a type is seen: by other assemblies (`open`), by its own assembly only (`assembly`), or not known from this part (`unknown`: a `partial` part without an access modifier, or a type nested in one). */
+type TypeSeen = 'open' | 'assembly' | 'unknown';
+
+/** How far the type declaration `node` is seen, given the type declaration around it (`outer`, null at the top level). It is seen by its own assembly only when it, or a type around it, is `internal`, `private` or `private protected`, or has no access modifier where the default is internal (a top-level type) or private (a type nested in a class, struct or record); a type nested in an interface is public by default. */
+function typeSeen(node: Node, outer: CsScope['typeDecl']): TypeSeen {
+  if (outer !== null && outer.seen === 'assembly') return 'assembly';
+  const mods = accessModifiers(node);
+  let own: TypeSeen;
+  if (mods.has('public') || (mods.has('protected') && !mods.has('private'))) own = 'open';
+  else if (mods.has('internal') || mods.has('private')) own = 'assembly';
+  else if (mods.has('partial')) own = 'unknown';
+  else own = outer !== null && outer.node.type === 'interface_declaration' ? 'open' : 'assembly';
+  return own === 'open' && outer !== null && outer.seen === 'unknown' ? 'unknown' : own;
+}
+
+/** True when an extension method is seen by its own assembly only: the method is not public (or protected), or its static class is seen by its assembly only. A method of the misread C# 14 block form is judged by its class alone. */
+function assemblyOnlyExtension(node: Node, owner: NonNullable<CsScope['typeDecl']>): boolean {
+  if (node.type === 'method_declaration') {
+    const mods = accessModifiers(node);
+    if (!mods.has('public') && !(mods.has('protected') && !mods.has('private'))) return true;
+  }
+  return owner.seen === 'assembly';
+}
+
 /** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
 function firstTopLevelStatement(root: Node): Node | undefined {
   return root.namedChildren.find((c): c is Node => c?.type === 'global_statement');
@@ -424,7 +465,9 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     const extName = extensionMethodName(node, scope);
     if (extName !== undefined) {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
-      out.push({ symbolKey: extensionKey(ns, extName), line: node.startPosition.row + 1 });
+      const symbolKey = extensionKey(ns, extName);
+      out.push({ symbolKey, line: node.startPosition.row + 1 });
+      if (assemblyOnlyExtension(node, scope.typeDecl!)) out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
       return undefined;
     }
     if (!TYPE_DECLARATION_TYPES.has(node.type)) return undefined;
@@ -438,6 +481,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
     const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
     out.push({ symbolKey, line: node.startPosition.row + 1 });
+    if (typeSeen(node, scope.typeDecl) === 'assembly') out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
     return undefined;
   });
 
@@ -2065,7 +2109,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 16,
+  rev: 17,
   declarations,
   uses,
 };

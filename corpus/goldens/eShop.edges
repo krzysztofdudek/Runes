@@ -27,6 +27,7 @@ src/Basket.API/Model/CustomerBasket.cs:7	src/Basket.API/Model/BasketItem.cs
 src/Basket.API/Program.cs:10	src/eShop.ServiceDefaults/Extensions.cs
 src/Basket.API/Program.cs:12	src/Basket.API/Grpc/BasketService.cs
 src/Basket.API/Program.cs:3	src/eShop.ServiceDefaults/Extensions.cs
+src/Basket.API/Program.cs:4	src/Basket.API/Extensions/Extensions.cs
 src/Basket.API/Repositories/IBasketRepository.cs:7	src/Basket.API/Model/CustomerBasket.cs
 src/Basket.API/Repositories/IBasketRepository.cs:8	src/Basket.API/Model/CustomerBasket.cs
 src/Basket.API/Repositories/RedisBasketRepository.cs:23	src/Basket.API/Model/CustomerBasket.cs
@@ -182,6 +183,7 @@ src/Catalog.API/Program.cs:22	src/eShop.ServiceDefaults/Extensions.cs
 src/Catalog.API/Program.cs:26	src/Catalog.API/Apis/CatalogApi.cs
 src/Catalog.API/Program.cs:28	src/eShop.ServiceDefaults/OpenApi.Extensions.cs
 src/Catalog.API/Program.cs:5	src/eShop.ServiceDefaults/Extensions.cs
+src/Catalog.API/Program.cs:6	src/Catalog.API/Extensions/Extensions.cs
 src/Catalog.API/Services/CatalogAI.cs:28	src/Catalog.API/Model/CatalogItem.cs
 src/Catalog.API/Services/CatalogAI.cs:34	src/Catalog.API/Model/CatalogItem.cs
 src/Catalog.API/Services/CatalogAI.cs:7	src/Catalog.API/Services/ICatalogAI.cs
@@ -938,6 +940,7 @@ src/OrderProcessor/Extensions/Extensions.cs:18	src/OrderProcessor/Services/Grace
 src/OrderProcessor/Extensions/Extensions.cs:19	src/OrderProcessor/Services/GracePeriodManagerService.cs
 src/OrderProcessor/Extensions/Extensions.cs:23	src/OrderProcessor/Events/GracePeriodConfirmedIntegrationEvent.cs
 src/OrderProcessor/Program.cs:3	src/eShop.ServiceDefaults/Extensions.cs
+src/OrderProcessor/Program.cs:4	src/OrderProcessor/Extensions/Extensions.cs
 src/OrderProcessor/Program.cs:8	src/eShop.ServiceDefaults/Extensions.cs
 src/OrderProcessor/Services/GracePeriodManagerService.cs:11	src/OrderProcessor/Services/GracePeriodOrdersRepository.cs
 src/OrderProcessor/Services/GracePeriodManagerService.cs:13	src/OrderProcessor/BackgroundTaskOptions.cs
@@ -1289,6 +1292,7 @@ src/Ordering.API/Program.cs:17	src/eShop.ServiceDefaults/Extensions.cs
 src/Ordering.API/Program.cs:21	src/Ordering.API/Apis/OrdersApi.cs
 src/Ordering.API/Program.cs:24	src/eShop.ServiceDefaults/OpenApi.Extensions.cs
 src/Ordering.API/Program.cs:3	src/eShop.ServiceDefaults/Extensions.cs
+src/Ordering.API/Program.cs:4	src/Ordering.API/Extensions/Extensions.cs
 src/Ordering.Domain/AggregatesModel/BuyerAggregate/Buyer.cs:13	src/Ordering.Domain/AggregatesModel/BuyerAggregate/PaymentMethod.cs
 src/Ordering.Domain/AggregatesModel/BuyerAggregate/Buyer.cs:15	src/Ordering.Domain/AggregatesModel/BuyerAggregate/PaymentMethod.cs
 src/Ordering.Domain/AggregatesModel/BuyerAggregate/Buyer.cs:20	src/Ordering.Domain/AggregatesModel/BuyerAggregate/PaymentMethod.cs
@@ -1468,6 +1472,7 @@ src/WebApp/Extensions/Extensions.cs:50	src/WebApp/Services/OrderStatus/Integrati
 src/WebApp/Extensions/Extensions.cs:50	src/WebApp/Services/OrderStatus/IntegrationEvents/Events/OrderStatusChangedToSubmittedIntegrationEvent.cs
 src/WebApp/Extensions/Extensions.cs:60	src/eShop.ServiceDefaults/ConfigurationExtensions.cs
 src/WebApp/Extensions/Extensions.cs:61	src/eShop.ServiceDefaults/ConfigurationExtensions.cs
+src/WebApp/Program.cs:10	src/WebApp/Extensions/Extensions.cs
 src/WebApp/Program.cs:14	src/eShop.ServiceDefaults/Extensions.cs
 src/WebApp/Program.cs:6	src/eShop.ServiceDefaults/Extensions.cs
 src/WebApp/Services/BasketState.cs:10	src/WebApp/Services/BasketService.cs
@@ -1637,6 +1642,7 @@ src/Webhooks.API/Program.cs:16	src/eShop.ServiceDefaults/Extensions.cs
 src/Webhooks.API/Program.cs:20	src/Webhooks.API/Apis/WebHooksApi.cs
 src/Webhooks.API/Program.cs:23	src/eShop.ServiceDefaults/OpenApi.Extensions.cs
 src/Webhooks.API/Program.cs:3	src/eShop.ServiceDefaults/Extensions.cs
+src/Webhooks.API/Program.cs:4	src/Webhooks.API/Extensions/Extensions.cs
 src/Webhooks.API/Services/GrantUrlTesterService.cs:3	src/Webhooks.API/Services/IGrantUrlTesterService.cs
 src/Webhooks.API/Services/IWebhooksRetriever.cs:6	src/Webhooks.API/Model/WebhookSubscription.cs
 src/Webhooks.API/Services/IWebhooksRetriever.cs:6	src/Webhooks.API/Model/WebhookType.cs
@@ -1742,9 +1748,11 @@ tests/Basket.UnitTests/BasketServiceTests.cs:74	src/Basket.API/Grpc/BasketServic
 tests/Basket.UnitTests/BasketServiceTests.cs:84	src/Basket.API/Model/CustomerBasket.cs
 tests/Basket.UnitTests/BasketServiceTests.cs:94	src/Basket.API/Repositories/IBasketRepository.cs
 tests/Basket.UnitTests/BasketServiceTests.cs:95	src/Basket.API/Grpc/BasketService.cs
+tests/Catalog.FunctionalTests/CatalogApiFixture.cs:10	src/Catalog.API/Program.Testing.cs
 tests/Catalog.FunctionalTests/CatalogApiTests.cs:113	src/Catalog.API/Model/CatalogItem.cs
 tests/Catalog.FunctionalTests/CatalogApiTests.cs:13	tests/Catalog.FunctionalTests/CatalogApiFixture.cs
 tests/Catalog.FunctionalTests/CatalogApiTests.cs:134	src/Catalog.API/Model/CatalogItem.cs
+tests/Catalog.FunctionalTests/CatalogApiTests.cs:15	src/Catalog.API/Program.Testing.cs
 tests/Catalog.FunctionalTests/CatalogApiTests.cs:153	src/Catalog.API/Model/CatalogItem.cs
 tests/Catalog.FunctionalTests/CatalogApiTests.cs:178	src/Catalog.API/Model/CatalogItem.cs
 tests/Catalog.FunctionalTests/CatalogApiTests.cs:178	src/Catalog.API/Model/PaginatedItems.cs
@@ -1997,6 +2005,7 @@ tests/Ordering.UnitTests/Domain/SeedWork/ValueObjectTests.cs:8	src/Ordering.Doma
 tests/Webhooks.FunctionalTests/WebhooksApiFixture.cs:42	src/Webhooks.API/Services/IGrantUrlTesterService.cs
 tests/Webhooks.FunctionalTests/WebhooksApiFixture.cs:43	src/Webhooks.API/Services/IGrantUrlTesterService.cs
 tests/Webhooks.FunctionalTests/WebhooksApiFixture.cs:75	tests/Webhooks.FunctionalTests/TestAuthenticationMiddleware.cs
+tests/Webhooks.FunctionalTests/WebhooksApiFixture.cs:8	src/Webhooks.API/Program.cs
 tests/Webhooks.FunctionalTests/WebhooksApiFixture.cs:81	src/Webhooks.API/Services/IGrantUrlTesterService.cs
 tests/Webhooks.FunctionalTests/WebhooksApiTests.cs:24	src/Webhooks.API/Model/WebhookSubscriptionRequest.cs
 tests/Webhooks.FunctionalTests/WebhooksApiTests.cs:44	src/Webhooks.API/Model/WebhookSubscription.cs

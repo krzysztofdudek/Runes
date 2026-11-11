@@ -11,10 +11,13 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
  *   - `<ProjectReference Include>`: a path relative to the file that holds it (and, in an imported file, to the project too: both readings are taken), or one that starts with `$(MSBuildThisFileDirectory)` or `$(MSBuildProjectDirectory)`; a wildcard is matched against the project files of the repository; a path with any other property is unresolvable, so the project is OPEN;
  *   - `<Reference Include="Name, Version=…">` with or without a `<HintPath>`: the in-repository project whose assembly name (its `<AssemblyName>`, or its file's name) equals the name or the HintPath's file name; no such project: an external assembly, nothing;
  *   - `<PackageReference Include="Id">` naming an in-repository project by its `<PackageId>` or assembly name: a repository that consumes its own packages;
- *   - `<Compile Include>` naming files outside the project's directory, an `<Import>` of a `.projitems` shared project, and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups): the project is OPEN. An import of a file the view holds is read like the project file itself.
+ *   - `<Compile Include>` naming files outside the project's directory adds those files, and only those, to the project's compilation (a LINKED file, below); one whose path needs a property this reader does not know, or leaves the repository, could name anything, so the project is OPEN, as it is for an `<Import>` of a `.projitems` shared project and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups). An import of a file the view holds is read like the project file itself.
+ *   - `<Compile Remove>`: a file of the project's directory that the item names is in no compilation of that project, so it declares nothing any caller can see. Only a removal that always applies is read: one under a condition (on the item, its `ItemGroup` or a `Choose` branch) or inside a `Target` may not, a file that a `<Compile Include>` of the same project names again is kept, whatever the order, and a project with a `<Compile Include>` this reader cannot place (a path with a property it does not know) keeps every file, because that include may put any of them back.
  * Conditions are read, never evaluated: every branch counts. References are transitive, as in SDK-style projects (`PrivateAssets` and `DisableTransitiveProjectReferences` are not read: only more reach). An OPEN project reaches everything, and so does every project that reaches an open one.
  *
- * A file that another project compiles through a `Compile` item outside that project's directory (a linked file) is code of that project too: as a caller it sees what the linking project references, as a target it is seen by it (the linking project is open, so it reaches everything).
+ * A file that another project compiles through a `Compile` item outside that project's directory (a linked file) is code of that project too: as a caller it sees what the linking project references, as a target it is seen by the linking project and by every project that reaches it. A linked file under no project file is code of the projects that link it alone. Two files that one compilation holds are `same` to each other.
+ *
+ * INTERNALS. An internal type is seen only by its own compilation and by the assemblies that compilation names as friends (`InternalsVisibleTo`). A project's friends are read from its `<InternalsVisibleTo Include>` items (in its project files and the `Directory.Build.*` files above it; `$(MSBuildProjectName)` and `$(AssemblyName)` read as the project's names), its `<AssemblyAttribute Include="…InternalsVisibleTo">` items, and the `[assembly: InternalsVisibleTo("…")]` attributes of the C# files it compiles, read only when a caller first asks about that project. A grant this reader cannot name (a property it does not know, a constant instead of a string) names every project, and a pair the graph knows nothing about is visible: the answer fails open here too.
  *
  * Every path is matched segment by segment in any case (a Windows or macOS author's spelling builds there). Everything unknown fails OPEN: a reference, a `Directory.Build.*` name or an import that names a file of the repository this reader cannot find opens its project, and the answer then allows the candidate, so the worst case is the answer before this module existed.
  */
@@ -23,7 +26,11 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
 export type Reach = 'same' | 'reachable' | 'unreachable' | 'unknown';
 
 /** Whether the project of `fromFile` can see the declarations of `targetFile` (repository-relative POSIX paths). See {@link buildCsharpReachability}. */
-export type Reachability = (fromFile: string, targetFile: string) => Reach;
+export interface Reachability {
+  (fromFile: string, targetFile: string): Reach;
+  /** Whether `fromFile` may see the internal declarations of `targetFile`: the two share a compilation, or a compilation of the target that the caller's project reaches names the caller's assembly as a friend (`InternalsVisibleTo`). True whenever the graph cannot say. A resolver given a `Reachability` without it reads no declaration as internal. */
+  internalsVisible?(fromFile: string, targetFile: string): boolean;
+}
 
 /** Project file extensions whose references are read (the C# ones are the projects of `.cs` files; the others are links a reference chain may pass through). */
 const PROJECT_FILE = /\.(?:cs|fs|vb)proj$/i;
@@ -39,7 +46,7 @@ function norm(p: string): string {
   return path.posix.normalize(p.replace(/\\/g, '/')).replace(/\/$/, '') || '.';
 }
 
-/** A glob (`*`, `**`, `?`) as an anchored, case-insensitive regular expression over normalized paths. */
+/** A glob (`*`, `**`, `?`) as an anchored, case-insensitive regular expression over normalized paths. A `**` that ends the glob (`Old/**`) matches every file below, as in MSBuild. */
 function globToRegExp(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
@@ -47,8 +54,11 @@ function globToRegExp(glob: string): RegExp {
     if (c === '*') {
       if (glob[i + 1] === '*') {
         i++;
-        if (glob[i + 1] === '/') i++;
-        re += '(?:.*/)?';
+        if (i + 1 === glob.length) re += '.*';
+        else {
+          if (glob[i + 1] === '/') i++;
+          re += '(?:.*/)?';
+        }
       } else re += '[^/]*';
     } else if (c === '?') re += '[^/]';
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
@@ -56,10 +66,30 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`, 'i');
 }
 
+/** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
+const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
+
 /** The names an item's `Include` attribute lists (`;`-separated), trimmed and not empty. */
 function includes(attrText: string): string[] {
   const value = attributes(attrText).get('include');
   return value === undefined ? [] : value.split(';').map((s) => s.trim()).filter((s) => s !== '');
+}
+
+/** True when the item whose start tag is at `index` of `text` may not always apply: it has a `Condition`, or it sits in an `ItemGroup` with one, in a `Choose` branch or in a `Target`. */
+function conditional(text: string, index: number, attrText: string): boolean {
+  if (attributes(attrText).has('condition')) return true;
+  const open: Array<{ name: string; condition: boolean }> = [];
+  const tags = new RegExp(`<(\\/?)(ItemGroup|Target|Choose|When|Otherwise)\\b${ATTRS}(\\/?)>`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = tags.exec(text)) !== null && m.index < index) {
+    if (m[4] === '/') continue;
+    const name = m[2].toLowerCase();
+    if (m[1] === '/') {
+      const at = open.map((e) => e.name).lastIndexOf(name);
+      if (at !== -1) open.length = at;
+    } else open.push({ name, condition: attributes(m[3]).has('condition') });
+  }
+  return open.some((e) => e.condition || e.name !== 'itemgroup');
 }
 
 /** The file name without its directory and extension, of a path in either separator style. */
@@ -80,8 +110,10 @@ export function buildCsharpReachability(
   const source: FileSource = options?.files ?? diskFileView(projectRoot, false);
   const loc = makeProjectLocator(source);
 
+  const files = [...csFiles];
+  const known = new Set(files);
   const projectOf = new Map<string, string>();
-  for (const f of csFiles) {
+  for (const f of files) {
     const dir = loc.projectDirOf(f);
     if (dir !== null) projectOf.set(f, dir);
   }
@@ -171,9 +203,9 @@ export function buildCsharpReachability(
 
   /** A path an item names, resolved against the directory of the file that holds it, or `unresolved` when it needs a property this reader does not know, or `outside` when it leaves the repository. */
   type Resolved = { kind: 'path'; path: string } | { kind: 'unresolved' } | { kind: 'outside' };
-  const resolveItemPath = (raw: string, declDir: string, projectDir: string): Resolved => {
+  const resolveItemPath = (raw: string, declDir: string, projectDir: string, plainBase: string = declDir): Resolved => {
     let value = raw.replace(/\\/g, '/');
-    let base = declDir;
+    let base = plainBase;
     const lead = /^\$\((MSBuildThisFileDirectory|MSBuildProjectDirectory)\)\/?/i.exec(value);
     if (lead !== null) {
       base = lead[1].toLowerCase() === 'msbuildthisfiledirectory' ? declDir : projectDir;
@@ -192,12 +224,26 @@ export function buildCsharpReachability(
     return declDir === projectDir ? [own] : [own, resolveItemPath(raw, projectDir, projectDir)];
   };
 
-  interface Facts { refs: Set<string>; open: boolean; links: RegExp[] }
+  /** `removed`: the patterns of the project's own files that it takes out of its compilation; `kept`: the patterns its `Compile Include` items name inside its directory, which put a removed file back; `keepsAll`: a `Compile Include` this reader cannot place, which may put any removed file back; `friends`: the lower-cased assembly names the project grants its internals; `everyFriend`: a grant this reader cannot name. */
+  interface Facts { refs: Set<string>; open: boolean; links: RegExp[]; removed: RegExp[]; kept: RegExp[]; keepsAll: boolean; friends: Set<string>; everyFriend: boolean }
   const factsCache = new Map<string, Facts>();
   const factsOf = (projectDir: string): Facts => {
     const hit = factsCache.get(projectDir);
     if (hit !== undefined) return hit;
-    const facts: Facts = { refs: new Set(), open: false, links: [] };
+    const facts: Facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
+    /** A friend's name as written, its properties read as this project's names; an unknown property names every project. */
+    const addFriend = (raw: string): void => {
+      const own = projectFilesIn(projectDir);
+      let written = [raw.split(',')[0].trim()];
+      for (const [prop, values] of [['MSBuildProjectName', own.map(stem)], ['AssemblyName', own.flatMap(namesOfProject)]] as const) {
+        const re = new RegExp(`\\$\\(${prop}\\)`, 'gi');
+        written = written.flatMap((w) => (w.search(re) === -1 ? [w] : values.map((v) => w.replace(re, v))));
+      }
+      for (const w of written) {
+        if (/[$%@]\(/.test(w)) facts.everyFriend = true;
+        else if (w !== '') facts.friends.add(w.toLowerCase());
+      }
+    };
     factsCache.set(projectDir, facts);
 
     const queue: string[] = [];
@@ -258,17 +304,34 @@ export function buildCsharpReachability(
         for (const id of includes(m[1])) for (const dir of projectDirsNamed(id)) facts.refs.add(dir);
       }
 
-      const compiles = /<Compile\b([^>]*?)\/?>/gi;
+      const compiles = new RegExp(`<Compile\\b${ATTRS}\\/?>`, 'gi');
       while ((m = compiles.exec(text)) !== null) {
         for (const item of includes(m[1])) {
           for (const r of resolveItemPaths(item, declDir, projectDir)) {
-            if (r.kind !== 'path') facts.open = true;
-            else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix)) {
+            if (r.kind !== 'path') {
               facts.open = true;
-              facts.links.push(globToRegExp(r.path));
-            }
+              if (r.kind === 'unresolved') facts.keepsAll = true;
+            } else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix)) facts.links.push(globToRegExp(r.path));
+            else facts.kept.push(globToRegExp(r.path));
           }
         }
+        const remove = attributes(m[1]).get('remove');
+        if (remove === undefined || conditional(text, m.index, m[1])) continue;
+        // MSBuild reads an item's relative path against the project being built, whichever imported file holds it; a removal is read in that one way only, because a second reading could take out a file the project compiles.
+        for (const item of remove.split(';').map((v) => v.trim()).filter((v) => v !== '')) {
+          const r = resolveItemPath(item, declDir, projectDir, projectDir);
+          if (r.kind === 'path') facts.removed.push(globToRegExp(r.path));
+        }
+      }
+
+      const friends = /<InternalsVisibleTo\b([^>]*?)\/?>/gi;
+      while ((m = friends.exec(text)) !== null) for (const name of includes(m[1])) addFriend(name);
+      const assemblyAttributes = /<AssemblyAttribute\b([^>]*?)(?:\/>|>([\s\S]*?)<\/AssemblyAttribute>)/gi;
+      while ((m = assemblyAttributes.exec(text)) !== null) {
+        if (!includes(m[1]).some((n) => /(?:^|\.)InternalsVisibleTo(?:Attribute)?$/i.test(n))) continue;
+        const parameter = m[2] === undefined ? undefined : /<_Parameter1\b[^>]*>([^<]*)<\/_Parameter1>/i.exec(m[2])?.[1];
+        if (parameter === undefined) facts.everyFriend = true;
+        else addFriend(parameter);
       }
 
       const imports = /<Import\b([^>]*?)\/?>/gi;
@@ -323,7 +386,7 @@ export function buildCsharpReachability(
   /** Every project's `Compile` links that leave its directory, as `[project directory, pattern]`, read once. */
   let linkIndex: Array<[string, RegExp]> | undefined;
   /** The projects, other than the file's own, that compile the file through a `Compile` item outside their directory: the file is also code of each of them, so it sees what they reference. */
-  const linkersOf = (file: string, own: string): string[] => {
+  const linkersOf = (file: string, own: string | undefined): string[] => {
     if (linkIndex === undefined) {
       linkIndex = [];
       for (const dir of new Set(everyProjectFile().map((f) => path.posix.dirname(f)))) {
@@ -333,17 +396,96 @@ export function buildCsharpReachability(
     return [...new Set(linkIndex.filter(([dir, re]) => dir !== own && re.test(file)).map(([dir]) => dir))];
   };
 
-  return (fromFile, targetFile) => {
-    const from = projectOf.get(fromFile);
-    const target = projectOf.get(targetFile);
-    if (from === undefined || target === undefined) return 'unknown';
-    if (from === target) return 'same';
+  /** True when the file's own project compiles it: no `Compile Remove` of the project takes it out, a `Compile Include` of the project names it again, or one the reader cannot place might. */
+  const compiledByOwn = (file: string, own: string): boolean => {
+    const facts = factsOf(own);
+    return facts.keepsAll || !facts.removed.some((re) => re.test(file)) || facts.kept.some((re) => re.test(file));
+  };
+
+  /** The projects whose compilation holds the file: its own project unless that project removes it, and every project that links it. Undefined when the graph knows nothing of the file: it is not one of the files the graph was built for, or it lies under no project file and no project links it. */
+  const compilations = new Map<string, string[] | undefined>();
+  const compilationsOf = (file: string): string[] | undefined => {
+    if (compilations.has(file)) return compilations.get(file);
+    let out: string[] | undefined;
+    if (known.has(file)) {
+      const own = projectOf.get(file);
+      const linkers = linkersOf(file, own);
+      if (own === undefined) out = linkers.length === 0 ? undefined : linkers;
+      else out = compiledByOwn(file, own) ? [own, ...linkers] : linkers;
+    }
+    compilations.set(file, out);
+    return out;
+  };
+
+  /** The names the assembly of a project directory answers to (see `namesOfProject`), read once. */
+  const assemblyNames = new Map<string, string[]>();
+  const assemblyNamesIn = (dir: string): string[] => {
+    let hit = assemblyNames.get(dir);
+    if (hit === undefined) assemblyNames.set(dir, (hit = projectFilesIn(dir).flatMap(namesOfProject)));
+    return hit;
+  };
+
+  /** The C# files a compilation holds, its own and the ones it links. */
+  const filesOfCompilation = new Map<string, string[]>();
+  const compiledFiles = (dir: string): string[] => {
+    let hit = filesOfCompilation.get(dir);
+    if (hit === undefined) filesOfCompilation.set(dir, (hit = files.filter((f) => compilationsOf(f)?.includes(dir) === true)));
+    return hit;
+  };
+
+  /** Whether the project grants its internals to one of `names`: its MSBuild items, then the assembly attributes of the C# files it compiles. */
+  const sourceFriends = new Map<string, { friends: Set<string>; everyFriend: boolean }>();
+  const grants = (dir: string, names: readonly string[]): boolean => {
+    const facts = factsOf(dir);
+    if (facts.everyFriend || names.some((n) => facts.friends.has(n))) return true;
+    let found = sourceFriends.get(dir);
+    if (found === undefined) {
+      found = { friends: new Set(), everyFriend: false };
+      sourceFriends.set(dir, found);
+      for (const f of compiledFiles(dir)) {
+        const text = source.read(f);
+        if (text === undefined || !text.includes('InternalsVisibleTo')) continue;
+        const attributeLists = /\[\s*assembly\s*:([^\]]*)\]/g;
+        let m: RegExpExecArray | null;
+        while ((m = attributeLists.exec(text)) !== null) {
+          const grantsIn = /\bInternalsVisibleTo(?:Attribute)?\s*\(([^)]*)\)/g;
+          let g: RegExpExecArray | null;
+          while ((g = grantsIn.exec(m[1])) !== null) {
+            const literal = /^\s*@?"([^"]*)"\s*$/.exec(g[1]);
+            if (literal === null) found.everyFriend = true;
+            else found.friends.add(literal[1].split(',')[0].trim().toLowerCase());
+          }
+        }
+      }
+    }
+    return found.everyFriend || names.some((n) => found.friends.has(n));
+  };
+
+  const reach = ((fromFile: string, targetFile: string): Reach => {
+    const callers = compilationsOf(fromFile);
+    const targets = compilationsOf(targetFile);
+    // A file in no compilation (removed by its project, linked by none): as a target it declares nothing anyone sees; as a caller its references bind nowhere, which the graph cannot say anything about.
+    if (callers === undefined || targets === undefined || callers.length === 0) return 'unknown';
+    if (targets.length === 0) return 'unreachable';
+    if (callers.some((c) => targets.includes(c))) return 'same';
     let open = false;
-    for (const root of [from, ...linkersOf(fromFile, from)]) {
+    for (const root of callers) {
       const closure = closureOf(root);
-      if (closure.reaches.has(target)) return 'reachable';
+      if (targets.some((t) => closure.reaches.has(t))) return 'reachable';
       if (closure.open) open = true;
     }
     return open ? 'unknown' : 'unreachable';
+  }) as Reachability;
+
+  reach.internalsVisible = (fromFile, targetFile) => {
+    const callers = compilationsOf(fromFile);
+    const targets = compilationsOf(targetFile);
+    if (callers === undefined || targets === undefined || callers.length === 0 || targets.length === 0) return true;
+    if (callers.some((c) => targets.includes(c))) return true;
+    const reached = targets.filter((t) => callers.some((c) => closureOf(c).reaches.has(t)));
+    if (reached.length === 0) return true;
+    const names = [...new Set(callers.flatMap(assemblyNamesIn))];
+    return reached.some((t) => grants(t, names));
   };
+  return reach;
 }

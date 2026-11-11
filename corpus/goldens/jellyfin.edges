@@ -32388,7 +32388,6 @@ tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs:74	Jellyfi
 tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs:77	Jellyfin.Server/Program.cs
 tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs:84	tests/Jellyfin.Server.Integration.Tests/TestAppHost.cs
 tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs:91	Jellyfin.Server/Extensions/WebHostBuilderExtensions.cs
-tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs:91	Jellyfin.Server/Program.cs
 tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs:97	Emby.Server.Implementations/ConfigurationOptions.cs
 tests/Jellyfin.Server.Integration.Tests/Middleware/RobotsRedirectionMiddlewareTests.cs:10	tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs
 tests/Jellyfin.Server.Integration.Tests/Middleware/RobotsRedirectionMiddlewareTests.cs:12	tests/Jellyfin.Server.Integration.Tests/JellyfinApplicationFactory.cs

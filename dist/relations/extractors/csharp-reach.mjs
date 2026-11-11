@@ -11,7 +11,7 @@ const SKIPPED_DIRS = new Set(['bin', 'obj', 'node_modules']);
 function norm(p) {
     return path.posix.normalize(p.replace(/\\/g, '/')).replace(/\/$/, '') || '.';
 }
-/** A glob (`*`, `**`, `?`) as an anchored, case-insensitive regular expression over normalized paths. */
+/** A glob (`*`, `**`, `?`) as an anchored, case-insensitive regular expression over normalized paths. A `**` that ends the glob (`Old/**`) matches every file below, as in MSBuild. */
 function globToRegExp(glob) {
     let re = '';
     for (let i = 0; i < glob.length; i++) {
@@ -19,9 +19,13 @@ function globToRegExp(glob) {
         if (c === '*') {
             if (glob[i + 1] === '*') {
                 i++;
-                if (glob[i + 1] === '/')
-                    i++;
-                re += '(?:.*/)?';
+                if (i + 1 === glob.length)
+                    re += '.*';
+                else {
+                    if (glob[i + 1] === '/')
+                        i++;
+                    re += '(?:.*/)?';
+                }
             }
             else
                 re += '[^/]*';
@@ -33,10 +37,33 @@ function globToRegExp(glob) {
     }
     return new RegExp(`^${re}$`, 'i');
 }
+/** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
+const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
 /** The names an item's `Include` attribute lists (`;`-separated), trimmed and not empty. */
 function includes(attrText) {
     const value = attributes(attrText).get('include');
     return value === undefined ? [] : value.split(';').map((s) => s.trim()).filter((s) => s !== '');
+}
+/** True when the item whose start tag is at `index` of `text` may not always apply: it has a `Condition`, or it sits in an `ItemGroup` with one, in a `Choose` branch or in a `Target`. */
+function conditional(text, index, attrText) {
+    if (attributes(attrText).has('condition'))
+        return true;
+    const open = [];
+    const tags = new RegExp(`<(\\/?)(ItemGroup|Target|Choose|When|Otherwise)\\b${ATTRS}(\\/?)>`, 'gi');
+    let m;
+    while ((m = tags.exec(text)) !== null && m.index < index) {
+        if (m[4] === '/')
+            continue;
+        const name = m[2].toLowerCase();
+        if (m[1] === '/') {
+            const at = open.map((e) => e.name).lastIndexOf(name);
+            if (at !== -1)
+                open.length = at;
+        }
+        else
+            open.push({ name, condition: attributes(m[3]).has('condition') });
+    }
+    return open.some((e) => e.condition || e.name !== 'itemgroup');
 }
 /** The file name without its directory and extension, of a path in either separator style. */
 function stem(p) {
@@ -50,8 +77,10 @@ function stem(p) {
 export function buildCsharpReachability(projectRoot, csFiles, options) {
     const source = options?.files ?? diskFileView(projectRoot, false);
     const loc = makeProjectLocator(source);
+    const files = [...csFiles];
+    const known = new Set(files);
     const projectOf = new Map();
-    for (const f of csFiles) {
+    for (const f of files) {
         const dir = loc.projectDirOf(f);
         if (dir !== null)
             projectOf.set(f, dir);
@@ -141,9 +170,9 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         }
         return source.isFile(at) ? at : undefined;
     };
-    const resolveItemPath = (raw, declDir, projectDir) => {
+    const resolveItemPath = (raw, declDir, projectDir, plainBase = declDir) => {
         let value = raw.replace(/\\/g, '/');
-        let base = declDir;
+        let base = plainBase;
         const lead = /^\$\((MSBuildThisFileDirectory|MSBuildProjectDirectory)\)\/?/i.exec(value);
         if (lead !== null) {
             base = lead[1].toLowerCase() === 'msbuildthisfiledirectory' ? declDir : projectDir;
@@ -168,7 +197,22 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const hit = factsCache.get(projectDir);
         if (hit !== undefined)
             return hit;
-        const facts = { refs: new Set(), open: false, links: [] };
+        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
+        /** A friend's name as written, its properties read as this project's names; an unknown property names every project. */
+        const addFriend = (raw) => {
+            const own = projectFilesIn(projectDir);
+            let written = [raw.split(',')[0].trim()];
+            for (const [prop, values] of [['MSBuildProjectName', own.map(stem)], ['AssemblyName', own.flatMap(namesOfProject)]]) {
+                const re = new RegExp(`\\$\\(${prop}\\)`, 'gi');
+                written = written.flatMap((w) => (w.search(re) === -1 ? [w] : values.map((v) => w.replace(re, v))));
+            }
+            for (const w of written) {
+                if (/[$%@]\(/.test(w))
+                    facts.everyFriend = true;
+                else if (w !== '')
+                    facts.friends.add(w.toLowerCase());
+            }
+        };
         factsCache.set(projectDir, facts);
         const queue = [];
         const queued = new Set();
@@ -236,18 +280,44 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                     for (const dir of projectDirsNamed(id))
                         facts.refs.add(dir);
             }
-            const compiles = /<Compile\b([^>]*?)\/?>/gi;
+            const compiles = new RegExp(`<Compile\\b${ATTRS}\\/?>`, 'gi');
             while ((m = compiles.exec(text)) !== null) {
                 for (const item of includes(m[1])) {
                     for (const r of resolveItemPaths(item, declDir, projectDir)) {
-                        if (r.kind !== 'path')
+                        if (r.kind !== 'path') {
                             facts.open = true;
-                        else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix)) {
-                            facts.open = true;
-                            facts.links.push(globToRegExp(r.path));
+                            if (r.kind === 'unresolved')
+                                facts.keepsAll = true;
                         }
+                        else if (projectDirPrefix !== '' && !`${r.path}/`.startsWith(projectDirPrefix))
+                            facts.links.push(globToRegExp(r.path));
+                        else
+                            facts.kept.push(globToRegExp(r.path));
                     }
                 }
+                const remove = attributes(m[1]).get('remove');
+                if (remove === undefined || conditional(text, m.index, m[1]))
+                    continue;
+                // MSBuild reads an item's relative path against the project being built, whichever imported file holds it; a removal is read in that one way only, because a second reading could take out a file the project compiles.
+                for (const item of remove.split(';').map((v) => v.trim()).filter((v) => v !== '')) {
+                    const r = resolveItemPath(item, declDir, projectDir, projectDir);
+                    if (r.kind === 'path')
+                        facts.removed.push(globToRegExp(r.path));
+                }
+            }
+            const friends = /<InternalsVisibleTo\b([^>]*?)\/?>/gi;
+            while ((m = friends.exec(text)) !== null)
+                for (const name of includes(m[1]))
+                    addFriend(name);
+            const assemblyAttributes = /<AssemblyAttribute\b([^>]*?)(?:\/>|>([\s\S]*?)<\/AssemblyAttribute>)/gi;
+            while ((m = assemblyAttributes.exec(text)) !== null) {
+                if (!includes(m[1]).some((n) => /(?:^|\.)InternalsVisibleTo(?:Attribute)?$/i.test(n)))
+                    continue;
+                const parameter = m[2] === undefined ? undefined : /<_Parameter1\b[^>]*>([^<]*)<\/_Parameter1>/i.exec(m[2])?.[1];
+                if (parameter === undefined)
+                    facts.everyFriend = true;
+                else
+                    addFriend(parameter);
             }
             const imports = /<Import\b([^>]*?)\/?>/gi;
             while ((m = imports.exec(text)) !== null) {
@@ -318,21 +388,107 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         }
         return [...new Set(linkIndex.filter(([dir, re]) => dir !== own && re.test(file)).map(([dir]) => dir))];
     };
-    return (fromFile, targetFile) => {
-        const from = projectOf.get(fromFile);
-        const target = projectOf.get(targetFile);
-        if (from === undefined || target === undefined)
+    /** True when the file's own project compiles it: no `Compile Remove` of the project takes it out, a `Compile Include` of the project names it again, or one the reader cannot place might. */
+    const compiledByOwn = (file, own) => {
+        const facts = factsOf(own);
+        return facts.keepsAll || !facts.removed.some((re) => re.test(file)) || facts.kept.some((re) => re.test(file));
+    };
+    /** The projects whose compilation holds the file: its own project unless that project removes it, and every project that links it. Undefined when the graph knows nothing of the file: it is not one of the files the graph was built for, or it lies under no project file and no project links it. */
+    const compilations = new Map();
+    const compilationsOf = (file) => {
+        if (compilations.has(file))
+            return compilations.get(file);
+        let out;
+        if (known.has(file)) {
+            const own = projectOf.get(file);
+            const linkers = linkersOf(file, own);
+            if (own === undefined)
+                out = linkers.length === 0 ? undefined : linkers;
+            else
+                out = compiledByOwn(file, own) ? [own, ...linkers] : linkers;
+        }
+        compilations.set(file, out);
+        return out;
+    };
+    /** The names the assembly of a project directory answers to (see `namesOfProject`), read once. */
+    const assemblyNames = new Map();
+    const assemblyNamesIn = (dir) => {
+        let hit = assemblyNames.get(dir);
+        if (hit === undefined)
+            assemblyNames.set(dir, (hit = projectFilesIn(dir).flatMap(namesOfProject)));
+        return hit;
+    };
+    /** The C# files a compilation holds, its own and the ones it links. */
+    const filesOfCompilation = new Map();
+    const compiledFiles = (dir) => {
+        let hit = filesOfCompilation.get(dir);
+        if (hit === undefined)
+            filesOfCompilation.set(dir, (hit = files.filter((f) => compilationsOf(f)?.includes(dir) === true)));
+        return hit;
+    };
+    /** Whether the project grants its internals to one of `names`: its MSBuild items, then the assembly attributes of the C# files it compiles. */
+    const sourceFriends = new Map();
+    const grants = (dir, names) => {
+        const facts = factsOf(dir);
+        if (facts.everyFriend || names.some((n) => facts.friends.has(n)))
+            return true;
+        let found = sourceFriends.get(dir);
+        if (found === undefined) {
+            found = { friends: new Set(), everyFriend: false };
+            sourceFriends.set(dir, found);
+            for (const f of compiledFiles(dir)) {
+                const text = source.read(f);
+                if (text === undefined || !text.includes('InternalsVisibleTo'))
+                    continue;
+                const attributeLists = /\[\s*assembly\s*:([^\]]*)\]/g;
+                let m;
+                while ((m = attributeLists.exec(text)) !== null) {
+                    const grantsIn = /\bInternalsVisibleTo(?:Attribute)?\s*\(([^)]*)\)/g;
+                    let g;
+                    while ((g = grantsIn.exec(m[1])) !== null) {
+                        const literal = /^\s*@?"([^"]*)"\s*$/.exec(g[1]);
+                        if (literal === null)
+                            found.everyFriend = true;
+                        else
+                            found.friends.add(literal[1].split(',')[0].trim().toLowerCase());
+                    }
+                }
+            }
+        }
+        return found.everyFriend || names.some((n) => found.friends.has(n));
+    };
+    const reach = ((fromFile, targetFile) => {
+        const callers = compilationsOf(fromFile);
+        const targets = compilationsOf(targetFile);
+        // A file in no compilation (removed by its project, linked by none): as a target it declares nothing anyone sees; as a caller its references bind nowhere, which the graph cannot say anything about.
+        if (callers === undefined || targets === undefined || callers.length === 0)
             return 'unknown';
-        if (from === target)
+        if (targets.length === 0)
+            return 'unreachable';
+        if (callers.some((c) => targets.includes(c)))
             return 'same';
         let open = false;
-        for (const root of [from, ...linkersOf(fromFile, from)]) {
+        for (const root of callers) {
             const closure = closureOf(root);
-            if (closure.reaches.has(target))
+            if (targets.some((t) => closure.reaches.has(t)))
                 return 'reachable';
             if (closure.open)
                 open = true;
         }
         return open ? 'unknown' : 'unreachable';
+    });
+    reach.internalsVisible = (fromFile, targetFile) => {
+        const callers = compilationsOf(fromFile);
+        const targets = compilationsOf(targetFile);
+        if (callers === undefined || targets === undefined || callers.length === 0 || targets.length === 0)
+            return true;
+        if (callers.some((c) => targets.includes(c)))
+            return true;
+        const reached = targets.filter((t) => callers.some((c) => closureOf(c).reaches.has(t)));
+        if (reached.length === 0)
+            return true;
+        const names = [...new Set(callers.flatMap(assemblyNamesIn))];
+        return reached.some((t) => grants(t, names));
     };
+    return reach;
 }
