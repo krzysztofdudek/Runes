@@ -8,7 +8,7 @@ cites: "Rust Reference, Macros By Example (`#[macro_use] mod macros;` brings a m
 
 ## Rule
 
-`src/lib.rs` brings `decl_mods!` into scope from `src/macros.rs` and invokes it as `decl_mods!(late);`, and `src/main.rs` is a second crate with an `Opts` of its own. The `mod late;` exists only through an expansion of a macro defined in another file, which the reader of the root does not follow, so the root cannot be read to the end: the module is left to the first root and `crate::Opts` in `src/late/mod.rs` binds `src/lib.rs` (owner root).
+`src/lib.rs` brings `decl_mods!` into scope from `src/macros.rs` and invokes it as `decl_mods!(late);`, and `src/main.rs` is a second crate with an `Opts` of its own. The `mod late;` exists only through an expansion of a macro defined in another file, which is not read, so no plain `mod` declaration leads from a root to `src/late/mod.rs`: the roots are tried in their usual order, and its `crate::Opts` binds `src/lib.rs` (owner root).
 
 ## Files
 

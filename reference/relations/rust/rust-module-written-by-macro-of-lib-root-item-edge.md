@@ -8,7 +8,7 @@ cites: "Rust Reference, Macros By Example (a `macro_rules!` expansion at the cra
 
 ## Rule
 
-`src/lib.rs` defines a `macro_rules!` macro whose body writes `mod $name;` and invokes it as `decl!(late);`, and `src/main.rs` is a second crate with an `Opts` of its own. The module `late` exists only through the expansion, which the reader does not follow, so its owner is left to the first root and `crate::Opts` in `src/late/mod.rs` binds `src/lib.rs` (owner root).
+`src/lib.rs` defines a `macro_rules!` macro whose body writes `mod $name;` and invokes it as `decl!(late);`, and `src/main.rs` is a second crate with an `Opts` of its own. The module `late` exists only through the expansion, which is not read, so no plain `mod` declaration leads from a root to `src/late/mod.rs`: the roots are tried in their usual order, and its `crate::Opts` binds `src/lib.rs` (owner root).
 
 ## Files
 

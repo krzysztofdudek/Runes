@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustModuleFileKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
 import type { SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -50,7 +50,7 @@ export interface ResolvePathOptions {
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate.
  *
- *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for one question only: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs; the Rust extractor declares those names from the file's parse tree (`rustTopLevelItemKey`). Without the table no name is known to be such an item, so those paths stay silent. */
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for two questions, both answered by what the Rust extractor declares from each file's parse tree: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs (`rustTopLevelItemKey`), and which files a file declares as its modules by name alone, which tells the crate roots that compile a file where a package has several in one tree (`rustModuleFileKey`). Without the table no name is known to be such an item, so those paths stay silent, and no module is known to be declared, so no root is preferred. */
 export function makeResolvePathToFile(
   projectRoot: string,
   ownerOf?: (repoRelPosix: string) => string | undefined,
@@ -67,13 +67,18 @@ export function makeResolvePathToFile(
   const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
   const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
   const rustDeps = makeRustResolveDeps(plain, exists);
-  // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`).
+  // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`), and a file declares a module by name alone only when the table says so (see `rustModuleFileKey`).
   const rustDepsByTable = new WeakMap<SymbolTable, RustResolveDeps>();
   const rustDepsFor = (table: SymbolTable | undefined): RustResolveDeps => {
     if (table === undefined) return rustDeps;
     let deps = rustDepsByTable.get(table);
     if (deps === undefined) {
-      deps = { ...rustDeps, rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares!(rootFile, name)) };
+      const declaresModule = (file: string, modulePath: string): boolean => table.has('rust', rustModuleFileKey(modulePath)) && table.filesFor('rust', rustModuleFileKey(modulePath)).includes(file);
+      deps = {
+        ...rustDeps,
+        crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
+        rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares!(rootFile, name)),
+      };
       rustDepsByTable.set(table, deps);
     }
     return deps;
@@ -183,15 +188,13 @@ export function makeResolvePathToFile(
 function makeRustResolveDeps(
   plain: FileSource,
   exists: (repoRelPosix: string) => boolean,
-): RustResolveDeps {
+): RustResolveDeps & { crateRootFor(fromFile: string, declaresModule?: RustModuleDeclared): RustCrateRoot | undefined } {
   // Cache: directory (repo-rel POSIX, '' = root) → the Cargo.toml read there (null = none).
   const manifestByDir = new Map<string, CargoManifest | null>();
   // Cache: directory → the nearest Cargo.toml directory at or above it (null = none).
   const packageDirByDir = new Map<string, string | null>();
   // Cache: crate-root file → its text with comments stripped ('' when unreadable).
   const rootTextByFile = new Map<string, string>();
-  // Cache: crate-root file → the modules it declares at its top level, and whether it can be read to the end.
-  const modulesByFile = new Map<string, RustRootModules>();
 
   function manifestAt(dir: string): CargoManifest | undefined {
     if (!manifestByDir.has(dir)) {
@@ -251,7 +254,7 @@ function makeRustResolveDeps(
     return !exists(at('src/lib.rs')) && exists(at(legacy)) && isEdition2015(pkgDir, manifest) ? legacy : undefined;
   }
 
-  function crateRootFor(fromFile: string): RustCrateRoot | undefined {
+  function crateRootFor(fromFile: string, declaresModule?: RustModuleDeclared): RustCrateRoot | undefined {
     const file = toPosix(fromFile);
     const pkgDir = packageDirFrom(dirOf(file));
     if (pkgDir === undefined) return undefined;
@@ -291,23 +294,26 @@ function makeRustResolveDeps(
     // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
     const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
     const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib, rel.startsWith('src/bin/') ? srcBinFiles(pkgDir) : [], buildScriptOf(manifest));
-    // Cargo compiles a file once per crate that declares it (`mod x;` from a crate root down), so with several roots in the tree the file's crates are those whose root declares the first module segment below the tree's directory: a root item named in the file is that root's, and when none or several do, no item binds (see `resolveFromModuleDir`).
+    // Where a tree has several crate roots (`src/lib.rs` beside `src/main.rs`, a `[[bin]]` in `src/`, the binaries of `src/bin/` over a directory without `main.rs`), the roots that certainly compile the file are those a chain of plain `mod` declarations leads to (`rootsCompiling`). Nothing is concluded from a root the chain does not reach: it may still compile the file through a `path` attribute, `include!` or a macro.
     const existingRoots = target.rootFiles.filter((f) => exists(at(f)));
-    const declaring = target.byDeclaration === true || (existingRoots.length > 1 && !target.fileIsRoot) ? rootsDeclaring(rel, target.srcDir, existingRoots, at) : undefined;
-    // A module of the binaries of `src/bin/` belongs to the one that declares it; with none or several, `crate::` names no root we can tell.
-    const unrooted = target.byDeclaration === true && declaring?.roots.length !== 1;
-    // A root that cannot be read to the end (see `readRustRootModules`) may declare any module, so no module is told from the names of the others: every module is left to the first root that holds a name, as when only the library was read.
-    const undecided = target.byDeclaration !== true && declaring !== undefined && declaring.unreadable;
-    const owningRoots = declaring === undefined || undecided ? undefined : declaring.roots;
+    const severalRoots = target.byDeclaration === true || (existingRoots.length > 1 && !target.fileIsRoot);
+    const compiling = severalRoots && declaresModule !== undefined ? rootsCompiling(rel, target.srcDir, existingRoots, at, declaresModule) : [];
+    if (target.byDeclaration === true) {
+      // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the one binary known to declare them; with none known, or several, `crate::` names no root that can be told.
+      const unrooted = compiling.length !== 1;
+      return { srcDir: at(target.srcDir), crateName, rootFiles: unrooted ? [] : compiling.map(at), fileIsRoot: false, lib: lib ?? null, crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, compiling), ...(unrooted ? { unrooted } : {}) };
+    }
+    // Two or more roots that compile the file: `crate::` is a different root in each, so a root item binds none. One: it is probed first, and the others after it in their usual order, since one of them may compile the file too. None known: the usual order.
+    const rootsShared = compiling.length > 1;
+    const rootFiles = rootsShared ? compiling : [...compiling, ...target.rootFiles.filter((f) => !compiling.includes(f))];
     return {
       srcDir: at(target.srcDir),
       crateName,
-      rootFiles: unrooted ? [] : (owningRoots ?? target.rootFiles).map(at),
+      rootFiles: rootFiles.map(at),
       fileIsRoot: target.fileIsRoot,
       lib: lib ?? null,
-      crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, owningRoots?.length === 1 ? owningRoots : existingRoots),
-      ...(unrooted ? { unrooted } : {}),
-      ...(undecided ? { rootsUndecided: true } : {}),
+      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, existingRoots),
+      ...(rootsShared ? { rootsShared } : {}),
     };
   }
 
@@ -322,12 +328,30 @@ function makeRustResolveDeps(
     return (plain.list(joinRel(pkgDir, 'src/bin')) ?? []).filter((e) => e.kind === 'file' && e.name.endsWith('.rs')).map((e) => `src/bin/${e.name}`);
   }
 
-  /** The roots among `roots` that declare the module `file` lies in, below the tree directory `srcDir` (all package-relative, `at` makes a path repository-relative), and whether any root cannot be read to the end. All the roots when `file` lies outside that directory, which tells nothing: one declaring root owns the file, several are the crates it belongs to, none means no crate compiles it, as long as every root was read to the end. */
-  function rootsDeclaring(file: string, srcDir: string, roots: string[], at: (sub: string) => string): { roots: string[]; unreadable: boolean } {
+  /** The roots among `roots` that certainly compile `file`, a file below the tree directory `srcDir` (all package-relative; `at` makes a path repository-relative): those from which a chain of plain `mod` declarations leads down to the file. A module file is declared by the file of a module above it, which names the path between them (`declaresModule`: `x` for `mod x;`, `outer/x` for one inside the inline module `outer`), and so on up to a root lying in `srcDir` itself. The result is a lower bound: a root missing from it may compile the file as well, through a `path` attribute, `include!`, a macro, or a declaration in a file that did not parse. A file outside `srcDir` has no chain, so none. */
+  function rootsCompiling(file: string, srcDir: string, roots: string[], at: (sub: string) => string, declaresModule: RustModuleDeclared): string[] {
     const below = srcDir === '' ? file : file.startsWith(`${srcDir}/`) ? file.slice(srcDir.length + 1) : undefined;
-    if (below === undefined) return { roots, unreadable: false };
-    const first = below.split('/')[0].replace(/\.rs$/, '');
-    return { roots: roots.filter((r) => rootModules(at(r)).declared.has(first)), unreadable: roots.some((r) => rootModules(at(r)).unreadable) };
+    if (below === undefined || !below.endsWith('.rs')) return [];
+    const found = new Set<string>();
+    const climbed = new Set<string>();
+    // `moduleFile` is the file of the module whose names from the tree's root are `names`.
+    const climb = (moduleFile: string, names: string[]): void => {
+      if (names.length === 0 || climbed.has(moduleFile)) return;
+      climbed.add(moduleFile);
+      for (let k = names.length - 1; k >= 0; k--) {
+        const pathBelow = names.slice(k).join('/');
+        if (k === 0) {
+          for (const root of roots) if (root !== moduleFile && dirOf(root) === srcDir && declaresModule(at(root), pathBelow)) found.add(root);
+          continue;
+        }
+        const parent = joinRel(srcDir, names.slice(0, k).join('/'));
+        for (const parentFile of [`${parent}.rs`, `${parent}/mod.rs`]) if (exists(at(parentFile)) && declaresModule(at(parentFile), pathBelow)) climb(parentFile, names.slice(0, k));
+      }
+    };
+    const names = below.slice(0, -'.rs'.length).split('/');
+    if (names[names.length - 1] === 'mod') names.pop();
+    climb(file, names);
+    return roots.filter((r) => found.has(r));
   }
 
   /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
@@ -439,16 +463,6 @@ function makeRustResolveDeps(
     return undefined;
   }
 
-  function rootModules(rootFile: string): RustRootModules {
-    let modules = modulesByFile.get(rootFile);
-    if (modules === undefined) {
-      const raw = plain.read(rootFile);
-      modules = readRustRootModules(raw === undefined ? '' : raw);
-      modulesByFile.set(rootFile, modules);
-    }
-    return modules;
-  }
-
   function rootDeclares(rootFile: string, name: string, asItem = false): boolean {
     // Which names the root binds at its top level only its parse tree tells, through the pass's symbol table (`rustDepsFor` in makeResolvePathToFile); without one, none is known.
     if (asItem) return false;
@@ -464,6 +478,9 @@ function makeRustResolveDeps(
   return { crateRootFor, dependencyFor, rootDeclares };
 }
 
+/** Whether `file` (repository-relative) declares, by name alone, the module at `modulePath` below its own module (`x`, `outer/x`): what the Rust extractor reads from the file's parse tree and declares under `rustModuleFileKey`. */
+type RustModuleDeclared = (file: string, modulePath: string) => boolean;
+
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
@@ -472,7 +489,7 @@ function makeRustResolveDeps(
  *
  *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`.
  *
- *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare its directory, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller to pick the roots that declare it.
+ *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare it, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller that the directory is no crate of its own: the file's root is the one binary known to declare it, or none.
  *
  *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
  *
@@ -999,111 +1016,6 @@ export function parseCargoManifest(text: string): CargoManifest {
  *  file's own declarations). */
 function stripRustComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
-}
-
-/** Rust source with its comments, string literals (raw, byte and C ones too), character literals and shebang line blanked, so what is left is the code a bracket count can follow: `'{'` and `r#"a " {"#` open nothing, and a lifetime (`'a`) is not a character literal. `complete` is false when a comment or literal is left open at the end of the text. */
-function rustCodeOnly(text: string): { code: string; complete: boolean } {
-  let rawEnd: number | undefined;
-  let complete = true;
-  let out = '';
-  let i = 0;
-  // A first line `#!…` is a shebang unless it begins an inner attribute (`#![…]`).
-  if (text.startsWith('#!') && !/^#!\s*\[/.test(text)) while (i < text.length && text[i] !== '\n') i++;
-  while (i < text.length) {
-    const c = text[i];
-    if (c === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      out += ' ';
-    } else if (c === '/' && text[i + 1] === '*') {
-      let depth = 1;
-      i += 2;
-      while (i < text.length && depth > 0) {
-        if (text.startsWith('/*', i)) (depth++, (i += 2));
-        else if (text.startsWith('*/', i)) (depth--, (i += 2));
-        else i++;
-      }
-      if (depth > 0) complete = false;
-      out += ' ';
-    } else if (c === '"') {
-      i++;
-      while (i < text.length && text[i] !== '"') i += text[i] === '\\' ? 2 : 1;
-      if (i >= text.length) complete = false;
-      i++;
-      out += '""';
-    } else if ((c === 'r' || c === 'b' || c === 'c') && !/[A-Za-z0-9_]/.test(text[i - 1] ?? '') && (rawEnd = rawStringEnd(text, i)) !== undefined) {
-      if (rawEnd < 0) complete = false;
-      i = Math.abs(rawEnd);
-      out += '""';
-    } else if (c === "'") {
-      if (text[i + 1] === '\\') {
-        const end = text.indexOf("'", i + 3);
-        if (end === -1) complete = false;
-        i = end === -1 ? text.length : end + 1;
-        out += "''";
-      } else {
-        const width = (text.codePointAt(i + 1) ?? 0) > 0xffff ? 2 : 1;
-        if (text[i + 1 + width] === "'") {
-          i += width + 2;
-          out += "''";
-        } else {
-          out += c;
-          i++;
-        }
-      }
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return { code: out, complete };
-}
-
-/** The index just past the raw string literal (`r"…"`, `r#"…"#`, `br"…"`, `cr"…"`) that starts at `i`, negated when it is left open at the end of the text; undefined when none starts there. */
-function rawStringEnd(text: string, i: number): number | undefined {
-  const open = /[bc]?r(#*)"/y;
-  open.lastIndex = i;
-  const m = open.exec(text);
-  if (m === null) return undefined;
-  const close = `"${m[1]}`;
-  const end = text.indexOf(close, open.lastIndex);
-  return end === -1 ? -text.length : end + close.length;
-}
-
-/** The modules a crate-root file declares, and whether the file could be read to the end. `declared` holds those written as `mod x;` or `mod x { … }` at its top level, or inside a `cfg_if!` invocation there, never inside another module's braces or a function body. `unreadable` says the file holds something that can declare a module the names do not tell: a macro invocation at item level other than `cfg_if!` (`include!` and a macro defined in another file among them), any macro definition (`macro_rules!` or `macro`), a `path` attribute, brackets that do not balance, or a comment or literal left open. */
-interface RustRootModules {
-  declared: Set<string>;
-  unreadable: boolean;
-}
-
-function readRustRootModules(source: string): RustRootModules {
-  const { code, complete } = rustCodeOnly(source);
-  const declared = new Set<string>();
-  let unreadable = !complete || /#\s*!?\s*\[[^\]]*\bpath\s*=/.test(code);
-  // What each open bracket belongs to: a `cfg_if!` or other macro invocation (`macro`), a macro definition (`macrodef`), the body of an inline module (`mod`), or any other block (`other`); a bracket inside a macro belongs to it as well.
-  const stack: { kind: string; close: string }[] = [];
-  const top = (): string | undefined => stack[stack.length - 1]?.kind;
-  const atItemLevel = (): boolean => stack.every((frame) => frame.kind === 'macro');
-  const inner = (invocation: boolean): string => (top() === 'macro' || top() === 'macrodef' ? top()! : invocation && top() === undefined ? 'macro' : 'other');
-  const CLOSE: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
-  // An invocation stands for an item where an item could start: at the start of the text, or after the `;`, `}`, `]` or `{` that ends the item or attribute before it.
-  const startsItem = (at: number): boolean => /(^|[;}\]{])\s*$/.test(code.slice(0, at));
-  const parts = /\bmacro_rules\s*!\s*(?:r#)?\w+\s*(?<def>[({[])|\bmacro\s+(?:r#)?\w+\s*(?<def2>[({[])|\bmod\s+(?:r#)?(?<mod>\w+)\s*(?<modEnd>[;{])|(?<path>(?:\w+\s*::\s*)*)(?<name>\w+)\s*!\s*(?<call>[({[])|(?<closer>[)}\]])|(?<open>[({[])/g;
-  for (const m of code.matchAll(parts)) {
-    const g = m.groups!;
-    if (g.def !== undefined || g.def2 !== undefined) {
-      unreadable = true;
-      stack.push({ kind: 'macrodef', close: CLOSE[g.def ?? g.def2] });
-    } else if (g.mod !== undefined) {
-      if (atItemLevel()) declared.add(g.mod);
-      if (g.modEnd === '{') stack.push({ kind: 'mod', close: '}' });
-    } else if (g.call !== undefined) {
-      if (atItemLevel() && g.name !== 'cfg_if' && startsItem(m.index)) unreadable = true;
-      stack.push({ kind: inner(true), close: CLOSE[g.call] });
-    } else if (g.closer !== undefined) {
-      if (stack.pop()?.close !== g.closer) unreadable = true;
-    } else stack.push({ kind: inner(false), close: CLOSE[g.open] });
-  }
-  return { declared, unreadable: unreadable || stack.length > 0 };
 }
 
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */

@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { rustTopLevelItemKey } from './rust-resolve.mjs';
+import { rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -389,6 +389,10 @@ function join(prefix, tail) {
  * 2015 `use` path names one of its items, so a name defined only inside an inline `mod`, a
  * function body, a `const` or `static` initializer, a closure or a `macro_rules!` body is
  * never taken for an item of the root.
+ *
+ * Every module the file places in a file of its own by name alone is declared under
+ * `rustModuleFileKey(path)` (`modfile:<path>`), read by `plainModuleFiles`: this is what the
+ * resolver asks when it follows a file's module chain up to the crate roots that compile it.
  */
 function declarations(file) {
     const out = [];
@@ -410,7 +414,71 @@ function declarations(file) {
     }
     for (const { name, line } of topLevelItemNames(root))
         out.push({ symbolKey: rustTopLevelItemKey(name), line });
+    for (const { path, line } of plainModuleFiles(root))
+        out.push({ symbolKey: rustModuleFileKey(path), line });
     return out;
+}
+/** The attributes that leave a `mod` where its name puts it: the compiler's own, which rewrite nothing. Any other attribute in front of a `mod` may be a macro that rewrites the item, and a `cfg_attr` there may apply one, or a `path`. */
+const INERT_MOD_ATTRIBUTES = new Set(['cfg', 'doc', 'allow', 'warn', 'deny', 'forbid', 'expect', 'macro_use', 'deprecated']);
+/** The further attributes of the compiler that stand at the head of a file or of an inline module (`#![no_std]`, `#![feature(…)]`). */
+const INERT_INNER_ATTRIBUTES = new Set(['no_std', 'no_core', 'no_main', 'no_implicit_prelude', 'no_builtins', 'feature', 'recursion_limit', 'type_length_limit', 'crate_type', 'crate_name', 'windows_subsystem']);
+/** The tools whose attributes (`#[rustfmt::skip]`, `#[clippy::…]`) the compiler passes over. */
+const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy']);
+/**
+ * The modules a Rust file certainly places in files of their own by their names: each `mod x;` (no body) that is an item of the file itself, or of inline modules nested in it, as the path of the names from the file's own module (`x`, `outer/x`), with `r#` stripped. Rust compiles the file that path names beside the declaring file (`x.rs` or `x/mod.rs`) into every crate that compiles the declaring file.
+ *
+ * Only what the tree proves is listed, so a module missing here is not known to be absent. Left out: a `mod` with an attribute in front of it other than the compiler's own inert ones (a `path`, a `cfg_attr`, an attribute macro), or inside an inline module with one; every `mod` of a file or an inline module whose head holds an inner attribute that is not one of the compiler's or that names a `path`; a `mod` inside a function body, a block or a macro's tokens; and every `mod` of a file the grammar could not parse to the end, where the nesting itself is a guess.
+ */
+export function plainModuleFiles(root) {
+    const out = [];
+    if (root.hasError)
+        return out;
+    const visit = (items, prefix) => {
+        if (items.some((n) => n !== null && n.type === 'inner_attribute_item' && !attributeIsInert(n, true)))
+            return;
+        for (const node of items) {
+            if (node === null || node.type !== 'mod_item' || !modAttributesAreInert(node))
+                continue;
+            const name = unraw(node.childForFieldName('name')?.text ?? '');
+            if (name === '')
+                continue;
+            const body = node.childForFieldName('body');
+            if (body === null)
+                out.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1 });
+            else
+                visit(body.namedChildren, [...prefix, name]);
+        }
+    };
+    visit(root.namedChildren, []);
+    return out;
+}
+/** Whether every attribute written in front of `modItem` is an inert one. Attributes parse as preceding `attribute_item` siblings; comments may stand between them. */
+function modAttributesAreInert(modItem) {
+    let sib = modItem.previousNamedSibling;
+    while (sib !== null && (sib.type === 'attribute_item' || sib.type === 'line_comment' || sib.type === 'block_comment')) {
+        if (sib.type === 'attribute_item' && !attributeIsInert(sib, false))
+            return false;
+        sib = sib.previousNamedSibling;
+    }
+    return true;
+}
+/** Whether an `attribute_item` (in front of an item) or an `inner_attribute_item` (`inner`, at the head of a file or an inline module) is one of the compiler's inert attributes or a tool's. An inner `cfg_attr` is inert unless it names a `path`: no attribute macro stands in that place. */
+function attributeIsInert(item, inner) {
+    const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
+    const id = attr?.namedChild(0) ?? null;
+    if (id === null)
+        return false;
+    if (id.type === 'identifier') {
+        if (INERT_MOD_ATTRIBUTES.has(id.text))
+            return true;
+        if (!inner)
+            return false;
+        return INERT_INNER_ATTRIBUTES.has(id.text) || (id.text === 'cfg_attr' && !/\bpath\b/.test(item.text));
+    }
+    if (id.type !== 'scoped_identifier')
+        return false;
+    const tool = id.childForFieldName('path');
+    return tool !== null && tool.type === 'identifier' && TOOL_ATTRIBUTES.has(tool.text);
 }
 /** The item kinds whose `name` field a file's top level binds as an item. */
 const NAMED_ITEMS = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item', 'function_item', 'function_signature_item', 'const_item', 'static_item', 'mod_item', 'macro_definition']);
@@ -546,7 +614,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 4,
+    rev: 5,
     declarations,
     uses,
 };

@@ -8,7 +8,7 @@ cites: "Rust Reference, Macros (the built-in `include!` parses a file as items a
 
 ## Rule
 
-`src/lib.rs` writes `include!("mods.rs");` and `src/mods.rs` holds `mod late;`, and `src/main.rs` is a second crate with an `Opts` of its own. The included file is not read, so the root cannot be read to the end: the module is left to the first root and `crate::Opts` in `src/late/mod.rs` binds `src/lib.rs` (owner root).
+`src/lib.rs` writes `include!("mods.rs");` and `src/mods.rs` holds `mod late;`, and `src/main.rs` is a second crate with an `Opts` of its own. An included file is not followed, so no plain `mod` declaration leads from a root to `src/late/mod.rs`: the roots are tried in their usual order, and its `crate::Opts` binds `src/lib.rs` (owner root).
 
 ## Files
 

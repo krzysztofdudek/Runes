@@ -15,7 +15,7 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     if (root === 'crate') {
         if (crate.unrooted === true)
             return undefined;
-        return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares, crate.rootsUndecided));
+        return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares, crate.rootsShared));
     }
     // A bare leading identifier: the current crate's own package name (2018+ edition
     // path-clarity) addresses the package's LIBRARY, from any of its targets.
@@ -33,7 +33,7 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
         const rootFiles = crate.rootFiles ?? [];
         const declaresItem = (f, name) => (deps.rootDeclares?.(f, name, true) ?? true);
         if (rootFiles.some((f) => exists(f) && declaresItem(f, root)))
-            return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem, crate.rootsUndecided));
+            return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem, crate.rootsShared));
     }
     // External crate (std/core/alloc, third-party) — not a resolvable path.
     return undefined;
@@ -42,14 +42,18 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
 export function rustTopLevelItemKey(name) {
     return `item:${name}`;
 }
+/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). The `modfile:` prefix can never be a Rust identifier. */
+export function rustModuleFileKey(modulePath) {
+    return `modfile:${modulePath}`;
+}
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */
 const EDITION_2015_EXTERNAL_ROOTS = new Set(['std', 'core', 'alloc', 'proc_macro', 'test']);
 /** The crate-root name check: the deps' own, or "every name is declared" when absent. */
 function declaresOf(deps) {
     return deps.rootDeclares ?? (() => true);
 }
-function rootContext(dir, files, declares, alternatives = false) {
-    return files === undefined || files.length === 0 ? undefined : { dir, files, declares, alternatives };
+function rootContext(dir, files, declares, shared = false) {
+    return files === undefined || files.length === 0 ? undefined : { dir, files, declares, shared };
 }
 /**
  * `super::…` / `self::…` — resolve relative to the importing file's MODULE.
@@ -106,7 +110,7 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     // A module of a crate that cannot be told reaches the crate root by climbing out of the tree's first level, and which crate's root that is, is not known; below it the path is the same in every crate.
     if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir))
         return undefined;
-    return resolveFromModuleDir(moduleDir, tail, exists, rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsUndecided));
+    return resolveFromModuleDir(moduleDir, tail, exists, rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared));
 }
 /**
  * Resolve a module-relative tail (`['a','b','Sym']`) under a starting module
@@ -122,10 +126,9 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
  * Also the empty tail resolves to the module dir itself (`<dir>/mod.rs` is not used
  * here because `dir` already IS the module dir; the self/super caller handles that).
  * When the module dir IS the crate root (`root.dir`), the crate root module's file is the
- * crate root file: the empty tail binds the one existing `root.files` entry, and an item
- * tail binds that root file when it declares the item's name (`root.declares`); with more than
- * one root file (a module that several crates declare) neither binds, unless the root files are
- * alternatives (`root.alternatives`), when the first that fits does.
+ * crate root file: the empty tail binds the first existing `root.files` entry, and an item
+ * tail binds the first root file that declares the item's name (`root.declares`); when the root
+ * files are crates that all compile the importing file (`root.shared`) neither binds.
  * The FIRST existing candidate wins. Any miss → undefined (silence).
  */
 function resolveFromModuleDir(moduleDir, tail, exists, root) {
@@ -167,12 +170,9 @@ function resolveFromModuleDir(moduleDir, tail, exists, root) {
         return rootFileFor(root, exists, (f) => root.declares(f, segs[0]));
     return undefined;
 }
-/** The crate-root file of `root` that holds the name `fits` asks about: the first existing one that does when the root files are alternatives, and otherwise the one existing root file if it does. Several existing root files are the crates that all compile the module, and which of them a root item is cannot be told, so none is bound. */
+/** The crate-root file of `root` that holds the name `fits` asks about: the first existing one that does. None when the root files are crates that all compile the importing file (`root.shared`): `crate::` is a different root in each, and which one a root item is cannot be told. */
 function rootFileFor(root, exists, fits) {
-    const live = root.files.filter((f) => exists(f));
-    if (root.alternatives)
-        return live.find(fits);
-    return live.length === 1 && fits(live[0]) ? live[0] : undefined;
+    return root.shared ? undefined : root.files.find((f) => exists(f) && fits(f));
 }
 /** Is `dir` within (or equal to) the crate `src` root? Guards `super::` climbing
  *  above the crate root, which is an external/invalid path → silence. */

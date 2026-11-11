@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, rustTopLevelItemKey } from '../../helpers/internal/relations.mjs';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, rustTopLevelItemKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
@@ -269,7 +269,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // Declared by its path, or by a bin named like the package, it is the root again.
     expect(resolve('[[bin]]\nname = "x"\npath = "src/main.rs"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
     expect(resolve('[[bin]]\nname = "app"\n', 'self::cli::Args', 'src/main.rs')).toBe('src/cli.rs');
-    expect(resolve('[[bin]]\nname = "app"\n', 'crate::Main', 'src/cli.rs')).toBe('src/main.rs');
+    expect(resolve('[[bin]]\nname = "app"\n', 'crate::Main', 'src/bin/tool.rs')).toBe('src/main.rs');
     // With discovery on it is a root with nothing declared.
     put('Cargo.toml', '[package]\nname = "app"\n');
     expect(makeResolvePathToFile(ws)('self::cli::Args', 'src/main.rs', 'rust')).toBe('src/cli.rs');
@@ -451,8 +451,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBe('src/shapes.rs');
     expect(resolve(pkg('2018', '[[bin]]\nname = "other"\nedition = "2015"\n'), 'shapes::Circle', 'src/main.rs')).toBeUndefined();
     // A module of both the library and the binary is read in two editions when they differ, so it is not told; it is when they agree.
-    put('src/lib.rs', 'mod shapes;\nmod api;\n');
-    put('src/main.rs', 'mod shapes;\nmod api;\n');
+    put('src/lib.rs', 'mod shapes;\n');
     table = await tableNow();
     expect(resolve(pkg('2018', '[[bin]]\nname = "app"\nedition = "2015"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
     expect(resolve(pkg('2015', '[[bin]]\nname = "app"\nedition = "2021"\n'), 'shapes::Circle', 'src/api/client.rs')).toBeUndefined();
@@ -526,8 +525,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     // In the same directory as the binary, outside src/.
     put('same/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "crates/core/lib.rs"\n[[bin]]\nname = "app"\npath = "crates/core/main.rs"\n');
     put('same/crates/core/lib.rs', 'pub mod util;\npub struct Item;\n');
-    put('same/crates/core/main.rs', 'mod tool;\nstruct Bin;\nfn main() {}\n');
-    put('same/crates/core/tool.rs', '');
+    put('same/crates/core/main.rs', 'struct Bin;\nfn main() {}\n');
     put('same/crates/core/other.rs', '');
     // Below the binary's directory: the library's deeper directory holds its files.
     put('below/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "lib/lib.rs"\n[[bin]]\nname = "app"\npath = "main.rs"\n');
@@ -540,8 +538,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::LibOnly', 'root/foo.rs', 'rust')).toBe('root/lib.rs');
     expect(resolve('crate::foo', 'root/lib.rs', 'rust')).toBe('root/foo.rs');
     expect(resolve('crate::Item', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/lib.rs');
-    expect(resolve('crate::Bin', 'same/crates/core/tool.rs', 'rust')).toBe('same/crates/core/main.rs');
-    expect(resolve('crate::Bin', 'same/crates/core/util.rs', 'rust')).toBeUndefined();
+    expect(resolve('crate::Bin', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/main.rs');
     expect(resolve('crate::other', 'same/crates/core/util.rs', 'rust')).toBe('same/crates/core/other.rs');
     expect(resolve('crate::Item', 'below/lib/util.rs', 'rust')).toBe('below/lib/lib.rs');
     expect(resolve('crate::util', 'below/lib/lib.rs', 'rust')).toBe('below/lib/util.rs');
@@ -577,7 +574,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('b/lib.rs', 'pub struct Config;\n');
     put('b/src/main.rs', 'struct Config;\nfn main() {}\n');
     put('c/Cargo.toml', '[package]\nname = "app"\n[lib]\npath = "src/core.rs"\n');
-    put('c/src/core.rs', 'pub mod cli;\npub struct Config;\n');
+    put('c/src/core.rs', 'pub struct Config;\n');
     put('c/src/main.rs', 'struct Config;\nfn main() {}\n');
     const resolve = makeResolvePathToFile(ws);
     expect(resolve('crate::Config', 'a/src/cli.rs', 'rust')).toBe('a/src/main.rs');
@@ -593,41 +590,134 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::Config', 'c/src/cli.rs', 'rust')).toBe('c/src/core.rs');
   });
 
-  it('binds a crate:: root item to the one root that declares the module, and to none when several roots or no root do', () => {
+  it('binds a crate:: root item to the root that a chain of plain mod declarations leads to, to none when the chains lead to several, and in the usual order when none is known', async () => {
     put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[[bin]]\nname = "cli"\npath = "src/cli.rs"\n');
     put('src/lib.rs', '// mod comment;\npub mod lib_only;\npub mod nested_in_lib {\n    pub mod inside;\n}\nmod both;\nmod r#raw;\npub const TEXT: &str = "mod in_string { mod x; }";\npub struct Opts;\npub struct LibOpts;\n');
     put('src/main.rs', 'mod main_only;\nmod both;\nstruct Opts;\nstruct MainOpts;\nfn main() {}\n');
     put('src/cli.rs', 'mod cli_only;\nmod both;\nmod inside;\nstruct Opts;\nstruct CliOpts;\nfn main() {}\n');
-    for (const f of ['lib_only', 'main_only', 'cli_only', 'both', 'orphan', 'raw', 'in_string']) put(`src/${f}/mod.rs`, '');
+    for (const f of ['lib_only', 'cli_only', 'both', 'orphan', 'raw', 'in_string']) put(`src/${f}/mod.rs`, '');
+    put('src/main_only/mod.rs', 'mod deep;\nmod inline {\n    mod leaf;\n}\n');
+    put('src/main_only/deep.rs', 'mod deeper;\n');
+    put('src/main_only/deep/deeper.rs', '');
+    put('src/main_only/inline/leaf.rs', '');
+    put('src/main_only/loose.rs', '');
     put('src/nested_in_lib/inside.rs', '');
     put('src/inside.rs', '');
+    put('src/cli/args.rs', '');
     put('tools/stray.rs', '');
-    const resolve = makeResolvePathToFile(ws);
-    expect(resolve('crate::Opts', 'src/lib_only/mod.rs', 'rust')).toBe('src/lib.rs');
-    expect(resolve('crate::Opts', 'src/main_only/mod.rs', 'rust')).toBe('src/main.rs');
-    expect(resolve('crate::Opts', 'src/cli_only/mod.rs', 'rust')).toBe('src/cli.rs');
-    // A root item the declaring root lacks is no item of another root.
-    expect(resolve('crate::MainOpts', 'src/lib_only/mod.rs', 'rust')).toBeUndefined();
-    expect(resolve('crate::MainOpts', 'src/main_only/mod.rs', 'rust')).toBe('src/main.rs');
-    // A module of several crates, or of none, binds no root item; its module paths still resolve.
-    expect(resolve('crate::Opts', 'src/both/mod.rs', 'rust')).toBeUndefined();
-    expect(resolve('crate::Opts', 'src/orphan/mod.rs', 'rust')).toBeUndefined();
-    expect(resolve('crate::Opts', 'tools/stray.rs', 'rust')).toBeUndefined();
-    expect(resolve('crate::lib_only', 'src/both/mod.rs', 'rust')).toBe('src/lib_only/mod.rs');
-    // Only a module declared at the top of a root counts: not one in an inline module, a comment or a string; a raw identifier does.
-    expect(resolve('crate::Opts', 'src/raw/mod.rs', 'rust')).toBe('src/lib.rs');
-    expect(resolve('crate::Opts', 'src/in_string/mod.rs', 'rust')).toBeUndefined();
-    expect(resolve('crate::Opts', 'src/inside.rs', 'rust')).toBe('src/cli.rs');
-    // The module's file itself is its crate's root only when it is one.
-    expect(resolve('crate::Opts', 'src/cli.rs', 'rust')).toBe('src/cli.rs');
+    put('m/Cargo.toml', '[package]\nname = "m"\nedition = "2021"\n');
+    put('m/src/lib.rs', '');
+    put('m/src/main.rs', 'fn main() {}\n');
+    put('m/src/mod.rs', '');
+    put('m/src/other.rs', '');
+    put('src/lib_only/twice.rs', 'mod leaf;\n');
+    put('src/lib_only/twice/leaf.rs', '');
+    put('src/lib_only/mod.rs', 'mod twice;\nmod twice {\n    mod leaf;\n}\n');
+    const table = await tableNow();
+    const resolve = (spec, from) => makeResolvePathToFile(ws)(spec, from, 'rust', false, table);
+    expect(resolve('crate::Opts', 'src/lib_only/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'src/main_only/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/cli_only/mod.rs')).toBe('src/cli.rs');
+    // The chain is followed through every module file down to the asking file, and through inline modules.
+    expect(resolve('crate::Opts', 'src/main_only/deep.rs')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/main_only/deep/deeper.rs')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/main_only/inline/leaf.rs')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/nested_in_lib/inside.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'src/inside.rs')).toBe('src/cli.rs');
+    expect(resolve('crate::Opts', 'src/raw/mod.rs')).toBe('src/lib.rs');
+    // The root itself, and a climb to it, are the known root's.
+    expect(resolve('crate', 'src/main_only/mod.rs')).toBe('src/main.rs');
+    expect(resolve('super::Opts', 'src/main_only/mod.rs')).toBe('src/main.rs');
+    expect(resolve('super::super::Opts', 'src/main_only/deep.rs')).toBe('src/main.rs');
+    // A name the known root does not hold is looked for in the other roots, in their usual order: one of them may compile the file too.
+    expect(resolve('crate::MainOpts', 'src/main_only/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate::MainOpts', 'src/lib_only/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate::LibOpts', 'src/main_only/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::CliOpts', 'src/main_only/mod.rs')).toBe('src/cli.rs');
+    expect(resolve('crate::Nowhere', 'src/main_only/mod.rs')).toBeUndefined();
+    // A module that two or more roots certainly compile binds no root item; its module paths still resolve.
+    expect(resolve('crate::Opts', 'src/both/mod.rs')).toBeUndefined();
+    expect(resolve('crate::LibOpts', 'src/both/mod.rs')).toBeUndefined();
+    expect(resolve('crate', 'src/both/mod.rs')).toBeUndefined();
+    expect(resolve('crate::lib_only', 'src/both/mod.rs')).toBe('src/lib_only/mod.rs');
+    // No chain reaches these files, or the chain has a gap: nothing is known, and the roots are tried in their usual order, the library first. A file may be compiled through a path attribute, an included file or a macro.
+    expect(resolve('crate::Opts', 'src/orphan/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::MainOpts', 'src/orphan/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate', 'src/orphan/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'src/in_string/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'src/main_only/loose.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::Opts', 'tools/stray.rs')).toBe('src/lib.rs');
+    // A mod.rs beside the roots is no module of the tree by its name: nothing is known about it, and its module paths resolve.
+    expect(resolve('crate::other', 'm/src/mod.rs')).toBe('m/src/other.rs');
+    // A file that two declarations of one parent reach is still one module of one root.
+    expect(resolve('crate::MainOpts', 'src/lib_only/twice/leaf.rs')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/lib_only/twice/leaf.rs')).toBe('src/lib.rs');
+    // src/cli.rs is a root. As a root its `mod inside;` is src/inside.rs; src/cli/args.rs would be a module of a module called cli, which no root declares.
+    expect(resolve('crate::Opts', 'src/cli/args.rs')).toBe('src/lib.rs');
+    // A root file is its own crate's root.
+    expect(resolve('crate::Opts', 'src/cli.rs')).toBe('src/cli.rs');
+    // Without the pass's symbol table no declaration is known, so every module takes the usual order.
+    const bare = makeResolvePathToFile(ws);
+    expect(bare('crate::Opts', 'src/main_only/mod.rs', 'rust')).toBe('src/lib.rs');
+    expect(bare('crate::Opts', 'src/both/mod.rs', 'rust')).toBe('src/lib.rs');
+    expect(bare('crate::MainOpts', 'src/main_only/mod.rs', 'rust')).toBe('src/main.rs');
   });
 
-  it('reads the modules of a crate root through its comments, literals and macros, and leaves every module to the first root when a root cannot be read to the end', () => {
+  it('takes a root for certain only from a plain mod item of the parse tree, and keeps the usual order for every other way a module can be written', async () => {
     const lib = 'src/lib.rs';
-    const scenarios = [
-      // [lib.rs text, the module file, the file `crate::Opts` binds there, main.rs text]: the library when the reader sees it declare the module or a root cannot be read to the end, none when every root was read and none declares it
+    const main = 'src/main.rs';
+    // [main.rs text, the module file below src/, the file `crate::Opts` binds there]. The library and the binary each hold an `Opts`. The binary is bound only where its text declares the module file by name alone; anything else leaves the usual order, where the library comes first.
+    const inBinary = [
+      ['mod a;\n', 'a/mod.rs', main],
+      ['mod a;\n', 'a.rs', main],
+      ['pub(crate) mod a;\n', 'a.rs', main],
+      ['mod r#a;\n', 'a.rs', main],
+      ['#[cfg(unix)]\nmod a;\n', 'a.rs', main],
+      ['/// Doc.\n#[allow(dead_code)]\n// a comment between\n#[rustfmt::skip]\n#[macro_use]\nmod a;\n', 'a.rs', main],
+      ['#![no_std]\n#![cfg_attr(docsrs, feature(doc_cfg))]\n#![allow(dead_code)]\nmod a;\n', 'a.rs', main],
+      ["const Q: char = '\"'; const B: char = '{';\nmod a;\n", 'a.rs', main],
+      ['const R: &str = r##"a "# { "##;\nconst B: &[u8] = br#"{ "#;\nmod a;\n', 'a.rs', main],
+      ['/* mod b; /* nested */ mod c; */\nmod a;\n', 'a.rs', main],
+      ['/* mod b; /* nested */ mod c; */\nmod a;\n', 'b.rs', lib],
+      ['pub const TEXT: &str = "mod a;";\n', 'a.rs', lib],
+      ['thread_local! { static X: u8 = 1; }\ninclude!("more.rs");\nmod a;\n', 'a.rs', main],
+      // An inline module puts the file below its name; a module of that name beside the root is another file.
+      ['mod outer {\n    mod a;\n}\n', 'outer/a.rs', main],
+      ['mod outer {\n    mod a;\n}\n', 'a.rs', lib],
+      ['mod outer {\n    pub mod inner {\n        mod a;\n    }\n}\n', 'outer/inner/a/mod.rs', main],
+      // A `mod` in a function body, or written by a macro's tokens, is no item of the tree.
+      ['fn f() {\n    mod a;\n}\n', 'a.rs', lib],
+      ['cfg_if! {\n    if #[cfg(unix)] {\n        mod a;\n    } else {\n        mod b;\n    }\n}\n', 'a.rs', lib],
+      ['cfg_if::cfg_if! { if #[cfg(unix)] { mod a; } }\n', 'a.rs', lib],
+      ['macro_rules! decl { ($n:ident) => { mod $n; }; }\ndecl!(a);\n', 'a.rs', lib],
+      ['macro decl($n:ident) { mod $n; }\ndecl!(a);\n', 'a.rs', lib],
+      ['#[macro_use]\nmod macros;\ndecl_mods!(a);\n', 'a.rs', lib],
+      ['::kit::decl_mods!(a);\n', 'a.rs', lib],
+      ['r#decl!(a);\n', 'a.rs', lib],
+      ['include!("mods.rs");\n', 'a.rs', lib],
+      ['::core::include!("mods.rs");\n', 'a.rs', lib],
+      // An attribute that can move or rewrite the module leaves it unknown: a path, a cfg_attr, an attribute macro, on the `mod` or on an inline module around it.
+      ['#[path = "x.rs"]\nmod a;\n', 'a.rs', lib],
+      ['#[path = "x.rs"]\nmod a;\n', 'x.rs', lib],
+      ['#[cfg_attr(unix, path = "x.rs")]\nmod a;\n', 'a.rs', lib],
+      ['#[cfg_attr(docsrs, doc(cfg(unix)))]\nmod a;\n', 'a.rs', lib],
+      ['#[kit::modules]\nmod a;\n', 'a.rs', lib],
+      ['#[instrument]\nmod a;\n', 'a.rs', lib],
+      ['#[path = "elsewhere"]\nmod outer {\n    mod a;\n}\n', 'outer/a.rs', lib],
+      ['mod outer {\n    #![path = "elsewhere"]\n    mod a;\n}\n', 'outer/a.rs', lib],
+      ['#![cfg_attr(unix, path = "x")]\nmod a;\n', 'a.rs', lib],
+      ['#![kit::rewrite]\nmod a;\n', 'a.rs', lib],
+      // A file that does not parse to the end tells nothing, not even a `mod` that stands before the damage.
+      ['fn broken( {\n}\nmod a;\n', 'a.rs', lib],
+      ['mod a;\nfn f() {\n', 'a.rs', lib],
+      ['mod a;\n}\n', 'a.rs', lib],
+      ['mod a;\nconst S: &str = "open', 'a.rs', lib],
+      ['mod a\n', 'a.rs', lib],
+    ];
+    // [lib.rs text, the module below src/, the file bound, main.rs text]: every shape an earlier reading of the library's text met. The library holds the name, so each binds the library, known or not; only a plain declaration in the binary changes that.
+    const inLibrary = [
       ['mod a;\n', 'a', lib],
-      ['/* mod a; /* nested */ mod b; */\nmod c;\n', 'a', undefined],
+      ['/* mod a; /* nested */ mod b; */\nmod c;\n', 'a', lib],
       ['/* mod a; /* nested */ mod b; */\nmod c;\n', 'c', lib],
       ["const Q: char = '\"'; const B: char = '{';\nmod a;\n", 'a', lib],
       ["const E: char = '\\'';\nconst U: char = '\\u{7b}';\nconst W: char = '\\\\';\nmod a;\n", 'a', lib],
@@ -636,12 +726,11 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       ['const R: &str = "a // not a comment /* {";\nmod a;\n', 'a', lib],
       ['const R: &str = "a \\" { b";\nmod a;\n', 'a', lib],
       ['mod r#a;\n', 'a', lib],
-      ['mod outer {\n    mod a;\n}\n', 'a', undefined],
-      ['fn f() {\n    mod a;\n}\n', 'a', undefined],
+      ['mod outer {\n    mod a;\n}\n', 'a', lib],
+      ['fn f() {\n    mod a;\n}\n', 'a', lib],
       ['cfg_if! {\n    if #[cfg(unix)] {\n        mod a;\n    } else {\n        mod b;\n    }\n}\n', 'b', lib],
-      ['cfg_if! { if #[cfg(unix)] { mod outer { mod a; } } }\n', 'a', undefined],
+      ['cfg_if! { if #[cfg(unix)] { mod outer { mod a; } } }\n', 'a', lib],
       ['thread_local! { static X: u8 = 1; }\nmod a;\n', 'a', lib],
-      // A root the reader cannot follow leaves the module to the first root.
       ['#[path = "x.rs"]\nmod a;\n', 'b', lib],
       ['#![cfg_attr(unix, path = "x.rs")]\nmod a;\n', 'b', lib],
       ['macro_rules! decl { ($n:ident) => { mod $n; }; }\ndecl!(b);\n', 'b', lib],
@@ -657,34 +746,45 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       ['mod a;\nfn f( { ) }\n', 'b', lib],
       ['mod a;\n}\n', 'b', lib],
       ['mod a;\nfn f() {\n', 'b', lib],
-      // Macro invocations that stand in an expression, a block or a cfg_if! body are no item of the root.
-      ['const S: &str = concat!("a", "b");\nstatic V: u8 = size!();\nmod a;\n', 'b', undefined],
-      ['fn f() { println!("{}", 1); }\nimpl T { const N: u8 = n!(); }\nmod a;\n', 'b', undefined],
-      ['cfg_if::cfg_if! { if #[cfg(unix)] { mod a; } }\n', 'b', undefined],
-      ['#[cfg(unix)]\nmod a;\n#[derive(Debug)] struct S;\n', 'b', undefined],
-      // A shebang line is no code; an inner attribute at the start is, and a C raw string is a string.
+      ['const S: &str = concat!("a", "b");\nstatic V: u8 = size!();\nmod a;\n', 'b', lib],
+      ['fn f() { println!("{}", 1); }\nimpl T { const N: u8 = n!(); }\nmod a;\n', 'b', lib],
+      ['cfg_if::cfg_if! { if #[cfg(unix)] { mod a; } }\n', 'b', lib],
+      ['#[cfg(unix)]\nmod a;\n#[derive(Debug)] struct S;\n', 'b', lib],
       ['#!/usr/bin/env run-script {\nconst X: u8 = 1;\nmod a;\n', 'a', lib],
       ['#![allow(dead_code)]\nmod a;\n', 'a', lib],
       ['const C: &core::ffi::CStr = cr#"say " {"#;\nconst D: &core::ffi::CStr = c"{";\nmod a;\n', 'a', lib],
-      // One root that cannot be read leaves every module to the first root, also one the other root declares.
-      ['#[path = "imp/thing.rs"]\nmod thing;\n', 'imp', lib, 'mod imp;\n'],
-      ['macro_rules! m { () => {}; }\n', 'b', lib, 'mod b;\n'],
-      ['mod a;\n', 'b', lib, 'include!("x.rs");\nmod b;\n'],
-      ['mod a;\n', 'b', 'src/main.rs', 'mod b;\n'],
-      ['mod a;\n', 'a', lib, 'mod b;\n'],
-      // Unterminated forms end at the end of the file.
       ['mod a;\nconst S: &str = "open', 'a', lib],
       ['mod a;\nconst S: &str = r#"open', 'a', lib],
       ["mod a;\nconst C: char = '\\", 'a', lib],
       ['mod a;\n/* open', 'a', lib],
+      // The binary declares the module by name alone, so the binary certainly compiles it, whatever the library's text holds.
+      ['#[path = "imp/thing.rs"]\nmod thing;\n', 'imp', main, 'mod imp;\n'],
+      ['macro_rules! m { () => {}; }\n', 'b', main, 'mod b;\n'],
+      ['mod a;\n', 'b', main, 'include!("x.rs");\nmod b;\n'],
+      ['mod a;\n', 'b', main, 'mod b;\n'],
+      ['mod a;\n', 'a', lib, 'mod b;\n'],
+      // Both declare it by name alone: two crates, no root item.
+      ['mod a;\n', 'a', undefined, 'mod a;\n'],
     ];
-    scenarios.forEach(([libText, mod, expected, mainText = ''], n) => {
+    inBinary.forEach(([mainText, file], n) => {
+      put(`b${n}/Cargo.toml`, '[package]\nname = "app"\nedition = "2021"\n');
+      put(`b${n}/src/lib.rs`, 'pub struct Opts;\n');
+      put(`b${n}/src/main.rs`, `${mainText}\nstruct Opts;\nfn main() {}\n`);
+      put(`b${n}/src/${file}`, '');
+    });
+    inLibrary.forEach(([libText, mod, , mainText = ''], n) => {
       put(`s${n}/Cargo.toml`, '[package]\nname = "app"\nedition = "2021"\n');
-      put(`s${n}/src/lib.rs`, `${libText}pub struct Opts;\n`);
+      put(`s${n}/src/lib.rs`, `${libText}\npub struct Opts;\n`);
       put(`s${n}/src/main.rs`, `${mainText}struct Opts;\nfn main() {}\n`);
       put(`s${n}/src/${mod}/mod.rs`, '');
-      const found = makeResolvePathToFile(ws)('crate::Opts', `s${n}/src/${mod}/mod.rs`, 'rust');
-      expect(found, `${JSON.stringify(libText)} → ${mod}`).toBe(expected === undefined ? undefined : `s${n}/${expected}`);
+    });
+    const table = await tableNow();
+    const resolve = makeResolvePathToFile(ws);
+    inBinary.forEach(([mainText, file, expected], n) => {
+      expect(resolve('crate::Opts', `b${n}/src/${file}`, 'rust', false, table), `main.rs ${JSON.stringify(mainText)} → ${file}`).toBe(`b${n}/${expected}`);
+    });
+    inLibrary.forEach(([libText, mod, expected], n) => {
+      expect(resolve('crate::Opts', `s${n}/src/${mod}/mod.rs`, 'rust', false, table), `lib.rs ${JSON.stringify(libText)} → ${mod}`).toBe(expected === undefined ? undefined : `s${n}/${expected}`);
     });
   });
 
@@ -706,7 +806,13 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/withmain/main.rs', 'mod config;\nfn main() {}\n');
     put('src/bin/withmain/config/mod.rs', '');
     put('src/bin/withmain/helper.rs', '');
-    const resolve = makeResolvePathToFile(ws);
+    put('src/bin/selfish.rs', 'mod selfish;\nmod inner;\nfn main() {}\n');
+    put('src/bin/selfish/inner.rs', '');
+    const declared = await tableNow();
+    const resolve = (spec, from, language) => makeResolvePathToFile(ws)(spec, from, language, false, declared);
+    // Without the pass's symbol table no binary is known to declare the directory, and it is still no crate of its own.
+    expect(makeResolvePathToFile(ws)('crate::config::Cfg', 'src/bin/common/mod.rs', 'rust')).toBeUndefined();
+    expect(makeResolvePathToFile(ws)('self::deep', 'src/bin/common/mod.rs', 'rust')).toBe('src/bin/common/deep/mod.rs');
     // The binary that declares the directory roots its files, at any depth, for `crate::` and `super::` alike.
     expect(resolve('crate::config::Cfg', 'src/bin/common/mod.rs', 'rust')).toBe('src/bin/config/mod.rs');
     expect(resolve('super::config::Cfg', 'src/bin/common/mod.rs', 'rust')).toBe('src/bin/config/mod.rs');
@@ -725,6 +831,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::peer::T', 'src/bin/loose/sub.rs', 'rust')).toBe('src/bin/loose/peer.rs');
     expect(resolve('super::super::config::Cfg', 'src/bin/shared/sib.rs', 'rust')).toBeUndefined();
     expect(resolve('super::config::Cfg', 'src/bin/shared/mod.rs', 'rust')).toBeUndefined();
+    // A binary that names itself as its own module declares nothing: the files below its name have no known crate.
+    expect(resolve('crate::config::Cfg', 'src/bin/selfish/inner.rs', 'rust')).toBeUndefined();
     // A directory with a main.rs is a crate of its own: its files read `crate::` in its tree.
     expect(resolve('crate::config', 'src/bin/withmain/helper.rs', 'rust')).toBe('src/bin/withmain/config/mod.rs');
     expect(resolve('crate::config::Cfg', 'src/bin/withmain/config/mod.rs', 'rust')).toBe('src/bin/withmain/config/mod.rs');
@@ -1285,6 +1393,19 @@ path = "..\u002fmore"
     expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
     // Anywhere in the file: the top level is the parse tree's question, not this one's.
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
+  });
+
+  it('declares each module a file places by name alone under its module file key, with the line of the mod item', async () => {
+    const code = '#![allow(dead_code)]\nmod a;\npub mod outer {\n    mod b;\n    pub(crate) mod inner {\n        #[cfg(test)]\n        mod r#c;\n    }\n    #[path = "moved"]\n    mod moved {\n        mod d;\n    }\n}\n#[path = "e.rs"]\nmod e;\nfn f() {}\nstruct mod_like;\n';
+    await withParsedFile('src/lib.rs', code, (tree) => {
+      expect(plainModuleFiles(tree.rootNode)).toEqual([{ path: 'a', line: 2 }, { path: 'outer/b', line: 4 }, { path: 'outer/inner/c', line: 7 }]);
+      const keys = rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust')).map((d) => d.symbolKey);
+      expect(keys.filter((k) => k.startsWith('modfile:'))).toEqual([rustModuleFileKey('a'), rustModuleFileKey('outer/b'), rustModuleFileKey('outer/inner/c')]);
+      expect(rustModuleFileKey('outer/b')).toBe('modfile:outer/b');
+    });
+    // A file that does not parse to the end declares none, and neither does a nameless or damaged `mod`.
+    await withParsedFile('x.rs', 'mod a;\nfn broken( {\n', (tree) => expect(plainModuleFiles(tree.rootNode)).toEqual([]));
+    await withParsedFile('x.rs', '', (tree) => expect(plainModuleFiles(tree.rootNode)).toEqual([]));
   });
 
   // The names the top level of `code` binds as items, as the Rust extractor reads them from the parse tree.

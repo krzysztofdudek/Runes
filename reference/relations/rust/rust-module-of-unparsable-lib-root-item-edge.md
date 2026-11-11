@@ -8,7 +8,7 @@ cites: "Rust Reference, Paths (`crate` is the root of the current crate)"
 
 ## Rule
 
-`src/lib.rs` leaves a parenthesis open before `mod late;` (a file in the middle of an edit), and `src/main.rs` is a second crate with an `Opts` of its own. A root whose brackets do not balance cannot be read to the end, so the module is left to the first root and `crate::Opts` in `src/late/mod.rs` binds `src/lib.rs` (owner root).
+`src/lib.rs` leaves a parenthesis open before `mod late;` (a file in the middle of an edit), and `src/main.rs` is a second crate with an `Opts` of its own. A file that does not parse to the end tells nothing about its modules, so the roots are tried in their usual order and `crate::Opts` in `src/late/mod.rs` binds `src/lib.rs` (owner root).
 
 ## Files
 

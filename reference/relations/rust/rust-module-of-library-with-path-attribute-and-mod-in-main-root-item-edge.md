@@ -8,7 +8,7 @@ cites: "Rust Reference, Modules (the `path` attribute names the file of a module
 
 ## Rule
 
-`src/lib.rs` declares `#[path = "imp/thing.rs"] mod thing;` and `src/main.rs` declares `mod imp;`. Rust compiles `src/imp/thing.rs` into the library, but the reader sees only the binary declare a module called `imp`. A package with a root that cannot be read to the end leaves every module to the first root, so the name `imp` does not pick the binary: `crate::Opts` in `src/imp/thing.rs` binds `src/lib.rs` (owner root), not `src/main.rs` (owner bin).
+`src/lib.rs` declares `#[path = "imp/thing.rs"] mod thing;` and `src/main.rs` declares `mod imp;`. Rust compiles `src/imp/thing.rs` into the library. The binary declares a module called `imp`, but `src/imp/mod.rs` does not declare `thing`, so no chain of plain `mod` declarations leads from the binary root to the file. The name `imp` alone does not pick the binary: the roots are tried in their usual order, and `crate::Opts` in `src/imp/thing.rs` binds `src/lib.rs` (owner root), not `src/main.rs` (owner bin).
 
 ## Files
 
