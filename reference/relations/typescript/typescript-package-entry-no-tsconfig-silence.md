@@ -39,4 +39,4 @@ console.log(value);
 
 ## Why
 
-A bundler or Babel may build `dist/index.js` from any file, and the repository's structure may map `packages/core/src/` and `packages/core/` to different owners, so the package directory as a whole is not a target. The diagnostic lets a consumer say that imports of this package are not resolved.
+A bundler or Babel may build `dist/index.js` from any file, and the repository's structure may map `packages/core/src/` and `packages/core/` to different owners, so the package directory as a whole is not a target. The diagnostic lets a consumer say that an import reaching this entry is not resolved.

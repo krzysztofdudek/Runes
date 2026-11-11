@@ -1000,7 +1000,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
             // `rootDir` resolves like them; one outside the repository is kept as null: no source in the repository is under it.
             if (typeof options?.rootDir === 'string')
                 merged.rootDir = joinConfigPath(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
-            for (const field of ['allowJs', 'checkJs']) {
+            for (const field of ['allowJs', 'checkJs', 'noEmit']) {
                 const value = options?.[field];
                 if (typeof value === 'boolean')
                     merged[field] = value;
@@ -1291,7 +1291,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         projectsIn.set(pkgDir, found);
         return found;
     };
-    // The source root tsc computed before TypeScript 6 for a config with no `rootDir`: the longest common directory of the non-declaration files the project holds. undefined when it cannot be known from the config's own directory (a `files` or `include` entry reaches outside it) or the project holds no source.
+    // The source root tsc computed before TypeScript 6 for a config with no `rootDir`: the longest common directory of the non-declaration files the project holds. undefined when it cannot be known from the config's own directory (a `files` or `include` entry reaches outside it); null when the project holds no source there, so it writes no output.
     const commonRoots = new Map();
     const commonRoot = (file, config) => {
         if (commonRoots.has(file))
@@ -1299,7 +1299,8 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         const configDir = dirOf(file);
         const inside = (p) => configDir === '' || p === configDir || p.startsWith(`${configDir}/`);
         let common;
-        if ([...(config.files ?? []), ...(config.include ?? [])].every(inside)) {
+        const knowable = [...(config.files ?? []), ...(config.include ?? [])].every(inside);
+        if (knowable) {
             const stack = [configDir];
             while (stack.length > 0) {
                 const dir = stack.pop();
@@ -1327,12 +1328,12 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                 }
             }
         }
-        const root = common?.join('/');
+        const root = common !== undefined ? common.join('/') : knowable ? null : undefined;
         commonRoots.set(file, root);
         return root;
     };
     const allowsJs = (config) => config.allowJs ?? config.checkJs ?? false;
-    // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
+    // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
     const sourceOfOutput = (pkgDir, target, exists) => {
         const projects = projectsOf(pkgDir);
         if (projects === 'unknown' || projects.length === 0)
@@ -1344,7 +1345,8 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
             const hits = new Set();
             for (const { file, config } of projects) {
                 const out = kind.declaration ? (config.declarationDir ?? config.outDir) : config.outDir;
-                if (out === undefined || config.rootDir === null)
+                // A config that writes no output (`noEmit`) has no say in where an output file comes from.
+                if (out === undefined || config.rootDir === null || config.noEmit === true)
                     continue;
                 if (out !== '' && !stem.startsWith(`${out}/`))
                     continue;
@@ -1358,6 +1360,9 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                     // An unknown root may name a file this reading cannot see.
                     if (common === undefined)
                         return undefined;
+                    // A project that holds no source writes nothing.
+                    if (common === null)
+                        continue;
                     roots = common === configDir ? [configDir] : [configDir, common];
                 }
                 for (const root of roots) {
@@ -1378,7 +1383,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         if (report === undefined)
             return;
         const manifest = pkg.dir === '' ? 'package.json' : `${pkg.dir}/package.json`;
-        report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and no tsconfig of the package maps it to a source; imports of the package are not resolved`);
+        report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and no tsconfig of the package maps it to a source; an import that resolves to this entry binds nothing`);
     };
     return {
         tsconfigFor,

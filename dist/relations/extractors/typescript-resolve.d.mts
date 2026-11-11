@@ -46,7 +46,7 @@ export interface TsResolveDeps {
     packageAt?(dir: string): TsPackage | undefined;
     /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, or when two readings name different files. */
     sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | undefined;
-    /** Told that an entry of a package's package.json names no file and maps to no source, so imports of the package bind nothing. */
+    /** Told that an entry of a package's package.json names no file and maps to no source, so an import that resolved to it bound nothing. */
     entryMissing?(pkg: TsPackage, target: string): void;
     /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution target, whether or not it is on disk. */
     isExcluded?(repoRelPosix: string): boolean;
