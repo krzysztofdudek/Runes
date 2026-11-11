@@ -386,3 +386,11 @@ describe('MATRIX — C# type positions in patterns', () => {
   it('csharp-pattern-generic-type-edge', () => runCase('csharp-pattern-generic-type-edge'));
   it('csharp-pattern-enum-member-through-type-edge', () => runCase('csharp-pattern-enum-member-through-type-edge'));
 });
+
+describe('MATRIX — C# ref types, query range variable types and function pointer types', () => {
+  it('csharp-ref-return-type-edge', () => runCase('csharp-ref-return-type-edge'));
+  it('csharp-ref-local-type-edge', () => runCase('csharp-ref-local-type-edge'));
+  it('csharp-ref-and-query-types-edge', () => runCase('csharp-ref-and-query-types-edge'));
+  it('csharp-query-range-variable-type-edge', () => runCase('csharp-query-range-variable-type-edge'));
+  it('csharp-function-pointer-type-edge', () => runCase('csharp-function-pointer-type-edge'));
+});
