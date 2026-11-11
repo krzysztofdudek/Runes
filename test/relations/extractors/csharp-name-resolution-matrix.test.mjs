@@ -370,3 +370,11 @@ describe('MATRIX — C# rooted using directives inside a namespace block', () =>
   it('csharp-using-rooted-block-global-edge', () => runCase('csharp-using-rooted-block-global-edge'));
   it('csharp-using-rooted-block-beside-namespace-edge', () => runCase('csharp-using-rooted-block-beside-namespace-edge'));
 });
+
+describe('MATRIX — C# delegate declarations are types', () => {
+  it('csharp-delegate-declared-edge', () => runCase('csharp-delegate-declared-edge'));
+  it('csharp-delegate-nested-edge', () => runCase('csharp-delegate-nested-edge'));
+  it('csharp-delegate-enclosing-namespace-hides-imported-class-silence', () => runCase('csharp-delegate-enclosing-namespace-hides-imported-class-silence'));
+  it('csharp-delegate-generic-arity-edge', () => runCase('csharp-delegate-generic-arity-edge'));
+  it('csharp-delegate-file-local-not-published-edge', () => runCase('csharp-delegate-file-local-not-published-edge'));
+});
