@@ -1537,6 +1537,21 @@ describe('package-entry-missing', () => {
     const rootPkg = run({ 'package.json': '{ "name": "solo", "main": "./dist/index.js" }' }, ['solo']);
     expect(rootPkg.diagnostics.map((d) => [d.code, d.file])).toEqual([['package-entry-missing', 'package.json']]);
   });
+  it('says which of the two holds: no tsconfig maps the entry, or the tsconfigs map it to different sources', () => {
+    const one = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }' }, ['@acme/core']);
+    expect(one.diagnostics[0].message).toContain('no tsconfig of the package maps it to a source');
+    const two = run({
+      ...base,
+      'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }',
+      'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }',
+      'packages/core/tsconfig.legacy.json': '{ "compilerOptions": { "rootDir": "legacy", "outDir": "dist" } }',
+      'packages/core/legacy/index.ts': '',
+    }, ['@acme/core']);
+    expect(two.hits).toEqual([undefined]);
+    expect(two.diagnostics.map((d) => d.code)).toEqual(['package-entry-missing']);
+    expect(two.diagnostics[0].message).toContain('map it to different sources');
+    expect(two.diagnostics[0].message).not.toContain('no tsconfig');
+  });
   it('says nothing when the entry maps to its source, when a later entry binds, or when the package has no entry', () => {
     const mapped = run({ ...base, 'packages/core/package.json': '{ "name": "@acme/core", "main": "./dist/index.js" }', 'packages/core/tsconfig.json': '{ "compilerOptions": { "rootDir": "src", "outDir": "dist" } }' }, ['@acme/core']);
     expect(mapped.hits).toEqual(['packages/core/src/index.ts']);

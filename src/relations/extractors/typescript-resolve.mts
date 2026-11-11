@@ -85,13 +85,16 @@ export interface TsResolveDeps {
   packageNamed(name: string, fromFile: string): TsPackage | 'ambiguous' | undefined;
   /** The package whose package.json sits directly in `dir`, if any. */
   packageAt?(dir: string): TsPackage | undefined;
-  /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, or when two readings name different files. */
-  sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | undefined;
+  /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, {@link SOURCES_DISAGREE} when two readings name different files. */
+  sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined;
   /** Told that an entry of a package's package.json names no file and maps to no source, so an import that resolved to it bound nothing. */
-  entryMissing?(pkg: TsPackage, target: string): void;
+  entryMissing?(pkg: TsPackage, target: string, sourcesDisagree: boolean): void;
   /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution target, whether or not it is on disk. */
   isExcluded?(repoRelPosix: string): boolean;
 }
+
+/** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
+export const SOURCES_DISAGREE = Symbol('sources disagree');
 
 export interface TsPathConfig {
   /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
@@ -209,9 +212,9 @@ function resolveWorkspacePackage(
   const { manifest, dir } = pkg;
 
   // An entry that names no file in the repository (build output a clean checkout does not hold) is read through the package's tsconfig; one that maps to no source either is reported when nothing else binds the import.
-  const missing: string[] = [];
+  const missing: MissingEntry[] = [];
   const reported = (hit: string | undefined): string | undefined => {
-    if (hit === undefined && missing.length > 0) deps.entryMissing?.(pkg, missing[0]);
+    if (hit === undefined && missing.length > 0) deps.entryMissing?.(pkg, missing[0].target, missing[0].sourcesDisagree);
     return hit;
   };
   if (manifest.exports !== undefined && manifest.exports !== null) {
@@ -233,12 +236,19 @@ function entryFile(
   target: string | undefined,
   exists: (repoRelPosix: string) => boolean,
   deps: TsResolveDeps | undefined,
-  missing?: string[],
+  missing?: MissingEntry[],
 ): string | undefined {
   if (target === undefined) return undefined;
   const hit = probe(target, exists) ?? deps?.sourceOfOutput?.(pkg.dir, target, exists);
-  if (hit === undefined) missing?.push(target);
-  return hit;
+  if (typeof hit === 'string') return hit;
+  missing?.push({ target, sourcesDisagree: hit === SOURCES_DISAGREE });
+  return undefined;
+}
+
+/** A package entry that named no file and gave no source, and whether that was because the package's tsconfigs name different sources for it. */
+interface MissingEntry {
+  target: string;
+  sourcesDisagree: boolean;
 }
 
 /** `exports` shorthand forms (a string, an array, a conditions object) mean the root subpath. */
@@ -497,7 +507,7 @@ function probe(
 }
 
 /** A package directory's own entry file from its `types`/`typings`/`module`/`main` fields. */
-function entryOf(pkg: TsPackage, exists: (repoRelPosix: string) => boolean, deps?: TsResolveDeps, missing?: string[]): string | undefined {
+function entryOf(pkg: TsPackage, exists: (repoRelPosix: string) => boolean, deps?: TsResolveDeps, missing?: MissingEntry[]): string | undefined {
   const { manifest, dir } = pkg;
   for (const field of [manifest.types, manifest.typings, manifest.module, manifest.main]) {
     if (typeof field !== 'string' || field === '') continue;
@@ -1356,7 +1366,7 @@ export function makeTsResolveDeps(
   };
   const allowsJs = (config: LoadedConfig): boolean => config.allowJs ?? config.checkJs ?? false;
   // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
-  const sourceOfOutput = (pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | undefined => {
+  const sourceOfOutput = (pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined => {
     const projects = projectsOf(pkgDir);
     if (projects === 'unknown' || projects.length === 0) return undefined;
     const known = OUTPUT_SOURCES.some((o) => target.endsWith(o.suffix));
@@ -1387,15 +1397,16 @@ export function makeTsResolveDeps(
           if (source !== undefined) hits.add(source);
         }
       }
-      if (hits.size > 1) return undefined;
+      if (hits.size > 1) return SOURCES_DISAGREE;
       if (hits.size === 1) return [...hits][0];
     }
     return undefined;
   };
-  const entryMissing = (pkg: TsPackage, target: string): void => {
+  const entryMissing = (pkg: TsPackage, target: string, sourcesDisagree: boolean): void => {
     if (report === undefined) return;
     const manifest = pkg.dir === '' ? 'package.json' : `${pkg.dir}/package.json`;
-    report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and no tsconfig of the package maps it to a source; an import that resolves to this entry binds nothing`);
+    const why = sourcesDisagree ? 'the tsconfigs of the package map it to different sources' : 'no tsconfig of the package maps it to a source';
+    report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and ${why}; an import that resolves to this entry binds nothing`);
   };
 
   return {

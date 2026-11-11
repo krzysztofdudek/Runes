@@ -65,6 +65,8 @@ export function resolveTsPath(specifier, fromFile, existsAny, deps, callForm) {
     }
     return resolveBare(spec, from, exists, deps, callForm);
 }
+/** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
+export const SOURCES_DISAGREE = Symbol('sources disagree');
 function resolveBare(spec, from, exists, deps, callForm) {
     const config = deps.tsconfigFor(from);
     // A tsconfig that exists but cannot be read may remap this very specifier: resolving it
@@ -118,7 +120,7 @@ function resolveWorkspacePackage(spec, from, exists, deps, callForm) {
     const missing = [];
     const reported = (hit) => {
         if (hit === undefined && missing.length > 0)
-            deps.entryMissing?.(pkg, missing[0]);
+            deps.entryMissing?.(pkg, missing[0].target, missing[0].sourcesDisagree);
         return hit;
     };
     if (manifest.exports !== undefined && manifest.exports !== null) {
@@ -135,9 +137,10 @@ function entryFile(pkg, target, exists, deps, missing) {
     if (target === undefined)
         return undefined;
     const hit = probe(target, exists) ?? deps?.sourceOfOutput?.(pkg.dir, target, exists);
-    if (hit === undefined)
-        missing?.push(target);
-    return hit;
+    if (typeof hit === 'string')
+        return hit;
+    missing?.push({ target, sourcesDisagree: hit === SOURCES_DISAGREE });
+    return undefined;
 }
 /** `exports` shorthand forms (a string, an array, a conditions object) mean the root subpath. */
 function normalizeExports(exportsField) {
@@ -1421,17 +1424,18 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                 }
             }
             if (hits.size > 1)
-                return undefined;
+                return SOURCES_DISAGREE;
             if (hits.size === 1)
                 return [...hits][0];
         }
         return undefined;
     };
-    const entryMissing = (pkg, target) => {
+    const entryMissing = (pkg, target, sourcesDisagree) => {
         if (report === undefined)
             return;
         const manifest = pkg.dir === '' ? 'package.json' : `${pkg.dir}/package.json`;
-        report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and no tsconfig of the package maps it to a source; an import that resolves to this entry binds nothing`);
+        const why = sourcesDisagree ? 'the tsconfigs of the package map it to different sources' : 'no tsconfig of the package maps it to a source';
+        report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and ${why}; an import that resolves to this entry binds nothing`);
     };
     return {
         tsconfigFor,

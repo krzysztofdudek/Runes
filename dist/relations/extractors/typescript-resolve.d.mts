@@ -44,13 +44,15 @@ export interface TsResolveDeps {
     packageNamed(name: string, fromFile: string): TsPackage | 'ambiguous' | undefined;
     /** The package whose package.json sits directly in `dir`, if any. */
     packageAt?(dir: string): TsPackage | undefined;
-    /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, or when two readings name different files. */
-    sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | undefined;
+    /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, {@link SOURCES_DISAGREE} when two readings name different files. */
+    sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined;
     /** Told that an entry of a package's package.json names no file and maps to no source, so an import that resolved to it bound nothing. */
-    entryMissing?(pkg: TsPackage, target: string): void;
+    entryMissing?(pkg: TsPackage, target: string, sourcesDisagree: boolean): void;
     /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution target, whether or not it is on disk. */
     isExcluded?(repoRelPosix: string): boolean;
 }
+/** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
+export declare const SOURCES_DISAGREE: unique symbol;
 export interface TsPathConfig {
     /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
     baseUrl?: string;
