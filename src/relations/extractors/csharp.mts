@@ -177,8 +177,10 @@ interface CsScope {
   readonly extBelow: boolean;
   /** The member accesses the node is the receiver of, nearest first: only a member access nests directly in the `expression` of another, so the chain is read from the walk. */
   readonly access: { readonly node: Node; readonly outer: CsScope['access'] } | null;
-  /** Where the node sits in a nest of tuples: directly under a tuple (`tuple`) or under an argument of one (`arg`), and the outermost tuple of the nest of tuples-in-arguments-of-tuples. */
-  readonly tuple: { readonly stage: 'tuple' | 'arg'; readonly root: Node } | null;
+  /** Where the node sits in a nest of tuples: directly under a tuple (`tuple`), under an argument of one (`arg`) or under any other child of one (`child`); `root` the outermost tuple of the nest of tuples-in-arguments-of-tuples and `rootParent` its parent, `self` the tuple directly above and `selfParent` its parent. The walk came through each of them, so none is asked of the tree again. */
+  readonly tuple: { readonly stage: 'tuple' | 'arg' | 'child'; readonly root: Node; readonly rootParent: Node | null; readonly self: Node; readonly selfParent: Node | null } | null;
+  /** Where the node sits just under a type declaration, for the two shapes read by a step or two up: a child of the type `type` (`child`), a child of such a child (`member`: a member in the type's body, a parameter in its primary constructor's list), a child of a member that is a constructor named `extension` (`ctorChild`, see `extensionMethodName`), or a child of such a child (`ctorGrandchild`). Null anywhere else. */
+  readonly near: { readonly stage: 'child' | 'member' | 'ctorChild' | 'ctorGrandchild'; readonly type: Node } | null;
 }
 
 /** The type parameter names of one declaration, linked to those of the declaration around it. */
@@ -198,7 +200,7 @@ interface NsFrame {
   outerList?: OuterUsings[];
 }
 
-const TOP_SCOPE: CsScope = { ns: null, chain: '', bodyChain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null };
+const TOP_SCOPE: CsScope = { ns: null, chain: '', bodyChain: '', typeDecl: null, fileLocal: false, tp: null, tpSkip: undefined, nameof: false, extBelow: false, access: null, tuple: null, near: null };
 
 /** The scope the node is read in: its parent's scope, except that an attribute list of a declaration does not see that declaration's type parameters. */
 function csSeen(node: Node, inherited: CsScope): CsScope {
@@ -253,10 +255,17 @@ function csBelow(node: Node, own: CsScope, parentOf: ParentOf): CsScope | undefi
   }
   const access = type === 'member_access_expression' ? { node, outer: own.access } : null;
   let tuple: CsScope['tuple'] = null;
-  if (type === 'tuple_expression') tuple = { stage: 'tuple', root: own.tuple?.stage === 'arg' ? own.tuple.root : node };
-  else if (type === 'argument' && own.tuple?.stage === 'tuple') tuple = { stage: 'arg', root: own.tuple.root };
-  if (access !== null || own.access !== null || tuple !== null || own.tuple !== null) changed = true;
-  return changed ? { ns, chain, bodyChain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple } : undefined;
+  if (type === 'tuple_expression') {
+    const above = parentOf();
+    tuple = own.tuple?.stage === 'arg' ? { stage: 'tuple', root: own.tuple.root, rootParent: own.tuple.rootParent, self: node, selfParent: above } : { stage: 'tuple', root: node, rootParent: above, self: node, selfParent: above };
+  } else if (own.tuple?.stage === 'tuple') tuple = { ...own.tuple, stage: type === 'argument' ? 'arg' : 'child' };
+  let near: CsScope['near'] = null;
+  if (TYPE_DECLARATION_TYPES.has(type)) near = { stage: 'child', type: node };
+  else if (own.near?.stage === 'child') near = { stage: 'member', type: own.near.type };
+  else if (own.near?.stage === 'member' && type === 'constructor_declaration' && node.childForFieldName('name')?.text === 'extension') near = { stage: 'ctorChild', type: own.near.type };
+  else if (own.near?.stage === 'ctorChild') near = { stage: 'ctorGrandchild', type: own.near.type };
+  if (access !== null || own.access !== null || tuple !== null || own.tuple !== null || near !== null || own.near !== null) changed = true;
+  return changed ? { ns, chain, bodyChain, typeDecl, fileLocal, tp, tpSkip, nameof, extBelow, access, tuple, near } : undefined;
 }
 
 /** The names the `type_parameter_list` of a declaration declares (none when it has no list). */
@@ -712,10 +721,8 @@ function extensionMethodName(node: Node, scope: CsScope): string | undefined {
   if (node.type === 'local_function_statement') {
     // Only a local function DIRECTLY in the body of the misread `extension(…)` constructor of the
     // static class itself; a local function anywhere else is a helper, never an extension member.
-    const ctor = node.parent!.parent!;
-    const misreadBlock =
-      ctor.type === 'constructor_declaration' && ctor.childForFieldName('name')!.text === 'extension' && ctor.parent!.parent!.id === owner.id;
-    return misreadBlock ? name : undefined;
+    // The walk carries where the node sits under the type (`CsScope.near`).
+    return scope.near?.stage === 'ctorGrandchild' && scope.near.type.id === owner.id ? name : undefined;
   }
   // The C# 14 block form on a grammar that knows it: a method inside an extension declaration.
   if (scope.extBelow) return name;
@@ -816,7 +823,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     }
     // The parameters of a primary constructor: a record's are its public properties, a class's or a struct's are seen by every part of the type and by no other.
     // A primary constructor's list is the type's own child, in its header (outside its body); the type is asked for only there.
-    if (node.type === 'parameter' && owner !== null && !owner.fileLocal && scope.bodyChain !== scope.chain && parentOf()!.parent!.id === owner.node.id) {
+    if (node.type === 'parameter' && owner !== null && !owner.fileLocal && scope.bodyChain !== scope.chain && scope.near?.stage === 'member' && scope.near.type.id === owner.node.id) {
       const name = node.childForFieldName('name');
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
       const typeKey = ns === '' ? scope.chain : `${ns}.${scope.chain}`;
@@ -923,14 +930,14 @@ function directiveNamespaceText(directive: Node, skipName: Node | null = null): 
 /**
  * True when a `declaration_expression` sits where C# lets one declare a variable: as an `out` argument (`F(out T x)`), or as an element, at any tuple depth, of the target of a deconstruction (`(T a, U b) = …`, `foreach ((T a, U b) in …)`). The grammar also reads a comparison pair in an argument list, `F(i < A, j > B)` or `F(x.i < A, j > B)`, as a declaration of a variable `B` of the generic type `i<A, j>` or `x.i<A, j>`; that reading sits in a plain argument and is rejected here, and so is a declaration-shaped element of a tuple that is not a deconstruction target.
  */
-function declaresVariable(decl: Node, scope: CsScope): boolean {
-  const arg = decl.parent!; // a declaration expression is always an argument's child
+function declaresVariable(scope: CsScope, parentOf: ParentOf): boolean {
+  const arg = parentOf()!; // a declaration expression is always an argument's child
   if (hasTokenChild(arg, 'out')) return true;
-  // A tuple in an argument of a tuple continues the nest: the outermost tuple of the nest is carried down the walk (`scope.tuple`).
-  const tuple = scope.tuple?.stage === 'arg' ? scope.tuple.root : arg.parent!;
-  if (tuple.type !== 'tuple_expression') return false;
-  const target = tuple.parent!;
-  return (target.type === 'assignment_expression' || target.type === 'foreach_statement') && target.childForFieldName('left')?.id === tuple.id;
+  // The tuple the argument stands in, and what that tuple stands in, are carried down the walk (`scope.tuple`): a tuple in an argument of a tuple continues the nest, and the outermost tuple of the nest is the target. Asking each node for its parent instead costs the square of the size of a file of such lines.
+  const nest = scope.tuple;
+  if (nest === null || nest.stage === 'tuple') return false;
+  const [tuple, target] = nest.stage === 'arg' ? [nest.root, nest.rootParent] : [nest.self, nest.selfParent];
+  return target !== null && (target.type === 'assignment_expression' || target.type === 'foreach_statement') && target.childForFieldName('left')?.id === tuple.id;
 }
 
 /** True when a using directive's namespace is written after `global::` (`using global::Core;`): it names that namespace from the global namespace. */
@@ -2212,7 +2219,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     }
     // A declaration expression `out T x`, or an element of a deconstruction target `(T a, U b) = …`. Anywhere else the node is the grammar's reading of a comparison pair (`F(i < A, j > B)` as a declaration of `i<A, j> B`, `F(x.i < A, j > B)` as one of `x.i<A, j> B`), which names no type: nothing under it is read, or the general qualified-name reading below would still take `x.i` and its "type arguments" for types.
     if (node.type === 'declaration_expression') {
-      if (!declaresVariable(node, scopeOf(node))) {
+      if (!declaresVariable(scopeOf(node), parentOf)) {
         // The comparison reading (177): `F(x < Limits.Max, y > z)` is two comparisons, so each type argument that is a member access `Limits.Max` is a receiver of its own, `Limits` being a type unless this file declares it as a value.
         const type = node.childForFieldName('type');
         const args = type?.type === 'generic_name' ? findChild(type, 'type_argument_list') : null;
