@@ -1349,6 +1349,12 @@ describe('csharp — a type named in a pattern or after `is`', () => {
     expect(keys).toContain('Lib.Box`1.Item');
     expect(keys).toContain('Lib.Credit');
   });
+  it('a dotted constant reads its first name before the dotted name, so a type bound there ends the lookup', async () => {
+    const { uses } = await run('namespace App.Core;\nclass C { bool A(int n) => n is Limits.Max; }\n');
+    const group = uses.map((u) => u.candidates.flatMap((c) => (c.kind === 'symbol' ? [c.symbolKey] : []))).find((g) => g.includes('Limits.Max'));
+    expect(group.indexOf('App.Core.Limits')).toBeGreaterThanOrEqual(0);
+    expect(group.indexOf('App.Core.Limits')).toBeLessThan(group.indexOf('Limits.Max'));
+  });
   it('a dotted name led by a value this file declares is no type', async () => {
     const { uses } = await run(['class C { Mode Config; bool A(object o) => o is Config.Limit; bool B(object o) => o is Lib.Limit; }', ''].join('\n'));
     const keys = keysOf(uses);

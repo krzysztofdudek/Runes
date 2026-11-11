@@ -1087,7 +1087,7 @@ export function extractCsharpRefs(file) {
     /**
      * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain led by a using alias (`S::Core.Customer`, which the grammar reads as a member access over `S::Core`) is the alias-qualified type it spells: its tail is rewritten on assembly onto the namespace the alias names, as a qualified name's is, and an alias the map does not bind (an extern alias) gives nothing. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does any other shape.
      */
-    function emitMemberAccessType(access) {
+    function emitMemberAccessType(access, asReceiver = false) {
         const segs = [];
         const generics = [];
         let rooted = false;
@@ -1121,6 +1121,11 @@ export function extractCsharpRefs(file) {
         const line = access.startPosition.row + 1;
         if (alias !== undefined)
             refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: nsChain(access), at: access.startIndex });
+        else if (asReceiver) {
+            if (namesOwnProgram(segs[0]))
+                return;
+            refs.push({ kind: 'receiver', chain: segs, line, enclosingNs: nsChain(access), at: access.startIndex, rooted, ...(rooted ? {} : enclosingTypes(access)) });
+        }
         else
             pushRef(segs.join('.'), access, line, rooted);
         for (const g of generics)
@@ -1318,9 +1323,9 @@ export function extractCsharpRefs(file) {
             const expr = node.namedChild(0);
             if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name'))
                 emitTypeNode(expr);
-            // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, read as the type it spells. It may also be a constant of a type (`Status.Active`): the receiver reading of the access still gives the type, and a type of the spelled name exists only where the repository declares one, so no type is named after the member.
+            // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
             else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)))
-                emitMemberAccessType(expr);
+                emitMemberAccessType(expr, true);
             return undefined;
         }
         // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
