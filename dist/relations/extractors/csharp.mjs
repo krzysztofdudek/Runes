@@ -1,5 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
-import { indexScopes, walkScoped } from './scope-walk.mjs';
+import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 /**
  * C# dependency extractor — the HARDEST language, and the design's poster child for
  * SymbolTable resolution.
@@ -147,7 +147,7 @@ function csSeen(node, inherited) {
     return { ...inherited, tp: node.type === 'attribute_list' ? inherited.tpSkip : inherited.tp, tpSkip: undefined };
 }
 /** The scope the children of `node` inherit, or undefined when it is `own`. */
-function csBelow(node, own) {
+function csBelow(node, own, parentOf) {
     const type = node.type;
     let { ns, chain, bodyChain, typeDecl, fileLocal, tp, nameof, extBelow } = own;
     let tpSkip;
@@ -168,9 +168,12 @@ function csBelow(node, own) {
         changed = true;
     }
     // The body of a type declaration (`declaration_list`, or an enum's member list): only inside it are the type's members, its nested types included, in scope.
-    if ((type === 'declaration_list' || type === 'enum_member_declaration_list') && node.parent !== null && TYPE_DECLARATION_TYPES.has(node.parent.type)) {
-        bodyChain = chain;
-        changed = true;
+    if (type === 'declaration_list' || type === 'enum_member_declaration_list') {
+        const parent = parentOf();
+        if (parent !== null && TYPE_DECLARATION_TYPES.has(parent.type)) {
+            bodyChain = chain;
+            changed = true;
+        }
     }
     if (type === 'extension_declaration') {
         extBelow = true;
@@ -217,11 +220,11 @@ function typeParameterNames(decl) {
 }
 /** Walk the tree with the scope of every node (see `CsScope`); a visitor that returns `false` skips the children of the node it was given. */
 function walkCs(root, visit) {
-    walkScoped(root, TOP_SCOPE, (node, inherited) => {
+    walkScoped(root, TOP_SCOPE, (node, inherited, parentOf) => {
         const own = csSeen(node, inherited);
         if (visit(node, own) === false)
             return false;
-        return csBelow(node, own) ?? (own === inherited ? undefined : own);
+        return csBelow(node, own, parentOf) ?? (own === inherited ? undefined : own);
     });
 }
 /** The scope of every node of a file, by node id, for the helpers that are handed a node a few levels under the one the walk is at. */
@@ -1283,7 +1286,7 @@ export function extractCsharpRefs(file) {
         emitDirectiveType(target, node);
         return false;
     });
-    walk(file.tree.rootNode, (node) => {
+    walkWithParent(file.tree.rootNode, (node, parentOf) => {
         // Do NOT descend into directive/declaration HEADERS — their dotted names are the
         // imported namespace or the declared namespace name, not a symbol USE.
         if (node.type === 'using_directive' || node.type === 'file_scoped_namespace_declaration') {
@@ -1420,16 +1423,17 @@ export function extractCsharpRefs(file) {
         if (node.type === 'qualified_name') {
             if (emitted.has(node.id))
                 return undefined;
-            if (node.parent !== null && node.parent.type === 'namespace_declaration') {
-                const nm = node.parent.childForFieldName('name');
+            const parent = parentOf();
+            if (parent !== null && parent.type === 'namespace_declaration') {
+                const nm = parent.childForFieldName('name');
                 if (nm !== null && nm.id === node.id)
                     return undefined;
             }
-            if (node.parent !== null && node.parent.type === 'qualified_name')
+            if (parent !== null && parent.type === 'qualified_name')
                 return undefined;
             // A `qualified_name` that is itself the `qualifier` of an `alias_qualified_name` is part
             // of a `global::`-rooted name handled at the alias node — skip the bare qualifier.
-            if (node.parent !== null && node.parent.type === 'alias_qualified_name')
+            if (parent !== null && parent.type === 'alias_qualified_name')
                 return undefined;
             emitted.add(node.id);
             emitQualified(node);

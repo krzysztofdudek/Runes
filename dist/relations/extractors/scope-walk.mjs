@@ -38,12 +38,12 @@ export function walkScoped(root, initial, visitor, parentOfRoot = () => root.par
 export function indexScopes(roots, initial, below, seen, skip) {
     const index = new Map();
     for (const root of roots) {
-        walkScoped(root, initial, (node, inherited) => {
+        walkScoped(root, initial, (node, inherited, parent) => {
             const own = seen === undefined ? inherited : seen(node, inherited);
             index.set(node.id, own);
             if (skip?.(node) === true)
                 return false;
-            return below(node, own) ?? (own === inherited ? undefined : own);
+            return below(node, own, parent) ?? (own === inherited ? undefined : own);
         });
     }
     return index;

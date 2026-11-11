@@ -53,17 +53,17 @@ export function walkScoped<S>(
 export function indexScopes<S>(
   roots: readonly Node[],
   initial: S,
-  below: (node: Node, seen: S) => S | undefined,
+  below: (node: Node, seen: S, parent: ParentOf) => S | undefined,
   seen?: (node: Node, inherited: S) => S,
   skip?: (node: Node) => boolean,
 ): Map<number, S> {
   const index = new Map<number, S>();
   for (const root of roots) {
-    walkScoped<S>(root, initial, (node, inherited) => {
+    walkScoped<S>(root, initial, (node, inherited, parent) => {
       const own = seen === undefined ? inherited : seen(node, inherited);
       index.set(node.id, own);
       if (skip?.(node) === true) return false;
-      return below(node, own) ?? (own === inherited ? undefined : own);
+      return below(node, own, parent) ?? (own === inherited ? undefined : own);
     });
   }
   return index;
