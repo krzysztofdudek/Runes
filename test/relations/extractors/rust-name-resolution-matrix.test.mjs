@@ -116,6 +116,11 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-inline-package-table-crate-name-edge', () => runCase('rust-inline-package-table-crate-name-edge'));
   it('rust-reexported-extern-crate-edge', () => runCase('rust-reexported-extern-crate-edge'));
   it('rust-extern-crate-alias-edge', () => runCase('rust-extern-crate-alias-edge'));
+  it('rust-module-written-by-macro-of-lib-root-item-edge', () => runCase('rust-module-written-by-macro-of-lib-root-item-edge'));
+  it('rust-module-with-path-attribute-of-lib-root-item-edge', () => runCase('rust-module-with-path-attribute-of-lib-root-item-edge'));
+  it('rust-module-after-raw-string-brace-of-lib-root-item-edge', () => runCase('rust-module-after-raw-string-brace-of-lib-root-item-edge'));
+  it('rust-module-after-char-literal-brace-of-lib-root-item-edge', () => runCase('rust-module-after-char-literal-brace-of-lib-root-item-edge'));
+  it('rust-module-in-cfg-if-of-lib-root-item-edge', () => runCase('rust-module-in-cfg-if-of-lib-root-item-edge'));
   it('rust-patch-workspace-dependency-edge', () => runCase('rust-patch-workspace-dependency-edge'));
   it('rust-patch-crates-io-git-dependency-silence', () => runCase('rust-patch-crates-io-git-dependency-silence'));
   it('rust-patch-git-source-edge', () => runCase('rust-patch-git-source-edge'));
