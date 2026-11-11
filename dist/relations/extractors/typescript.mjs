@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
  * TypeScript / TSX / JavaScript dependency extractor.
@@ -243,18 +244,8 @@ const TYPE_POSITION_ANCESTORS = new Set([
     'function_type',
     'object_type',
 ]);
+// Nodes whose first named child is a value or a name and whose other named children are types.
 const TYPE_ON_THE_RIGHT = new Set(['type_alias_declaration', 'as_expression', 'satisfies_expression']);
-/** Whether an `import('x')` call node is an import type, which TypeScript resolves by the format of its file as an import statement is, rather than a dynamic import() call. */
-function inTypePosition(call) {
-    let child = call;
-    for (let parent = call.parent; parent !== null; child = parent, parent = parent.parent) {
-        if (TYPE_POSITION_ANCESTORS.has(parent.type))
-            return true;
-        if (TYPE_ON_THE_RIGHT.has(parent.type) && parent.namedChild(0)?.id !== child.id)
-            return true;
-    }
-    return false;
-}
 function uses(file) {
     const out = [];
     const seen = new Set();
@@ -269,7 +260,14 @@ function uses(file) {
     };
     const emit = (specifier, node, callForm) => emitAt(specifier, node.startPosition.row + 1, callForm);
     const inModuleFile = isModuleFile(file.tree.rootNode);
-    walk(file.tree.rootNode, (node) => {
+    // Whether a node lies in a type, carried down the walk: an import('x') there is an import type, which TypeScript resolves by the format of its file as an import statement is, not a dynamic import() call.
+    const typeSide = new Set();
+    walkScoped(file.tree.rootNode, false, (node, inheritedInType) => {
+        const inType = inheritedInType || typeSide.has(node.id);
+        if (TYPE_ON_THE_RIGHT.has(node.type))
+            for (const c of node.namedChildren.slice(1))
+                if (c !== null)
+                    typeSide.add(c.id);
         switch (node.type) {
             case 'import_statement': {
                 // Every form gives its edge, type-only ones included (`import type …`,
@@ -309,7 +307,7 @@ function uses(file) {
                 // A plain string literal OR a no-substitution template literal yields a
                 // static specifier; an interpolated template literal / identifier / other
                 // expression is non-literal and skipped (specifierFromCallArg returns undefined).
-                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inTypePosition(node) ? undefined : 'import');
+                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inType ? undefined : 'import');
                 break;
             }
             case 'module': {
@@ -338,7 +336,7 @@ function uses(file) {
             default:
                 break;
         }
-        return undefined;
+        return inType || TYPE_POSITION_ANCESTORS.has(node.type) ? true : undefined;
     });
     for (const { specifier, line } of recoverFromErrors(file))
         emitAt(specifier, line);
