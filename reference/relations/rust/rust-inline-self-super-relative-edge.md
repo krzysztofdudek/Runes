@@ -39,10 +39,12 @@ struct S {
 fn g() {
     super::shared::run();
 }
+mod widget;
 ```
 
 ## Expect
 
+- src/feature/mod.rs:7 -> node:widget      # the `mod` that makes the file a module
 - src/feature/mod.rs:2 -> node:widget      # inline type-position self::widget::W → src/feature/widget/mod.rs (node widget)
 - src/feature/mod.rs:5 -> node:shared      # inline expression-position super::shared::run → src/shared/mod.rs (node shared)
 

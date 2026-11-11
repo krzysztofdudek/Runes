@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
@@ -83,6 +83,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
                 ...rustDeps,
                 crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
                 externCrateFor: (fromFile, file, name) => (declared(file, rustExternNameKey(name)) ? rustDeps.crateBoundBy(fromFile, (crate) => declared(file, rustExternBindingKey(name, crate))) : undefined),
+                moduleDeclared: (file, modulePath) => (declared(file, rustModuleKey(modulePath)) ? true : declared(file, RUST_MODULES_KNOWN_KEY) ? false : undefined),
                 rootDeclares: (rootFile, name, asItem = false) => declared(rootFile, rustTopLevelItemKey(name)) || (!asItem && declared(rootFile, rustExternNameKey(name))) || globBrings(rootFile, name),
             };
             rustDepsByTable.set(table, deps);

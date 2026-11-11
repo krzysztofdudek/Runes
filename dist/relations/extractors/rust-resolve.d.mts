@@ -59,6 +59,15 @@
  * that root, and a dependency no root binds stays silent. Only an `extern crate` declaration
  * names its crate directly.
  *
+ * DECLARED MODULES: a file is a module only when a `mod` item declares it. A file whose name
+ * fits a path (`src/util/parse.rs` for `crate::util::parse`) is bound as a module when a file
+ * of a module above it declares it (`moduleDeclared`), and passed over when the files above it
+ * are known to declare no such module: the name is then an item of the module above, and that
+ * module's file is bound. Where neither is known the file is bound as before, unless it is the
+ * root file of a Cargo target, which is a crate of its own (`src/bin/serve.rs` for
+ * `crate::serve` written in `src/bin/server.rs`). Without `moduleDeclared` (no table of the
+ * pass) no file's modules are known and every fitting file is bound, as in 1.0.
+ *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
  *   - A path rooted at an EXTERNAL crate (std, serde, tokio — any first segment that
@@ -110,6 +119,8 @@ export interface RustResolveDeps {
     rootDeclares?(rootFile: string, name: string, asItem?: boolean): boolean;
     /** The library tree of the crate that the top level of `file` binds as `name` with `extern crate` (`extern crate a as name;`, or `extern crate name;`), when that crate is an in-repo path dependency of the package of `fromFile`, or that package's own library. Undefined when `file` binds no such name there or the crate is not in the repository. Absent → no name is known to be bound that way. Its presence also says that what a crate root binds is known, which the edition 2015 rule for a path dependency needs. */
     externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
+    /** Does `file` declare, without a body, the module at `modulePath` below its own module (`x`, or `outer/x` through its inline module `outer`)? True when it does; false when every module the file declares is known and this is none of them; undefined when that is not known (the file is not in the pass's table, did not parse to the end, or invokes a macro that could declare one). Absent → never known. */
+    moduleDeclared?(file: string, modulePath: string): boolean | undefined;
 }
 export declare function resolveRustPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): string | undefined;
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
@@ -122,3 +133,7 @@ export declare function rustExternBindingKey(name: string, crate: string): strin
 export declare function rustModuleFileKey(modulePath: string, conditional?: boolean): string;
 /** The symbol key under which the Rust extractor declares, for a file, a module whose names a top-level glob `use` of the file brings into the file's own module: `path` is the glob's path as written, without the `::*` and with `r#` stripped (`types`, `self::types`, `crate::a::b`). In a crate root, where `self` and `crate` are the same module and a bare first name is a module the root declares, the three spellings name the module at that path below the root. The `glob:` prefix can never be a Rust identifier. */
 export declare function rustGlobKey(path: string): string;
+/** The symbol key under which the Rust extractor declares, for a file, a module the file declares without a body (`mod x;`), whatever stands in front of it and also in a `cfg_if!` branch. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). It says that the name is a module with a file of its own, not where that file is. The `mod:` prefix can never be a Rust identifier. */
+export declare function rustModuleKey(modulePath: string): string;
+/** The symbol key the Rust extractor declares for a file whose `rustModuleKey` declarations are all the modules it declares without a body: the file parsed to the end and invokes no macro, among its items, that could declare another. Without it a module the file does not list is not known to be absent. It can never be a Rust identifier. */
+export declare const RUST_MODULES_KNOWN_KEY = "mods:all";

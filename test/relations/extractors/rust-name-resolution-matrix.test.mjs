@@ -262,6 +262,16 @@ describe('MATRIX — mod declarations inside cfg_if!', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a file is a module only when a mod declares it', () => {
+  it('rust-function-named-like-undeclared-sibling-file-edge', () => runCase('rust-function-named-like-undeclared-sibling-file-edge'));
+  it('rust-inline-module-over-stale-sibling-file-edge', () => runCase('rust-inline-module-over-stale-sibling-file-edge'));
+  it('rust-module-declared-by-unknown-macro-keeps-file-edge', () => runCase('rust-module-declared-by-unknown-macro-keeps-file-edge'));
+  it('rust-module-declared-in-cfg-if-and-stale-root-file-edge', () => runCase('rust-module-declared-in-cfg-if-and-stale-root-file-edge'));
+  it('rust-other-binary-root-declared-as-module-edge', () => runCase('rust-other-binary-root-declared-as-module-edge'));
+  it('rust-other-binary-root-not-a-module-silence', () => runCase('rust-other-binary-root-not-a-module-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one

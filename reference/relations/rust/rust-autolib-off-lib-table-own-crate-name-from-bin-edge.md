@@ -23,6 +23,7 @@ autolib = false
 
 ```rust path=src/lib.rs
 pub struct Marker;
+pub mod util;
 ```
 
 ```rust path=src/util/mod.rs
@@ -35,6 +36,7 @@ use app::util::Thing;
 
 ## Expect
 
+- src/lib.rs:2 -> node:util      # the `mod` that makes the file a module
 - src/main.rs:1 -> node:util          # the `[lib]` table keeps the library, so the crate name still addresses it
 
 ## Why

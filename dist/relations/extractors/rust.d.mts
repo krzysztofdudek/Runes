@@ -13,6 +13,18 @@ export declare function plainModuleFiles(root: Node): Array<{
     conditional: boolean;
 }>;
 /**
+ * Every module a Rust file declares without a body: each `mod x;` that is an item of the file itself or of inline modules nested in it, and each one in a branch of a `cfg_if!` that stands among those items, as the path of its names from the file's own module (`x`, `outer/x`), with `r#` stripped. Whatever stands in front of the `mod` (a `cfg`, a `path` attribute, an attribute macro) is not read: the list says which names are modules with a file of their own, not where the file is.
+ *
+ * `known` says that the list holds every such module of the file. It is false where a `mod` may exist that the tree does not show: in a file the grammar could not parse to the end, in one whose head holds an inner attribute that is not one of the compiler's, and in one that invokes, among those items or in a `cfg_if!` branch, a macro other than the item macros Runes reads (`ITEM_MACROS`, `cfg_if!`), since a macro can expand to a `mod` or include a file that holds one.
+ */
+export declare function declaredModules(root: Node): {
+    declared: Array<{
+        path: string;
+        line: number;
+    }>;
+    known: boolean;
+};
+/**
  * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`; for a function with `#[proc_macro_derive(Name, …)]` in front of it the derive `Name` as well as the function), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
  */
 export declare function topLevelItemNames(root: Node): Array<{

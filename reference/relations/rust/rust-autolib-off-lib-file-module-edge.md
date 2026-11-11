@@ -29,6 +29,7 @@ pub struct Helper;
 
 ```rust path=src/main.rs
 use self::util::Thing;
+mod util;
 ```
 
 ```rust path=src/util/mod.rs
@@ -37,6 +38,7 @@ pub struct Thing;
 
 ## Expect
 
+- src/main.rs:2 -> node:util      # the `mod` that makes the file a module
 - src/main.rs:1 -> node:util          # the inferred bin is untouched; src/lib.rs is no library root
 
 ## Why

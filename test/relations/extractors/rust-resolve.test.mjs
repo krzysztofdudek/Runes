@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey, declaredModules, rustModuleKey, RUST_MODULES_KNOWN_KEY } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
@@ -724,7 +724,7 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/cli/args.rs', '');
     put('tools/stray.rs', '');
     put('m/Cargo.toml', '[package]\nname = "m"\nedition = "2021"\n');
-    put('m/src/lib.rs', '');
+    put('m/src/lib.rs', 'mod other;\n');
     put('m/src/main.rs', 'fn main() {}\n');
     put('m/src/mod.rs', '');
     put('m/src/other.rs', '');
@@ -971,8 +971,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/config/mod.rs', 'pub struct Cfg;\n');
     put('src/bin/common/mod.rs', 'mod deep;\n');
     put('src/bin/common/deep/mod.rs', '');
-    put('src/bin/shared/mod.rs', '');
-    put('src/bin/loose/mod.rs', '');
+    put('src/bin/shared/mod.rs', 'mod sib;\nmod other;\n');
+    put('src/bin/loose/mod.rs', 'mod sub;\nmod peer;\n');
     put('src/bin/loose/sub.rs', '');
     put('src/bin/loose/peer.rs', '');
     put('src/bin/shared/sib.rs', '');
@@ -1667,7 +1667,7 @@ path = "..\u002fmore"
   it('declares each top-level item under its own key beside the declarations it always made, and the resolver asks only that key', async () => {
     const code = 'pub struct Engine;\npub use a::Error;\nfn f() { struct Local; }';
     const keys = await withParsedFile('src/lib.rs', code, (tree) => rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust')).map((d) => d.symbolKey));
-    expect(keys).toEqual(['Engine', 'f', rustTopLevelItemKey('Engine'), rustTopLevelItemKey('Error'), rustTopLevelItemKey('f')]);
+    expect(keys).toEqual(['Engine', 'f', rustTopLevelItemKey('Engine'), rustTopLevelItemKey('Error'), rustTopLevelItemKey('f'), RUST_MODULES_KNOWN_KEY]);
   });
 
 });
@@ -1816,5 +1816,73 @@ describe('resolveRustPath — a use path that starts with a name in scope (injec
 
   it('gives no file for a form it cannot read', () => {
     for (const bad of ['use', 'use::x::crate::shapes::sh', 'use::0::sh::Circle', 'use::2::crate::shapes', 'use::1.5::crate::sh']) expect(resolveRustPath(bad, 'src/api.rs', exists, deps(false))).toBeUndefined();
+  });
+});
+
+describe('resolveRustPath — a file is a module only when a mod declares it (injected deps)', () => {
+  const known = new Set(['src/lib.rs', 'src/util/mod.rs', 'src/util/parse.rs', 'src/util/deep/leaf.rs', 'src/serve.rs', 'src/a.rs', 'src/a/b.rs', 'src/outer/x.rs', 'src/outer.rs']);
+  const exists = (p) => known.has(p);
+  const depsWith = (moduleDeclared, roots = []) => ({ crateRootFor: (f) => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: roots.includes(f) }), rootDeclares: () => true, moduleDeclared });
+
+  it('passes over a file the module above is known not to declare, and binds that module', () => {
+    const deps = depsWith((file, path) => file === 'src/lib.rs' && path === 'util');
+    expect(resolveRustPath('crate::util::parse', 'src/a.rs', exists, deps)).toBe('src/util/mod.rs');
+    expect(resolveRustPath('crate::serve', 'src/a.rs', exists, deps)).toBe('src/lib.rs');
+  });
+
+  it('binds a file a module above declares, directly or through its inline modules', () => {
+    const deps = depsWith((file, path) => (file === 'src/lib.rs' && (path === 'util' || path === 'util/deep/leaf' || path === 'outer/x')) || (file === 'src/util/mod.rs' && path === 'parse'));
+    expect(resolveRustPath('crate::util::parse::old', 'src/a.rs', exists, deps)).toBe('src/util/parse.rs');
+    expect(resolveRustPath('crate::util::deep::leaf::X', 'src/a.rs', exists, deps)).toBe('src/util/deep/leaf.rs');
+    // src/outer.rs exists and declares no `x`, yet the root declares it through its inline module `outer`.
+    expect(resolveRustPath('crate::outer::x', 'src/a.rs', exists, deps)).toBe('src/outer/x.rs');
+  });
+
+  it('binds a fitting file where nothing is known, unless it is the root of a target', () => {
+    const unknown = depsWith(() => undefined, ['src/serve.rs']);
+    expect(resolveRustPath('crate::util::parse', 'src/a.rs', exists, unknown)).toBe('src/util/parse.rs');
+    expect(resolveRustPath('crate::serve::run', 'src/a.rs', exists, unknown)).toBe('src/lib.rs');
+    // One file above is known not to declare it and another is not known: not ruled out.
+    const mixed = depsWith((file) => (file === 'src/lib.rs' ? false : undefined));
+    expect(resolveRustPath('crate::util::parse', 'src/a.rs', exists, mixed)).toBe('src/util/parse.rs');
+    // A target root that a module above declares is its module.
+    const declaredRoot = depsWith((file, path) => file === 'src/lib.rs' && path === 'serve', ['src/serve.rs']);
+    expect(resolveRustPath('crate::serve::run', 'src/a.rs', exists, declaredRoot)).toBe('src/serve.rs');
+  });
+
+  it('asks the file of the module itself for a relative path, and binds as before without the check', () => {
+    const deps = depsWith((file, path) => file === 'src/a.rs' && path === 'b');
+    expect(resolveRustPath('self::b::X', 'src/a.rs', exists, deps)).toBe('src/a/b.rs');
+    expect(resolveRustPath('self::b::X', 'src/a.rs', exists, depsWith(() => false))).toBe('src/a.rs');
+    const plain = { crateRootFor: () => ({ srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: true }) };
+    expect(resolveRustPath('crate::serve::run', 'src/a.rs', exists, plain)).toBe('src/serve.rs');
+  });
+});
+
+describe('declaredModules', () => {
+  const read = (code) => withParsedFile('src/lib.rs', code, (tree) => declaredModules(tree.rootNode));
+  const paths = (r) => r.declared.map((d) => `${d.path}@${d.line}`);
+
+  it('lists every mod without a body, whatever stands in front of it, through inline modules and cfg_if! branches', async () => {
+    const r = await read('mod a;\n#[path = "x.rs"]\nmod b;\n#[my_attr]\nmod c;\nmod outer {\n    #[cfg(unix)]\n    mod r#gen;\n    cfg_if! { if #[cfg(a)] { mod inner; mod deep { mod leaf; } } }\n}\ncfg_if::cfg_if! {\n    if #[cfg(unix)] { mod unix; } else { mod other; }\n}\nfn f() { mod local; }\nlazy_static! { static ref X: u8 = 1; }');
+    expect(paths(r)).toEqual(['a@1', 'b@3', 'c@5', 'outer/gen@8', 'outer/inner@9', 'outer/deep/leaf@9', 'unix@12', 'other@12']);
+    expect(r.known).toBe(true);
+  });
+
+  it('is not known to be whole under an unread macro, an unread inner attribute, a macro in a cfg_if! branch or a parse error', async () => {
+    expect((await read('mod a;\nmodules!(b);')).known).toBe(false);
+    expect((await read('mod a;\ninclude!("more.rs");')).known).toBe(false);
+    expect((await read('mod outer { declare::them! { c } }')).known).toBe(false);
+    expect((await read('#![my_crate_macro]\nmod a;')).known).toBe(false);
+    expect((await read('mod outer {\n    #![cfg_attr(unix, path = "u")]\n    mod a;\n}')).known).toBe(false);
+    expect((await read('cfg_if! { if #[cfg(a)] { modules!(b); } }')).known).toBe(false);
+    expect((await read('cfg_if! { if #[cfg(a)] { mod m { cfg_if! { if #[cfg(b)] { gen_mods! {} } } } } }')).known).toBe(false);
+    expect((await read('mod a;\nfn broken( {')).known).toBe(false);
+  });
+
+  it('stays whole beside what declares no module', async () => {
+    const r = await read('#![no_std]\n#![cfg_attr(docsrs, feature(doc_cfg))]\ncfg_if! {\n    if #[cfg(a)] {\n        macro_rules! m { () => {}; }\n        thread_local! { static T: u8 = 1; }\n        const A: u8 = make!(1);\n        fn f() -> ! { panic!() }\n        cfg_if! { if #[cfg(b)] { static B: bool = !true; } }\n    }\n}\nfn g() { println!("x"); }\nbitflags! { struct F: u8 {} }\nstruct S;');
+    expect(paths(r)).toEqual([]);
+    expect(r.known).toBe(true);
   });
 });

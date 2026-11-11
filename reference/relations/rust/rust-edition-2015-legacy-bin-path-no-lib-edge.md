@@ -22,6 +22,7 @@ name = "cli"
 
 ```rust path=src/cli.rs
 use self::tools::Helper;
+mod tools;
 ```
 
 ```rust path=src/tools/mod.rs
@@ -30,6 +31,7 @@ pub struct Helper;
 
 ## Expect
 
+- src/cli.rs:2 -> node:tools      # the `mod` that makes the file a module
 - src/cli.rs:1 -> node:tools          # legacy bin path: src/<name>.rs is the root when there is no library
 
 ## Why

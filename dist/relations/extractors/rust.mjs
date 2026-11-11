@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -575,6 +575,11 @@ function join(prefix, tail) {
  * module's file, this is what tells the resolver that a crate root re-exports a name it does
  * not write.
  *
+ * Every module the file declares without a body, whatever stands in front of it, is declared
+ * under `rustModuleKey(path)` (`mod:<path>`), and `RUST_MODULES_KNOWN_KEY` (`mods:all`) says
+ * that those are all of them, both read by `declaredModules`: this is what tells the resolver
+ * that a file whose name fits a path is no module, because no `mod` declares it.
+ *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
  * declaration nothing can switch off, `modfile?:<path>` for one under a `cfg`. This is what the
@@ -608,6 +613,11 @@ function declarations(file) {
         out.push({ symbolKey: rustGlobKey(path), line });
     for (const { path, line, conditional } of plainModuleFiles(root))
         out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
+    const modules = declaredModules(root);
+    for (const { path, line } of modules.declared)
+        out.push({ symbolKey: rustModuleKey(path), line });
+    if (modules.known)
+        out.push({ symbolKey: RUST_MODULES_KNOWN_KEY, line: 1 });
     return out;
 }
 /** The attributes that leave a `mod` where its name puts it: the compiler's own, which rewrite nothing. Any other attribute in front of a `mod` may be a macro that rewrites the item, and a `cfg_attr` there may apply one, or a `path`. A `cfg` moves nothing, but it may remove the item: see `conditional` in `plainModuleFiles`. */
@@ -651,6 +661,80 @@ export function plainModuleFiles(root) {
     };
     visit(root.namedChildren, [], false);
     return out;
+}
+/**
+ * Every module a Rust file declares without a body: each `mod x;` that is an item of the file itself or of inline modules nested in it, and each one in a branch of a `cfg_if!` that stands among those items, as the path of its names from the file's own module (`x`, `outer/x`), with `r#` stripped. Whatever stands in front of the `mod` (a `cfg`, a `path` attribute, an attribute macro) is not read: the list says which names are modules with a file of their own, not where the file is.
+ *
+ * `known` says that the list holds every such module of the file. It is false where a `mod` may exist that the tree does not show: in a file the grammar could not parse to the end, in one whose head holds an inner attribute that is not one of the compiler's, and in one that invokes, among those items or in a `cfg_if!` branch, a macro other than the item macros Runes reads (`ITEM_MACROS`, `cfg_if!`), since a macro can expand to a `mod` or include a file that holds one.
+ */
+export function declaredModules(root) {
+    const declared = [];
+    let known = !root.hasError;
+    const visit = (items, prefix) => {
+        for (const node of items) {
+            if (node === null)
+                continue;
+            if (node.type === 'inner_attribute_item') {
+                if (!attributeIsInert(node, true))
+                    known = false;
+            }
+            else if (node.type === 'mod_item') {
+                const name = unraw(node.childForFieldName('name')?.text ?? '');
+                const body = node.childForFieldName('body');
+                if (name === '')
+                    known = false;
+                else if (body === null)
+                    declared.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1 });
+                else
+                    visit(body.namedChildren, [...prefix, name]);
+            }
+            else {
+                const call = node.type === 'expression_statement' ? node.namedChild(0) : node;
+                if (call?.type !== 'macro_invocation')
+                    continue;
+                const macro = call.childForFieldName('macro');
+                const macroName = macro?.type === 'scoped_identifier' ? macro.childForFieldName('name')?.text : macro?.text;
+                const body = call.namedChildren.find((c) => c?.type === 'token_tree') ?? null;
+                if (macroName === 'cfg_if' && body !== null) {
+                    for (const mod of cfgIfModules(body))
+                        declared.push({ path: [...prefix, ...mod.names].join('/'), line: mod.at.startPosition.row + 1 });
+                    if (cfgIfInvokesMacro(body))
+                        known = false;
+                }
+                else if (macroName === undefined || !ITEM_MACROS.has(macroName))
+                    known = false;
+            }
+        }
+    };
+    visit(root.namedChildren, []);
+    return { declared, known };
+}
+/** Whether a `cfg_if!` body invokes, among the items of its branches, of a `cfg_if!` nested there or of an inline `mod` written there, a macro other than `cfg_if!`, `macro_rules!` and the item macros Runes reads: a name followed by `!`. Nothing inside any other nested token tree (a function body, an attribute, an initializer's group) is an item of those levels. */
+function cfgIfInvokesMacro(body) {
+    const braced = (tree) => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+    const items = (tree) => {
+        const tokens = tree.children.filter((c) => c !== null);
+        for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i];
+            if (t.type === '=') {
+                while (i + 1 < tokens.length && tokens[i + 1].type !== ';')
+                    i++;
+            }
+            else if (t.type === 'identifier' && tokens[i + 1]?.type === '!') {
+                if (t.text === 'cfg_if') {
+                    if (branches(tokens[i + 2]))
+                        return true;
+                }
+                else if (t.text !== 'macro_rules' && !ITEM_MACROS.has(t.text))
+                    return true;
+            }
+            else if (!t.isNamed && t.type === 'mod' && braced(tokens[i + 2]) && items(tokens[i + 2]))
+                return true;
+        }
+        return false;
+    };
+    const branches = (tree) => tree !== undefined && tree.namedChildren.some((c) => c !== null && braced(c) && items(c));
+    return branches(body);
 }
 /** The attributes written in front of `item`. They parse as preceding `attribute_item` siblings; comments may stand between them. */
 function attributesBefore(item) {
@@ -942,7 +1026,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 16,
+    rev: 17,
     declarations,
     uses,
 };

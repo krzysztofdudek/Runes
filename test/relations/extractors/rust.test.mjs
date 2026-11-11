@@ -298,7 +298,7 @@ describe('rust extractor — declarations()', () => {
       'use crate::a;\nstruct S {}\nimpl S {}\nconst X: u32 = 1;\nstatic Y: u32 = 2;\n',
     );
     const keys = declarations.map((d) => d.symbolKey);
-    expect(keys.filter((k) => !k.startsWith('item:'))).toEqual(['S']);
+    expect(keys.filter((k) => !k.startsWith('item:'))).toEqual(['S', 'mods:all']);
     expect(keys.filter((k) => k.startsWith('item:'))).toEqual(['item:a', 'item:S', 'item:X', 'item:Y']);
   });
 
