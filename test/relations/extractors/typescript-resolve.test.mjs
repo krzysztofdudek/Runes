@@ -280,7 +280,12 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
       const r = preset(options);
       expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
       expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
-      expect(r('lib', 'app/a.mts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      // The file kind and the call form fix their branch whatever the preset sets.
+      expect(r('lib', 'app/a.mts'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.mjs', 'import'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.cts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.mts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.ts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
     }
     // What the config sets itself is known: both settings, or a module that implies its resolution.
     expect(preset({ module: 'esnext', moduleResolution: 'bundler' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');

@@ -104,14 +104,14 @@ const PACKAGE_TYPES = [undefined, 'module', 'commonjs'];
 // The package type reads only for a file whose extension does not say its format.
 const packageTypesOf = (ext) => (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx' ? PACKAGE_TYPES : [undefined]);
 
-function fixture(ext, packageType) {
+function fixture(ext, packageType, requireFirst = false) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'runes-conditions-'));
   roots.push(root);
   const put = (rel, text) => {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     writeFileSync(path.join(root, rel), text);
   };
-  put('lib/package.json', JSON.stringify({ name: 'lib', exports: { '.': { import: './esm.d.ts', require: './cjs.d.ts' } } }));
+  put('lib/package.json', JSON.stringify({ name: 'lib', exports: { '.': requireFirst ? { require: './cjs.d.ts', import: './esm.d.ts' } : { import: './esm.d.ts', require: './cjs.d.ts' } } }));
   put('lib/esm.d.ts', 'export declare const v: number;\nexport type T = number;\n');
   put('lib/cjs.d.ts', 'export declare const v: number;\nexport type T = number;\n');
   put('app/package.json', JSON.stringify({ name: 'app', ...(packageType === undefined ? {} : { type: packageType }), dependencies: { lib: 'file:../lib' } }));
@@ -168,6 +168,50 @@ async function compare(settings, extensions, forms, pinTarget = true) {
   return { compared, mismatches };
 }
 
+// A preset the app's tsconfig extends, installed under node_modules as a package manager leaves it. The compiler always reads it. Runes reads it when it is given the disk, and not when the path is excluded, which is how a consumer that resolves the files of a commit sees every installed package.
+const PRESET = 'app/node_modules/@preset/base/tsconfig.json';
+// What the app's own tsconfig sets over the preset.
+const OWN_OPTIONS = [{}, { moduleResolution: 'bundler' }, { moduleResolution: 'nodenext' }, { module: 'commonjs' }, { module: 'esnext' }, { module: 'nodenext' }, { module: 'preserve' }, { module: 'esnext', moduleResolution: 'bundler' }];
+// The rows whose branch the file kind or the call form fixes, whatever the preset sets.
+const fixedByKindOrForm = (ext, form) => {
+  // A require() call and import x = require() read require in every file; a .mts or .mjs file imports, also through import(); a .cts or .cjs file requires, except through import(), which the compiler rewrites or not by the module setting.
+  if (form === 'require' || form === 'importEquals') return true;
+  if (ext === 'mts' || ext === 'mjs') return true;
+  return (ext === 'cts' || ext === 'cjs') && form !== 'dynamic';
+};
+
+function compilerTargetThroughConfig(root, ext, code) {
+  const file = path.join(root, `app/use.${ext}`);
+  writeFileSync(file, code);
+  const forced = ts.convertCompilerOptionsFromJson({ allowJs: true, jsx: 'preserve', noEmit: true, noLib: true, skipLibCheck: true, types: [] }, root).options;
+  const parsed = ts.getParsedCommandLineOfConfigFile(path.join(root, 'app/tsconfig.json'), forced, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
+  const program = ts.createProgram([file], parsed.options, ts.createCompilerHost(parsed.options, true));
+  const source = program.getSourceFile(file);
+  let found;
+  const visit = (node) => {
+    if (ts.isStringLiteral(node) && node.text === 'lib') found = program.getResolvedModuleFromModuleSpecifier(node, source)?.resolvedModule?.resolvedFileName;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found === undefined ? undefined : path.basename(found);
+}
+
+async function runesTargetThroughConfig(root, ext, code, seesPreset) {
+  const language = ext === 'tsx' ? 'tsx' : isTypeScriptFile(ext) ? 'typescript' : 'javascript';
+  const { uses } = await runExtractor(typescriptExtractor, language, `.${ext}`, code);
+  const hint = uses.map((u) => u.candidates[0]).find((h) => h.specifier === 'lib');
+  const isFile = (p) => {
+    try {
+      return statSync(path.join(root, p)).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const deps = makeTsResolveDeps(root, seesPreset ? undefined : (p) => p.includes('node_modules/@preset/'));
+  const target = hint === undefined ? undefined : resolveTsPath(hint.specifier, `app/use.${ext}`, isFile, deps, hint.callForm);
+  return target === undefined ? undefined : path.basename(target);
+}
+
 describe('the conditions Runes enters are the ones the compiler enters', () => {
   it('for an import statement, a require() call and a dynamic import(), in every module kind, file kind and package type', async () => {
     const { compared, mismatches } = await compare(SETTINGS, EXTENSIONS, CALL_FORMS);
@@ -190,5 +234,48 @@ describe('the conditions Runes enters are the ones the compiler enters', () => {
     // Each setting gives 16 (file kind, package type) rows x 3 call forms, less the 8 require() rows of TypeScript files, plus 8 TypeScript rows x 3 type forms: 64. The 4 settings that compute Classic (amd, umd, system and none alone) resolve nothing.
     expect(compared).toBe((DEFAULTED_SETTINGS.length - 4) * 64);
     expect(mismatches).toEqual([]);
+  });
+  it('for a tsconfig that extends an installed preset: the compiler\'s answer with the preset read, and without it the branch the file kind or the call form fixes, else the first listed target', async () => {
+    const forms = { ...CALL_FORMS, importEquals: TYPE_FORMS.importEquals, importType: TYPE_FORMS.importType };
+    const presets = [...SETTINGS, { module: 'commonjs' }, { module: 'esnext' }, { target: 'es5' }, {}];
+    const mismatches = [];
+    let compared = 0;
+    let fixed = 0;
+    for (const requireFirst of [false, true]) for (const own of OWN_OPTIONS) for (const ext of EXTENSIONS) for (const packageType of packageTypesOf(ext)) {
+      const root = fixture(ext, packageType, requireFirst);
+      mkdirSync(path.join(root, path.dirname(PRESET)), { recursive: true });
+      writeFileSync(path.join(root, 'app/node_modules/@preset/base/package.json'), '{ "name": "@preset/base" }');
+      writeFileSync(path.join(root, 'app/tsconfig.json'), JSON.stringify({ extends: '@preset/base/tsconfig.json', compilerOptions: own }));
+      for (const [name, code] of Object.entries(forms)) {
+        if (!isTypeScriptFile(ext) && (name === 'importEquals' || name === 'importType')) continue;
+        const where = `${requireFirst ? 'require first' : 'import first'}, own ${JSON.stringify(own)}, ${name} in .${ext}${packageType === undefined ? '' : ` (type ${packageType})`}`;
+        const answers = new Set();
+        let unseen;
+        for (const preset of presets) {
+          writeFileSync(path.join(root, PRESET), JSON.stringify({ compilerOptions: preset }));
+          const compiler = compilerTargetThroughConfig(root, ext, code);
+          if (compiler === undefined) continue;
+          compared++;
+          answers.add(compiler);
+          const seen = await runesTargetThroughConfig(root, ext, code, true);
+          if (seen !== compiler) mismatches.push(`preset ${JSON.stringify(preset)} read, ${where}: compiler ${compiler}, Runes ${seen}`);
+          unseen ??= { value: await runesTargetThroughConfig(root, ext, code, false) };
+        }
+        if (unseen === undefined) continue;
+        const first = requireFirst ? 'cjs.d.ts' : 'esm.d.ts';
+        if (fixedByKindOrForm(ext, name)) {
+          fixed++;
+          // Every preset gives the compiler one answer here, and Runes gives it without reading the preset.
+          if (answers.size !== 1 || !answers.has(unseen.value)) mismatches.push(`preset not read, ${where}: compiler ${[...answers].join(' or ')}, Runes ${unseen.value}`);
+        } else if (answers.size === 1 ? unseen.value !== first && !answers.has(unseen.value) : unseen.value !== first) {
+          // The answer depends on the preset (or Runes cannot know that it does not): the reading from before conditions were read.
+          mismatches.push(`preset not read, ${where}: the first listed target is ${first}, Runes ${unseen.value}`);
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+    // 2 orders x 8 own option sets x 24 rows that the file kind or the call form fixes.
+    expect(fixed).toBe(384);
+    expect(compared).toBeGreaterThanOrEqual(10000);
   });
 });
