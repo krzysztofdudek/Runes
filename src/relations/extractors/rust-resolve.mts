@@ -68,7 +68,7 @@ export interface RustCrateRoot {
   lib?: RustCrateTree | null;
   /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
   crateRelativeUses?: boolean;
-  /** True when the file is a module of a crate that cannot be told: no crate declares it, or several do and each reads `crate::` and `super::` as its own root. A path rooted at `crate` or `super` then names nothing, and the edition 2015 relative `use` is not read; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
+  /** True when the file is a module of a crate that cannot be told: no crate declares it, or several do and each reads `crate::` and `super::` as its own root. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
   unrooted?: boolean;
   /** True when the file may be a module of any of `rootFiles`, because none of them is seen to declare it and one holds a declaration that cannot be followed (a `path` attribute, a macro that writes a `mod`): the first root file that holds a name binds it. Absent or false → several root files are the crates that all declare the file, and a root item binds none. */
   rootsUndecided?: boolean;
@@ -193,7 +193,6 @@ function resolveRelative(
 ): string | undefined {
   const crate = deps.crateRootFor(fromFile);
   if (crate === undefined) return undefined;
-  if (crate.unrooted === true && segments.includes('super')) return undefined;
   const srcDir = crate.srcDir;
 
   const fromPosix = toPosix(fromFile);
@@ -229,6 +228,8 @@ function resolveRelative(
   // remaining tail starts at i.
   void root;
   const tail = segments.slice(i);
+  // A module of a crate that cannot be told reaches the crate root by climbing out of the tree's first level, and which crate's root that is, is not known; below it the path is the same in every crate.
+  if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir)) return undefined;
   return resolveFromModuleDir(moduleDir, tail, exists, rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsUndecided));
 }
 

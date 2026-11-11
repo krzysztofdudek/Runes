@@ -675,6 +675,9 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/shared/mod.rs', '');
     put('src/bin/loose/mod.rs', '');
     put('src/bin/loose/sub.rs', '');
+    put('src/bin/loose/peer.rs', '');
+    put('src/bin/shared/sib.rs', '');
+    put('src/bin/shared/other.rs', '');
     put('src/bin/withmain/main.rs', 'mod config;\nfn main() {}\n');
     put('src/bin/withmain/config/mod.rs', '');
     put('src/bin/withmain/helper.rs', '');
@@ -692,6 +695,11 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       expect(resolve('app::LibThing', from, 'rust')).toBe('src/lib.rs');
     }
     expect(resolve('self::sub', 'src/bin/loose/mod.rs', 'rust')).toBe('src/bin/loose/sub.rs');
+    // A climb that stays inside the directory is the same in every crate that declares it, so it keeps its edge; one that reaches the tree's root does not.
+    expect(resolve('super::other::T', 'src/bin/shared/sib.rs', 'rust')).toBe('src/bin/shared/other.rs');
+    expect(resolve('super::peer::T', 'src/bin/loose/sub.rs', 'rust')).toBe('src/bin/loose/peer.rs');
+    expect(resolve('super::super::config::Cfg', 'src/bin/shared/sib.rs', 'rust')).toBeUndefined();
+    expect(resolve('super::config::Cfg', 'src/bin/shared/mod.rs', 'rust')).toBeUndefined();
     // A directory with a main.rs is a crate of its own: its files read `crate::` in its tree.
     expect(resolve('crate::config', 'src/bin/withmain/helper.rs', 'rust')).toBe('src/bin/withmain/config/mod.rs');
     expect(resolve('crate::config::Cfg', 'src/bin/withmain/config/mod.rs', 'rust')).toBe('src/bin/withmain/config/mod.rs');

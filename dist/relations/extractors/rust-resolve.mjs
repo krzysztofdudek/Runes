@@ -70,8 +70,6 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     const crate = deps.crateRootFor(fromFile);
     if (crate === undefined)
         return undefined;
-    if (crate.unrooted === true && segments.includes('super'))
-        return undefined;
     const srcDir = crate.srcDir;
     const fromPosix = toPosix(fromFile);
     const fromDir = path.posix.dirname(fromPosix);
@@ -105,6 +103,9 @@ function resolveRelative(root, segments, fromFile, exists, deps) {
     // remaining tail starts at i.
     void root;
     const tail = segments.slice(i);
+    // A module of a crate that cannot be told reaches the crate root by climbing out of the tree's first level, and which crate's root that is, is not known; below it the path is the same in every crate.
+    if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir))
+        return undefined;
     return resolveFromModuleDir(moduleDir, tail, exists, rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsUndecided));
 }
 /**
