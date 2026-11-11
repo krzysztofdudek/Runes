@@ -44,6 +44,8 @@ export interface CsharpGlobalFacts {
   globalPrefixes: readonly string[];
   /** `[alias, target]` pairs of the file's own `global using A = N.T;` directives. */
   globalAliases: Iterable<readonly [string, string]>;
+  /** The types the file's own `global using static T;` directives name, a type argument written as its arity (``Repo`1``). A file that lists none imports none project-wide. */
+  globalStatics?: readonly string[];
 }
 
 /** The project-wide scope injected into a file's candidate assembly. */
@@ -52,6 +54,8 @@ export interface CsharpProjectScope {
   usings: string[];
   /** Every global alias of the file's project; one name may appear with 2+ targets (ambiguous). */
   aliases: Array<[string, string]>;
+  /** Every type a `global using static` of the file's project names; its nested types and extension methods are imported in every file of the project. */
+  statics: string[];
 }
 
 /** The implicit global usings the .NET SDKs generate (MS Learn — "Implicit using directives"). */
@@ -150,6 +154,7 @@ export function buildCsharpProjectScopes(
   for (const key of keys) {
     const group = byProject.get(key)!;
     const usings = new Set<string>();
+    const statics = new Set<string>();
     const aliases: Array<[string, string]> = [];
     const aliasSeen = new Set<string>();
     const addAlias = (name: string, target: string): void => {
@@ -191,9 +196,10 @@ export function buildCsharpProjectScopes(
 
     for (const f of group) {
       for (const p of f.globalPrefixes) usings.add(p);
+      for (const t of f.globalStatics ?? []) statics.add(t);
       for (const [name, target] of f.globalAliases) addAlias(name, target);
     }
-    const scope: CsharpProjectScope = { usings: [...usings].sort(), aliases };
+    const scope: CsharpProjectScope = { usings: [...usings].sort(), aliases, statics: [...statics].sort() };
     for (const f of group) out.set(f.path, scope);
   }
   return out;

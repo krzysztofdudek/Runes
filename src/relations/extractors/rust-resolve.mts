@@ -68,6 +68,12 @@ export interface RustCrateRoot {
   lib?: RustCrateTree | null;
   /** True when the package is edition 2015 (the edition Cargo assumes when `[package]` gives none): a `use` path with a bare leading identifier is relative to the crate root there, as `crate::` is. Absent or false → such a path names an external crate. */
   crateRelativeUses?: boolean;
+  /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or several are and each reads `crate::` and `super::` as its own root. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
+  unrooted?: boolean;
+  /** True when every one of `rootFiles` is a crate that certainly compiles the file: each declares it through a chain of plain `mod` declarations that no `cfg` can remove. `crate::` then means a different root in each, so a root item binds none of them. Absent or false → `rootFiles` are in probe order and the first existing one that holds a name binds it; a root known to compile the file stands first, and one that may compile it under a `cfg` after it. */
+  rootsShared?: boolean;
+  /** The crate-root files whose top-level items an edition 2015 `use` path of the file may name, in probe order: the roots known to compile the file when all of them are edition 2015, and the roots Cargo infers for its tree when those are. Absent → `rootFiles`. */
+  crateRelativeRoots?: string[];
 }
 
 export interface RustResolveDeps {
@@ -90,6 +96,8 @@ interface RootContext {
   dir: string;
   files: string[];
   declares: (rootFile: string, name: string) => boolean;
+  /** Every root file is a crate that certainly compiles the importing file, so none binds a root item. Otherwise the root files are probed in order and the first existing one that holds a name binds it. */
+  shared: boolean;
 }
 
 export function resolveRustPath(
@@ -113,7 +121,8 @@ export function resolveRustPath(
   if (crate === undefined) return undefined; // no Cargo.toml ancestor → not a crate path
 
   if (root === 'crate') {
-    return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares));
+    if (crate.unrooted === true) return undefined;
+    return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares, crate.rootsShared));
   }
 
   // A bare leading identifier: the current crate's own package name (2018+ edition
@@ -131,9 +140,9 @@ export function resolveRustPath(
 
   // Edition 2015: a `use` path is relative to the crate root, so `use a::b;` names the root's module `a`, and `use Error;` its item `Error`, which binds the root file as `crate::Error` does. The reserved crates and any root that does not declare the first segment stay external; an `extern crate` of the same name is a crate, no module or item of the root.
   if (crate.crateRelativeUses === true && !EDITION_2015_EXTERNAL_ROOTS.has(root)) {
-    const rootFiles = crate.rootFiles ?? [];
+    const rootFiles = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
     const declaresItem = (f: string, name: string): boolean => (deps.rootDeclares?.(f, name, true) ?? true);
-    if (rootFiles.some((f) => exists(f) && declaresItem(f, root))) return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem));
+    if (rootFiles.some((f) => exists(f) && declaresItem(f, root))) return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem, crate.rootsShared));
   }
 
   // External crate (std/core/alloc, third-party) — not a resolvable path.
@@ -143,6 +152,11 @@ export function resolveRustPath(
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */
 export function rustTopLevelItemKey(name: string): string {
   return `item:${name}`;
+}
+
+/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
+export function rustModuleFileKey(modulePath: string, conditional = false): string {
+  return `${conditional ? 'modfile?' : 'modfile'}:${modulePath}`;
 }
 
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */
@@ -157,8 +171,9 @@ function rootContext(
   dir: string,
   files: string[] | undefined,
   declares: (rootFile: string, name: string) => boolean,
+  shared = false,
 ): RootContext | undefined {
-  return files === undefined || files.length === 0 ? undefined : { dir, files, declares };
+  return files === undefined || files.length === 0 ? undefined : { dir, files, declares, shared };
 }
 
 /**
@@ -220,7 +235,9 @@ function resolveRelative(
   // remaining tail starts at i.
   void root;
   const tail = segments.slice(i);
-  return resolveFromModuleDir(moduleDir, tail, exists, rootContext(srcDir, crate.rootFiles, declaresOf(deps)));
+  // A module of a crate that cannot be told reaches the crate root by climbing out of the tree's first level, and which crate's root that is, is not known; below it the path is the same in every crate.
+  if (crate.unrooted === true && path.posix.normalize(moduleDir) === path.posix.normalize(srcDir)) return undefined;
+  return resolveFromModuleDir(moduleDir, tail, exists, rootContext(srcDir, crate.rootFiles, declaresOf(deps), crate.rootsShared));
 }
 
 /**
@@ -238,7 +255,8 @@ function resolveRelative(
  * here because `dir` already IS the module dir; the self/super caller handles that).
  * When the module dir IS the crate root (`root.dir`), the crate root module's file is the
  * crate root file: the empty tail binds the first existing `root.files` entry, and an item
- * tail binds the first root file that declares the item's name (`root.declares`).
+ * tail binds the first root file that declares the item's name (`root.declares`); when the root
+ * files are crates that all compile the importing file (`root.shared`) neither binds.
  * The FIRST existing candidate wins. Any miss → undefined (silence).
  */
 function resolveFromModuleDir(
@@ -254,7 +272,7 @@ function resolveFromModuleDir(
     for (const cand of [joinUnder(moduleDir, 'mod.rs'), moduleDir + '.rs']) {
       if (cand !== undefined && exists(cand)) return cand;
     }
-    if (atRoot) return root.files.find((f) => exists(f));
+    if (atRoot) return rootFileFor(root, exists, () => true);
     return undefined;
   }
 
@@ -277,8 +295,13 @@ function resolveFromModuleDir(
   // The crate root module's items live in the crate root file — bound only when that file
   // really declares (or `use`s) the first item name, so a crate-root-namespace name defined
   // elsewhere (a `#[macro_export]` macro) is never pinned on the root file.
-  if (atRoot) return root.files.find((f) => exists(f) && root.declares(f, segs[0]));
+  if (atRoot) return rootFileFor(root, exists, (f) => root.declares(f, segs[0]));
   return undefined;
+}
+
+/** The crate-root file of `root` that holds the name `fits` asks about: the first existing one that does. None when the root files are crates that all compile the importing file (`root.shared`): `crate::` is a different root in each, and which one a root item is cannot be told. */
+function rootFileFor(root: RootContext, exists: (repoRelPosix: string) => boolean, fits: (rootFile: string) => boolean): string | undefined {
+  return root.shared ? undefined : root.files.find((f) => exists(f) && fits(f));
 }
 
 /** Is `dir` within (or equal to) the crate `src` root? Guards `super::` climbing
