@@ -236,6 +236,8 @@ function uses(file) {
     const seen = new Set();
     // The inline modules around the node being visited, carried down the walk.
     let mods = null;
+    // The blocks and item lists around the node being visited, innermost first, carried down the walk.
+    let lexical = null;
     // While a `use` declaration is read: the crates the `extern crate` declarations of its own scope bind, by bound name.
     let externs = null;
     const externsByScope = new Map();
@@ -253,39 +255,44 @@ function uses(file) {
     let useFromRoot = false;
     const namesByScope = new Map();
     const namesOf = (scope) => {
-        let names = namesByScope.get(scope.id);
+        let names = namesByScope.get(scope.node.id);
         if (names === undefined) {
-            names = scopeNames(scope);
-            namesByScope.set(scope.id, names);
+            names = scopeNames(scope.node, scope.module);
+            namesByScope.set(scope.node.id, names);
         }
         return names;
     };
     /** The path the first segment `name` of a `use` path written in `decl` stands for, when a name in scope there says so: a module the module around it declares (`self::<name>`), or the path another `use` in scope bound to that name. The scopes are the blocks around the declaration, outward, and the module around them; a name of an outer module is not in scope. Undefined when no such name is found, or the `use` declarations found disagree. */
-    const inScope = (name, decl) => {
-        for (let scope = enclosingScope(decl); scope !== null; scope = enclosingScope(scope)) {
+    const inScope = (name, decl, from) => {
+        for (let scope = from; scope !== null; scope = scope.outer) {
             const found = (namesOf(scope).get(name) ?? []).filter((n) => n.decl?.id !== decl.id);
-            if (found.length > 0)
-                return found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0].path) ? found[0] : undefined);
-            if (isModuleScope(scope))
+            if (found.length > 0) {
+                const one = found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0].path) ? found[0] : undefined);
+                return one === undefined ? undefined : { name: one, scope };
+            }
+            if (scope.module)
                 return undefined;
         }
         return undefined;
     };
     /** A `use` path of `decl` with its first segment replaced by what that name stands for in scope, again and again while the path starts with such a name (`use crate::a; use a::b; use b::C;`). A path that starts with `crate`, `self` or `super`, or with a name nothing in scope binds, is returned as it is. */
-    const inScopePath = (specifier, decl) => {
+    const inScopePath = (specifier, decl, scope) => {
         let path = specifier;
         let from = decl;
+        let within = scope;
         for (let step = 0; step < 8; step++) {
             const [first, ...rest] = path.split('::');
             if (first === 'crate' || first === 'self' || first === 'super')
                 return path;
-            const name = inScope(first, from);
-            if (name === undefined)
+            const found = inScope(first, from, within);
+            if (found === undefined)
                 return path;
-            path = [name.path, ...rest].join('::');
-            if (name.decl === null)
+            path = [found.name.path, ...rest].join('::');
+            if (found.name.decl === null)
                 return path;
-            from = name.decl;
+            // The path a `use` bound is read where that `use` stands.
+            from = found.name.decl;
+            within = found.scope;
         }
         return specifier;
     };
@@ -297,7 +304,7 @@ function uses(file) {
         const root = specifier.split('::', 1)[0];
         const crate = externs?.get(root);
         // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
-        const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl) : written;
+        const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
         if (crate !== undefined)
             specifier = `extern::${crate}::as::${specifier}`;
         else
@@ -397,8 +404,14 @@ function uses(file) {
                 return;
         }
     };
-    walkScoped(file.tree.rootNode, null, (node, scope, parent) => {
+    walkScoped(file.tree.rootNode, { mods: null, lexical: null }, (node, around, parent) => {
+        const scope = around.mods;
         mods = scope;
+        lexical = around.lexical;
+        // A block, the body of a module, an `impl` or a trait, and the file are scopes: what stands in them reads their names first.
+        if (node.type === 'source_file' || node.type === 'block' || node.type === 'declaration_list') {
+            return { mods: scope, lexical: { node, module: node.type === 'source_file' || parent()?.type === 'mod_item', outer: around.lexical } };
+        }
         if (node.type === 'use_declaration') {
             const arg = node.childForFieldName('argument');
             const scope = node.parent; // one step: the item list the declaration stands in
@@ -425,7 +438,7 @@ function uses(file) {
                 return undefined;
             // An inline module: what sits inside it is read relative to it.
             const name = node.childForFieldName('name')?.text ?? '';
-            return { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope };
+            return { mods: { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope }, lexical: around.lexical };
         }
         // `cfg_if! { … }` among the items of a module: each file-backed `mod` in its branches is a module on some target, addressed like one written outside the macro.
         if (node.type === 'macro_invocation') {
@@ -463,20 +476,8 @@ function uses(file) {
     });
     return out;
 }
-/** The nearest scope around `node`: a block, the body of a module, an `impl` or a trait, or the file. */
-function enclosingScope(node) {
-    for (let n = node.parent; n !== null; n = n.parent) {
-        if (n.type === 'block' || n.type === 'declaration_list' || n.type === 'source_file')
-            return n;
-    }
-    return null;
-}
-/** Whether a scope is a module's own: the file, or the body of an inline module. */
-function isModuleScope(scope) {
-    return scope.type === 'source_file' || (scope.type === 'declaration_list' && scope.parent?.type === 'mod_item');
-}
-/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module scope declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names. A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
-function scopeNames(scope) {
+/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module's own scope (`module`) declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names. A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
+function scopeNames(scope, module) {
     const out = new Map();
     const add = (name, path, decl) => {
         const plain = unraw(name);
@@ -488,7 +489,6 @@ function scopeNames(scope) {
         else
             list.push({ path, decl });
     };
-    const module = isModuleScope(scope);
     for (const node of scope.namedChildren) {
         if (node === null)
             continue;
