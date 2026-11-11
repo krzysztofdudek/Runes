@@ -24,6 +24,7 @@ path = "cli/main.rs"
 
 ```rust path=cli/main.rs
 use self::parts::Part;
+mod parts;
 ```
 
 ```rust path=cli/parts/mod.rs
@@ -40,6 +41,7 @@ pub struct Helper;
 
 ## Expect
 
+- cli/main.rs:2 -> node:parts      # the `mod` that makes the file a module
 - cli/main.rs:1 -> node:parts          # the declared bin named app is rooted at its path; the inferred src/main.rs is dropped
 
 ## Why

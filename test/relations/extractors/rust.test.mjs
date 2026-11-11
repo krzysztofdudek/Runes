@@ -108,11 +108,10 @@ describe('rust extractor — uses()', () => {
     expect(specs(uses)).toEqual(['crate']);
   });
 
-  it('emits nothing for a leading-`::` absolute path `use ::foo::Bar;` (malformed prefix → silence)', async () => {
-    // The leading `::` produces a scoped_identifier whose leftmost leaf has no `path`
-    // field, so the path renderer cannot determine the first segment and returns nothing.
+  it('emits a leading-`::` path `use ::foo::Bar;` without the `::`', async () => {
+    // The leading `::` produces a scoped_identifier whose leftmost leaf has no `path` field: the path is `foo::Bar`, the crate root's `foo` in edition 2015 and the crate `foo` from edition 2018 on.
     const { uses } = await run('use ::foo::Bar;');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo::Bar']);
   });
 
   it('falls back to emitting each list item when a group has NO common prefix `use ::{a, b};`', async () => {
@@ -129,19 +128,15 @@ describe('rust extractor — uses()', () => {
     expect(uses).toHaveLength(1);
   });
 
-  it('emits nothing when the group prefix is an unrenderable scoped path `use ::foo::{Bar, Baz};`', async () => {
-    // `::foo` renders to undefined (no leftmost segment). Emitting the items bare (`Bar`,
-    // `Baz`) would re-root them at the top level, where a bare name can match an in-repo
-    // path dependency the code never named → silence over a guess.
+  it('joins each item to a leading-`::` group prefix `use ::foo::{Bar, Baz};`', async () => {
+    // The items keep their prefix `foo`: they are never emitted bare (`Bar`, `Baz`), which would re-root them at the top level.
     const { uses } = await run('use ::foo::{Bar, Baz};');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo::Bar', 'foo::Baz']);
   });
 
-  it('emits nothing for a glob whose prefix is an unrenderable scoped path `use ::foo::*;`', async () => {
-    // The wildcard prefix `::foo` is a scoped_identifier that renders to undefined, so no
-    // specifier is emitted (silence over a guess).
+  it('emits the prefix of a leading-`::` glob `use ::foo::*;`', async () => {
     const { uses } = await run('use ::foo::*;');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo']);
   });
 
   it('resolves a renamed import via its `path` field only `use a as b;`', async () => {
@@ -150,9 +145,9 @@ describe('rust extractor — uses()', () => {
     expect(specs(uses)).toEqual(['a']);
   });
 
-  it('emits nothing for a renamed import whose path is an unrenderable scoped path `use ::foo as bar;`', async () => {
+  it('emits the path of a leading-`::` renamed import `use ::foo as bar;`', async () => {
     const { uses } = await run('use ::foo as bar;');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo']);
   });
 
   it('emits the prefix module for the `self` item of a group `use crate::a::{self, B};`', async () => {
@@ -303,7 +298,7 @@ describe('rust extractor — declarations()', () => {
       'use crate::a;\nstruct S {}\nimpl S {}\nconst X: u32 = 1;\nstatic Y: u32 = 2;\n',
     );
     const keys = declarations.map((d) => d.symbolKey);
-    expect(keys.filter((k) => !k.startsWith('item:'))).toEqual(['S']);
+    expect(keys.filter((k) => !k.startsWith('item:'))).toEqual(['S', 'mods:all']);
     expect(keys.filter((k) => k.startsWith('item:'))).toEqual(['item:a', 'item:S', 'item:X', 'item:Y']);
   });
 
@@ -311,5 +306,100 @@ describe('rust extractor — declarations()', () => {
     const { declarations } = await run('\nstruct Order {}\n');
     expect(declarations[0]?.symbolKey).toBe('Order');
     expect(declarations[0]?.line).toBe(2);
+  });
+});
+
+describe('rust extractor — a use path that starts with a name in scope', () => {
+  it('emits what a declared module stands for in front of the path as written', async () => {
+    const { uses } = await run('mod shapes;\npub use shapes::Circle;\nuse shapes::{self, deep::Arc};\nuse shapes::*;');
+    expect(specs(uses)).toEqual(['self::shapes', 'use::2::self::shapes::shapes::Circle', 'use::2::self::shapes::shapes', 'use::2::self::shapes::shapes::deep::Arc', 'use::2::self::shapes::shapes']);
+  });
+
+  it('follows the name another use bound: a path, a group member, an alias, a self member, and a chain of them', async () => {
+    const { uses } = await run('use crate::a;\nuse crate::g::{b, c as d, e::{self}};\nuse a::X;\nuse b::X;\nuse d::X;\nuse e::X;\nuse a::n;\nuse n::Y;');
+    expect(specs(uses).slice(4)).toEqual([
+      'use::2::crate::a::a::X', 'use::3::crate::g::b::b::X', 'use::3::crate::g::c::d::X', 'use::3::crate::g::e::e::X', 'use::2::crate::a::a::n', 'use::3::crate::a::n::n::Y',
+    ]);
+  });
+
+  it('leaves a path alone when nothing in scope binds its first name, when only the path itself does, or when two uses disagree', async () => {
+    const { uses } = await run('use tokio;\nuse tokio::sync::Mutex;\nuse own::own;\n#[cfg(unix)]\nuse crate::unix as sys;\n#[cfg(windows)]\nuse crate::windows as sys;\nuse sys::Handle;\nuse crate::k as _;');
+    expect(specs(uses)).toEqual(['tokio', 'tokio::sync::Mutex', 'own::own', 'crate::unix', 'crate::windows', 'sys::Handle', 'crate::k']);
+  });
+
+  it('takes two uses that bind the name to the same path as one', async () => {
+    const { uses } = await run('use crate::m::v;\nuse crate::m::v;\nuse v::X;');
+    expect(specs(uses)).toContain('use::3::crate::m::v::v::X');
+  });
+
+  it('gives up on a ring of names', async () => {
+    const { uses } = await run('use b::x as a;\nuse a::y as b;');
+    expect(specs(uses)).toEqual(['b::x', 'a::y']);
+  });
+
+  it('reads the names of the blocks and the module around a use, and none of an outer module', async () => {
+    const { uses } = await run('use crate::shapes as sh;\nmod top;\nfn f() {\n    use crate::other as o;\n    {\n        use o::A;\n        use sh::B;\n        use top::C;\n    }\n}\nimpl T { fn g() { use sh::D; } }\nmod inner {\n    use sh::E;\n    mod deep;\n    fn h() { use deep::F; mod blocked; use blocked::G; }\n}');
+    expect(specs(uses)).toEqual([
+      'crate::shapes', 'self::top', 'crate::other', 'use::2::crate::other::o::A', 'use::2::crate::shapes::sh::B', 'use::2::self::top::top::C', 'use::2::crate::shapes::sh::D',
+      'sh::E', 'self::inner::deep', 'use::3::self::inner::deep::deep::F', 'self::inner::blocked', 'blocked::G',
+    ]);
+  });
+
+  it('emits the path as written under an inline module whose directory a path attribute moved', async () => {
+    const { uses } = await run('#[path = "elsewhere"]\nmod outer {\n    mod m;\n    use m::X;\n    use crate::k;\n    use k::Y;\n}');
+    expect(specs(uses)).toEqual(['m::X', 'crate::k', 'use::2::crate::k::k::Y']);
+  });
+
+  it('prefers the crate an extern crate of the same scope binds', async () => {
+    const { uses } = await run('extern crate core_lib as cl;\nmod cl;\nuse cl::Engine;');
+    expect(specs(uses)).toEqual(['extern::core_lib', 'self::cl', 'extern::core_lib::as::cl::Engine']);
+  });
+});
+
+describe('rust extractor — the globs of a file', () => {
+  it('declares the path of each top-level glob, in a group too, and none that starts with ::', async () => {
+    const { declarations } = await run('pub use types::*;\nuse self::a::{b::*, C, d::{e::*}};\nuse crate::r#gen::*;\nuse ::kit::*;\nuse {f::*};\nmod inner { use hidden::*; }\nfn f() { use local::*; }');
+    expect(declarations.filter((d) => d.symbolKey.startsWith('glob:')).map((d) => `${d.symbolKey}@${d.line}`)).toEqual(['glob:types@1', 'glob:self::a::b@2', 'glob:self::a::d::e@2', 'glob:crate::gen@3', 'glob:f@5']);
+  });
+});
+
+describe('rust extractor — a use path that starts with ::', () => {
+  it('emits the path without the :: in every form of the use tree, and never as a name in scope', async () => {
+    const { uses } = await run('mod shapes;\nuse ::shapes::Circle;\nuse ::{a, b::C};\nuse ::shapes::{A, deep::B};\nuse ::shapes::*;\nuse ::shapes as s;\nuse ::x;\nuse ::lead::lead2;\nuse lead2::Z;');
+    expect(specs(uses)).toEqual(['self::shapes', 'shapes::Circle', 'a', 'b::C', 'shapes::A', 'shapes::deep::B', 'shapes', 'shapes', 'x', 'lead::lead2', 'lead2::Z']);
+  });
+
+  it('emits no inline path that starts with ::', async () => {
+    const { uses } = await run('fn f(a: ::shapes::Circle) { ::shapes::make(); }');
+    expect(specs(uses)).toEqual([]);
+  });
+});
+
+describe('rust extractor — a path attribute and what stands between it and its mod', () => {
+  it('skips the mod behind a doc comment, a line comment, a block comment and another attribute', async () => {
+    const { uses } = await run('#[path = "a.rs"]\n/// doc\nmod a;\n#[path = "b.rs"]\n// line\n/* block */\n#[allow(dead_code)]\nmod b;\n/// doc only\nmod c;\n#[cfg(unix)]\n/** block doc */\nmod d;');
+    expect(specs(uses)).toEqual(['self::c', 'self::d']);
+  });
+
+  it('silences what an inline module holds when a comment follows its path attribute', async () => {
+    const { uses } = await run('#[path = "elsewhere"]\n/// doc\nmod outer {\n    mod inner;\n    use self::inner::X;\n}');
+    expect(specs(uses)).toEqual([]);
+  });
+});
+
+describe('rust extractor — mod declarations inside cfg_if!', () => {
+  it('emits each file-backed mod of each branch from its own line, under either name of the macro', async () => {
+    const { uses } = await run('cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        mod unix;\n    } else if #[cfg(windows)] {\n        pub mod r#gen;\n    } else {\n        pub(crate) mod other;\n    }\n}\ncfg_if! { if #[cfg(a)] { mod plain; } }');
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['self::unix@3', 'self::gen@5', 'self::other@7', 'self::plain@10']);
+  });
+
+  it('reads a nested cfg_if!, an inline mod, and skips a mod with a path attribute or under an inline mod with one', async () => {
+    const { uses } = await run('cfg_if! {\n    if #[cfg(a)] {\n        // mod commented;\n        #[cfg(b)] #[path = "x.rs"] /* c */ pub mod moved;\n        #[path = "dir"] mod relocated { mod inside; }\n        #[allow(unused)] mod kept;\n        mod inline { mod deep; fn mod_like() {} }\n        cfg_if! { if #[cfg(c)] { mod nested; } }\n        const MOD: u8 = 1;\n    }\n}');
+    expect(specs(uses)).toEqual(['self::kept', 'self::inline::deep', 'self::nested']);
+  });
+
+  it('reads a cfg_if! inside an inline module relative to it, and none in a function body, an impl aside', async () => {
+    const { uses } = await run('mod outer {\n    cfg_if! { if #[cfg(a)] { mod leaf; } }\n}\nfn f() {\n    cfg_if! { if #[cfg(a)] { mod local; } }\n    cfg_if! { if #[cfg(a)] { mod stmt; } };\n}\ncfg_if! { if #[cfg(a)] { mod top; } };\nother_macro! { mod not_read; }\n#[path = "p"]\nmod pinned { cfg_if! { if #[cfg(a)] { mod unpinned; } } }\ncfg_if!();');
+    expect(specs(uses)).toEqual(['self::outer::leaf', 'self::top']);
   });
 });

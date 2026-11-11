@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -53,6 +53,17 @@ import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLeve
  * another scope and is emitted as written. For the crate root, whose `extern crate` names
  * reach every module of the crate, `declarations()` records which crate each name stands for.
  *
+ * NAMES IN SCOPE: from edition 2018 a `use` path may start with a name in scope where it is
+ * written: a module that module declares, or a name another `use` in scope bound. Such a path
+ * is emitted as `use::<n>::<the n segments the name stands for>::<the path as written>`
+ * (`mod shapes; use shapes::Circle;` → `use::2::self::shapes::shapes::Circle`). `use` is a
+ * keyword, so no path of the source starts with it. Edition 2015 reads the path as written.
+ *
+ * LEADING `::`: `use ::a::X;` is emitted as `a::X`, and never as a name in scope. That is what
+ * it means in both readings: the crate root's `a` in edition 2015, where every `use` path
+ * starts at the root, and the crate `a` from edition 2018 on, where a bare first segment that
+ * the extractor left as written names a crate.
+ *
  * GLOB (`use a::b::*`) emits the prefix module `a::b`. RENAMED (`use a::b as c`)
  * strips the alias and emits the real path `a::b`. `pub use` (re-export) is
  * structurally a plain `use` carrying a `visibility_modifier`; the edge is
@@ -61,7 +72,7 @@ import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLeve
  *
  * MACROS are invisible: a path appearing inside a `macro_invocation` token_tree is
  * unparsed tokens, never a `use_declaration`, so macro-generated deps are never
- * emitted. EXTERNAL crates (std, serde, …) emit a path hint too, but the resolver
+ * emitted (the `mod` declarations of a `cfg_if!` aside, see below). EXTERNAL crates (std, serde, …) emit a path hint too, but the resolver
  * returns undefined for any path whose root is not `crate`/`super`/`self` (and not
  * the current crate's own name) — so they never become a violation.
  *
@@ -75,6 +86,13 @@ import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLeve
  * (silence) rather than risk binding the wrong file. An INLINE `mod foo { … }` (with a body)
  * declares no separate file — its contents are walked in place (its own `use`/paths are
  * caught), and the `mod` itself emits nothing.
+ *
+ * `cfg_if!`: its body is tokens to the grammar, so a `mod x;` in a branch is read from them
+ * (`cfgIfModules`). Each branch is the crate's on some target, so every file-backed `mod` of
+ * every branch is emitted, from the line of its `mod`, under the rules it follows outside the
+ * macro: inside an inline `mod y { … }` written there it is `self::y::x`, and with a `#[path]`
+ * attribute on it or on such an inline module it is skipped. Only a `cfg_if!` that stands
+ * among the items of a module is read.
  *
  * INLINE PATHS: a fully-qualified path used WITHOUT a `use` — in TYPE position
  * (`field: crate::orders::Order`, `impl crate::traits::T`) a `scoped_type_identifier`, in
@@ -95,7 +113,8 @@ import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLeve
  * `scoped_identifier` nests via field `path` (the prefix) and field `name` (the
  * final segment). The leftmost leaf is a `crate` / `super` / `self` / `identifier`
  * keyword-or-name node; its `.text` is the first segment. Returns undefined when
- * the structure is unexpected (malformed / error nodes) — silence over a guess.
+ * the structure is unexpected (malformed / error nodes) — silence over a guess. A path that
+ * starts with `::` is rendered without it; a `use` knows it from its argument's text.
  */
 function pathText(node) {
     const segments = [];
@@ -108,10 +127,10 @@ function pathText(node) {
         segments.unshift(nameNode.text);
         cur = cur.childForFieldName('path');
     }
-    // `cur` is now the leftmost leaf: crate | super | self | identifier (or null when
-    // a scoped_identifier had no `path` field, which the grammar does not produce).
+    // `cur` is now the leftmost leaf: crate | super | self | identifier, or null for a path
+    // that starts with `::` (`::shapes::Circle`), whose first scoped_identifier has no `path`.
     if (cur === null)
-        return undefined;
+        return segments.join('::');
     if (cur.type === 'crate' ||
         cur.type === 'super' ||
         cur.type === 'self' ||
@@ -205,26 +224,20 @@ function rebaseForInlineMods(specifier, names) {
     }
     return [...new Array(supers - names.length).fill('super'), ...rest].join('::');
 }
-/** True when `modItem` is preceded by a `#[path = "…"]` attribute that overrides its
- *  conventional file location. Attributes parse as preceding `attribute_item` siblings. */
+/** True when a `#[path = "…"]` attribute in front of `modItem` overrides its conventional file location. Attributes parse as preceding `attribute_item` siblings; doc comments, comments and other attributes may stand between the attribute and the `mod`, in any order. */
 function modHasPathOverride(modItem) {
-    let sib = modItem.previousNamedSibling;
-    while (sib !== null && sib.type === 'attribute_item') {
-        const attr = sib.namedChild(0); // attribute
-        if (attr !== null && attr.type === 'attribute') {
-            const id = attr.namedChild(0);
-            if (id !== null && id.type === 'identifier' && id.text === 'path')
-                return true;
-        }
-        sib = sib.previousNamedSibling;
-    }
-    return false;
+    return attributesBefore(modItem).some((item) => {
+        const id = item.namedChild(0)?.namedChild(0) ?? null;
+        return id !== null && id.type === 'identifier' && id.text === 'path';
+    });
 }
 function uses(file) {
     const out = [];
     const seen = new Set();
     // The inline modules around the node being visited, carried down the walk.
     let mods = null;
+    // The blocks and item lists around the node being visited, innermost first, carried down the walk.
+    let lexical = null;
     // While a `use` declaration is read: the crates the `extern crate` declarations of its own scope bind, by bound name.
     let externs = null;
     const externsByScope = new Map();
@@ -236,22 +249,79 @@ function uses(file) {
         }
         return bound;
     };
+    // While a `use` declaration is read: the declaration, whose scope's names its path may start with.
+    let useDecl = null;
+    // Whether that declaration's path starts with `::`: the crate root in edition 2015, a crate from edition 2018 on, and in neither a name in scope.
+    let useFromRoot = false;
+    const namesByScope = new Map();
+    const namesOf = (scope) => {
+        let names = namesByScope.get(scope.node.id);
+        if (names === undefined) {
+            names = scopeNames(scope.node, scope.module);
+            namesByScope.set(scope.node.id, names);
+        }
+        return names;
+    };
+    /** The path the first segment `name` of a `use` path written in `decl` stands for, when a name in scope there says so: a module the module around it declares (`self::<name>`), or the path another `use` in scope bound to that name. The scopes are the blocks around the declaration, outward, and the module around them; a name of an outer module is not in scope. Undefined when no such name is found, or the `use` declarations found disagree. */
+    const inScope = (name, decl, from) => {
+        for (let scope = from; scope !== null; scope = scope.outer) {
+            const found = (namesOf(scope).get(name) ?? []).filter((n) => n.decl?.id !== decl.id);
+            if (found.length > 0) {
+                const one = found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0].path) ? found[0] : undefined);
+                return one === undefined ? undefined : { name: one, scope };
+            }
+            if (scope.module)
+                return undefined;
+        }
+        return undefined;
+    };
+    /** A `use` path of `decl` with its first segment replaced by what that name stands for in scope, again and again while the path starts with such a name (`use crate::a; use a::b; use b::C;`). A path that starts with `crate`, `self` or `super`, or with a name nothing in scope binds, is returned as it is. */
+    const inScopePath = (specifier, decl, scope) => {
+        let path = specifier;
+        let from = decl;
+        let within = scope;
+        for (let step = 0; step < 8; step++) {
+            const [first, ...rest] = path.split('::');
+            if (first === 'crate' || first === 'self' || first === 'super')
+                return path;
+            const found = inScope(first, from, within);
+            if (found === undefined)
+                return path;
+            path = [found.name.path, ...rest].join('::');
+            if (found.name.decl === null)
+                return path;
+            // The path a `use` bound is read where that `use` stands.
+            from = found.name.decl;
+            within = found.scope;
+        }
+        return specifier;
+    };
     const emit = (raw, node) => {
         if (raw === undefined || raw === '')
             return;
-        let specifier = unrawPath(raw);
+        const written = unrawPath(raw);
+        let specifier = written;
         const root = specifier.split('::', 1)[0];
         const crate = externs?.get(root);
+        // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
+        const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
         if (crate !== undefined)
             specifier = `extern::${crate}::as::${specifier}`;
-        if (root === 'self' || root === 'super') {
+        else
+            specifier = meant;
+        const meantRoot = specifier.split('::', 1)[0];
+        if (meantRoot === 'self' || meantRoot === 'super') {
             // Relative to the module the node sits in: rebase across enclosing inline modules.
             const chain = inlineModChain(mods);
             if (chain.names.length > 0) {
-                if (chain.unpinned)
+                if (chain.unpinned && meant === written)
                     return; // a #[path]-relocated (or nameless) inline module → silence
-                specifier = rebaseForInlineMods(specifier, chain.names);
+                specifier = chain.unpinned ? written : rebaseForInlineMods(specifier, chain.names);
             }
+        }
+        if (crate === undefined && meant !== written && specifier !== written) {
+            const lead = specifier.split('::').length - (written.split('::').length - 1);
+            specifier = `use::${lead}::${specifier.split('::').slice(0, lead).join('::')}::${written}`;
         }
         const line = node.startPosition.row + 1;
         const dedupKey = `${specifier} ${line}`;
@@ -334,15 +404,24 @@ function uses(file) {
                 return;
         }
     };
-    walkScoped(file.tree.rootNode, null, (node, scope, parent) => {
+    walkScoped(file.tree.rootNode, { mods: null, lexical: null }, (node, around, parent) => {
+        const scope = around.mods;
         mods = scope;
+        lexical = around.lexical;
+        // A block, the body of a module, an `impl` or a trait, and the file are scopes: what stands in them reads their names first.
+        if (node.type === 'source_file' || node.type === 'block' || node.type === 'declaration_list') {
+            return { mods: scope, lexical: { node, module: node.type === 'source_file' || parent()?.type === 'mod_item', outer: around.lexical } };
+        }
         if (node.type === 'use_declaration') {
             const arg = node.childForFieldName('argument');
             const scope = node.parent; // one step: the item list the declaration stands in
             externs = scope === null ? null : externsOf(scope);
+            useDecl = node;
+            useFromRoot = arg !== null && arg.text.startsWith('::');
             if (arg !== null)
                 handleArgument(arg, '');
             externs = null;
+            useDecl = null;
             return false; // do not descend into the use tree again
         }
         // File-backed `mod foo;` (no body) → the submodule file, addressed as `self::foo`. A
@@ -359,7 +438,17 @@ function uses(file) {
                 return undefined;
             // An inline module: what sits inside it is read relative to it.
             const name = node.childForFieldName('name')?.text ?? '';
-            return { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope };
+            return { mods: { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope }, lexical: around.lexical };
+        }
+        // `cfg_if! { … }` among the items of a module: each file-backed `mod` in its branches is a module on some target, addressed like one written outside the macro.
+        if (node.type === 'macro_invocation') {
+            const body = cfgIfBody(node, parent());
+            if (body === null)
+                return undefined;
+            for (const mod of cfgIfModules(body))
+                if (!mod.moved)
+                    emit(`self::${mod.names.join('::')}`, mod.at);
+            return false;
         }
         // `extern crate name [as alias];` → `extern::name` (never `self`); the resolver binds it
         // only to an in-repo path dependency or the package's own library.
@@ -386,6 +475,68 @@ function uses(file) {
         return undefined;
     });
     return out;
+}
+/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module's own scope (`module`) declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names. A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
+function scopeNames(scope, module) {
+    const out = new Map();
+    const add = (name, path, decl) => {
+        const plain = unraw(name);
+        if (plain === '' || plain === '_')
+            return;
+        const list = out.get(plain);
+        if (list === undefined)
+            out.set(plain, [{ path, decl }]);
+        else
+            list.push({ path, decl });
+    };
+    for (const node of scope.namedChildren) {
+        if (node === null)
+            continue;
+        if (node.type === 'mod_item' && module) {
+            const name = node.childForFieldName('name');
+            if (name !== null)
+                add(name.text, `self::${unraw(name.text)}`, null);
+        }
+        else if (node.type === 'use_declaration') {
+            const arg = node.childForFieldName('argument');
+            if (arg === null || arg.text.startsWith('::'))
+                continue;
+            for (const bound of useBindingPaths(arg, ''))
+                add(bound.name, unrawPath(bound.path), node);
+        }
+    }
+    return out;
+}
+/** The names a `use` argument binds, each with the path it names: the last segment of a path, each member of a group under the group's path, the alias of an `as`, the module a `self` member names. `prefix` is the path of the groups around the argument. */
+function useBindingPaths(arg, prefix) {
+    switch (arg.type) {
+        case 'identifier':
+            return [{ name: arg.text, path: join(prefix, arg.text) }];
+        case 'scoped_identifier': {
+            const path = join(prefix, pathText(arg));
+            const name = arg.childForFieldName('name');
+            return path === undefined || name === null ? [] : [{ name: name.text, path }];
+        }
+        case 'self':
+            return prefix === '' ? [] : [{ name: prefix.slice(prefix.lastIndexOf(':') + 1), path: prefix }];
+        case 'use_as_clause': {
+            const alias = arg.childForFieldName('alias');
+            const p = arg.childForFieldName('path');
+            const inner = p === null ? [] : useBindingPaths(p, prefix);
+            return alias === null || inner.length !== 1 ? [] : [{ name: alias.text, path: inner[0].path }];
+        }
+        case 'scoped_use_list': {
+            const pre = prefixNode(arg);
+            const groupPrefix = pre === null ? prefix : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
+            const list = arg.childForFieldName('list');
+            return groupPrefix === undefined || list === null ? [] : useBindingPaths(list, groupPrefix);
+        }
+        case 'use_list':
+            return arg.namedChildren.flatMap((c) => (c === null ? [] : useBindingPaths(c, prefix)));
+        default:
+            // A glob binds names no tree shows; `crate` and `super` alone bind none.
+            return [];
+    }
 }
 /** Join a `::`-module prefix with a tail. Empty prefix → the tail itself; undefined
  *  tail → undefined (propagates a resolution failure rather than guessing). */
@@ -419,6 +570,22 @@ function join(prefix, tail) {
  * `rustExternBindingKey(name, crate)` (`extern:<name>=<crate>`), which lets a path that starts
  * with the name resolve to the crate.
  *
+ * Every module whose names a top-level glob `use` brings in is declared under
+ * `rustGlobKey(path)` (`glob:<path>`), read by `topLevelGlobs`: with the item keys of that
+ * module's file, this is what tells the resolver that a crate root re-exports a name it does
+ * not write.
+ *
+ * Every module the file declares without a body, whatever stands in front of it, is declared
+ * under `rustModuleKey(path)` (`mod:<path>`), and `RUST_MODULES_KNOWN_KEY` (`mods:all`) says
+ * that those are all of them, both read by `declaredModules`: this is what tells the resolver
+ * that a file whose name fits a path is no module, because no `mod` declares it.
+ *
+ * Every file the top level of the file loads through a `path` attribute on a `mod` is
+ * declared under `rustPathModuleKey(path)` (`pathmod:<path>`), and under
+ * `rustPathModuleNameKey(name)` (`pathmod-name:<file name>`) so that it can be found from the
+ * loaded file, both read by `pathModules`: a file loaded that way owns its directory as a
+ * `mod.rs` does, which is where the resolver then looks for its children.
+ *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
  * declaration nothing can switch off, `modfile?:<path>` for one under a `cfg`. This is what the
@@ -448,8 +615,19 @@ function declarations(file) {
         if (crate !== undefined)
             out.push({ symbolKey: rustExternBindingKey(name, crate), line });
     }
+    for (const { path, line } of topLevelGlobs(root))
+        out.push({ symbolKey: rustGlobKey(path), line });
     for (const { path, line, conditional } of plainModuleFiles(root))
         out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
+    const modules = declaredModules(root);
+    for (const { path, line } of modules.declared)
+        out.push({ symbolKey: rustModuleKey(path), line });
+    if (modules.known)
+        out.push({ symbolKey: RUST_MODULES_KNOWN_KEY, line: 1 });
+    for (const { path, line } of pathModules(root)) {
+        out.push({ symbolKey: rustPathModuleKey(path), line });
+        out.push({ symbolKey: rustPathModuleNameKey(path.slice(path.lastIndexOf('/') + 1)), line });
+    }
     return out;
 }
 /** The attributes that leave a `mod` where its name puts it: the compiler's own, which rewrite nothing. Any other attribute in front of a `mod` may be a macro that rewrites the item, and a `cfg_attr` there may apply one, or a `path`. A `cfg` moves nothing, but it may remove the item: see `conditional` in `plainModuleFiles`. */
@@ -492,6 +670,112 @@ export function plainModuleFiles(root) {
         }
     };
     visit(root.namedChildren, [], false);
+    return out;
+}
+/**
+ * Every module a Rust file declares without a body: each `mod x;` that is an item of the file itself or of inline modules nested in it, and each one in a branch of a `cfg_if!` that stands among those items, as the path of its names from the file's own module (`x`, `outer/x`), with `r#` stripped. Whatever stands in front of the `mod` (a `cfg`, a `path` attribute, an attribute macro) is not read: the list says which names are modules with a file of their own, not where the file is.
+ *
+ * `known` says that the list holds every such module of the file. It is false where a `mod` may exist that the tree does not show: in a file the grammar could not parse to the end, in one whose head holds an inner attribute that is not one of the compiler's, and in one that invokes, among those items or in a `cfg_if!` branch, a macro other than the item macros Runes reads (`ITEM_MACROS`, `cfg_if!`), since a macro can expand to a `mod` or include a file that holds one.
+ */
+export function declaredModules(root) {
+    const declared = [];
+    let known = !root.hasError;
+    const visit = (items, prefix) => {
+        for (const node of items) {
+            if (node === null)
+                continue;
+            if (node.type === 'inner_attribute_item') {
+                if (!attributeIsInert(node, true))
+                    known = false;
+            }
+            else if (node.type === 'mod_item') {
+                const name = unraw(node.childForFieldName('name')?.text ?? '');
+                const body = node.childForFieldName('body');
+                if (name === '')
+                    known = false;
+                else if (body === null)
+                    declared.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1 });
+                else
+                    visit(body.namedChildren, [...prefix, name]);
+            }
+            else {
+                const call = node.type === 'expression_statement' ? node.namedChild(0) : node;
+                if (call?.type !== 'macro_invocation')
+                    continue;
+                const macro = call.childForFieldName('macro');
+                const macroName = macro?.type === 'scoped_identifier' ? macro.childForFieldName('name')?.text : macro?.text;
+                const body = call.namedChildren.find((c) => c?.type === 'token_tree') ?? null;
+                if (macroName === 'cfg_if' && body !== null) {
+                    for (const mod of cfgIfModules(body))
+                        declared.push({ path: [...prefix, ...mod.names].join('/'), line: mod.at.startPosition.row + 1 });
+                    if (cfgIfInvokesMacro(body))
+                        known = false;
+                }
+                else if (macroName === undefined || !ITEM_MACROS.has(macroName))
+                    known = false;
+            }
+        }
+    };
+    visit(root.namedChildren, []);
+    return { declared, known };
+}
+/** Whether a `cfg_if!` body invokes, among the items of its branches, of a `cfg_if!` nested there or of an inline `mod` written there, a macro other than `cfg_if!`, `macro_rules!` and the item macros Runes reads: a name followed by `!`. Nothing inside any other nested token tree (a function body, an attribute, an initializer's group) is an item of those levels. */
+function cfgIfInvokesMacro(body) {
+    const braced = (tree) => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+    const items = (tree) => {
+        const tokens = tree.children.filter((c) => c !== null);
+        for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i];
+            if (t.type === '=') {
+                while (i + 1 < tokens.length && tokens[i + 1].type !== ';')
+                    i++;
+            }
+            else if (t.type === 'identifier' && tokens[i + 1]?.type === '!') {
+                if (t.text === 'cfg_if') {
+                    if (branches(tokens[i + 2]))
+                        return true;
+                }
+                else if (t.text !== 'macro_rules' && !ITEM_MACROS.has(t.text))
+                    return true;
+            }
+            else if (!t.isNamed && t.type === 'mod' && braced(tokens[i + 2]) && items(tokens[i + 2]))
+                return true;
+        }
+        return false;
+    };
+    const branches = (tree) => tree !== undefined && tree.namedChildren.some((c) => c !== null && braced(c) && items(c));
+    return branches(body);
+}
+/**
+ * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
+ */
+export function pathModules(root) {
+    const out = [];
+    for (const node of root.namedChildren) {
+        if (node === null || node.type !== 'mod_item' || node.childForFieldName('body') !== null)
+            continue;
+        for (const item of attributesBefore(node)) {
+            const attr = item.namedChild(0);
+            const id = attr?.namedChild(0) ?? null;
+            const value = attr?.childForFieldName('value') ?? null;
+            if (id === null || id.type !== 'identifier' || id.text !== 'path' || value === null || value.type !== 'string_literal')
+                continue;
+            const text = value.text.slice(1, -1);
+            if (text === '' || text.startsWith('/') || text.includes('\\'))
+                continue;
+            const parts = [];
+            for (const part of text.split('/')) {
+                if (part === '' || part === '.')
+                    continue;
+                if (part === '..' && parts.length > 0 && parts[parts.length - 1] !== '..')
+                    parts.pop();
+                else
+                    parts.push(part);
+            }
+            if (parts.length > 0 && parts[parts.length - 1] !== '..')
+                out.push({ path: parts.join('/'), line: node.startPosition.row + 1 });
+        }
+    }
     return out;
 }
 /** The attributes written in front of `item`. They parse as preceding `attribute_item` siblings; comments may stand between them. */
@@ -616,6 +900,38 @@ function externCratesIn(scope) {
     }
     return out;
 }
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
+export function topLevelGlobs(root) {
+    const out = [];
+    const visit = (arg, prefix, line) => {
+        if (arg.type === 'use_wildcard') {
+            const pre = prefixNode(arg);
+            const path = pre === null ? undefined : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
+            if (path !== undefined)
+                out.push({ path: unrawPath(path), line });
+        }
+        else if (arg.type === 'scoped_use_list') {
+            const pre = prefixNode(arg);
+            const groupPrefix = pre === null ? prefix : join(prefix, pre.type === 'scoped_identifier' ? pathText(pre) : pre.text);
+            const list = arg.childForFieldName('list');
+            if (groupPrefix !== undefined && list !== null)
+                visit(list, groupPrefix, line);
+        }
+        else if (arg.type === 'use_list') {
+            for (const item of arg.namedChildren)
+                if (item !== null)
+                    visit(item, prefix, line);
+        }
+    };
+    for (const node of root.namedChildren) {
+        if (node === null || node.type !== 'use_declaration')
+            continue;
+        const arg = node.childForFieldName('argument');
+        if (arg !== null && !arg.text.startsWith('::'))
+            visit(arg, '', node.startPosition.row + 1);
+    }
+    return out;
+}
 /** The names a `use` argument binds. `last` is the last segment of the path of the group it sits in, which a `self` member binds. */
 function useBindings(arg, last) {
     switch (arg.type) {
@@ -643,6 +959,63 @@ function useBindings(arg, last) {
             // A glob (`use a::*;`) binds names no tree shows; `crate`, `super` alone bind none.
             return [];
     }
+}
+/** The token tree of a `cfg_if!` invocation that stands among the items of a module (the file's, or an inline module's), or null for any other node. `parent` is the invocation's parent. */
+function cfgIfBody(call, parent) {
+    const macro = call.childForFieldName('macro');
+    const name = macro?.type === 'scoped_identifier' ? macro.childForFieldName('name')?.text : macro?.text;
+    if (name !== 'cfg_if')
+        return null;
+    const holder = parent?.type === 'expression_statement' ? parent.parent : parent;
+    if (holder === null || (holder.type !== 'source_file' && holder.type !== 'declaration_list'))
+        return null;
+    return call.namedChildren.find((c) => c?.type === 'token_tree') ?? null;
+}
+/**
+ * The file-backed modules a `cfg_if!` body declares: each `mod x;` in a braced branch, in a `cfg_if!` nested in one, and in an inline `mod y { … }` written there, which adds its name in front (`names`, `r#` stripped: `x`, or `y`, `x`). `at` is the `mod` keyword. `moved` is true when a `path` attribute stands in front of the `mod` or of an inline module around it, behind a visibility, comments or other attributes: the file is then not where the names put it. Every branch is listed, since each is the crate's on some target.
+ */
+export function cfgIfModules(body) {
+    const out = [];
+    const braced = (tree) => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+    const branches = (tree, names, moved) => {
+        for (const c of tree.namedChildren)
+            if (c !== null && braced(c))
+                items(c, names, moved);
+    };
+    const items = (tree, names, moved) => {
+        const tokens = tree.children.filter((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+        for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i];
+            const next = tokens[i + 1];
+            if (t.type === 'identifier' && t.text === 'cfg_if' && next?.type === '!' && tokens[i + 2]?.type === 'token_tree') {
+                branches(tokens[i + 2], names, moved);
+                i += 2;
+            }
+            else if (!t.isNamed && t.type === 'mod' && next?.type === 'identifier') {
+                // Back over the visibility (`pub`, `pub(crate)`) to the attributes: `#` and its bracketed tree, one pair each.
+                let j = i - 1;
+                if (tokens[j]?.type === 'token_tree' && tokens[j - 1]?.type === 'pub')
+                    j -= 2;
+                else if (tokens[j]?.type === 'pub')
+                    j -= 1;
+                let path = false;
+                for (; j >= 1 && tokens[j].type === 'token_tree' && tokens[j - 1].type === '#'; j -= 2) {
+                    const id = tokens[j].namedChild(0);
+                    if (id !== null && id.type === 'identifier' && id.text === 'path')
+                        path = true;
+                }
+                const here = [...names, unraw(next.text)];
+                const after = tokens[i + 2];
+                if (after?.type === ';')
+                    out.push({ names: here, at: t, moved: moved || path });
+                else if (braced(after))
+                    items(after, here, moved || path);
+                i += 2;
+            }
+        }
+    };
+    branches(body, [], false);
+    return out;
 }
 /** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
 function cfgIfItems(body) {
@@ -695,7 +1068,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 11,
+    rev: 18,
     declarations,
     uses,
 };
