@@ -1043,15 +1043,16 @@ async function compareOracles(opts, repo, dir, result, runes, head, explained, s
   const status = unexplained.length > 0 ? 'FAIL' : 'ok  ';
   process.stdout.write(`${status} ${head}; checked: ${parts.join(', ') || 'no oracle applies'}; ${findings.length} disagreements, ${findings.length - unexplained.length} explained\n`);
   reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => oracleEntry(repo.id, f)));
-  // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. It is named, not failed, because a toolchain of another machine can see a disagreement this one does not.
+  // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. A plain run names it, because a toolchain of another machine can see a disagreement this one does not; --strict, which CI runs with every toolchain installed, fails on it.
   const ran = new Set(Object.entries(outcomes).filter(([, o]) => o.skipped === undefined).map(([name]) => name));
   const unused = [...explained].filter(([key, e]) => e.repo === repo.id && ran.has(e.kind.split(':')[0]) && !used.has(key)).map(([, e]) => `${e.where}: ${e.text.slice(0, 200)}`);
   if (unused.length > 0) {
     process.stdout.write(`    ${unused.length} explanations of ${repo.id} match no disagreement of this run:\n`);
     for (const u of unused.slice(0, 20)) process.stdout.write(`    UNUSED ${u}\n`);
     if (unused.length > 20) process.stdout.write(`    ... and ${unused.length - 20} more\n`);
+    if (opts.strict) process.stdout.write('    --strict: an explanation that matches no disagreement fails the run.\n');
   }
-  return unexplained.length === 0;
+  return unexplained.length === 0 && !(opts.strict && unused.length > 0);
 }
 
 async function main() {
