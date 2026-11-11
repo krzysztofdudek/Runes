@@ -251,16 +251,42 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
   });
   it('keeps the earlier reading, the first target that names a file, wherever the settings do not decide', () => {
     for (const [options, from] of [
-      [{ moduleResolution: 'bundler' }, 'app/a.ts'], // module unset: its default moved between TypeScript 5 and 6
-      [{ module: 'esnext' }, 'app/a.ts'], // resolution unset and not implied
       [{ module: 'esnext', moduleResolution: 'node10' }, 'app/a.ts'], // Node10 reads no exports, which Runes does not model
-      [{ module: 'esnext', moduleResolution: 'nodenext' }, 'app/a.ts'], // a Node resolution with a non-Node module, which tsc rejects
-      [{ module: 'nodenext', moduleResolution: 'bundler' }, 'app/a.ts'], // and the reverse
-      [{ module: 7, moduleResolution: 'bundler' }, 'app/a.ts'], // a value of another type is unset
+      [{ module: 'amd' }, 'app/a.ts'], // Classic, implied, reads none either
+      [{ module: 'nodenext', moduleResolution: 'bundler' }, 'app/a.ts'], // Bundler with a Node module
       [{ module: 'esnext', moduleResolution: 'bundler' }, 'app/a.vue'], // a component's format is not read
     ]) expect(withConfig(options)('lib', from), JSON.stringify(options)).toBe('lib/cjs/index.cts');
-    // A tsconfig that sets nothing decides nothing either.
-    expect(project({ ...lib, 'app/tsconfig.json': '{ "compilerOptions": { "strict": true } }' })('lib/types', 'app/a.ts')).toBe('lib/v99.d.ts');
+  });
+  it('reads an unset module from target and an unset moduleResolution from module, as TypeScript 6 computes them', () => {
+    // No module: an ES kind, except under target es5, which gives commonjs. No resolution: Bundler.
+    for (const options of [{}, { strict: true }, { target: 'ES2020' }, { target: 'es3' }, { module: 'esnext' }, { moduleResolution: 'bundler' }, { target: 'es5', module: 'es2015' }, { module: 7, moduleResolution: 'bundler' }]) { // a value of another type is unset
+      const r = withConfig(options);
+      expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.cts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.ts', 'require'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib/types', 'app/a.ts'), JSON.stringify(options)).toBe('lib/t.d.ts');
+    }
+    for (const options of [{ target: 'ES5' }, { module: 'commonjs' }, { target: 'es5', moduleResolution: 'bundler' }]) {
+      const r = withConfig(options);
+      expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.mts'), JSON.stringify(options)).toBe('lib/esm/index.ts');
+      expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+    }
+  });
+  it('under a Node resolution with a module that is not a Node one, the package type decides, then the module', () => {
+    const typed = (type) => ({ 'app/package.json': JSON.stringify({ name: 'app', type }) });
+    const es = { moduleResolution: 'nodenext' };
+    expect(withConfig(es)('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(withConfig(es, typed('commonjs'))('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(withConfig(es, typed('commonjs'))('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
+    expect(withConfig(es, typed('commonjs'))('lib', 'app/a.mts')).toBe('lib/esm/index.ts');
+    expect(withConfig(es)('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
+    const cjs = { moduleResolution: 'node16', module: 'commonjs' };
+    expect(withConfig(cjs)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    expect(withConfig(cjs, typed('module'))('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(withConfig(cjs, typed('module'))('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
+    // Under preserve a dynamic import() stays an import in a file that requires.
+    expect(withConfig({ moduleResolution: 'node16', module: 'preserve' })('lib', 'app/a.cts', 'import')).toBe('lib/esm/index.ts');
   });
   it('stops at a null target, skips a versioned types key the compiler fails, and reads an array entry by entry', () => {
     const r = withConfig({ module: 'esnext', moduleResolution: 'bundler' });
@@ -395,7 +421,7 @@ describe('resolveTsPath — the call form selects require or import', () => {
     expect(r('lib', 'esm/a.ts', 'require')).toBe('lib/cjs/index.cts');
   });
   it('a call form changes nothing where the settings decide no conditions', () => {
-    const r = withConfig({ module: 'esnext' });
+    const r = withConfig({ module: 'esnext', moduleResolution: 'node10' });
     expect(r('lib', 'app/a.ts', 'import')).toBe('lib/cjs/index.cts');
     expect(r('lib', 'app/a.ts', 'require')).toBe('lib/cjs/index.cts');
   });

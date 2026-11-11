@@ -52,6 +52,16 @@ const DEFAULTED_SETTINGS = [
   { moduleResolution: 'bundler', target: 'es5' },
   { moduleResolution: 'node16' },
   { moduleResolution: 'nodenext' },
+  { moduleResolution: 'node16', target: 'es5' },
+  // A Node resolution with a module that is not a Node one is what a tsconfig naming only the resolution computes; the same pair written out reads the same.
+  { moduleResolution: 'node16', module: 'commonjs' },
+  { moduleResolution: 'nodenext', module: 'esnext' },
+  { moduleResolution: 'node16', module: 'es2015' },
+  { moduleResolution: 'node16', module: 'preserve' },
+  { moduleResolution: 'nodenext', module: 'amd' },
+  { moduleResolution: 'node16', module: 'umd' },
+  { moduleResolution: 'node16', module: 'system' },
+  { moduleResolution: 'node16', module: 'none' },
 ];
 // A call form is read the same in every file kind; the forms below it are import types, which are only written in TypeScript.
 const CALL_FORMS = {
@@ -172,10 +182,13 @@ describe('the conditions Runes enters are the ones the compiler enters', () => {
     expect(mismatches).toEqual([]);
   });
   it('for a tsconfig that leaves module, moduleResolution or both to the compiler\'s defaults, in every file kind, package type and form', async () => {
-    const forms = { ...CALL_FORMS, importEquals: TYPE_FORMS.importEquals, typeofImport: TYPE_FORMS.typeofImport, importType: TYPE_FORMS.importType };
-    const { compared, mismatches } = await compare(DEFAULTED_SETTINGS, EXTENSIONS, forms, false);
-    // {} alone gives 16 (file kind, package type) rows x 3 call forms, less the 8 require() rows of TypeScript files, plus 8 TypeScript rows x 3 type forms.
-    expect(compared).toBeGreaterThanOrEqual(64 * 10);
+    const calls = await compare(DEFAULTED_SETTINGS, EXTENSIONS, CALL_FORMS, false);
+    const typeForms = { importEquals: TYPE_FORMS.importEquals, typeofImport: TYPE_FORMS.typeofImport, importType: TYPE_FORMS.importType };
+    const types = await compare(DEFAULTED_SETTINGS, ['ts', 'tsx', 'cts', 'mts'], typeForms, false);
+    const compared = calls.compared + types.compared;
+    const mismatches = [...calls.mismatches, ...types.mismatches];
+    // Each setting gives 16 (file kind, package type) rows x 3 call forms, less the 8 require() rows of TypeScript files, plus 8 TypeScript rows x 3 type forms: 64. The 4 settings that compute Classic (amd, umd, system and none alone) resolve nothing.
+    expect(compared).toBe((DEFAULTED_SETTINGS.length - 4) * 64);
     expect(mismatches).toEqual([]);
   });
 });

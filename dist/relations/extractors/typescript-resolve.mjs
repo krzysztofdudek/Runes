@@ -136,15 +136,16 @@ function normalizeExports(exportsField) {
 }
 const NODE_MODULE_KINDS = new Set(['node16', 'node18', 'node20', 'nodenext']);
 const IMPORT_CALL_REWRITING_MODULE_KINDS = new Set(['commonjs', 'amd', 'umd', 'system', 'none']);
+const CLASSIC_MODULE_KINDS = new Set(['amd', 'umd', 'system', 'none']);
 const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
 /**
  * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
  *
- * The settings decide when the config in effect names the resolution: `moduleResolution` `bundler`, `node16` or `nodenext`, or, with no `moduleResolution`, a `module` that implies it in TypeScript 5 and 6 alike (`node16`, `node18`, `node20` and `nodenext` imply their own, `preserve` implies Bundler). Nothing else decides: with neither set the default moved between TypeScript 5 (Node10 or Classic) and 6 (Bundler), and under Node10 or Classic `exports` is not read at all, a difference Runes does not model.
+ * The settings are read as TypeScript 6 computes them. `moduleResolution` `bundler`, `node16` or `nodenext` names the resolution. With no `moduleResolution` the `module` implies it: `node16`, `node18`, `node20` and `nodenext` imply their own, `amd`, `umd`, `system` and `none` imply Classic, and every other one Bundler. With no `module` the `target` implies it: `es5` gives `commonjs`, and any other target, or none, an ES module kind. Under Node10 or Classic, named or implied, `exports` is not read at all, a difference Runes does not model: the settings then decide nothing.
  *
  * A file no tsconfig covers is read as Node reads it, whatever the compiler would default to: `import` or `require` by the file's format, `types`, `node` and `default`, so a key for a runtime or a bundler (`react-server`, `edge-light`, `worker`, `react-native`, `browser`) is passed over.
  *
- * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
+ * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. Under a Node resolution with a `module` that is not a Node one (tsc reports the pair and still resolves), the nearest package.json `"type"` decides when it is `module` or `commonjs`, and with no `type` the file requires under `commonjs`, `amd`, `umd`, `system` or `none` and imports otherwise. Bundler with a Node `module`, and any other file kind (a Vue or Svelte component), decide nothing.
  *
  * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
  */
@@ -161,14 +162,12 @@ function exportConditions(from, deps, callForm) {
     }
     else {
         const { moduleResolution: resolution } = config;
-        module = config.module;
-        kind =
-            resolution === 'bundler' || (resolution === undefined && module === 'preserve')
-                ? 'bundler'
-                : resolution === 'node16' || resolution === 'nodenext' || (resolution === undefined && module !== undefined && NODE_MODULE_KINDS.has(module))
-                    ? 'node'
-                    : undefined;
-        if (kind === undefined || module === undefined)
+        module = config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext');
+        if (resolution === undefined)
+            kind = NODE_MODULE_KINDS.has(module) ? 'node' : CLASSIC_MODULE_KINDS.has(module) ? undefined : 'bundler';
+        else
+            kind = resolution === 'bundler' ? 'bundler' : resolution === 'node16' || resolution === 'nodenext' ? 'node' : undefined;
+        if (kind === undefined)
             return undefined;
     }
     let format;
@@ -179,6 +178,10 @@ function exportConditions(from, deps, callForm) {
     else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
         if (module === undefined || (kind === 'node' && NODE_MODULE_KINDS.has(module)))
             format = typeIsModule() ? 'import' : 'require';
+        else if (kind === 'node') {
+            const type = deps.nearestPackage(from)?.manifest.type;
+            format = type === 'module' ? 'import' : type === 'commonjs' || IMPORT_CALL_REWRITING_MODULE_KINDS.has(module) ? 'require' : 'import';
+        }
         else if (kind === 'bundler' && module === 'commonjs')
             format = 'require';
         else if (kind === 'bundler' && ESM_MODULE_KINDS.has(module))
@@ -186,12 +189,14 @@ function exportConditions(from, deps, callForm) {
     }
     if (format === undefined)
         return undefined;
+    // Under a Node resolution with a `module` that is not a Node one, a dynamic import() is resolved in the file's own format, except under `preserve`.
+    const mixed = kind === 'node' && module !== undefined && !NODE_MODULE_KINDS.has(module);
     const rewritten = callForm === 'import' &&
         config !== undefined &&
         module !== undefined &&
         !NODE_MODULE_KINDS.has(module) &&
         module !== 'preserve' &&
-        (ext === '.cts' || ext === '.cjs' || (ext !== '.mts' && ext !== '.mjs' && IMPORT_CALL_REWRITING_MODULE_KINDS.has(module)));
+        (mixed ? format === 'require' : ext === '.cts' || ext === '.cjs' || (ext !== '.mts' && ext !== '.mjs' && IMPORT_CALL_REWRITING_MODULE_KINDS.has(module)));
     const conditions = new Set(['default', rewritten ? 'require' : (callForm ?? format), 'types', ...(config?.customConditions ?? [])]);
     if (kind === 'node')
         conditions.add('node');
@@ -934,8 +939,8 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                 }
                 merged.paths = { base: dir, map };
             }
-            // tsc reads these two enum options case-insensitively; a value of another type is unset, as tsc then takes the default.
-            for (const field of ['moduleResolution', 'module']) {
+            // tsc reads these enum options case-insensitively; a value of another type is unset, as tsc then takes the default.
+            for (const field of ['moduleResolution', 'module', 'target']) {
                 const value = options?.[field];
                 if (typeof value === 'string')
                     merged[field] = value.toLowerCase();
@@ -991,6 +996,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
         ...(config.moduleResolution !== undefined ? { moduleResolution: config.moduleResolution } : {}),
         ...(config.module !== undefined ? { module: config.module } : {}),
+        ...(config.target !== undefined ? { target: config.target } : {}),
         ...(config.customConditions !== undefined ? { customConditions: config.customConditions } : {}),
         ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
     });

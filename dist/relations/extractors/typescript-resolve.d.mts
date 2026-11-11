@@ -53,6 +53,8 @@ export interface TsPathConfig {
     /** `moduleResolution` and `module`, lower-cased, and `customConditions`, when set anywhere in the chain: what the conditions of a package's `exports` and `imports` are chosen by. */
     moduleResolution?: string;
     module?: string;
+    /** `target`, lower-cased, when set anywhere in the chain: what the compiler takes its default `module` from. */
+    target?: string;
     customConditions?: string[];
     /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
     paths?: {
