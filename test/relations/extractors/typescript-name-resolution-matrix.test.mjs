@@ -116,6 +116,10 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-workspace-package-edge', () => runCase('typescript-workspace-package-edge'));
   it('typescript-workspace-semver-range-linked-edge', () => runCase('typescript-workspace-semver-range-linked-edge'));
   it('typescript-workspace-pnpm-range-unlinked-silence', () => runCase('typescript-workspace-pnpm-range-unlinked-silence'));
+  it('typescript-workspace-pnpm-undeclared-member-silence', () => runCase('typescript-workspace-pnpm-undeclared-member-silence'));
+  it('typescript-workspace-pnpm-root-declared-member-edge', () => runCase('typescript-workspace-pnpm-root-declared-member-edge'));
+  it('typescript-workspace-pnpm-hoisted-undeclared-member-edge', () => runCase('typescript-workspace-pnpm-hoisted-undeclared-member-edge'));
+  it('typescript-workspace-undeclared-member-npm-edge', () => runCase('typescript-workspace-undeclared-member-npm-edge'));
   it('typescript-workspace-protocol-pnpm-edge', () => runCase('typescript-workspace-protocol-pnpm-edge'));
   it('typescript-workspace-range-unsatisfied-silence', () => runCase('typescript-workspace-range-unsatisfied-silence'));
   it('typescript-workspace-unknown-manager-range-edge', () => runCase('typescript-workspace-unknown-manager-range-edge'));
