@@ -85,28 +85,53 @@ describe('typescript extractor — uses()', () => {
     ]);
   });
   it('marks no call form on an import type, which is read by the format of its file like an import statement', async () => {
-    const { uses } = await run(
-      [
-        `type M = typeof import('./m');`,
-        `let v: import('./t').T;`,
-        `type A = import('./a').T | null;`,
-        `type B = Array<import('./b').T>;`,
-        `const w = {} as import('./w').T;`,
-        `const s = x satisfies import('./s').T;`,
-        `const f = vi.fn<() => typeof import('./f')>();`,
-        `function g<T extends import('./g1').T = import('./g2').T>() {}`,
-        `class C implements import('./c').B {}`,
-        `let a = <import('./cast').T>x;`,
-        `const d = import('./value');`,
-        `const e = (await import('./value2')) as import('./e').T;`,
-        `import type R = require('./r');`,
-      ].join('\n'),
-    );
+    const typed = [
+      "type M = typeof import('./m');",
+      "let v: import('./t').T;",
+      "type A = import('./a').T | null;",
+      "type B = Array<import('./b').T>;",
+      "const w = {} as import('./w').T;",
+      "const s = x satisfies import('./s').T;",
+      "const f = vi.fn<() => typeof import('./f')>();",
+      "function g<T extends import('./g1').T = import('./g2').T>() {}",
+      "let a = <import('./cast').T>x;",
+      "function p(x: unknown): x is import('./p').T { return true; }",
+      "function q(x: unknown): asserts x is import('./q').T {}",
+      "class C extends B<import('./c').T> {}",
+      "const D = class extends B<import('./d').T> {};",
+      "export default class extends B<import('./e').T> {}",
+      "class F implements I<import('./i').T> {}",
+      "h<import('./h1').T>();",
+      "h<import('./h2').T>`x`;",
+      "new H<import('./h3').T>();",
+      "type K = keyof import('./k').T;",
+      "type P = (import('./par').T);",
+      "type Q = (import('./parr').T)[];",
+      "type L = `x${import('./l').T}`;",
+      "type R = readonly import('./r').T[];",
+      "type S = import('./cond').T extends infer U ? U : never;",
+    ];
+    // One statement a file: the grammar's recovery from a type it cannot read can run on into the next statement.
+    for (const line of typed) {
+      const { uses } = await run(line);
+      const forms = uses.map((u) => u.candidates[0].callForm);
+      expect(forms.length, line).toBe(line.split('import(').length - 1);
+      expect(forms.filter((f) => f !== undefined), line).toEqual([]);
+    }
+    const { uses } = await run(["const d = import('./value');", "const e = (await import('./value2')) as import('./e2').T;", "import type R2 = require('./r2');"].join('\n'));
     const form = new Map(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm]));
-    for (const typed of ['./m', './t', './a', './b', './w', './s', './f', './g1', './g2', './c', './cast', './e']) expect(form.get(typed), typed).toBeUndefined();
     expect(form.get('./value')).toBe('import');
     expect(form.get('./value2')).toBe('import');
-    expect(form.get('./r')).toBe('require');
+    expect(form.get('./e2')).toBeUndefined();
+    expect(form.get('./r2')).toBe('require');
+  });
+  it('keeps the import call form on an import() in the heritage clause of a class or interface, which holds expressions', async () => {
+    const { uses } = await run("class C implements import('./a').B {}\ninterface I extends import('./b').B {}\nconst x = foo(import('./c'), [import('./d')]);");
+    const form = new Map(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm]));
+    expect(form.get('./a')).toBe('import');
+    expect(form.get('./b')).toBe('import');
+    expect(form.get('./c')).toBe('import');
+    expect(form.get('./d')).toBe('import');
   });
   it('javascript: detects require + import, no crash on no-type-syntax', async () => {
     const { uses } = await run(`import x from './x';\nconst y = require('./y');`, '.js', 'javascript');

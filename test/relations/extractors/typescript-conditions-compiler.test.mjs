@@ -44,7 +44,9 @@ const TYPE_FORMS = {
   classExpressionHeritage: "export const C = class extends B<import('lib').T> {};",
   defaultClassHeritage: "export default class extends B<import('lib').T> {}",
   implementsArgument: "export class C implements I<import('lib').T> {}",
-  interfaceExtends: "export interface I extends import('lib').B {}",
+  // The heritage clause of an interface holds expressions, so the compiler reads this import() as a dynamic import call.
+  interfaceExtends: "interface I extends import('lib').B {}\nexport {};",
+  classImplements: "export class C implements import('lib').B {}",
   callTypeArgument: "g<import('lib').T>();",
   taggedTemplateTypeArgument: "g<import('lib').T>`x`;",
   newTypeArgument: "new G<import('lib').T>();",

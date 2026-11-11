@@ -138,6 +138,11 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-commonjs-module-dynamic-import-edge', () => runCase('typescript-exports-commonjs-module-dynamic-import-edge'));
   it('typescript-exports-preserve-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-preserve-dynamic-import-in-cts-file-edge'));
   it('typescript-exports-nodenext-typeof-import-in-cts-file-edge', () => runCase('typescript-exports-nodenext-typeof-import-in-cts-file-edge'));
+  it('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-type-predicate-import-type-in-cts-file-edge'));
+  it('typescript-exports-nodenext-type-argument-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-type-argument-import-type-in-cts-file-edge'));
+  it('typescript-exports-nodenext-keyof-and-parenthesized-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-keyof-and-parenthesized-import-type-in-cts-file-edge'));
+  it('typescript-exports-nodenext-template-literal-import-type-in-cts-file-edge', () => runCase('typescript-exports-nodenext-template-literal-import-type-in-cts-file-edge'));
+  it('typescript-exports-nodenext-heritage-import-call-in-cts-file-edge', () => runCase('typescript-exports-nodenext-heritage-import-call-in-cts-file-edge'));
   it('typescript-workspace-duplicate-name-silence', () => runCase('typescript-workspace-duplicate-name-silence'));
   it('typescript-workspace-fixture-outside-globs-silence', () => runCase('typescript-workspace-fixture-outside-globs-silence'));
   it('typescript-workspace-member-beats-fixture-edge', () => runCase('typescript-workspace-member-beats-fixture-edge'));
