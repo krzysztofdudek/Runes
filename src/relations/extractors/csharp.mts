@@ -7,6 +7,7 @@ import type {
   DeclaredSymbol,
   ParsedFile,
   TargetHint,
+  CsharpCondition,
   SymbolSetMember,
 } from './types.mjs';
 
@@ -355,14 +356,32 @@ export function interfaceKey(typeKey: string): string {
   return `interface:${typeKey}`;
 }
 
-/** The head of the keys that record the instance methods `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`. Each overload declares `method:<key>#<name>\t<shape>`, its shape (`methodShape`) as the value, listed under the head like a base record (`baseListKey`). A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
-export function methodKey(typeKey: string, name: string): string {
-  return `method:${typeKey}#${name}`;
+/** The head of the key that records the instance methods of the type `typeKey`: `methods:<key>`. A part of a type that declares any declares `methods:<key>\t<value>` once, the value (`decodeMethods`) listing each overload by name, shape (`methodShape`) and reach, listed under the head like a base record (`baseListKey`). A static method, an explicit interface implementation (callable through the interface alone) and an extension method are not listed, and a private method only in a `partial` type, whose other parts can call it. The colon is in no C# name. */
+export function methodsKey(typeKey: string): string {
+  return `methods:${typeKey}`;
 }
 
-/** The head of the keys that record the private instance methods (see `methodKey`): `private-method:<key>#<name>`. Only a call on `this` inside the type reaches one. */
-export function privateMethodKey(typeKey: string, name: string): string {
-  return `private-method:${typeKey}#${name}`;
+/** One instance method of a type as its record lists it: `reach` says who can call it, any code (`public`, which stands for `internal` and `protected internal` too: an assembly is not told apart here), the type and the types derived from it (`protected`), or the type alone (`private`). */
+export interface CsharpMethod { name: string; shape: string; reach: 'public' | 'protected' | 'private' }
+
+const METHOD_REACH_MARKS = { public: '', protected: '~', private: '-' } as const;
+
+/** The methods a `methods` record's value lists: entries `<mark><name>:<shape>` joined by a space, the mark `~` for a protected method and `-` for a private one. */
+export function decodeMethods(value: string): CsharpMethod[] {
+  return value.split(' ').map((entry) => {
+    const reach = entry.startsWith('~') ? 'protected' : entry.startsWith('-') ? 'private' : 'public';
+    const body = reach === 'public' ? entry : entry.slice(1);
+    const colon = body.indexOf(':');
+    return { name: body.slice(0, colon), shape: body.slice(colon + 1), reach };
+  });
+}
+
+/** Who can call the instance method `method` of the type declaration `owner` (see `CsharpMethod`). */
+function methodReach(method: Node, owner: Node): CsharpMethod['reach'] {
+  const mods = accessModifiers(method);
+  if (mods.has('protected')) return mods.has('internal') ? 'public' : 'protected';
+  if (mods.has('private')) return 'private';
+  return mods.has('public') || mods.has('internal') || owner.type === 'interface_declaration' ? 'public' : 'private';
 }
 
 /** How many type arguments and arguments a method takes, as far as its declaration says without its types: `<type parameters>:<required parameters>:<all parameters>`, the last `*` for a `params` list. */
@@ -716,6 +735,8 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
   const fileNs = fileScopedNamespace(file.tree.rootNode);
   const members = new Set<string>();
+  // The instance methods of each type of the file, by type key (see `methodsKey`).
+  const methods = new Map<string, { line: number; entries: Set<string> }>();
   // Set once a record of a written type is declared: the file then declares its using directives too.
   let written = false;
   const fileLocalTypes: string[] = [];
@@ -734,7 +755,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       members.add(symbolKey);
       out.push({ symbolKey, line });
     };
-    // The members of a type other files can name, declared directly in its body: each name that is no type (see `memberKey`), and each instance method (see `methodKey`).
+    // The members of a type other files can name, declared directly in its body: each name that is no type (see `memberKey`), and each instance method (see `methodsKey`).
     if (owner !== null && !owner.fileLocal && owner.node.type !== 'enum_declaration' && node.parent!.parent?.id === owner.node.id) {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
       const typeKey = ns === '' ? scope.chain : `${ns}.${scope.chain}`;
@@ -742,7 +763,14 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       const sameAsType = typeSimpleName(memberTypeNode(node));
       for (const name of memberNames(node)) {
         if (name !== sameAsType) declareOnce(hidden ? privateMemberKey(typeKey, name) : memberKey(typeKey, name));
-        if (node.type === 'method_declaration' && !hasStaticModifier(node)) declareOnce(`${hidden ? privateMethodKey(typeKey, name) : methodKey(typeKey, name)}\t${methodShape(node)}`);
+        if (node.type === 'method_declaration' && !hasStaticModifier(node)) {
+          const reach = methodReach(node, owner.node);
+          if (reach !== 'private' || accessModifiers(owner.node).has('partial')) {
+            let listed = methods.get(typeKey);
+            if (listed === undefined) methods.set(typeKey, (listed = { line: owner.node.startPosition.row + 1, entries: new Set() }));
+            listed.entries.add(`${METHOD_REACH_MARKS[reach]}${name}:${methodShape(node)}`);
+          }
+        }
         record(memberTypeKey(typeKey, name), memberTypeNode(node), scope, line);
       }
     }
@@ -786,6 +814,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     }
     return undefined;
   });
+  for (const [typeKey, listed] of methods) out.push({ symbolKey: `${methodsKey(typeKey)}\t${[...listed.entries].join(' ')}`, line: listed.line });
   if (written) out.push({ symbolKey: `${USINGS_KEY}\t${encodeUsings({ scope: buildUsingScope(file), fileLocalTypes })}`, line: 1 });
 
   // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
@@ -1221,8 +1250,9 @@ export type CsharpRefDescriptor =
    *  namespaces the compilation unit's using directives import as one set.
    *  `args` and `typeArgs` count the call's arguments and its written type arguments: an instance method takes the call only when the counts fit it.
    *  `member` is set where the receiver's first name is one the file does not declare, written inside a type: the call is an extension call only when that name is a member of one of `member.types` (the types around the call, innermost first), declared in another part or inherited, and a static call through a type otherwise; `direct` says the receiver is that name alone, so the member's own type is the receiver's.
+   *  `from` are the keys of the types whose bodies hold the call, innermost first: a protected or a private method takes the call only from where it can be called.
    *  `on` holds the written type of the receiver where the file declares it (a parameter, a field, a property or a local with a type of its own; several when declarations of the name in one scope differ), each as the reference that type is, and `self` the key of the enclosing type for a call on `this`: an instance method of that name in such a type, or in a base of it, is what the call binds (C# spec §12.8.10.3), and the group then gives nothing. Both are absent where the receiver's type is not written (`var`, a call result, an inferred lambda parameter). */
-  | { kind: 'ext'; name: string; line: number; enclosingNs: string[]; at: number; args: number; typeArgs: number; on?: CsharpRefDescriptor[]; self?: string; member?: { types: string[]; name: string; direct: boolean } };
+  | { kind: 'ext'; name: string; line: number; enclosingNs: string[]; at: number; args: number; typeArgs: number; on?: CsharpRefDescriptor[]; self?: string; from?: string[]; member?: { types: string[]; name: string; direct: boolean } };
 
 /**
  * The pure, alias-UNRESOLVED extract of one C# file — the cacheable fact (design §14 Correction
@@ -1393,10 +1423,10 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return described;
   };
 
-  /** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type. Read once, when the first receiver asks. */
+  /** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type. Read once, when the first receiver asks. */
   type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean }>>;
   let typedNames: TypedNames | undefined;
-  const SCOPE_NODES = new Set(['block', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
+  const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed_statement', 'switch_section', 'catch_clause', 'switch_expression_arm', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
   const declaredTypes = (): TypedNames => {
     if (typedNames !== undefined) return typedNames;
     const index: TypedNames = new Map();
@@ -2038,6 +2068,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           at: node.startIndex,
           args: call.args,
           typeArgs: call.typeArgs,
+          ...(enclosingTypes(node).types === undefined ? {} : { from: enclosingTypes(node).types }),
           ...receiverType(call.receiver),
           ...(call.member === undefined ? {} : { member: call.member }),
         });
@@ -2533,7 +2564,7 @@ export function assembleCsharpCandidates(
    *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
    *  in-scope `Name` → ambiguous → silence). Aliases import no
    *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
-  const pushExtension = (name: string, enclosingNs: string[], line: number, at: number, guards: SymbolHint[]): void => {
+  const pushExtension = (name: string, enclosingNs: string[], line: number, at: number, guards: SymbolHint[], unless: CsharpCondition[]): void => {
     const candidates: TargetHint[] = [...guards];
     const pushed = new Set<string>();
     const addSet = (set: SymbolSetMember[]): void => {
@@ -2555,6 +2586,8 @@ export function assembleCsharpCandidates(
     candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
     // A namespace both enclosing and imported only repeats a key already read.
     addSet([...usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })), ...compilationUnitStatics.map((t) => ({ symbolKey: classExtensionKey(t, name) }))]);
+    // Every extension reading carries the conditions under which the call is no extension call at all (`unless`).
+    if (unless.length > 0) for (const c of candidates.slice(guards.length)) (c as SymbolHint).unless = unless;
     out.push({ candidates, kind: 'import', line });
   };
 
@@ -2613,14 +2646,14 @@ export function assembleCsharpCandidates(
         break;
       }
       case 'ext': {
-        // The receiver's written type, where the file gives one, leads the group as a guard: an instance method of that name there ends it (`instance`).
+        // The receiver's written type, where the file gives one, is a condition on every reading of the group: an instance method of that name there takes the call.
         const receivers = (r.on ?? []).map(groupOf).filter((g) => g.length > 0);
         const guards: SymbolHint[] = [];
         // A receiver the file does not declare is a value only as a member of a type around the call (`memberOnly`).
         const call = { method: r.name, args: r.args, typeArgs: r.typeArgs };
         if (r.member !== undefined) guards.push({ kind: 'symbol', symbolKey: `member#${r.member.name}`, memberOnly: { types: r.member.types, name: r.member.name, ...(r.member.direct ? { call } : {}) } });
-        if (receivers.length > 0 || r.self !== undefined) guards.push({ kind: 'symbol', symbolKey: `instance#${r.name}()`, instance: { ...call, receivers, ...(r.self === undefined ? {} : { self: r.self }) } });
-        pushExtension(r.name, r.enclosingNs, r.line, r.at, guards);
+        const unless: CsharpCondition[] = receivers.length > 0 || r.self !== undefined ? [{ kind: 'instance-method', ...call, receivers, from: r.from ?? [], ...(r.self === undefined ? {} : { self: r.self }) }] : [];
+        pushExtension(r.name, r.enclosingNs, r.line, r.at, guards, unless);
         break;
       }
     }
@@ -2646,7 +2679,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 24,
+  rev: 25,
   declarations,
   uses,
 };

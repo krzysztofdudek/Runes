@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodKey, privateMethodKey, memberKey, privateMemberKey, memberTypeKey, shapeTakes } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodsKey, decodeMethods, memberKey, privateMemberKey, memberTypeKey, shapeTakes } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -265,34 +265,42 @@ describe('csharp: an attribute is the reading that binds an attribute class', ()
 });
 
 describe('csharp: an extension call gives way to an instance method of the receiver', () => {
-  it('declares each instance method once, a private one apart, and none for a static, explicit or extension method or a file-local type', async () => {
+  it('lists the instance methods of each type once, with their reach, and none for a static, explicit or extension method or a file-local type', async () => {
     await project({
       'src/a/Types.cs': [
         'namespace App;',
-        'public class Order : IOrder {',
+        'public partial class Order : IOrder {',
         '  public void Save() { }',
         '  public void Save(int retries) { }',
+        '  public void Save() { }',
         '  void Hidden() { }',
         '  private protected void Shared() { }',
+        '  protected void Derived() { }',
+        '  protected internal void Wide() { }',
         '  internal void Inside() { }',
         '  private void Secret() { }',
         '  public static void Create() { }',
         '  void IOrder.Explicit() { }',
         '  void Outer() { void Local() { } }',
-        '  public class Line { public void Total() { } }',
+        '  public class Line { public void Total() { } void Sum() { } }',
         '}',
         'public interface IOrder { void Explicit(); }',
         'public struct Money { public void Round() { } void Trim() { } }',
+        'public class Empty { void OnlyPrivate() { } }',
         'public static class Ext { public static void Extra(this Order o) { } }',
         'file class Local { public void Run() { } }',
       ].join('\n'),
     }, ({ keys }) => {
-      const declared = keys('src/a/Types.cs').filter((k) => k.startsWith('method:') || k.startsWith('private-method:'));
-      expect(declared).toEqual([
-        `${methodKey('App.Order', 'Save')}\t0:0:0`, `${methodKey('App.Order', 'Save')}\t0:1:1`, `${privateMethodKey('App.Order', 'Hidden')}\t0:0:0`, `${methodKey('App.Order', 'Shared')}\t0:0:0`, `${methodKey('App.Order', 'Inside')}\t0:0:0`,
-        `${privateMethodKey('App.Order', 'Secret')}\t0:0:0`, `${privateMethodKey('App.Order', 'Outer')}\t0:0:0`, `${methodKey('App.Order+Line', 'Total')}\t0:0:0`, `${methodKey('App.IOrder', 'Explicit')}\t0:0:0`,
-        `${methodKey('App.Money', 'Round')}\t0:0:0`, `${privateMethodKey('App.Money', 'Trim')}\t0:0:0`,
-      ]);
+      const listed = Object.fromEntries(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:')).map((k) => k.slice('methods:'.length).split('\t')));
+      expect(listed).toEqual({
+        // A private method is listed only in a partial type, whose other parts can call it.
+        'App.Order': 'Save:0:0:0 Save:0:1:1 -Hidden:0:0:0 ~Shared:0:0:0 ~Derived:0:0:0 Wide:0:0:0 Inside:0:0:0 -Secret:0:0:0 -Outer:0:0:0',
+        'App.Order+Line': 'Total:0:0:0',
+        'App.IOrder': 'Explicit:0:0:0',
+        'App.Money': 'Round:0:0:0',
+      });
+      expect(decodeMethods(listed['App.Order']).slice(1, 4)).toEqual([{ name: 'Save', shape: '0:1:1', reach: 'public' }, { name: 'Hidden', shape: '0:0:0', reach: 'private' }, { name: 'Shared', shape: '0:0:0', reach: 'protected' }]);
+      expect(methodsKey('App.Order')).toBe('methods:App.Order');
     });
   });
 
@@ -300,17 +308,17 @@ describe('csharp: an extension call gives way to an instance method of the recei
     await project({
       'src/a/Types.cs': 'public class Bag {\n  public void Put(int a) { }\n  public void Put<T>(T a, int b = 0) { }\n  public void Put(string format, params object[] rest) { }\n  public void Put(int a, int b, int c) { }\n}\n',
     }, ({ keys, table, resolver }) => {
-      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('method:'))).toEqual(['0:1:1', '1:1:2', '0:1:*', '0:3:3'].map((shape) => `method:Bag#Put\t${shape}`));
+      expect(keys('src/a/Types.cs').filter((k) => k.startsWith('methods:'))).toEqual(['methods:Bag\tPut:0:1:1 Put:1:1:2 Put:0:1:* Put:0:3:3']);
       for (const [shape, typeArgs, args, fits] of [
         ['0:1:1', 0, 1, true], ['0:1:1', 0, 0, false], ['0:1:1', 0, 2, false], ['0:1:1', 1, 1, false],
         ['1:1:2', 0, 1, true], ['1:1:2', 1, 2, true], ['1:1:2', 2, 1, false], ['1:1:2', 0, 3, false],
         ['0:1:*', 0, 1, true], ['0:1:*', 0, 9, true], ['0:1:*', 0, 0, false],
       ]) expect(shapeTakes(shape, typeArgs, args), `${shape} ${typeArgs} ${args}`).toBe(fits);
       const lookup = makeCsharpTypeLookup(table, (readings, fromFile) => readings.find((hint) => resolver.resolveFile(hint, fromFile, 'csharp') !== undefined)?.symbolKey);
-      expect(lookup.hasMethod('Bag', { method: 'Put', args: 4, typeArgs: 0 }, false)).toBe(true); // the params overload
-      expect(lookup.hasMethod('Bag', { method: 'Put', args: 0, typeArgs: 0 }, false)).toBe(false);
-      expect(lookup.hasMethod('Bag', { method: 'Put', args: 1, typeArgs: 2 }, false)).toBe(false);
-      expect(lookup.hasMethod('Bag', { method: 'Take', args: 1, typeArgs: 0 }, true)).toBe(false);
+      expect(lookup.hasMethod('Bag', { method: 'Put', args: 4, typeArgs: 0 }, [])).toBe(true); // the params overload
+      expect(lookup.hasMethod('Bag', { method: 'Put', args: 0, typeArgs: 0 }, [])).toBe(false);
+      expect(lookup.hasMethod('Bag', { method: 'Put', args: 1, typeArgs: 2 }, [])).toBe(false);
+      expect(lookup.hasMethod('Bag', { method: 'Take', args: 1, typeArgs: 0 }, ['Bag'])).toBe(false);
     });
   });
 
@@ -362,27 +370,36 @@ describe('csharp: an extension call gives way to an instance method of the recei
     });
   });
 
-  it('reads every written type where one scope declares the receiver name twice, and leaves a type parameter unknown', async () => {
+  it('reads every written type where one scope declares the receiver name twice, the name of each loop in its own loop, and leaves a type parameter unknown', async () => {
     await project({
-      'src/a/Use.cs': 'namespace App;\npublic class Use<T> {\n  void Run(T item) {\n    if (true) { } \n    for (First x = null;;) { x.A(); }\n    for (Second x = null;;) { x.A(); }\n    item.B();\n  }\n}\n',
+      // Two declarations of `x` in one block are not valid C#; the reader still takes both types, because it cannot say which the call means.
+      'src/a/Use.cs': 'namespace App;\npublic class Use<T> {\n  void Run(T item) {\n    First x = null; Second x = null; x.A();\n    for (Third y = null;;) { y.B(); }\n    for (Fourth y = null;;) { y.B(); }\n    using (Fifth z = null) { z.C(); }\n    item.D();\n  }\n}\n',
     }, ({ files }) => {
-      const ext = extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map((r) => [r.name, r.on?.map((d) => d.ref)]);
-      expect(ext).toEqual([['A', ['First', 'Second']], ['A', ['First', 'Second']], ['B', undefined]]);
+      const ext = extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map((r) => [r.name, r.on?.map((d) => d.ref), r.from]);
+      expect(ext).toEqual([['A', ['First', 'Second'], ['App.Use`1']], ['B', ['Third'], ['App.Use`1']], ['B', ['Fourth'], ['App.Use`1']], ['C', ['Fifth'], ['App.Use`1']], ['D', undefined, ['App.Use`1']]]);
     });
   });
 
-  it('ends the group only where a written receiver type has the method, and a private one counts for `this` alone', async () => {
+  it('voids every extension reading where a written receiver type has the method, and answers absent, never ambiguous', async () => {
     await project({
-      'src/core/Order.cs': 'namespace App;\npublic class Order { void Secret() { } public void Open() { } }\npublic class Other { }\n',
-      'src/ext/Ext.cs': 'namespace App;\npublic static class Ext {\n  public static void Secret(this Other o) { }\n  public static void Open(this Other o) { }\n}\n',
-      'src/web/Use.cs': 'namespace App;\npublic class Use {\n  void Run(Order order, Other other, Missing missing) {\n    order.Secret();\n    order.Open();\n    other.Open();\n    missing.Open();\n  }\n}\n',
+      'src/core/Order.cs': 'namespace App;\npublic partial class Order { void Secret() { } public void Open() { } protected void Guarded() { } }\npublic class Other { }\n',
+      'src/ext/Ext.cs': 'namespace App;\npublic static class Ext {\n  public static void Secret(this Other o) { }\n  public static void Open(this Other o) { }\n  public static void Guarded(this Other o) { }\n}\n',
+      'src/web/Use.cs': 'namespace App;\npublic class Use {\n  void Run(Order order, Other other, Missing missing) {\n    order.Secret();\n    order.Open();\n    other.Open();\n    missing.Open();\n    order.Guarded();\n  }\n}\n',
+      'src/core/Order.Part.cs': 'namespace App;\npublic partial class Order {\n  void Run(Order next) { next.Secret(); }\n}\npublic class Rush : Order {\n  void Go(Order next) { next.Guarded(); next.Secret(); }\n}\n',
     }, ({ files, edges, resolver }) => {
-      expect(edges('src/web/Use.cs')).toEqual(['3->core', '4->ext', '6->ext', '7->ext']);
-      const guard = csharpUses(files.find((f) => f.path === 'src/web/Use.cs')).find((u) => u.line === 5).candidates[0];
-      expect(guard.symbolKey).toBe('instance#Open()');
-      expect(resolver.classify(guard, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'ambiguous' });
-      expect(resolver.resolve(guard, 'src/web/Use.cs', 'csharp')).toBe(undefined);
-      expect(resolver.resolveFile(guard, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      // A private or a protected method of Order does not take a call from Use; the public one does.
+      expect(edges('src/web/Use.cs')).toEqual(['3->core', '4->ext', '6->ext', '7->ext', '8->ext']);
+      // Another part of Order reaches its private method; a derived class reaches the protected one and not the private one.
+      expect(edges('src/core/Order.Part.cs')).toEqual(['6->ext']);
+      const group = csharpUses(files.find((f) => f.path === 'src/web/Use.cs')).find((u) => u.line === 5).candidates;
+      expect(group.map((c) => c.symbolKey)).toEqual(['App.Open()', 'Open()']);
+      expect(group[0].unless).toBe(group[1].unless);
+      expect(group[0].unless.map((c) => [c.kind, c.method, c.args, c.typeArgs, c.from, c.receivers.length])).toEqual([['instance-method', 'Open', 0, 0, ['App.Use'], 1]]);
+      for (const c of group) {
+        expect(resolver.classify(c, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
+        expect(resolver.resolve(c, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+        expect(resolver.resolveFile(c, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      }
     });
   });
 });

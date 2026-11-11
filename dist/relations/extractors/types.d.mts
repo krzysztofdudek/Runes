@@ -8,6 +8,20 @@ export interface SymbolSetMember {
     nestedOnly?: boolean;
     shadow?: string[];
 }
+/**
+ * A condition under which a C# reading binds nothing (`TargetHint.unless`).
+ *
+ * `instance-method`: the reading is an extension method of a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments. `receivers` are the ordered groups of readings of each type the file writes for the call's receiver, `self` the key of the enclosing type for a call on `this`, and `from` the keys of the types whose bodies hold the call, innermost first. The condition holds when a type a group binds (or `self`) has an instance method of that name that the call fits by those counts and that the calling code can reach: one the type declares in any part, or one of its base classes in the repository, to any depth (for an interface, of its base interfaces). A protected method is reached from the type that declares it and from the types derived from it, a private one from that type alone. The interfaces a class implements are not read: member lookup in a class does not read them (C# spec §12.5), and an explicit implementation is reached through the interface alone. C# turns to extension methods only when no instance method applies (§12.8.10.3).
+ */
+export type CsharpCondition = {
+    kind: 'instance-method';
+    method: string;
+    args: number;
+    typeArgs: number;
+    receivers: TargetHint[][];
+    self?: string;
+    from: string[];
+};
 export type TargetHint = {
     kind: 'path';
     specifier: string;
@@ -50,14 +64,8 @@ export type TargetHint = {
         written: TargetHint[];
         suffixed?: TargetHint[];
     };
-    /** C#: a guard at the head of an extension-method group, never a binding. `method` is the called name, `args` and `typeArgs` the number of its arguments and of its written type arguments, `receivers` the ordered group of readings of each type the file writes for the call's receiver, and `self` the key of the enclosing type for a call on `this`. When a type one of them binds, a base class or an interface of it in the repository, or another part of it, declares an instance method of that name whose parameter and type parameter counts the call fits, the call is that method's (C# spec §12.8.10.3) and the resolver ends the group in silence (`classify` answers `ambiguous`); otherwise the guard is absent and the extension readings after it are read. */
-    instance?: {
-        method: string;
-        args: number;
-        typeArgs: number;
-        receivers: TargetHint[][];
-        self?: string;
-    };
+    /** C#: conditions under which the reading binds nothing (`CsharpCondition`). Where one holds, the resolver reads the candidate as it reads a name the repository does not declare: `classify` answers `absent`, `resolve` and `resolveFile` nothing. Every reading of a group that depends on a condition carries it, so the group binds nothing and ends in silence, and no outcome is an ambiguity. Absent = the reading stands. */
+    unless?: CsharpCondition[];
     /** Ruby only: a lexical nesting candidate `N::A::B` carries its first-segment name
      *  `N::A`. When `N::A` has an in-repo definition but the candidate itself has none, Ruby
      *  has already committed to `N::A` and will not look further out, so the reference is

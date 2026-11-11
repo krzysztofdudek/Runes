@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, memberKey, memberTypeKey, methodsKey, decodeMethods, type CsharpMethod, privateMemberKey, shapeTakes } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -19,8 +19,8 @@ export interface CsharpTypeLookup {
   path(typeKey: string, segments: readonly string[]): string[];
   /** Whether the type `typeKey` is an attribute class: `yes` when its base classes, followed through the repository, reach `System.Attribute`; `no` when it is an interface, or every base of it lies in the repository and none reaches `System.Attribute` (a type that lists no base among them); `maybe` when a base leaves the repository under another name, which may or may not derive from it. */
   attributeClass(typeKey: string): 'yes' | 'no' | 'maybe';
-  /** True when a call `value.name(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, finds an instance method it fits by those counts (`shapeTakes`): the type, in any part, or a base class or an interface of it in the repository, to any depth, declares one that is not private; with `own` (a call on `this` inside the type) a private one of the type itself counts too. */
-  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number }, own: boolean): boolean;
+  /** True when a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, written inside the types `from`, finds an instance method it fits by those counts (`shapeTakes`) and can reach: one the type declares, in any part, or one of its base classes in the repository, to any depth (for an interface, its base interfaces). A protected method counts where one of `from` is the type that declares it or derives from it, a private one where one of `from` is that type. */
+  hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number }, from: readonly string[]): boolean;
   /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
   memberTypes(typeKey: string, name: string): string[];
 }
@@ -146,17 +146,32 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return answer;
   };
 
-  const hasMethod = (typeKey: string, call: { method: string; args: number; typeArgs: number }, own: boolean): boolean => {
-    const takes = (head: string): boolean => table.valuesOf(LANGUAGE, head).some(({ value }) => shapeTakes(value, call.typeArgs, call.args));
-    if (own && takes(privateMethodKey(typeKey, call.method))) return true;
+  const methodsMemo = new Map<string, CsharpMethod[]>();
+  const methodsOf = (typeKey: string): CsharpMethod[] => {
+    let listed = methodsMemo.get(typeKey);
+    if (listed === undefined) methodsMemo.set(typeKey, (listed = table.valuesOf(LANGUAGE, methodsKey(typeKey)).flatMap(({ value }) => decodeMethods(value))));
+    return listed;
+  };
+
+  /** The type `typeKey` and what it inherits members from, nearest first: its base classes, or for an interface its base interfaces. */
+  const lineage = (typeKey: string): string[] => {
     const seen = new Set<string>();
     const pending = [typeKey];
-    while (pending.length > 0) {
-      const key = pending.pop()!;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (takes(methodKey(key, call.method))) return true;
-      pending.push(...bases(key).inside);
+    for (let i = 0; i < pending.length; i++) {
+      if (seen.has(pending[i])) continue;
+      seen.add(pending[i]);
+      pending.push(...inherited(pending[i]));
+    }
+    return [...seen];
+  };
+
+  const hasMethod = (typeKey: string, call: { method: string; args: number; typeArgs: number }, from: readonly string[]): boolean => {
+    for (const declaring of lineage(typeKey)) {
+      for (const method of methodsOf(declaring)) {
+        if (method.name !== call.method || !shapeTakes(method.shape, call.typeArgs, call.args)) continue;
+        if (method.reach === 'public') return true;
+        if (method.reach === 'private' ? from.includes(declaring) : from.some((type) => lineage(type).includes(declaring))) return true;
+      }
     }
     return false;
   };

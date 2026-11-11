@@ -241,8 +241,8 @@ export function makeResolver(deps) {
     const hintFiles = (hint, language, fromFile) => {
         if (hint.attribute !== undefined)
             return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
-        // A guard binds nothing itself (see `endsGroup`).
-        if (hint.instance !== undefined || hint.memberOnly !== undefined)
+        // A guard binds nothing itself (see `endsGroup`), and neither does a reading one of whose conditions holds.
+        if (hint.memberOnly !== undefined || (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile))))
             return new Set();
         let files;
         if (hint.set !== undefined) {
@@ -282,7 +282,7 @@ export function makeResolver(deps) {
     };
     let csharpLookup;
     const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
-    /** True when a C# hint ends its group in silence: a reading inside a type whose first name is a member of that type that is no type (`orMember`); a guard for a receiver that is no member of a type around its call (`memberOnly`); a guard whose call's receiver has an instance method of the called name (`instance`). */
+    /** True when a C# hint ends its group in silence: a reading inside a type whose first name is a member of that type that is no type (`orMember`); a guard for a receiver that is no member of a type around its call (`memberOnly`). */
     const endsGroup = (hint, fromFile) => {
         if (hint.within !== undefined && hint.orMember === true) {
             return csharp().simpleName(hint.within, hint.symbolKey.slice(hint.within.length + 1).split('.')[0]) === 'member';
@@ -296,19 +296,28 @@ export function makeResolver(deps) {
                 if (found === 'type')
                     return true;
                 // A member: a value, whose written type may have the called method itself.
-                return call !== undefined && csharp().memberTypes(type, name).some((key) => csharp().hasMethod(key, call, false));
+                return call !== undefined && csharp().memberTypes(type, name).some((key) => csharp().hasMethod(key, call, types));
             }
             return true;
         }
-        const guard = hint.instance;
-        if (guard === undefined)
-            return false;
-        if (guard.self !== undefined && csharp().hasMethod(guard.self, guard, true))
-            return true;
-        return guard.receivers.some((readings) => {
-            const bound = bindCsharpType(readings, fromFile);
-            return bound !== undefined && csharp().hasMethod(bound.key, guard, false);
-        });
+        return false;
+    };
+    /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
+    const held = new WeakMap();
+    const holds = (condition, fromFile) => {
+        let byFile = held.get(condition);
+        if (byFile === undefined)
+            held.set(condition, (byFile = new Map()));
+        let answer = byFile.get(fromFile);
+        if (answer === undefined) {
+            answer = (condition.self !== undefined && csharp().hasMethod(condition.self, condition, condition.from))
+                || condition.receivers.some((readings) => {
+                    const bound = bindCsharpType(readings, fromFile);
+                    return bound !== undefined && csharp().hasMethod(bound.key, condition, condition.from);
+                });
+            byFile.set(fromFile, answer);
+        }
+        return answer;
     };
     /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
     const attributeBinding = (attribute, fromFile) => {

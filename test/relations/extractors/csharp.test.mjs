@@ -1021,7 +1021,7 @@ describe('csharp — the implicit Program of top-level statements (issue 075)', 
   });
   it('a file without top-level statements declares no implicit `Program`', async () => {
     const { declarations } = await run(['namespace App;', 'public class Startup { void Main() { } }', ''].join('\n'));
-    expect(keys(declarations)).toEqual([['App.Startup', 2], ['private-member:App.Startup#Main', 2], ['private-method:App.Startup#Main\t0:0:0', 2]]); // the class and its one method, nothing for a `Program`
+    expect(keys(declarations)).toEqual([['App.Startup', 2], ['private-member:App.Startup#Main', 2]]); // the class and its one method, nothing for a `Program`
   });
   it('a bare `Program` reference tries every explicit reading first and the implicit fallback last', async () => {
     const { uses } = await run(['namespace T;', 'class C { F<Program> f; }', ''].join('\n'));

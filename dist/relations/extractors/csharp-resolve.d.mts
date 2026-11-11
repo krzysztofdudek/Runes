@@ -20,12 +20,12 @@ export interface CsharpTypeLookup {
     path(typeKey: string, segments: readonly string[]): string[];
     /** Whether the type `typeKey` is an attribute class: `yes` when its base classes, followed through the repository, reach `System.Attribute`; `no` when it is an interface, or every base of it lies in the repository and none reaches `System.Attribute` (a type that lists no base among them); `maybe` when a base leaves the repository under another name, which may or may not derive from it. */
     attributeClass(typeKey: string): 'yes' | 'no' | 'maybe';
-    /** True when a call `value.name(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, finds an instance method it fits by those counts (`shapeTakes`): the type, in any part, or a base class or an interface of it in the repository, to any depth, declares one that is not private; with `own` (a call on `this` inside the type) a private one of the type itself counts too. */
+    /** True when a call `value.method(…)` with `args` arguments and `typeArgs` written type arguments, on a value of the type `typeKey`, written inside the types `from`, finds an instance method it fits by those counts (`shapeTakes`) and can reach: one the type declares, in any part, or one of its base classes in the repository, to any depth (for an interface, its base interfaces). A protected method counts where one of `from` is the type that declares it or derives from it, a private one where one of `from` is that type. */
     hasMethod(typeKey: string, call: {
         method: string;
         args: number;
         typeArgs: number;
-    }, own: boolean): boolean;
+    }, from: readonly string[]): boolean;
     /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
     memberTypes(typeKey: string, name: string): string[];
 }

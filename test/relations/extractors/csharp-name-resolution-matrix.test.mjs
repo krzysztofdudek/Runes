@@ -459,4 +459,8 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-derived-class-type-receiver-edge', () => runCase('csharp-derived-class-type-receiver-edge'));
   it('csharp-extension-beside-instance-method-of-other-shape-edge', () => runCase('csharp-extension-beside-instance-method-of-other-shape-edge'));
   it('csharp-member-named-as-its-type-receiver-edge', () => runCase('csharp-member-named-as-its-type-receiver-edge'));
+  it('csharp-extension-beside-explicit-interface-method-edge', () => runCase('csharp-extension-beside-explicit-interface-method-edge'));
+  it('csharp-extension-beside-default-interface-method-edge', () => runCase('csharp-extension-beside-default-interface-method-edge'));
+  it('csharp-extension-beside-protected-method-edge', () => runCase('csharp-extension-beside-protected-method-edge'));
+  it('csharp-extension-receiver-in-sibling-loops-edge', () => runCase('csharp-extension-receiver-in-sibling-loops-edge'));
 });

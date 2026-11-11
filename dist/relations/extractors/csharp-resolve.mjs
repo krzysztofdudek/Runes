@@ -1,4 +1,4 @@
-import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, memberKey, memberTypeKey, methodsKey, decodeMethods, privateMemberKey, shapeTakes } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -122,20 +122,35 @@ export function makeCsharpTypeLookup(table, bind) {
         attributeMemo.set(typeKey, answer);
         return answer;
     };
-    const hasMethod = (typeKey, call, own) => {
-        const takes = (head) => table.valuesOf(LANGUAGE, head).some(({ value }) => shapeTakes(value, call.typeArgs, call.args));
-        if (own && takes(privateMethodKey(typeKey, call.method)))
-            return true;
+    const methodsMemo = new Map();
+    const methodsOf = (typeKey) => {
+        let listed = methodsMemo.get(typeKey);
+        if (listed === undefined)
+            methodsMemo.set(typeKey, (listed = table.valuesOf(LANGUAGE, methodsKey(typeKey)).flatMap(({ value }) => decodeMethods(value))));
+        return listed;
+    };
+    /** The type `typeKey` and what it inherits members from, nearest first: its base classes, or for an interface its base interfaces. */
+    const lineage = (typeKey) => {
         const seen = new Set();
         const pending = [typeKey];
-        while (pending.length > 0) {
-            const key = pending.pop();
-            if (seen.has(key))
+        for (let i = 0; i < pending.length; i++) {
+            if (seen.has(pending[i]))
                 continue;
-            seen.add(key);
-            if (takes(methodKey(key, call.method)))
-                return true;
-            pending.push(...bases(key).inside);
+            seen.add(pending[i]);
+            pending.push(...inherited(pending[i]));
+        }
+        return [...seen];
+    };
+    const hasMethod = (typeKey, call, from) => {
+        for (const declaring of lineage(typeKey)) {
+            for (const method of methodsOf(declaring)) {
+                if (method.name !== call.method || !shapeTakes(method.shape, call.typeArgs, call.args))
+                    continue;
+                if (method.reach === 'public')
+                    return true;
+                if (method.reach === 'private' ? from.includes(declaring) : from.some((type) => lineage(type).includes(declaring)))
+                    return true;
+            }
         }
         return false;
     };
