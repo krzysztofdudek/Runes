@@ -197,9 +197,10 @@ describe('csharp extractor — uses() emits SYMBOL hints (never path hints)', ()
     const keys = symbolKeys(uses);
     // No plain namespace prefix recorded → the bare base `Baz` yields NO `Foo.Bar.Baz` candidate.
     // (The static-using TARGET `Foo.Bar.Calc` IS emitted as its own fully-qualified dependency,
-    // but it never expands into a sibling-namespace candidate for `Baz`.)
+    // but it never expands into a sibling-namespace candidate for `Baz`. The only reading it adds is
+    // a type nested in `Calc`.)
     expect(keys).not.toContain('Foo.Bar.Baz');
-    expect(keys.some((k) => k.endsWith('.Baz'))).toBe(false);
+    expect(keys.filter((k) => k.endsWith('.Baz'))).toEqual(['Foo.Bar.Calc.Baz']);
   });
 
   it('does NOT honor `global using` from another file: a bare name with no in-file using stays SILENT at resolution', async () => {
@@ -1313,7 +1314,7 @@ describe('csharp — a declaration only its own assembly sees carries the intern
       'public static class Open { public static void A(this int x) { } internal static void B(this int x) { } static void C(this int x) { } }',
       'internal static class Shut { public static void D(this int x) { } }',
       'static class Bare { public static void E(this int x) { } }',
-    ])).toEqual(['N.B()', 'N.C()', 'N.Shut', 'N.D()', 'N.Bare', 'N.E()']);
+    ])).toEqual(['N.B()', 'N.Open#B()', 'N.C()', 'N.Open#C()', 'N.Shut', 'N.D()', 'N.Shut#D()', 'N.Bare', 'N.E()', 'N.Bare#E()']);
   });
 });
 

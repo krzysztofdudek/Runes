@@ -133,3 +133,95 @@ describe('csharp extractor — block namespace declaration', () => {
     expect(keys.some((k) => k.endsWith('Models.Customer'))).toBe(true);
   });
 });
+
+describe('csharp extractor — a using static imports nested types and extension methods at the level of its directive', () => {
+  const groupOf = (uses, key) => uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === key));
+
+  it('the compilation unit reads the nested type of the target after the global namespace, as a nested type only', async () => {
+    const { uses } = await run('using static App.Core.Shapes;\nnamespace App.Web;\nclass Draw { Circle c; }\n');
+    const group = groupOf(uses, 'App.Core.Shapes.Circle');
+    const keys = group.candidates.map((c) => c.symbolKey);
+    expect(keys).toEqual(['App.Web.Draw+Circle', 'App.Web.Circle', 'App.Circle', 'Circle', 'App.Core.Shapes.Circle']);
+    expect(group.candidates[4].nestedOnly).toBe(true);
+  });
+
+  it('a namespace body reads it at its own namespace, behind that namespace\'s own member and before the global namespace', async () => {
+    const { uses } = await run('namespace App.Web {\n  using static App.Core.Shapes;\n  class Draw { Circle c; }\n}\n');
+    const keys = groupOf(uses, 'App.Core.Shapes.Circle').candidates.map((c) => c.symbolKey);
+    expect(keys.indexOf('App.Web.Circle')).toBeLessThan(keys.indexOf('App.Web.App.Core.Shapes.Circle'));
+    expect(keys.indexOf('App.Core.Shapes.Circle')).toBeLessThan(keys.indexOf('Circle'));
+  });
+
+  it('a target written after global:: is read from the global namespace only, in the compilation unit and in a namespace body', async () => {
+    const { uses } = await run('namespace A {\n  using static global::App.Core.Shapes;\n  class Draw { Circle c; }\n}\n');
+    const keys = uses.flatMap((u) => u.candidates.map((c) => c.symbolKey));
+    expect(keys).toContain('App.Core.Shapes.Circle');
+    expect(keys).not.toContain('A.App.Core.Shapes.Circle');
+  });
+
+  it('a generic target reads its nested types under its arity', async () => {
+    const { uses } = await run('using static App.Repo<Order>;\nclass C { Item i; }\n');
+    expect(groupOf(uses, 'App.Repo`1.Item')).toBeDefined();
+  });
+
+  it('an extension call reads the key the target class declares for the method, beside the namespaces the usings import', async () => {
+    const { uses } = await run('using App.Plain;\nusing static App.Ext.StringExt;\nclass A { string M(string s) => s.Shout(); }\n');
+    const group = uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === 'App.Ext.StringExt#Shout()'));
+    expect(group.candidates.map((c) => c.symbolKey)).toEqual(['Shout()', 'App.Plain.Shout()', 'App.Ext.StringExt#Shout()']);
+  });
+
+  it('declares each extension method under its namespace and under its class, and the global namespace\'s class as the bare class name', async () => {
+    const { declarations } = await run('namespace N { public static class E { public static void M(this int x) { } } }\npublic static class G { public static void K(this int x) { } }\n');
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()']);
+  });
+});
+
+describe('csharp extractor — a file-local type ends the lookup of its name in its own file', () => {
+  const keysOf = (uses) => uses.map((u) => u.candidates.map((c) => c.symbolKey));
+
+  it('keeps only the nested type of the enclosing type when the file-local type is in the innermost namespace: no outer namespace, no global one, no using', async () => {
+    const { uses } = await run('using Lib;\nnamespace App.Inner {\n  file class Helper { }\n  class C { Helper h; }\n}\n');
+    expect(keysOf(uses)).toEqual([['App.Inner.C+Helper']]);
+  });
+
+  it('reads the namespaces nearer than the one that holds the file-local type first', async () => {
+    const { uses } = await run('namespace App { file class Helper { } namespace Inner { class C { Helper h; } } }\n');
+    expect(keysOf(uses)).toEqual([['App.Inner.C+Helper', 'App.Inner.Helper']]);
+  });
+
+  it('ends a dotted name at the file-local type it starts with, a qualified one written in full too', async () => {
+    const { uses } = await run('namespace App;\nfile class Helper { public class Nested { } }\nclass C { Helper.Nested a; App.Helper b; }\n');
+    expect(keysOf(uses)).toEqual([['App.C+Helper.Nested'], ['App.C+App.Helper', 'App.App.Helper']]);
+  });
+
+  it('gives no reading for a name written after global:: that is a file-local type of the global namespace', async () => {
+    const { uses } = await run('file class Helper { }\nclass C { global::Helper h; }\n');
+    expect(keysOf(uses)).toEqual([]);
+  });
+
+  it('ends the lookup before a set of imports that holds a file-local type', async () => {
+    const { uses } = await run('using Lib;\nnamespace Lib { file class Order { } }\nnamespace App { class C { Order o; } }\n');
+    expect(keysOf(uses)).toEqual([['App.C+Order', 'App.Order', 'Order']]);
+  });
+
+  it('reads a type nested in a file-local type, a dotted name through it included, before any namespace', async () => {
+    const { uses } = await run('namespace App;\nfile class Outer { public class Inner { public class Deep { } } Inner a; Inner.Deep b; }\n');
+    expect(keysOf(uses)).toEqual([]);
+  });
+
+  it('keeps a nested type of an enclosing type that comes before the file-local type', async () => {
+    const { uses } = await run('namespace App;\nfile class Helper { }\npartial class C { Helper h; }\n');
+    expect(keysOf(uses)).toEqual([['App.C+Helper']]);
+  });
+
+  it('gives no reading for the target of a using alias or a using static that names a file-local type, nor for an alias-qualified name or attribute that does', async () => {
+    const { uses } = await run('using S = App;\nnamespace App;\nusing H = Helper;\nusing static Helper;\nfile class Helper { }\n[S::Marker]\nclass C { H a; S::Helper b; }\nfile class MarkerAttribute { }\n');
+    // Left: the alias target `App`, the attribute's other reading `Marker`, and the nested reading of `H`; the alias target of `H`, `using static Helper`, `S::Helper` and `MarkerAttribute` give none.
+    expect(keysOf(uses)).toEqual([['App'], ['App.Marker'], ['App.C+H']]);
+  });
+
+  it('declares nothing for a file-local type nor for a type nested in one', async () => {
+    const { declarations } = await run('namespace App;\nfile class Helper { class Inner { } }\nclass C { }\n');
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['App.C', 'internal:App.C']);
+  });
+});
