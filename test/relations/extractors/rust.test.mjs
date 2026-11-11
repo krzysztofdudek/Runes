@@ -108,11 +108,10 @@ describe('rust extractor — uses()', () => {
     expect(specs(uses)).toEqual(['crate']);
   });
 
-  it('emits nothing for a leading-`::` absolute path `use ::foo::Bar;` (malformed prefix → silence)', async () => {
-    // The leading `::` produces a scoped_identifier whose leftmost leaf has no `path`
-    // field, so the path renderer cannot determine the first segment and returns nothing.
+  it('emits a leading-`::` path `use ::foo::Bar;` without the `::`', async () => {
+    // The leading `::` produces a scoped_identifier whose leftmost leaf has no `path` field: the path is `foo::Bar`, the crate root's `foo` in edition 2015 and the crate `foo` from edition 2018 on.
     const { uses } = await run('use ::foo::Bar;');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo::Bar']);
   });
 
   it('falls back to emitting each list item when a group has NO common prefix `use ::{a, b};`', async () => {
@@ -129,19 +128,15 @@ describe('rust extractor — uses()', () => {
     expect(uses).toHaveLength(1);
   });
 
-  it('emits nothing when the group prefix is an unrenderable scoped path `use ::foo::{Bar, Baz};`', async () => {
-    // `::foo` renders to undefined (no leftmost segment). Emitting the items bare (`Bar`,
-    // `Baz`) would re-root them at the top level, where a bare name can match an in-repo
-    // path dependency the code never named → silence over a guess.
+  it('joins each item to a leading-`::` group prefix `use ::foo::{Bar, Baz};`', async () => {
+    // The items keep their prefix `foo`: they are never emitted bare (`Bar`, `Baz`), which would re-root them at the top level.
     const { uses } = await run('use ::foo::{Bar, Baz};');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo::Bar', 'foo::Baz']);
   });
 
-  it('emits nothing for a glob whose prefix is an unrenderable scoped path `use ::foo::*;`', async () => {
-    // The wildcard prefix `::foo` is a scoped_identifier that renders to undefined, so no
-    // specifier is emitted (silence over a guess).
+  it('emits the prefix of a leading-`::` glob `use ::foo::*;`', async () => {
     const { uses } = await run('use ::foo::*;');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo']);
   });
 
   it('resolves a renamed import via its `path` field only `use a as b;`', async () => {
@@ -150,9 +145,9 @@ describe('rust extractor — uses()', () => {
     expect(specs(uses)).toEqual(['a']);
   });
 
-  it('emits nothing for a renamed import whose path is an unrenderable scoped path `use ::foo as bar;`', async () => {
+  it('emits the path of a leading-`::` renamed import `use ::foo as bar;`', async () => {
     const { uses } = await run('use ::foo as bar;');
-    expect(specs(uses)).toEqual([]);
+    expect(specs(uses)).toEqual(['foo']);
   });
 
   it('emits the prefix module for the `self` item of a group `use crate::a::{self, B};`', async () => {
@@ -365,5 +360,17 @@ describe('rust extractor — the globs of a file', () => {
   it('declares the path of each top-level glob, in a group too, and none that starts with ::', async () => {
     const { declarations } = await run('pub use types::*;\nuse self::a::{b::*, C, d::{e::*}};\nuse crate::r#gen::*;\nuse ::kit::*;\nuse {f::*};\nmod inner { use hidden::*; }\nfn f() { use local::*; }');
     expect(declarations.filter((d) => d.symbolKey.startsWith('glob:')).map((d) => `${d.symbolKey}@${d.line}`)).toEqual(['glob:types@1', 'glob:self::a::b@2', 'glob:self::a::d::e@2', 'glob:crate::gen@3', 'glob:f@5']);
+  });
+});
+
+describe('rust extractor — a use path that starts with ::', () => {
+  it('emits the path without the :: in every form of the use tree, and never as a name in scope', async () => {
+    const { uses } = await run('mod shapes;\nuse ::shapes::Circle;\nuse ::{a, b::C};\nuse ::shapes::{A, deep::B};\nuse ::shapes::*;\nuse ::shapes as s;\nuse ::x;\nuse ::lead::lead2;\nuse lead2::Z;');
+    expect(specs(uses)).toEqual(['self::shapes', 'shapes::Circle', 'a', 'b::C', 'shapes::A', 'shapes::deep::B', 'shapes', 'shapes', 'x', 'lead::lead2', 'lead2::Z']);
+  });
+
+  it('emits no inline path that starts with ::', async () => {
+    const { uses } = await run('fn f(a: ::shapes::Circle) { ::shapes::make(); }');
+    expect(specs(uses)).toEqual([]);
   });
 });

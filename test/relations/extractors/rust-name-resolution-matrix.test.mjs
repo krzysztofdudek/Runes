@@ -245,6 +245,12 @@ describe('MATRIX — a path through a glob re-export of a crate root', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a use path that starts with ::', () => {
+  it('rust-edition-2015-use-leading-colons-root-module-edge', () => runCase('rust-edition-2015-use-leading-colons-root-module-edge'));
+  it('rust-edition-2018-use-leading-colons-crate-only-edge', () => runCase('rust-edition-2018-use-leading-colons-crate-only-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one

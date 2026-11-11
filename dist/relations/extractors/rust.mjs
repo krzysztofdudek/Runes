@@ -59,6 +59,11 @@ import { rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey
  * (`mod shapes; use shapes::Circle;` → `use::2::self::shapes::shapes::Circle`). `use` is a
  * keyword, so no path of the source starts with it. Edition 2015 reads the path as written.
  *
+ * LEADING `::`: `use ::a::X;` is emitted as `a::X`, and never as a name in scope. That is what
+ * it means in both readings: the crate root's `a` in edition 2015, where every `use` path
+ * starts at the root, and the crate `a` from edition 2018 on, where a bare first segment that
+ * the extractor left as written names a crate.
+ *
  * GLOB (`use a::b::*`) emits the prefix module `a::b`. RENAMED (`use a::b as c`)
  * strips the alias and emits the real path `a::b`. `pub use` (re-export) is
  * structurally a plain `use` carrying a `visibility_modifier`; the edge is
@@ -101,7 +106,8 @@ import { rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey
  * `scoped_identifier` nests via field `path` (the prefix) and field `name` (the
  * final segment). The leftmost leaf is a `crate` / `super` / `self` / `identifier`
  * keyword-or-name node; its `.text` is the first segment. Returns undefined when
- * the structure is unexpected (malformed / error nodes) — silence over a guess.
+ * the structure is unexpected (malformed / error nodes) — silence over a guess. A path that
+ * starts with `::` is rendered without it; a `use` knows it from its argument's text.
  */
 function pathText(node) {
     const segments = [];
@@ -114,10 +120,10 @@ function pathText(node) {
         segments.unshift(nameNode.text);
         cur = cur.childForFieldName('path');
     }
-    // `cur` is now the leftmost leaf: crate | super | self | identifier (or null when
-    // a scoped_identifier had no `path` field, which the grammar does not produce).
+    // `cur` is now the leftmost leaf: crate | super | self | identifier, or null for a path
+    // that starts with `::` (`::shapes::Circle`), whose first scoped_identifier has no `path`.
     if (cur === null)
-        return undefined;
+        return segments.join('::');
     if (cur.type === 'crate' ||
         cur.type === 'super' ||
         cur.type === 'self' ||
@@ -244,6 +250,8 @@ function uses(file) {
     };
     // While a `use` declaration is read: the declaration, whose scope's names its path may start with.
     let useDecl = null;
+    // Whether that declaration's path starts with `::`: the crate root in edition 2015, a crate from edition 2018 on, and in neither a name in scope.
+    let useFromRoot = false;
     const namesByScope = new Map();
     const namesOf = (scope) => {
         let names = namesByScope.get(scope.id);
@@ -290,7 +298,7 @@ function uses(file) {
         const root = specifier.split('::', 1)[0];
         const crate = externs?.get(root);
         // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
-        const meant = crate === undefined && useDecl !== null ? inScopePath(written, useDecl) : written;
+        const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl) : written;
         if (crate !== undefined)
             specifier = `extern::${crate}::as::${specifier}`;
         else
@@ -397,6 +405,7 @@ function uses(file) {
             const scope = node.parent; // one step: the item list the declaration stands in
             externs = scope === null ? null : externsOf(scope);
             useDecl = node;
+            useFromRoot = arg !== null && arg.text.startsWith('::');
             if (arg !== null)
                 handleArgument(arg, '');
             externs = null;
@@ -867,7 +876,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 13,
+    rev: 14,
     declarations,
     uses,
 };
