@@ -330,6 +330,10 @@ describe('MATRIX — C# reachability: a candidate binds only inside the caller\'
   it('csharp-extension-overload-own-project-silence', () => runCase('csharp-extension-overload-own-project-silence'));
 });
 
+describe('MATRIX — C# what a project compiles and what another project may see of it', () => {
+  it('csharp-compile-remove-excluded-file-edge', () => runCase('csharp-compile-remove-excluded-file-edge'));
+});
+
 describe('MATRIX — C# top-level Program in two entry projects (issue 075, part b)', () => {
   it('csharp-top-level-program-two-entries-referenced-edge', () => runCase('csharp-top-level-program-two-entries-referenced-edge'));
 });
