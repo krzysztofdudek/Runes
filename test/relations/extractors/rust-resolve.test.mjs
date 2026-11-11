@@ -592,8 +592,11 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
 
   it('binds a crate:: root item to the root that a chain of plain mod declarations leads to, to none when the chains lead to several, and in the usual order when none is known', async () => {
     put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[[bin]]\nname = "cli"\npath = "src/cli.rs"\n');
-    put('src/lib.rs', '// mod comment;\npub mod lib_only;\npub mod nested_in_lib {\n    pub mod inside;\n}\nmod both;\nmod r#raw;\npub const TEXT: &str = "mod in_string { mod x; }";\npub struct Opts;\npub struct LibOpts;\n');
-    put('src/main.rs', 'mod main_only;\nmod both;\nstruct Opts;\nstruct MainOpts;\nfn main() {}\n');
+    put('src/lib.rs', '// mod comment;\npub mod lib_only;\npub mod nested_in_lib {\n    pub mod inside;\n}\nmod both;\nmod r#raw;\npub const TEXT: &str = "mod in_string { mod x; }";\npub struct Opts;\npub struct LibOpts;\n#[cfg(feature = "x")]\nmod cfg_in_lib;\n#[cfg(unix)]\nmod cfg_both;\nmod gated;\n');
+    put('src/main.rs', 'mod main_only;\nmod both;\nstruct Opts;\nstruct MainOpts;\nfn main() {}\nmod cfg_in_lib;\n#[cfg(windows)]\nmod cfg_both;\n#[cfg(feature = "cli")]\nmod cfg_main;\n#[cfg(unix)]\nmod gated;\n');
+    for (const f of ['cfg_in_lib', 'cfg_both', 'cfg_main']) put(`src/${f}/mod.rs`, '');
+    put('src/gated/mod.rs', 'mod inner;\n');
+    put('src/gated/inner.rs', '');
     put('src/cli.rs', 'mod cli_only;\nmod both;\nmod inside;\nstruct Opts;\nstruct CliOpts;\nfn main() {}\n');
     for (const f of ['lib_only', 'cli_only', 'both', 'orphan', 'raw', 'in_string']) put(`src/${f}/mod.rs`, '');
     put('src/main_only/mod.rs', 'mod deep;\nmod inline {\n    mod leaf;\n}\n');
@@ -640,6 +643,18 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('crate::LibOpts', 'src/both/mod.rs')).toBeUndefined();
     expect(resolve('crate', 'src/both/mod.rs')).toBeUndefined();
     expect(resolve('crate::lib_only', 'src/both/mod.rs')).toBe('src/lib_only/mod.rs');
+    // A declaration under a cfg may be removed, so it never makes the second of two crates: the root that certainly compiles the file is tried first, the one that may compile it after it.
+    expect(resolve('crate::Opts', 'src/cfg_in_lib/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate::LibOpts', 'src/cfg_in_lib/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate', 'src/cfg_in_lib/mod.rs')).toBe('src/main.rs');
+    // The cfg may stand on any declaration of the chain.
+    expect(resolve('crate::Opts', 'src/gated/inner.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::MainOpts', 'src/gated/inner.rs')).toBe('src/main.rs');
+    // Roots that all declare the file under a cfg keep their usual order, and stand before a root that does not declare it.
+    expect(resolve('crate::Opts', 'src/cfg_both/mod.rs')).toBe('src/lib.rs');
+    expect(resolve('crate::MainOpts', 'src/cfg_both/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate::Opts', 'src/cfg_main/mod.rs')).toBe('src/main.rs');
+    expect(resolve('crate::LibOpts', 'src/cfg_main/mod.rs')).toBe('src/lib.rs');
     // No chain reaches these files, or the chain has a gap: nothing is known, and the roots are tried in their usual order, the library first. A file may be compiled through a path attribute, an included file or a macro.
     expect(resolve('crate::Opts', 'src/orphan/mod.rs')).toBe('src/lib.rs');
     expect(resolve('crate::MainOpts', 'src/orphan/mod.rs')).toBe('src/main.rs');
@@ -680,6 +695,21 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('shapes::Circle', 'src/lib.rs')).toBe('src/shapes.rs');
     // The binary's own root reads its own edition.
     expect(resolve('shapes::Circle', 'src/cli.rs')).toBeUndefined();
+    // A module of the 2021 binary keeps the edge the library's edition gave it before: the library may compile it too. A name only the binary's root declares is no module of an edition 2015 root, so it gives none.
+    expect(resolve('shapes::Circle', 'src/args.rs')).toBe('src/shapes.rs');
+    expect(resolve('args::Parsed', 'src/api/client.rs')).toBeUndefined();
+    expect(resolve('args::Parsed', 'src/args.rs')).toBeUndefined();
+    // The mirror: a 2021 package whose binary in src/ is edition 2015. Its module reads a bare path from the binary's root, and the library's modules do not.
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[[bin]]\nname = "cli"\npath = "src/cli.rs"\nedition = "2015"\n');
+    put('src/cli.rs', 'mod args;\nmod flags;\nfn main() {}\n');
+    put('src/flags.rs', '');
+    const mirror = await tableNow();
+    const resolveMirror = (spec, from) => makeResolvePathToFile(ws)(spec, from, 'rust', false, mirror);
+    expect(resolveMirror('flags::Flag', 'src/args.rs')).toBe('src/flags.rs');
+    expect(resolveMirror('flags::Flag', 'src/api/client.rs')).toBeUndefined();
+    expect(resolveMirror('shapes::Circle', 'src/api/client.rs')).toBeUndefined();
+    // Without the table no root is known to compile a file, and a binary declared in src/ decides no edition.
+    expect(makeResolvePathToFile(ws)('flags::Flag', 'src/args.rs', 'rust')).toBeUndefined();
   });
 
   it('takes a root for certain only from a plain mod item of the parse tree, and keeps the usual order for every other way a module can be written', async () => {
@@ -784,6 +814,15 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       ['mod a;\n', 'a', lib, 'mod b;\n'],
       // Both declare it by name alone: two crates, no root item.
       ['mod a;\n', 'a', undefined, 'mod a;\n'],
+      // A declaration under a cfg is not the second crate: the root that declares the module for certain binds it, whichever root holds the cfg and wherever the cfg stands.
+      ['mod a;\n', 'a', lib, '#[cfg(any())]\nmod a;\n'],
+      ['#[cfg(any())]\nmod a;\n', 'a', main, 'mod a;\n'],
+      ['#[cfg(feature = "never")]\nmod a;\n', 'a', main, 'mod a;\n'],
+      ['#![cfg(feature = "f")]\nmod a;\n', 'a', main, 'mod a;\n'],
+      ['#![cfg_attr(docsrs, cfg(docsrs))]\nmod a;\n', 'a', main, 'mod a;\n'],
+      ['#[cfg(unix)]\nmod a;\n', 'a', lib, '#[cfg(windows)]\nmod a;\n'],
+      // An inner cfg_attr that applies no cfg leaves the declaration certain: two crates again.
+      ['#![cfg_attr(docsrs, feature(doc_cfg))]\nmod a;\n', 'a', undefined, 'mod a;\n'],
     ];
     inBinary.forEach(([mainText, file], n) => {
       put(`b${n}/Cargo.toml`, '[package]\nname = "app"\nedition = "2021"\n');
@@ -827,6 +866,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     put('src/bin/withmain/helper.rs', '');
     put('src/bin/selfish.rs', 'mod selfish;\nmod inner;\nfn main() {}\n');
     put('src/bin/selfish/inner.rs', '');
+    put('src/bin/four.rs', '#[cfg(unix)]\nmod gated;\nstruct Four;\nfn main() {}\n');
+    put('src/bin/gated/mod.rs', '');
     const declared = await tableNow();
     const resolve = (spec, from, language) => makeResolvePathToFile(ws)(spec, from, language, false, declared);
     // Without the pass's symbol table no binary is known to declare the directory, and it is still no crate of its own.
@@ -850,6 +891,8 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolve('super::peer::T', 'src/bin/loose/sub.rs', 'rust')).toBe('src/bin/loose/peer.rs');
     expect(resolve('super::super::config::Cfg', 'src/bin/shared/sib.rs', 'rust')).toBeUndefined();
     expect(resolve('super::config::Cfg', 'src/bin/shared/mod.rs', 'rust')).toBeUndefined();
+    // A declaration under a cfg is a declaration here: the one binary that holds it roots the directory.
+    expect(resolve('crate::Four', 'src/bin/gated/mod.rs', 'rust')).toBe('src/bin/four.rs');
     // A binary that names itself as its own module declares nothing: the files below its name have no known crate.
     expect(resolve('crate::config::Cfg', 'src/bin/selfish/inner.rs', 'rust')).toBeUndefined();
     // A directory with a main.rs is a crate of its own: its files read `crate::` in its tree.
@@ -1414,14 +1457,28 @@ path = "..\u002fmore"
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
   });
 
-  it('declares each module a file places by name alone under its module file key, with the line of the mod item', async () => {
-    const code = '#![allow(dead_code)]\nmod a;\npub mod outer {\n    mod b;\n    pub(crate) mod inner {\n        #[cfg(test)]\n        mod r#c;\n    }\n    #[path = "moved"]\n    mod moved {\n        mod d;\n    }\n}\n#[path = "e.rs"]\nmod e;\nfn f() {}\nstruct mod_like;\n';
+  it('declares each module a file places by name alone under its module file key, with the line of the mod item, and under a key of its own when a cfg may remove it', async () => {
+    const code = '#![allow(dead_code)]\nmod a;\npub mod outer {\n    mod b;\n    pub(crate) mod inner {\n        #[cfg(test)]\n        mod r#c;\n    }\n    #[path = "moved"]\n    mod moved {\n        mod d;\n    }\n}\n#[path = "e.rs"]\nmod e;\nfn f() {}\nstruct mod_like;\n#[cfg(unix)]\nmod gated {\n    mod g;\n    mod deeper {\n        mod h;\n    }\n}\nmod headed {\n    #![cfg(unix)]\n    mod i;\n}\n';
     await withParsedFile('src/lib.rs', code, (tree) => {
-      expect(plainModuleFiles(tree.rootNode)).toEqual([{ path: 'a', line: 2 }, { path: 'outer/b', line: 4 }, { path: 'outer/inner/c', line: 7 }]);
+      expect(plainModuleFiles(tree.rootNode)).toEqual([
+        { path: 'a', line: 2, conditional: false },
+        { path: 'outer/b', line: 4, conditional: false },
+        { path: 'outer/inner/c', line: 7, conditional: true },
+        { path: 'gated/g', line: 20, conditional: true },
+        { path: 'gated/deeper/h', line: 22, conditional: true },
+        { path: 'headed/i', line: 27, conditional: true },
+      ]);
       const keys = rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust')).map((d) => d.symbolKey);
-      expect(keys.filter((k) => k.startsWith('modfile:'))).toEqual([rustModuleFileKey('a'), rustModuleFileKey('outer/b'), rustModuleFileKey('outer/inner/c')]);
+      expect(keys.filter((k) => k.startsWith('modfile'))).toEqual(['modfile:a', 'modfile:outer/b', 'modfile?:outer/inner/c', 'modfile?:gated/g', 'modfile?:gated/deeper/h', 'modfile?:headed/i']);
       expect(rustModuleFileKey('outer/b')).toBe('modfile:outer/b');
+      expect(rustModuleFileKey('outer/b', true)).toBe('modfile?:outer/b');
     });
+    // A cfg at the head of the file, or a cfg_attr there that applies one, makes every declaration of the file conditional; a cfg_attr that applies none does not.
+    const flags = (text) => withParsedFile('x.rs', text, (tree) => plainModuleFiles(tree.rootNode).map((m) => m.conditional));
+    expect(await flags('#![cfg(feature = "f")]\nmod a;\nmod b;\n')).toEqual([true, true]);
+    expect(await flags('#![cfg_attr(docsrs, cfg(docsrs))]\nmod a;\n')).toEqual([true]);
+    expect(await flags('#![cfg_attr(docsrs, feature(doc_cfg))]\n#![no_std]\nmod a;\n')).toEqual([false]);
+    expect(await flags('#[cfg(any())]\n#[allow(dead_code)]\nmod a;\n#[allow(dead_code)]\nmod b;\n')).toEqual([true, false]);
     // A file that does not parse to the end declares none, and neither does a nameless or damaged `mod`.
     await withParsedFile('x.rs', 'mod a;\nfn broken( {\n', (tree) => expect(plainModuleFiles(tree.rootNode)).toEqual([]));
     await withParsedFile('x.rs', '', (tree) => expect(plainModuleFiles(tree.rootNode)).toEqual([]));

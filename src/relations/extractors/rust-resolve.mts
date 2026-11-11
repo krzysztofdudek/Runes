@@ -70,8 +70,10 @@ export interface RustCrateRoot {
   crateRelativeUses?: boolean;
   /** True when the file lies in a directory of `src/bin/` that is no crate of its own, and its crate cannot be told: no binary there is known to declare it, or several are and each reads `crate::` and `super::` as its own root. A path rooted at `crate`, one that climbs with `super` to the crate root, and the edition 2015 relative `use` then name nothing; the package's own crate name and its path dependencies still resolve. Absent or false → the file's crate is told. */
   unrooted?: boolean;
-  /** True when every one of `rootFiles` is a crate that certainly compiles the file: each declares it through a chain of plain `mod` declarations. `crate::` then means a different root in each, so a root item binds none of them. Absent or false → `rootFiles` are in probe order and the first existing one that holds a name binds it; a root known to compile the file stands first. */
+  /** True when every one of `rootFiles` is a crate that certainly compiles the file: each declares it through a chain of plain `mod` declarations that no `cfg` can remove. `crate::` then means a different root in each, so a root item binds none of them. Absent or false → `rootFiles` are in probe order and the first existing one that holds a name binds it; a root known to compile the file stands first, and one that may compile it under a `cfg` after it. */
   rootsShared?: boolean;
+  /** The crate-root files whose top-level items an edition 2015 `use` path of the file may name, in probe order: the roots known to compile the file when all of them are edition 2015, and the roots Cargo infers for its tree when those are. Absent → `rootFiles`. */
+  crateRelativeRoots?: string[];
 }
 
 export interface RustResolveDeps {
@@ -138,7 +140,7 @@ export function resolveRustPath(
 
   // Edition 2015: a `use` path is relative to the crate root, so `use a::b;` names the root's module `a`, and `use Error;` its item `Error`, which binds the root file as `crate::Error` does. The reserved crates and any root that does not declare the first segment stay external; an `extern crate` of the same name is a crate, no module or item of the root.
   if (crate.crateRelativeUses === true && !EDITION_2015_EXTERNAL_ROOTS.has(root)) {
-    const rootFiles = crate.rootFiles ?? [];
+    const rootFiles = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
     const declaresItem = (f: string, name: string): boolean => (deps.rootDeclares?.(f, name, true) ?? true);
     if (rootFiles.some((f) => exists(f) && declaresItem(f, root))) return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem, crate.rootsShared));
   }
@@ -152,9 +154,9 @@ export function rustTopLevelItemKey(name: string): string {
   return `item:${name}`;
 }
 
-/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). The `modfile:` prefix can never be a Rust identifier. */
-export function rustModuleFileKey(modulePath: string): string {
-  return `modfile:${modulePath}`;
+/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
+export function rustModuleFileKey(modulePath: string, conditional = false): string {
+  return `${conditional ? 'modfile?' : 'modfile'}:${modulePath}`;
 }
 
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */

@@ -404,7 +404,8 @@ function join(prefix: string, tail: string | undefined): string | undefined {
  * never taken for an item of the root.
  *
  * Every module the file places in a file of its own by name alone is declared under
- * `rustModuleFileKey(path)` (`modfile:<path>`), read by `plainModuleFiles`: this is what the
+ * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
+ * declaration nothing can switch off, `modfile?:<path>` for one under a `cfg`. This is what the
  * resolver asks when it follows a file's module chain up to the crate roots that compile it.
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
@@ -427,11 +428,11 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     }
   }
   for (const { name, line } of topLevelItemNames(root)) out.push({ symbolKey: rustTopLevelItemKey(name), line });
-  for (const { path, line } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path), line });
+  for (const { path, line, conditional } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
   return out;
 }
 
-/** The attributes that leave a `mod` where its name puts it: the compiler's own, which rewrite nothing. Any other attribute in front of a `mod` may be a macro that rewrites the item, and a `cfg_attr` there may apply one, or a `path`. */
+/** The attributes that leave a `mod` where its name puts it: the compiler's own, which rewrite nothing. Any other attribute in front of a `mod` may be a macro that rewrites the item, and a `cfg_attr` there may apply one, or a `path`. A `cfg` moves nothing, but it may remove the item: see `conditional` in `plainModuleFiles`. */
 const INERT_MOD_ATTRIBUTES = new Set(['cfg', 'doc', 'allow', 'warn', 'deny', 'forbid', 'expect', 'macro_use', 'deprecated']);
 
 /** The further attributes of the compiler that stand at the head of a file or of an inline module (`#![no_std]`, `#![feature(…)]`). */
@@ -441,36 +442,51 @@ const INERT_INNER_ATTRIBUTES = new Set(['no_std', 'no_core', 'no_main', 'no_impl
 const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy']);
 
 /**
- * The modules a Rust file certainly places in files of their own by their names: each `mod x;` (no body) that is an item of the file itself, or of inline modules nested in it, as the path of the names from the file's own module (`x`, `outer/x`), with `r#` stripped. Rust compiles the file that path names beside the declaring file (`x.rs` or `x/mod.rs`) into every crate that compiles the declaring file.
+ * The modules a Rust file places in files of their own by their names: each `mod x;` (no body) that is an item of the file itself, or of inline modules nested in it, as the path of the names from the file's own module (`x`, `outer/x`), with `r#` stripped. Rust compiles the file that path names beside the declaring file (`x.rs` or `x/mod.rs`) into every crate that compiles the declaring file, unless a `cfg` removes the declaration.
+ *
+ * `conditional` is true when a `cfg` may remove the declaration: a `cfg` in front of the `mod` or of an inline module around it, or a `cfg`, or a `cfg_attr` that applies one, at the head of such an inline module or of the file. Whether the predicate holds is not read (`cfg(any())` never does), so a conditional declaration says the file may be compiled, never that it is.
  *
  * Only what the tree proves is listed, so a module missing here is not known to be absent. Left out: a `mod` with an attribute in front of it other than the compiler's own inert ones (a `path`, a `cfg_attr`, an attribute macro), or inside an inline module with one; every `mod` of a file or an inline module whose head holds an inner attribute that is not one of the compiler's or that names a `path`; a `mod` inside a function body, a block or a macro's tokens; and every `mod` of a file the grammar could not parse to the end, where the nesting itself is a guess.
  */
-export function plainModuleFiles(root: Node): Array<{ path: string; line: number }> {
-  const out: Array<{ path: string; line: number }> = [];
+export function plainModuleFiles(root: Node): Array<{ path: string; line: number; conditional: boolean }> {
+  const out: Array<{ path: string; line: number; conditional: boolean }> = [];
   if (root.hasError) return out;
-  const visit = (items: readonly (Node | null)[], prefix: readonly string[]): void => {
-    if (items.some((n) => n !== null && n.type === 'inner_attribute_item' && !attributeIsInert(n, true))) return;
+  const visit = (items: readonly (Node | null)[], prefix: readonly string[], removable: boolean): void => {
+    const head = items.filter((n): n is Node => n !== null && n.type === 'inner_attribute_item');
+    if (head.some((n) => !attributeIsInert(n, true))) return;
+    const here = removable || head.some(attributeIsCfg);
     for (const node of items) {
-      if (node === null || node.type !== 'mod_item' || !modAttributesAreInert(node)) continue;
+      if (node === null || node.type !== 'mod_item') continue;
+      const attributes = attributesBefore(node);
+      if (attributes.some((n) => !attributeIsInert(n, false))) continue;
       const name = unraw(node.childForFieldName('name')?.text ?? '');
       if (name === '') continue;
+      const conditional = here || attributes.some(attributeIsCfg);
       const body = node.childForFieldName('body');
-      if (body === null) out.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1 });
-      else visit(body.namedChildren, [...prefix, name]);
+      if (body === null) out.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1, conditional });
+      else visit(body.namedChildren, [...prefix, name], conditional);
     }
   };
-  visit(root.namedChildren, []);
+  visit(root.namedChildren, [], false);
   return out;
 }
 
-/** Whether every attribute written in front of `modItem` is an inert one. Attributes parse as preceding `attribute_item` siblings; comments may stand between them. */
-function modAttributesAreInert(modItem: Node): boolean {
-  let sib: Node | null = modItem.previousNamedSibling;
+/** The attributes written in front of `item`. They parse as preceding `attribute_item` siblings; comments may stand between them. */
+function attributesBefore(item: Node): Node[] {
+  const out: Node[] = [];
+  let sib: Node | null = item.previousNamedSibling;
   while (sib !== null && (sib.type === 'attribute_item' || sib.type === 'line_comment' || sib.type === 'block_comment')) {
-    if (sib.type === 'attribute_item' && !attributeIsInert(sib, false)) return false;
+    if (sib.type === 'attribute_item') out.push(sib);
     sib = sib.previousNamedSibling;
   }
-  return true;
+  return out;
+}
+
+/** Whether an attribute may remove what it stands on: a `cfg`, or a `cfg_attr` whose text applies one (`cfg_attr(a, cfg(b))`; a `doc(cfg(…))` inside one counts too, which errs toward conditional). */
+function attributeIsCfg(item: Node): boolean {
+  const id = item.namedChildren.find((c) => c !== null && c.type === 'attribute')?.namedChild(0) ?? null;
+  if (id === null || id.type !== 'identifier') return false;
+  return id.text === 'cfg' || (id.text === 'cfg_attr' && /\bcfg\s*\(/.test(item.text));
 }
 
 /** Whether an `attribute_item` (in front of an item) or an `inner_attribute_item` (`inner`, at the head of a file or an inline module) is one of the compiler's inert attributes or a tool's. An inner `cfg_attr` is inert unless it names a `path`: no attribute macro stands in that place. */

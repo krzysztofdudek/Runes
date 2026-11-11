@@ -30,7 +30,7 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     }
     // Edition 2015: a `use` path is relative to the crate root, so `use a::b;` names the root's module `a`, and `use Error;` its item `Error`, which binds the root file as `crate::Error` does. The reserved crates and any root that does not declare the first segment stay external; an `extern crate` of the same name is a crate, no module or item of the root.
     if (crate.crateRelativeUses === true && !EDITION_2015_EXTERNAL_ROOTS.has(root)) {
-        const rootFiles = crate.rootFiles ?? [];
+        const rootFiles = crate.crateRelativeRoots ?? crate.rootFiles ?? [];
         const declaresItem = (f, name) => (deps.rootDeclares?.(f, name, true) ?? true);
         if (rootFiles.some((f) => exists(f) && declaresItem(f, root)))
             return resolveFromModuleDir(crate.srcDir, segments, exists, rootContext(crate.srcDir, rootFiles, declaresItem, crate.rootsShared));
@@ -42,9 +42,9 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
 export function rustTopLevelItemKey(name) {
     return `item:${name}`;
 }
-/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). The `modfile:` prefix can never be a Rust identifier. */
-export function rustModuleFileKey(modulePath) {
-    return `modfile:${modulePath}`;
+/** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */
+export function rustModuleFileKey(modulePath, conditional = false) {
+    return `${conditional ? 'modfile?' : 'modfile'}:${modulePath}`;
 }
 /** Crates every edition 2015 crate root has in scope without a module of its own to shadow them. */
 const EDITION_2015_EXTERNAL_ROOTS = new Set(['std', 'core', 'alloc', 'proc_macro', 'test']);

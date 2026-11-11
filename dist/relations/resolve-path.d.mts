@@ -50,7 +50,7 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *
  *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare it, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller that the directory is no crate of its own: the file's root is the one binary known to declare it, or none.
  *
- *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`, and the caller leaves them out when it reads the edition of a file of the tree, which the library and `src/main.rs` decide as they did before those roots were told.
+ *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`. Such a root decides the edition of a file only when it is known to compile the file; otherwise the library and `src/main.rs` decide it, as they did before those roots were told.
  *
  *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
  *

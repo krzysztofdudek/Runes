@@ -57,7 +57,8 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return rustDeps;
         let deps = rustDepsByTable.get(table);
         if (deps === undefined) {
-            const declaresModule = (file, modulePath) => table.has('rust', rustModuleFileKey(modulePath)) && table.filesFor('rust', rustModuleFileKey(modulePath)).includes(file);
+            const declared = (file, key) => table.has('rust', key) && table.filesFor('rust', key).includes(file);
+            const declaresModule = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
             deps = {
                 ...rustDeps,
                 crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
@@ -281,26 +282,34 @@ function makeRustResolveDeps(plain, exists) {
         // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
         const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
         const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib, rel.startsWith('src/bin/') ? srcBinFiles(pkgDir) : [], buildScriptOf(manifest));
-        // Where a tree has several crate roots (`src/lib.rs` beside `src/main.rs`, a `[[bin]]` in `src/`, the binaries of `src/bin/` over a directory without `main.rs`), the roots that certainly compile the file are those a chain of plain `mod` declarations leads to (`rootsCompiling`). Nothing is concluded from a root the chain does not reach: it may still compile the file through a `path` attribute, `include!` or a macro.
+        // Where a tree has several crate roots (`src/lib.rs` beside `src/main.rs`, a `[[bin]]` in `src/`, the binaries of `src/bin/` over a directory without `main.rs`), the roots that compile the file are those a chain of plain `mod` declarations leads to (`rootsCompiling`): certainly, or under a `cfg`. Nothing is concluded from a root the chain does not reach: it may still compile the file through a `path` attribute, `include!` or a macro.
         const existingRoots = target.rootFiles.filter((f) => exists(at(f)));
-        const severalRoots = target.byDeclaration === true || (existingRoots.length > 1 && !target.fileIsRoot);
-        const compiling = severalRoots && declaresModule !== undefined ? rootsCompiling(rel, target.srcDir, existingRoots, at, declaresModule) : [];
+        const declaredRoots = target.declaredRoots ?? [];
+        const severalRoots = target.byDeclaration === true || (!target.fileIsRoot && (existingRoots.length > 1 || existingRoots.some((f) => declaredRoots.includes(f))));
+        const compiling = severalRoots && declaresModule !== undefined ? rootsCompiling(rel, target.srcDir, existingRoots, at, declaresModule) : { certain: [], conditional: [] };
+        const reached = [...compiling.certain, ...compiling.conditional];
         if (target.byDeclaration === true) {
-            // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the one binary known to declare them; with none known, or several, `crate::` names no root that can be told.
-            const unrooted = compiling.length !== 1;
-            return { srcDir: at(target.srcDir), crateName, rootFiles: unrooted ? [] : compiling.map(at), fileIsRoot: false, lib: lib ?? null, crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, compiling), ...(unrooted ? { unrooted } : {}) };
+            // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the one binary known to declare them, under a `cfg` or not; with none known, or several, `crate::` names no root that can be told.
+            const unrooted = reached.length !== 1;
+            return { srcDir: at(target.srcDir), crateName, rootFiles: unrooted ? [] : reached.map(at), fileIsRoot: false, lib: lib ?? null, crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, reached), ...(unrooted ? { unrooted } : {}) };
         }
-        // Two or more roots that compile the file: `crate::` is a different root in each, so a root item binds none. One: it is probed first, and the others after it in their usual order, since one of them may compile the file too. None known: the usual order.
-        const rootsShared = compiling.length > 1;
-        const rootFiles = rootsShared ? compiling : [...compiling, ...target.rootFiles.filter((f) => !compiling.includes(f))];
+        // Two or more roots that certainly compile the file: `crate::` is a different root in each, so a root item binds none. Otherwise the roots are probed in order: the one that certainly compiles the file, then those that compile it under a `cfg`, which proves nothing about the others, then the rest in their usual order, since one of them may compile the file too.
+        const rootsShared = compiling.certain.length > 1;
+        const rootFiles = rootsShared ? compiling.certain : [...reached, ...target.rootFiles.filter((f) => !reached.includes(f))];
+        // The edition of a file is the edition of the crates that compile it. The roots a chain reaches decide it when they agree; so do the roots Cargo infers for the tree (the library and `src/main.rs`), which decided it before a target declared in `src/` was a root of the tree, and one of which may compile the file by a way that is not followed. An edition 2015 `use` path then names an item of the roots that are edition 2015, never of a root with another edition.
+        const inferredRoots = existingRoots.filter((f) => !declaredRoots.includes(f));
+        const relativeRoots = severalRoots
+            ? [...new Set([...(reached.length > 0 && targetIsEdition2015(pkgDir, manifest, reached) ? reached : []), ...(inferredRoots.length > 0 && targetIsEdition2015(pkgDir, manifest, inferredRoots) ? inferredRoots : [])])]
+            : undefined;
         return {
             srcDir: at(target.srcDir),
             crateName,
             rootFiles: rootFiles.map(at),
             fileIsRoot: target.fileIsRoot,
             lib: lib ?? null,
-            crateRelativeUses: targetIsEdition2015(pkgDir, manifest, existingRoots.filter((f) => target.declaredRoots?.includes(f) !== true)),
+            crateRelativeUses: relativeRoots === undefined ? targetIsEdition2015(pkgDir, manifest, existingRoots) : relativeRoots.length > 0,
             ...(rootsShared ? { rootsShared } : {}),
+            ...(relativeRoots === undefined ? {} : { crateRelativeRoots: relativeRoots.map(at) }),
         };
     }
     /** The package-relative path of the build script (Cargo's `normalize_build`): `build.rs` unless `[package] build` names a file, or is `false`, which means none. A path that climbs out of the package names none. */
@@ -313,37 +322,44 @@ function makeRustResolveDeps(plain, exists) {
     function srcBinFiles(pkgDir) {
         return (plain.list(joinRel(pkgDir, 'src/bin')) ?? []).filter((e) => e.kind === 'file' && e.name.endsWith('.rs')).map((e) => `src/bin/${e.name}`);
     }
-    /** The roots among `roots` that certainly compile `file`, a file below the tree directory `srcDir` (all package-relative; `at` makes a path repository-relative): those from which a chain of plain `mod` declarations leads down to the file. A module file is declared by the file of a module above it, which names the path between them (`declaresModule`: `x` for `mod x;`, `outer/x` for one inside the inline module `outer`), and so on up to a root lying in `srcDir` itself. The result is a lower bound: a root missing from it may compile the file as well, through a `path` attribute, `include!`, a macro, or a declaration in a file that did not parse. A file outside `srcDir` has no chain, so none. */
+    /** The roots among `roots` that compile `file`, a file below the tree directory `srcDir` (all package-relative; `at` makes a path repository-relative): those from which a chain of plain `mod` declarations leads down to the file. A module file is declared by the file of a module above it, which names the path between them (`declaresModule`: `x` for `mod x;`, `outer/x` for one inside the inline module `outer`), and so on up to a root lying in `srcDir` itself. `certain` holds the roots with a chain no `cfg` can remove; `conditional` those whose every chain passes a declaration under a `cfg`, so they compile the file in some configuration at most. Both are lower bounds: a root in neither may compile the file as well, through a `path` attribute, `include!`, a macro, or a declaration in a file that did not parse. A file outside `srcDir` has no chain, so none. */
     function rootsCompiling(file, srcDir, roots, at, declaresModule) {
         const below = srcDir === '' ? file : file.startsWith(`${srcDir}/`) ? file.slice(srcDir.length + 1) : undefined;
         if (below === undefined || !below.endsWith('.rs'))
-            return [];
-        const found = new Set();
-        const climbed = new Set();
-        // `moduleFile` is the file of the module whose names from the tree's root are `names`.
-        const climb = (moduleFile, names) => {
-            if (names.length === 0 || climbed.has(moduleFile))
+            return { certain: [], conditional: [] };
+        // Root → whether a chain without a `cfg` reaches it.
+        const found = new Map();
+        // Module file → whether it was climbed from a chain without a `cfg`; such a climb covers a later one under a `cfg`.
+        const climbed = new Map();
+        // `moduleFile` is the file of the module whose names from the tree's root are `names`; `sure` says no declaration below it on this chain stands under a `cfg`.
+        const climb = (moduleFile, names, sure) => {
+            const before = climbed.get(moduleFile);
+            if (names.length === 0 || before === true || (before === false && !sure))
                 return;
-            climbed.add(moduleFile);
+            climbed.set(moduleFile, sure);
             for (let k = names.length - 1; k >= 0; k--) {
                 const pathBelow = names.slice(k).join('/');
                 if (k === 0) {
-                    for (const root of roots)
-                        if (root !== moduleFile && dirOf(root) === srcDir && declaresModule(at(root), pathBelow))
-                            found.add(root);
+                    for (const root of roots) {
+                        const how = root !== moduleFile && dirOf(root) === srcDir ? declaresModule(at(root), pathBelow) : undefined;
+                        if (how !== undefined)
+                            found.set(root, found.get(root) === true || (sure && how === 'always'));
+                    }
                     continue;
                 }
                 const parent = joinRel(srcDir, names.slice(0, k).join('/'));
-                for (const parentFile of [`${parent}.rs`, `${parent}/mod.rs`])
-                    if (exists(at(parentFile)) && declaresModule(at(parentFile), pathBelow))
-                        climb(parentFile, names.slice(0, k));
+                for (const parentFile of [`${parent}.rs`, `${parent}/mod.rs`]) {
+                    const how = exists(at(parentFile)) ? declaresModule(at(parentFile), pathBelow) : undefined;
+                    if (how !== undefined)
+                        climb(parentFile, names.slice(0, k), sure && how === 'always');
+                }
             }
         };
         const names = below.slice(0, -'.rs'.length).split('/');
         if (names[names.length - 1] === 'mod')
             names.pop();
-        climb(file, names);
-        return roots.filter((r) => found.has(r));
+        climb(file, names, true);
+        return { certain: roots.filter((r) => found.get(r) === true), conditional: roots.filter((r) => found.get(r) === false) };
     }
     /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
     function targetIsEdition2015(pkgDir, manifest, roots) {
@@ -495,7 +511,7 @@ function makeRustResolveDeps(plain, exists) {
  *
  *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare it, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller that the directory is no crate of its own: the file's root is the one binary known to declare it, or none.
  *
- *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`, and the caller leaves them out when it reads the edition of a file of the tree, which the library and `src/main.rs` decide as they did before those roots were told.
+ *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`. Such a root decides the edition of a file only when it is known to compile the file; otherwise the library and `src/main.rs` decide it, as they did before those roots were told.
  *
  *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
  *
