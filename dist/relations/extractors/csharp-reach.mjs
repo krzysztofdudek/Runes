@@ -253,10 +253,13 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
             while ((m = projectRefs.exec(text)) !== null) {
                 const applies = !conditional(text, m.index, m[1]);
                 const ref = {
-                    types: !(applies && metadata(m[1], m[2], 'ReferenceOutputAssembly') === 'false'),
+                    types: true,
                     follows: true,
                     flows: !(applies && (metadata(m[1], m[2], 'PrivateAssets') ?? '').split(';').some((v) => v.trim() === 'all')),
                 };
+                // Outside the restore graph: neither the project nor its references are seen, here or by a consumer.
+                if (applies && metadata(m[1], m[2], 'ReferenceOutputAssembly') === 'false')
+                    Object.assign(ref, { types: false, follows: false, flows: false });
                 for (const item of includes(m[1])) {
                     // A path that lies in the repository and names no file under any reading is a reference the graph cannot follow (a spelling this reader does not know): the project is open, never silently without it.
                     let named = false;

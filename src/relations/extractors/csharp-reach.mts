@@ -14,10 +14,10 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
  *   - `<Compile Include>` naming files outside the project's directory adds those files, and only those, to the project's compilation (a LINKED file, below); one whose path needs a property this reader does not know, or leaves the repository, could name anything, so the project is OPEN, as it is for an `<Import>` of a `.projitems` shared project and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups). An import of a file the view holds is read like the project file itself.
  *   - `<Compile Remove>`: a file of the project's directory that the item names is in no compilation of that project, so it declares nothing any caller can see. Only a removal that always applies is read: one under a condition (on the item, its `ItemGroup` or a `Choose` branch) or inside a `Target` may not, a file that a `<Compile Include>` of the same project names again is kept, whatever the order, and a project with a `<Compile Include>` this reader cannot place (a path with a property it does not know) keeps every file, because that include may put any of them back.
  * Conditions are read, never evaluated: every branch counts. References are transitive, as in SDK-style projects, and what the compiler is handed decides how far:
- *   - `ReferenceOutputAssembly="false"` on a `ProjectReference` (an attribute or a child element) is a build-order reference: the referenced assembly is not passed to the compiler, so the referencing project sees none of its types. The project's own references are still followed, since the restore graph is not told otherwise;
+ *   - `ReferenceOutputAssembly="false"` on a `ProjectReference` (an attribute or a child element) is a build-order reference: the referenced assembly is not passed to the compiler, and NuGet takes a project reference into the restore graph only when the flag is empty or true, so the referencing project sees neither that project nor anything it references, and passes none of it on to its own consumers;
  *   - `PrivateAssets="all"` on a `ProjectReference` keeps the reference from the projects that reference the referencing project: the referencing project sees the referenced one, its consumers do not;
  *   - a `<Reference>` hands over that one assembly: its types, never the references of the project that builds it, and a consumer of the referencing project does not see it either;
- *   - a metadata value under a `Condition`, or one that needs a property this reader does not know, is not read: the reference stays visible. `DisableTransitiveProjectReferences` is not read either: only more reach.
+ *   - a metadata value under a `Condition`, or one that needs a property this reader does not know, is not read: the reference stays visible. Known limits, each of which only keeps more reach: metadata given by an `Update` item or an `ItemDefinitionGroup` default is not read; `PrivateAssets="compile"`, `ExcludeAssets="all"` and `IncludeAssets="none"` are not read (only `PrivateAssets` naming `all` stops the flow); `DisableTransitiveProjectReferences` is not read.
  * An OPEN project reaches everything, and so does every project that reaches an open one.
  *
  * A file that another project compiles through a `Compile` item outside that project's directory (a linked file) is code of that project too: as a caller it sees what the linking project references, as a target it is seen by the linking project and by every project that reaches it. A linked file under no project file is code of the projects that link it alone. Two files that one compilation holds are `same` to each other.
@@ -291,10 +291,12 @@ export function buildCsharpReachability(
       while ((m = projectRefs.exec(text)) !== null) {
         const applies = !conditional(text, m.index, m[1]);
         const ref: Ref = {
-          types: !(applies && metadata(m[1], m[2], 'ReferenceOutputAssembly') === 'false'),
+          types: true,
           follows: true,
           flows: !(applies && (metadata(m[1], m[2], 'PrivateAssets') ?? '').split(';').some((v) => v.trim() === 'all')),
         };
+        // Outside the restore graph: neither the project nor its references are seen, here or by a consumer.
+        if (applies && metadata(m[1], m[2], 'ReferenceOutputAssembly') === 'false') Object.assign(ref, { types: false, follows: false, flows: false });
         for (const item of includes(m[1])) {
           // A path that lies in the repository and names no file under any reading is a reference the graph cannot follow (a spelling this reader does not know): the project is open, never silently without it.
           let named = false;
