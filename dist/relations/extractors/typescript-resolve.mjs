@@ -135,6 +135,7 @@ function normalizeExports(exportsField) {
     return exportsField;
 }
 const NODE_MODULE_KINDS = new Set(['node16', 'node18', 'node20', 'nodenext']);
+const IMPORT_CALL_REWRITING_MODULE_KINDS = new Set(['commonjs', 'amd', 'umd', 'system', 'none']);
 const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
 /**
  * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
@@ -145,7 +146,7 @@ const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext',
  *
  * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
  *
- * The format is the file's, which is what TypeScript reads for an `import` or `export` statement. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, a dynamic `import()` reads `import`.
+ * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
  */
 function exportConditions(from, deps, callForm) {
     const config = deps.tsconfigFor(from);
@@ -185,7 +186,13 @@ function exportConditions(from, deps, callForm) {
     }
     if (format === undefined)
         return undefined;
-    const conditions = new Set(['default', callForm ?? format, 'types', ...(config?.customConditions ?? [])]);
+    const rewritten = callForm === 'import' &&
+        config !== undefined &&
+        module !== undefined &&
+        !NODE_MODULE_KINDS.has(module) &&
+        module !== 'preserve' &&
+        (ext === '.cts' || ext === '.cjs' || (ext !== '.mts' && ext !== '.mjs' && IMPORT_CALL_REWRITING_MODULE_KINDS.has(module)));
+    const conditions = new Set(['default', rewritten ? 'require' : (callForm ?? format), 'types', ...(config?.customConditions ?? [])]);
     if (kind === 'node')
         conditions.add('node');
     return conditions;

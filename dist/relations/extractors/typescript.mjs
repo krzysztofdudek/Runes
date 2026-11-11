@@ -227,6 +227,34 @@ function augmentationSpecifier(moduleNode, inModuleFile) {
         return spec;
     return undefined;
 }
+// The grammar reads `typeof import('x')` and `import('x').T` as call expressions inside these type nodes.
+const TYPE_POSITION_ANCESTORS = new Set([
+    'type_query',
+    'type_annotation',
+    'type_arguments',
+    'constraint',
+    'default_type',
+    'implements_clause',
+    'union_type',
+    'intersection_type',
+    'tuple_type',
+    'array_type',
+    'generic_type',
+    'function_type',
+    'object_type',
+]);
+const TYPE_ON_THE_RIGHT = new Set(['type_alias_declaration', 'as_expression', 'satisfies_expression']);
+/** Whether an `import('x')` call node is an import type, which TypeScript resolves by the format of its file as an import statement is, rather than a dynamic import() call. */
+function inTypePosition(call) {
+    let child = call;
+    for (let parent = call.parent; parent !== null; child = parent, parent = parent.parent) {
+        if (TYPE_POSITION_ANCESTORS.has(parent.type))
+            return true;
+        if (TYPE_ON_THE_RIGHT.has(parent.type) && parent.namedChild(0)?.id !== child.id)
+            return true;
+    }
+    return false;
+}
 function uses(file) {
     const out = [];
     const seen = new Set();
@@ -281,7 +309,7 @@ function uses(file) {
                 // A plain string literal OR a no-substitution template literal yields a
                 // static specifier; an interpolated template literal / identifier / other
                 // expression is non-literal and skipped (specifierFromCallArg returns undefined).
-                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : 'import');
+                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inTypePosition(node) ? undefined : 'import');
                 break;
             }
             case 'module': {
@@ -349,8 +377,8 @@ function declarations(file) {
 }
 export const typescriptExtractor = {
     languages: new Set(['typescript', 'tsx', 'javascript']),
-    // rev 4: a require() call or `import x = require()` and a dynamic import() carry their call form, which
-    // picks the `require` or `import` condition of an `exports` entry;
+    // rev 4: a require() call or `import x = require()` and a dynamic import() (not an import type) carry
+    // their call form, which picks the `require` or `import` condition of an `exports` entry;
     // rev 3: every type-only reference gives its edge (statement forms, type-position
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
