@@ -126,6 +126,11 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-custom-condition-edge', () => runCase('typescript-exports-custom-condition-edge'));
   it('typescript-exports-unmatched-custom-condition-silence', () => runCase('typescript-exports-unmatched-custom-condition-silence'));
   it('typescript-exports-no-module-settings-bundler-silence', () => runCase('typescript-exports-no-module-settings-bundler-silence'));
+  it('typescript-package-entry-outdir-main-edge', () => runCase('typescript-package-entry-outdir-main-edge'));
+  it('typescript-package-entry-outdir-exports-edge', () => runCase('typescript-package-entry-outdir-exports-edge'));
+  it('typescript-package-entry-outdir-include-root-edge', () => runCase('typescript-package-entry-outdir-include-root-edge'));
+  it('typescript-package-entry-outdir-configs-disagree-silence', () => runCase('typescript-package-entry-outdir-configs-disagree-silence'));
+  it('typescript-package-entry-no-tsconfig-silence', () => runCase('typescript-package-entry-no-tsconfig-silence'));
   it('typescript-exports-no-tsconfig-react-server-default-edge', () => runCase('typescript-exports-no-tsconfig-react-server-default-edge'));
   it('typescript-exports-no-tsconfig-edge-light-default-edge', () => runCase('typescript-exports-no-tsconfig-edge-light-default-edge'));
   it('typescript-exports-no-tsconfig-react-native-default-edge', () => runCase('typescript-exports-no-tsconfig-react-native-default-edge'));
