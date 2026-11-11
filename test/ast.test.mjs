@@ -139,6 +139,24 @@ describe('walk and closest', () => {
       assert.equal(count, tree.rootNode.descendantCount);
     });
   });
+
+  // A node with 200 000 direct children: an index loop over them counts from the first child on every call, the square of their number; the cursor takes one step per child. About 0.1 s here, against a bound that leaves room for a loaded machine.
+  test('walk reads a node with 200 000 children in time linear in their number', async () => {
+    const elements = 200_000;
+    await host.withParsedFile('wide.js', `const wide = [${'1,'.repeat(elements)}];\n`, (tree) => {
+      let numbers = 0;
+      let widest = 0;
+      const start = performance.now();
+      walk(tree.rootNode, (n) => {
+        if (n.type === 'number') numbers++;
+        if (n.childCount > widest) widest = n.childCount;
+      });
+      const elapsed = performance.now() - start;
+      assert.equal(numbers, elements);
+      assert.ok(widest >= elements, `the widest node has ${widest} children`);
+      assert.ok(elapsed < 5_000, `took ${Math.round(elapsed)} ms`);
+    });
+  });
 });
 
 describe('the injected parser factory in Kotlin recovery', () => {
