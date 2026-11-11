@@ -232,8 +232,9 @@ function makeRustResolveDeps(
     return joined === '.' ? '' : joined;
   }
 
-  /** The library tree of the package at `pkgDir`. */
-  function libTreeOf(pkgDir: string, manifest: CargoManifest | undefined): { srcDir: string; rootFiles: string[] } {
+  /** The library tree of the package at `pkgDir`, or undefined when it has none: Cargo (`normalize_lib`, `autolib`) infers no library for a package that writes `autolib = false` and has no `[lib]` table, so its `src/lib.rs` is no library and no crate name addresses it. */
+  function libTreeOf(pkgDir: string, manifest: CargoManifest | undefined): { srcDir: string; rootFiles: string[] } | undefined {
+    if (manifest !== undefined && manifest.autolibOff && !manifest.libDeclared) return undefined;
     const rootFile = under(pkgDir, libPathOf(pkgDir, manifest) ?? 'src/lib.rs') ?? under(pkgDir, 'src/lib.rs')!;
     return { srcDir: dirOf(rootFile), rootFiles: [rootFile] };
   }
@@ -286,7 +287,7 @@ function makeRustResolveDeps(
       crateName,
       rootFiles: target.rootFiles.map(at),
       fileIsRoot: target.fileIsRoot,
-      lib,
+      lib: lib ?? null,
       crateRelativeUses: targetIsEdition2015(pkgDir, manifest, target.rootFiles.filter((f) => exists(at(f)))),
     };
   }
@@ -364,7 +365,8 @@ function makeRustResolveDeps(
       // target library's own crate name.
       const codeName = rename !== undefined ? normalizeCrateName(key) : (depManifest.crateName ?? normalizeCrateName(key));
       if (codeName !== name) continue;
-      return libTreeOf(depDir, depManifest);
+      const tree = libTreeOf(depDir, depManifest);
+      if (tree !== undefined) return tree;
     }
     return undefined;
   }
