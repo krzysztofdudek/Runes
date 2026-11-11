@@ -279,6 +279,20 @@ export function makeResolver(deps) {
         // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
         return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
     };
+    /**
+     * Whether the definers a C# extension-method reading binds can take its call (`TargetHint.takes`): true when one of `files` declares, under a key of the reading, an extension method whose shape takes the call's counts, or declares no shapes at all. It is asked only of a reading that would bind: a reading whose definers cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
+     */
+    const takesCall = (hint, files, language, fromFile) => {
+        const takes = hint.takes;
+        if (takes === undefined || language !== 'csharp')
+            return true;
+        const keys = [...new Set(hintKeys(hint, language, fromFile))];
+        for (const f of files) {
+            if (keys.some((k) => deps.symbolTable.filesFor(language, k).includes(f) && csharp().extensionTakes(k, f, takes)))
+                return true;
+        }
+        return false;
+    };
     /** The one C# type an ordered group of readings binds for `fromFile`, with the files in reach that declare it: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
     const bindCsharpType = (readings, fromFile) => {
         for (const hint of readings) {
@@ -479,7 +493,7 @@ export function makeResolver(deps) {
                 return undefined;
             const outcome = symbolOutcome(files);
             // absent / ambiguous (2+ owners) → silence; resolved (one file, or one owner) → edge.
-            return outcome.kind === 'resolved' ? { owner: outcome.owner, resolvedFile: outcome.resolvedFile } : undefined;
+            return outcome.kind === 'resolved' && takesCall(hint, files, language, fromFile) ? { owner: outcome.owner, resolvedFile: outcome.resolvedFile } : undefined;
         }
         const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
         if (!file) {
@@ -520,7 +534,8 @@ export function makeResolver(deps) {
                 if (forced !== undefined)
                     return { kind: forced };
             }
-            return symbolOutcome(files);
+            const outcome = symbolOutcome(files);
+            return outcome.kind === 'resolved' && !takesCall(hint, files, language, fromFile) ? { kind: 'absent' } : outcome;
         }
         // Path axis (PHP/Java/TS/JS/Py/Go/Rust/C/C++): resolution maps to AT MOST ONE file,
         // so the path probe itself has no `ambiguous` outcome — only resolved or absent. The one
@@ -544,7 +559,7 @@ export function makeResolver(deps) {
             const files = hintFiles(hint, language, fromFile);
             if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined)
                 return undefined;
-            return files.size === 1 ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
+            return files.size === 1 && takesCall(hint, files, language, fromFile) ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
         }
         const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
         if (file)

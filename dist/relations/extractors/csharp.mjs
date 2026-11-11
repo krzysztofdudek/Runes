@@ -282,6 +282,12 @@ function classExtensionKey(classKey, name) {
     return `${classKey}#${name}()`;
 }
 /**
+ * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces. A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
+ */
+export function extensionShapesKey(key) {
+    return `shapes:${key}`;
+}
+/**
  * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). A resolver given the reference graph (`ResolverDeps.reach`) reads the explicit and the implicit class as ONE name instead, as the compiler does, and chooses among those the referencing project can see, as long as the graph can say something about each of them. `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
  */
 export const IMPLICIT_PROGRAM_KEY = '<Program>$';
@@ -357,10 +363,17 @@ function methodShape(method) {
     }
     return `${typeParameterNames(method).size}:${required}:${open ? '*' : all}`;
 }
-/** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers. */
+/** The shape (`methodShape`) of an extension method as a call through its receiver sees it. The classic form declares the receiver as its first parameter, which the call does not pass. A member of a C# 14 extension block declares no receiver of its own, and the block may hold type parameters the member's own list does not show, so its count of type parameters is left open (`*`). */
+function extensionShape(method, blockMember) {
+    const [typeParameters, required, all] = methodShape(method).split(':');
+    if (blockMember)
+        return `*:${required}:${all}`;
+    return `${typeParameters}:${Number(required) - 1}:${all === '*' ? all : Number(all) - 1}`;
+}
+/** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers, and a shape that leaves its type parameters open (`*`) takes any. */
 export function shapeTakes(shape, typeArguments, args) {
     const [typeParameters, required, all] = shape.split(':');
-    if (typeArguments > 0 && Number(typeParameters) !== typeArguments)
+    if (typeArguments > 0 && typeParameters !== '*' && Number(typeParameters) !== typeArguments)
         return false;
     return args >= Number(required) && (all === '*' || args <= Number(all));
 }
@@ -699,6 +712,8 @@ function declarations(file) {
             listedMembers.set(typeKey, (listed = { line: owner.startPosition.row + 1, entries: new Set() }));
         listed.entries.add(entry);
     };
+    // The shapes of the extension methods of the file, by extension key (see `extensionShapesKey`).
+    const extensionShapes = new Map();
     // Set once a record of a written type is declared: the file then declares its using directives too.
     let written = false;
     const fileLocalTypes = [];
@@ -756,10 +771,15 @@ function declarations(file) {
             const assemblyOnly = assemblyOnlyExtension(node, scope.typeDecl);
             // The key of the method in its namespace (`extensionKey`), and the key it has in its class: `using static T;` imports the extension methods of T alone.
             const className = declaredTypeName(scope.typeDecl.node);
+            const shape = extensionShape(node, node.type === 'local_function_statement' || scope.extBelow);
             for (const symbolKey of [extensionKey(ns, extName), classExtensionKey(ns === '' ? className : `${ns}.${className}`, extName)]) {
                 out.push({ symbolKey, line });
                 if (assemblyOnly)
                     out.push({ symbolKey: internalKey(symbolKey), line });
+                let listed = extensionShapes.get(symbolKey);
+                if (listed === undefined)
+                    extensionShapes.set(symbolKey, (listed = { line, shapes: new Set() }));
+                listed.shapes.add(shape);
             }
             return undefined;
         }
@@ -792,6 +812,8 @@ function declarations(file) {
         out.push({ symbolKey: `${membersKey(typeKey)}\t${[...listed.entries].join(' ')}`, line: listed.line });
     for (const [typeKey, listed] of methods)
         out.push({ symbolKey: `${methodsKey(typeKey)}\t${[...listed.entries].join(' ')}`, line: listed.line });
+    for (const [key, listed] of extensionShapes)
+        out.push({ symbolKey: `${extensionShapesKey(key)}\t${[...listed.shapes].join(' ')}`, line: listed.line });
     if (written)
         out.push({ symbolKey: `${USINGS_KEY}\t${encodeUsings({ scope: buildUsingScope(file), fileLocalTypes })}`, line: 1 });
     // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
@@ -1355,8 +1377,9 @@ export function extractCsharpRefs(file) {
     /** What an `ext` descriptor says of its receiver: the receiver's written type, and the call's counts and the types around it where a receiver type will be asked. */
     const extensionReceiver = (inv, call) => {
         const receiver = receiverType(call.receiver);
+        // The counts alone say which extension methods can take the call; a count of zero is left out.
         if (receiver.on === undefined && receiver.self === undefined && call.member?.direct !== true)
-            return {};
+            return { ...(call.args > 0 ? { args: call.args } : {}), ...(call.typeArgs > 0 ? { typeArgs: call.typeArgs } : {}) };
         const from = enclosingTypes(inv).types;
         return { args: call.args, typeArgs: call.typeArgs, ...(from === undefined ? {} : { from: listPlace(from) }), ...receiver };
     };
@@ -2510,7 +2533,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
      *  in-scope `Name` → ambiguous → silence). Aliases import no
      *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
-    const pushExtension = (name, enclosingNs, line, at, unless) => {
+    const pushExtension = (name, enclosingNs, line, at, unless, takes) => {
         const candidates = [];
         const pushed = new Set();
         const addSet = (set) => {
@@ -2534,7 +2557,9 @@ export function assembleCsharpCandidates(extract, options = {}) {
         candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
         // A namespace both enclosing and imported only repeats a key already read.
         addSet([...usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })), ...compilationUnitStatics.map((t) => ({ symbolKey: classExtensionKey(t, name) }))]);
-        // Every extension reading carries the conditions under which the call is no extension call at all (`unless`).
+        // Every extension reading carries the counts of the call, which say which extension methods of its key can take it (`takes`), and the conditions under which the call is no extension call at all (`unless`).
+        for (const c of candidates)
+            c.takes = takes;
         if (unless.length > 0)
             for (const c of candidates)
                 c.unless = unless;
@@ -2645,7 +2670,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                     unless.push({ kind: 'no-member', types: holders, name: r.member.name, ...(r.member.direct ? { call } : {}) });
                 if (receivers.length > 0 || r.self !== undefined)
                     unless.push({ kind: 'instance-method', ...call, receivers, ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
-                pushExtension(r.name, r.enclosingNs, r.line, r.at, unless);
+                pushExtension(r.name, r.enclosingNs, r.line, r.at, unless, { args: call.args, typeArgs: call.typeArgs });
                 break;
             }
         }
@@ -2668,7 +2693,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 31,
+    rev: 32,
     declarations,
     uses,
 };

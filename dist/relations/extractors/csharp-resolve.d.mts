@@ -28,6 +28,11 @@ export interface CsharpTypeLookup {
     }, from: readonly string[], fromFile?: string): boolean;
     /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
     memberTypes(typeKey: string, name: string, fromFile?: string): string[];
+    /** True when one of the extension methods `file` declares under the extension key `key` can take a call with `call.args` arguments beside the receiver and `call.typeArgs` written type arguments (`shapeTakes` over the file's `shapes:<key>` record), or when the file declares no such record. */
+    extensionTakes(key: string, file: string, call: {
+        args: number;
+        typeArgs: number;
+    }): boolean;
 }
 /**
  * Which of an attribute's two readings C# takes (spec §23.3), from what each binds: `written` and `suffixed` are the attribute-class answers of the types the written name and the `Attribute`-suffixed name bind (undefined where the reading binds no type of the repository), and `hasSuffixed` says whether the attribute has a suffixed reading at all (a written name that already ends in `Attribute` has none). A reading that binds an attribute class is the result, and both doing so is the compiler's error CS1614, which gives nothing. A type that only may be one is taken as the suffixed reading, the name the convention gives an attribute class, and as the written reading only where no suffixed reading exists; a written name without the suffix that only may be one, beside nothing suffixed in the repository, gives nothing: the attribute is then most likely the framework's.

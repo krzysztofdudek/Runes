@@ -72,6 +72,11 @@ export type TargetHint = {
         written: TargetHint[];
         suffixed?: TargetHint[];
     };
+    /** C#: the counts of the call an extension-method reading stands for, its arguments beside the receiver and its written type arguments. Where the reading would bind, the resolver asks whether one of its definers declares, under the reading's key, an extension method that can take them (the `shapes:<key>` record of that file; a definer that declares no such record takes any call): when none can, the reading binds nothing, as a name the repository does not declare. A reading that names two owners stays ambiguous. Absent = the reading binds whatever the call passes. */
+    takes?: {
+        args: number;
+        typeArgs: number;
+    };
     /** C#: conditions under which the reading binds nothing (`CsharpCondition`). Where one holds, the resolver reads the candidate as it reads a name the repository does not declare: `classify` answers `absent`, `resolve` and `resolveFile` nothing. Every reading of a group that depends on a condition carries it, so the group binds nothing and ends in silence, and no outcome is an ambiguity. Absent = the reading stands. */
     unless?: CsharpCondition[];
     /** Ruby only: a lexical nesting candidate `N::A::B` carries its first-segment name

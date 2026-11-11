@@ -742,6 +742,47 @@ describe('csharp: what is recorded for a file type is read for the type of that 
   });
 });
 
+describe('csharp: an extension method takes a call only by its counts', () => {
+  it('an ext descriptor writes each count that is not zero, and both where a receiver type is asked', async () => {
+    await project({ 'src/web/Use.cs': 'class Use { void M(Order typed) { var s = Make(); s.Add(1, 2); s.Get<int>(); s.Run(); typed.Run(); } }\n' }, ({ files }) => {
+      const calls = extractCsharpRefs(files[0]).refs.filter((r) => r.kind === 'ext').map(({ args, typeArgs }) => [args, typeArgs]);
+      expect(calls).toEqual([[2, undefined], [undefined, 1], [undefined, undefined], [0, 0]]);
+    });
+  });
+
+  it('a reading binds nothing where its definer cannot take the call, the walk goes on outward, and a definer without a shapes record takes any call', async () => {
+    await project({
+      'src/lib/E.cs': 'namespace Lib;\npublic static class E { public static void Add(this object o, int a) { } }\n',
+      'src/kit/E.cs': 'namespace App.Web;\npublic static class E { public static void Add(this object o, int a, int b) { } }\n',
+      'src/web/Use.cs': 'using Lib;\nnamespace App.Web;\nclass Use {\n  void M() {\n    var s = Make();\n    s.Add(1);\n    s.Add(1, 2);\n    s.Add(1, 2, 3);\n  }\n}\n',
+    }, ({ edges, edgesThrough, declared, resolver, files }) => {
+      expect(edges('src/web/Use.cs')).toEqual(['6->lib', '7->kit']);
+      // The three answers agree: the nearer reading of the call of one argument is absent to `classify`, and nothing to `resolve` and `resolveFile`.
+      const nearer = csharpExtractor.uses(files.find((f) => f.path === 'src/web/Use.cs')).find((u) => u.line === 6).candidates[0];
+      expect(nearer.symbolKey).toBe('App.Web.Add()');
+      expect(resolver.classify(nearer, 'src/web/Use.cs', 'csharp')).toEqual({ kind: 'absent' });
+      expect(resolver.resolve(nearer, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      expect(resolver.resolveFile(nearer, 'src/web/Use.cs', 'csharp')).toBe(undefined);
+      // A table built from a store that kept no shapes record reads the definer of the nearer key for every call, as before.
+      const bare = new SymbolTable();
+      for (const [file, keys] of declared) for (const d of keys) if (!d.symbolKey.startsWith('shapes:')) bare.declare('csharp', d.symbolKey, file);
+      expect(edgesThrough(bare, 'src/web/Use.cs')).toEqual(['6->kit', '7->kit', '8->kit']);
+    });
+  });
+
+  it('two owners that declare the name at one level stay an ambiguity, whatever their shapes', async () => {
+    await project({
+      'src/lib/E.cs': 'namespace Lib;\npublic static class E { public static void Add(this object o, int a) { } }\n',
+      'src/kit/E.cs': 'namespace Kit;\npublic static class E { public static void Add(this object o, int a, int b) { } }\n',
+      'src/web/Use.cs': 'using Lib;\nusing Kit;\nclass Use {\n  void M() {\n    var s = Make();\n    s.Add(1);\n  }\n}\n',
+    }, ({ edges, resolver, files }) => {
+      expect(edges('src/web/Use.cs')).toEqual([]);
+      const group = csharpExtractor.uses(files[2]).find((u) => u.line === 6).candidates;
+      expect(group.map((c) => resolver.classify(c, 'src/web/Use.cs', 'csharp').kind)).toEqual(['absent', 'ambiguous', 'ambiguous']);
+    });
+  });
+});
+
 describe('csharp: the lists an extract names by place', () => {
   it('writes the types that can hold an unseen member once, for every receiver and call of one type body', async () => {
     await project({

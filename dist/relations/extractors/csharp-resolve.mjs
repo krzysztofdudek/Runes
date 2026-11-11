@@ -1,4 +1,4 @@
-import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, FILE_TYPE_REF, referencedTypeKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes, extensionShapesKey } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -198,7 +198,21 @@ export function makeCsharpTypeLookup(table, bind) {
         }
         return keys;
     };
+    const shapesMemo = new Map();
+    const extensionTakes = (key, file, call) => {
+        let byFile = shapesMemo.get(key);
+        if (byFile === undefined) {
+            shapesMemo.set(key, (byFile = new Map()));
+            for (const { value, files } of table.valuesOf(LANGUAGE, extensionShapesKey(key))) {
+                for (const f of files)
+                    byFile.set(f, [...(byFile.get(f) ?? []), ...value.split(' ')]);
+            }
+        }
+        const shapes = byFile.get(file);
+        return shapes === undefined || shapes.some((shape) => shapeTakes(shape, call.typeArgs, call.args));
+    };
     return {
+        extensionTakes,
         bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
         nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
         simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),
