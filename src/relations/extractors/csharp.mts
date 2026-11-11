@@ -433,6 +433,8 @@ export function convertsKey(typeKey: string): string {
 function writtenTypeEntry(typeNode: Node, scope: CsScope, typeParameters?: ReadonlySet<string>): string {
   const inner = typeNode.type === 'nullable_type' ? typeNode.childForFieldName('type')! : typeNode;
   if (inner.type === 'predefined_type') return inner.text;
+  // `dynamic` takes every argument, and the grammar reads the word as a plain name.
+  if (inner.text === 'dynamic') return '';
   const name = writtenName(inner, scope, typeParameters);
   return name === undefined || name === '' ? '' : encodeWritten({ at: inner.startIndex, name });
 }
@@ -1431,8 +1433,8 @@ const NAME_DECLARING_TYPES = new Set([
   ...TYPE_DECLARATION_TYPES,
 ]);
 
-/** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type. */
-type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean }>>;
+/** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type; `constant` marks a `const` field or local, whose value converts by more than its type says (C# spec §10.2.11). */
+type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean; constant?: boolean }>>;
 
 /** The nodes a declared name is scoped to. */
 const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed_statement', 'switch_section', 'catch_clause', 'switch_expression_arm', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
@@ -1459,8 +1461,8 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
   // The keys of the types of the file that can hold a member the file does not show (`takesMembers`).
   const openTypes = new Set<string>();
   const typedNames: TypedNames = new Map();
-  const typed = (name: string, type: Node | null, within: Node, member = false): void => {
-    const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member };
+  const typed = (name: string, type: Node | null, within: Node, member = false, constant = false): void => {
+    const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member, ...(constant ? { constant } : {}) };
     const list = typedNames.get(name);
     if (list === undefined) typedNames.set(name, [entry]);
     else list.push(entry);
@@ -1513,7 +1515,7 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
       const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && holderType !== null;
       for (const d of node.namedChildren) {
         const name = d!.type === 'variable_declarator' ? d!.childForFieldName('name') : null;
-        if (name !== null && name.type === 'identifier') typed(name.text, node.childForFieldName('type'), member ? holderType! : around, member);
+        if (name !== null && name.type === 'identifier') typed(name.text, node.childForFieldName('type'), member ? holderType! : around, member, hasModifier(holder, 'const'));
       }
     }
     const below = csBelow(node, scope, parentOf) ?? scope;
@@ -1647,7 +1649,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       const size = Math.min(...inScope.map((e) => e.end - e.start));
       const nearest = inScope.filter((e) => e.end - e.start === size);
       // One declaration in the nearest scope, with a type of its own: two of one name there leave the argument's type open.
-      if (nearest.length !== 1 || nearest[0].type === null) return null;
+      // A constant converts by its value (`const int Max = 5` to `byte`), so its written type says nothing certain of the parameters that take it.
+      if (nearest.length !== 1 || nearest[0].type === null || nearest[0].constant === true) return null;
       const type = nearest[0].type.type === 'nullable_type' ? nearest[0].type.childForFieldName('type')! : nearest[0].type;
       // `dynamic` is bound at run time, whatever the grammar reads the word as.
       if (type.text === 'dynamic') return null;
@@ -3009,7 +3012,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 36,
+  rev: 37,
   declarations,
   uses,
 };

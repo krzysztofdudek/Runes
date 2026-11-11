@@ -356,6 +356,9 @@ function writtenTypeEntry(typeNode, scope, typeParameters) {
     const inner = typeNode.type === 'nullable_type' ? typeNode.childForFieldName('type') : typeNode;
     if (inner.type === 'predefined_type')
         return inner.text;
+    // `dynamic` takes every argument, and the grammar reads the word as a plain name.
+    if (inner.text === 'dynamic')
+        return '';
     const name = writtenName(inner, scope, typeParameters);
     return name === undefined || name === '' ? '' : encodeWritten({ at: inner.startIndex, name });
 }
@@ -1259,8 +1262,8 @@ function collectDeclaredNames(root, fileNs) {
     // The keys of the types of the file that can hold a member the file does not show (`takesMembers`).
     const openTypes = new Set();
     const typedNames = new Map();
-    const typed = (name, type, within, member = false) => {
-        const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member };
+    const typed = (name, type, within, member = false, constant = false) => {
+        const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member, ...(constant ? { constant } : {}) };
         const list = typedNames.get(name);
         if (list === undefined)
             typedNames.set(name, [entry]);
@@ -1322,7 +1325,7 @@ function collectDeclaredNames(root, fileNs) {
             for (const d of node.namedChildren) {
                 const name = d.type === 'variable_declarator' ? d.childForFieldName('name') : null;
                 if (name !== null && name.type === 'identifier')
-                    typed(name.text, node.childForFieldName('type'), member ? holderType : around, member);
+                    typed(name.text, node.childForFieldName('type'), member ? holderType : around, member, hasModifier(holder, 'const'));
             }
         }
         const below = csBelow(node, scope, parentOf) ?? scope;
@@ -1453,7 +1456,8 @@ export function extractCsharpRefs(file) {
             const size = Math.min(...inScope.map((e) => e.end - e.start));
             const nearest = inScope.filter((e) => e.end - e.start === size);
             // One declaration in the nearest scope, with a type of its own: two of one name there leave the argument's type open.
-            if (nearest.length !== 1 || nearest[0].type === null)
+            // A constant converts by its value (`const int Max = 5` to `byte`), so its written type says nothing certain of the parameters that take it.
+            if (nearest.length !== 1 || nearest[0].type === null || nearest[0].constant === true)
                 return null;
             const type = nearest[0].type.type === 'nullable_type' ? nearest[0].type.childForFieldName('type') : nearest[0].type;
             // `dynamic` is bound at run time, whatever the grammar reads the word as.
@@ -2882,7 +2886,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 36,
+    rev: 37,
     declarations,
     uses,
 };
