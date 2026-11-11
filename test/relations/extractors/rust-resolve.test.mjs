@@ -1627,6 +1627,18 @@ path = "..\u002fmore"
     expect(await flags('#![cfg_attr(docsrs, cfg(docsrs))]\nmod a;\n')).toEqual([true]);
     expect(await flags('#![cfg_attr(docsrs, feature(doc_cfg))]\n#![no_std]\nmod a;\n')).toEqual([false]);
     expect(await flags('#[cfg(any())]\n#[allow(dead_code)]\nmod a;\n#[allow(dead_code)]\nmod b;\n')).toEqual([true, false]);
+    // What a cfg_attr applies is read from its tokens: a comment changes nothing, a nested cfg_attr is followed, and a cfg written inside another attribute, or a word in a string, applies nothing.
+    expect(await flags('#![cfg_attr(all(), cfg /* c */ (any()))]\nmod a;\n')).toEqual([true]);
+    expect(await flags('#![cfg_attr(all(), // c\n    cfg(any()))]\nmod a;\n')).toEqual([true]);
+    expect(await flags('#![cfg_attr(unix, allow(dead_code), cfg_attr(docsrs, cfg(docsrs)))]\nmod a;\n')).toEqual([true]);
+    expect(await flags('#![cfg_attr(docsrs, doc(cfg(unix)))]\nmod a;\n')).toEqual([false]);
+    expect(await flags('#![cfg_attr(docsrs, rustfmt::skip, doc = "cfg(x)")]\nmod a;\n')).toEqual([false]);
+    expect(await flags('#![cfg_attr(unix, cfg(x),)]\nmod a;\n')).toEqual([true]);
+    // A cfg_attr whose tokens do not read as a predicate and attributes may apply anything, a path included, so the file declares none.
+    expect(await flags('#![cfg_attr(unix)]\nmod a;\n')).toEqual([]);
+    expect(await flags('#![cfg_attr(unix, = x)]\nmod a;\n')).toEqual([]);
+    expect(await flags('#![cfg_attr(unix, cfg_attr)]\nmod a;\n')).toEqual([]);
+    expect(await flags('#![cfg_attr(, cfg(x))]\nmod a;\n')).toEqual([]);
     // A file that does not parse to the end declares none, and neither does a nameless or damaged `mod`.
     await withParsedFile('x.rs', 'mod a;\nfn broken( {\n', (tree) => expect(plainModuleFiles(tree.rootNode)).toEqual([]));
     await withParsedFile('x.rs', '', (tree) => expect(plainModuleFiles(tree.rootNode)).toEqual([]));
@@ -1881,12 +1893,16 @@ describe('declaredModules', () => {
     expect((await read('mod outer { declare::them! { c } }')).known).toBe(false);
     expect((await read('#![my_crate_macro]\nmod a;')).known).toBe(false);
     expect((await read('mod outer {\n    #![cfg_attr(unix, path = "u")]\n    mod a;\n}')).known).toBe(false);
+    expect((await read('#![cfg_attr(unix, /* c */ path = "u")]\nmod a;')).known).toBe(false);
+    expect((await read('#![cfg_attr(unix, cfg_attr(docsrs, path = "u"))]\nmod a;')).known).toBe(false);
+    expect((await read('#![cfg_attr(unix)]\nmod a;')).known).toBe(false);
     expect((await read('cfg_if! { if #[cfg(a)] { modules!(b); } }')).known).toBe(false);
     expect((await read('cfg_if! { if #[cfg(a)] { mod m { cfg_if! { if #[cfg(b)] { gen_mods! {} } } } } }')).known).toBe(false);
     expect((await read('mod a;\nfn broken( {')).known).toBe(false);
   });
 
   it('stays whole beside what declares no module', async () => {
+    expect((await read('#![cfg_attr(docsrs, doc = "path")]\nmod a;')).known).toBe(true);
     const r = await read('#![no_std]\n#![cfg_attr(docsrs, feature(doc_cfg))]\ncfg_if! {\n    if #[cfg(a)] {\n        macro_rules! m { () => {}; }\n        thread_local! { static T: u8 = 1; }\n        const A: u8 = make!(1);\n        fn f() -> ! { panic!() }\n        cfg_if! { if #[cfg(b)] { static B: bool = !true; } }\n    }\n}\nfn g() { println!("x"); }\nbitflags! { struct F: u8 {} }\nstruct S;');
     expect(paths(r)).toEqual([]);
     expect(r.known).toBe(true);

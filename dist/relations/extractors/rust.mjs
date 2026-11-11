@@ -789,14 +789,62 @@ function attributesBefore(item) {
     }
     return out;
 }
-/** Whether an attribute may remove what it stands on: a `cfg`, or a `cfg_attr` whose text applies one (`cfg_attr(a, cfg(b))`; a `doc(cfg(…))` inside one counts too, which errs toward conditional). */
+/** Whether an attribute may remove what it stands on: a `cfg`, or a `cfg_attr` that applies one (`cfg_attr(a, cfg(b))`, also through a nested `cfg_attr`), read from its tokens, so a comment inside it changes nothing. A `cfg_attr` whose tokens cannot be read counts, which errs toward conditional. */
 function attributeIsCfg(item) {
-    const id = item.namedChildren.find((c) => c !== null && c.type === 'attribute')?.namedChild(0) ?? null;
-    if (id === null || id.type !== 'identifier')
+    const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
+    const id = attr?.namedChild(0) ?? null;
+    if (attr === null || id === null || id.type !== 'identifier')
         return false;
-    return id.text === 'cfg' || (id.text === 'cfg_attr' && /\bcfg\s*\(/.test(item.text));
+    if (id.text === 'cfg')
+        return true;
+    if (id.text !== 'cfg_attr')
+        return false;
+    const applied = cfgAttrApplies(attr);
+    return applied === undefined || applied.includes('cfg');
 }
-/** Whether an `attribute_item` (in front of an item) or an `inner_attribute_item` (`inner`, at the head of a file or an inline module) is one of the compiler's inert attributes or a tool's. An inner `cfg_attr` is inert unless it names a `path`: no attribute macro stands in that place. */
+/** The names of the attributes a `cfg_attr` applies when its predicate holds, read from its tokens (`attr` is the `attribute` node, or the token tree of a `cfg_attr` nested in one): each attribute after the predicate, by its path (`cfg`, `path`, `rustfmt::skip`), and those of a `cfg_attr` nested among them. Comments are passed over. Undefined when the tokens do not read as a predicate followed by attributes. */
+function cfgAttrApplies(attr) {
+    const args = attr.type === 'token_tree' ? attr : attr.childForFieldName('arguments');
+    if (args === null || args.type !== 'token_tree')
+        return undefined;
+    const tokens = args.children.filter((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+    const parts = [[]];
+    for (const t of tokens) {
+        if (t.type === ',')
+            parts.push([]);
+        else
+            parts[parts.length - 1].push(t);
+    }
+    if (parts.length < 2 || parts[0].length === 0)
+        return undefined;
+    const out = [];
+    for (const part of parts.slice(1)) {
+        if (part.length === 0)
+            continue;
+        let i = 0;
+        const names = [];
+        while (part[i]?.type === 'identifier') {
+            names.push(part[i].text);
+            if (part[i + 1]?.type !== '::')
+                break;
+            i += 2;
+        }
+        if (names.length === 0)
+            return undefined;
+        const name = names.join('::');
+        if (name === 'cfg_attr') {
+            const tree = part[1];
+            const nested = tree?.type === 'token_tree' ? cfgAttrApplies(tree) : undefined;
+            if (nested === undefined)
+                return undefined;
+            out.push(...nested);
+        }
+        else
+            out.push(name);
+    }
+    return out;
+}
+/** Whether an `attribute_item` (in front of an item) or an `inner_attribute_item` (`inner`, at the head of a file or an inline module) is one of the compiler's inert attributes or a tool's. An inner `cfg_attr` is inert unless it applies a `path`, or its tokens cannot be read: no attribute macro stands in that place. */
 function attributeIsInert(item, inner) {
     const attr = item.namedChildren.find((c) => c !== null && c.type === 'attribute') ?? null;
     const id = attr?.namedChild(0) ?? null;
@@ -807,7 +855,10 @@ function attributeIsInert(item, inner) {
             return true;
         if (!inner)
             return false;
-        return INERT_INNER_ATTRIBUTES.has(id.text) || (id.text === 'cfg_attr' && !/\bpath\b/.test(item.text));
+        if (INERT_INNER_ATTRIBUTES.has(id.text))
+            return true;
+        const applied = id.text === 'cfg_attr' ? cfgAttrApplies(attr) : undefined;
+        return applied !== undefined && !applied.includes('path');
     }
     if (id.type !== 'scoped_identifier')
         return false;
@@ -1068,7 +1119,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 18,
+    rev: 19,
     declarations,
     uses,
 };
