@@ -120,8 +120,7 @@ function pathText(node) {
  *  `{ … }` list or the `*`. It is a named child that is one of the path-shaped
  *  node types; the trailing `use_list` is excluded. Returns undefined when absent. */
 function prefixNode(parent) {
-    for (let i = 0; i < parent.namedChildCount; i++) {
-        const c = parent.namedChild(i);
+    for (const c of parent.namedChildren) {
         if (c === null)
             continue;
         if (c.type === 'scoped_identifier' ||
@@ -304,8 +303,7 @@ function uses(file) {
             }
             case 'use_list': {
                 // `{ items }` — a group's list, or a brace list with no path prefix at all (`use {a::X, b::Y};`, where it is the argument itself): resolve every item on its own under the current prefix (empty at the top level).
-                for (let i = 0; i < arg.namedChildCount; i++) {
-                    const item = arg.namedChild(i);
+                for (const item of arg.namedChildren) {
                     if (item !== null)
                         handleArgument(item, prefix);
                 }
@@ -315,7 +313,7 @@ function uses(file) {
                 return;
         }
     };
-    walkScoped(file.tree.rootNode, null, (node, scope) => {
+    walkScoped(file.tree.rootNode, null, (node, scope, parent) => {
         mods = scope;
         if (node.type === 'use_declaration') {
             const arg = node.childForFieldName('argument');
@@ -348,7 +346,7 @@ function uses(file) {
             return false;
         }
         // Inline FQN in TYPE position — the outermost scoped_type_identifier carries the full path.
-        if (node.type === 'scoped_type_identifier' && node.parent?.type !== 'scoped_type_identifier') {
+        if (node.type === 'scoped_type_identifier' && parent()?.type !== 'scoped_type_identifier') {
             emitInline(scopedTypePathText(node), node);
             return undefined;
         }
@@ -356,8 +354,8 @@ function uses(file) {
         // an associated-fn path). Inner scoped_identifiers (incl. the `path` of a
         // scoped_type_identifier) have a scoped parent and are skipped.
         if (node.type === 'scoped_identifier' &&
-            node.parent?.type !== 'scoped_identifier' &&
-            node.parent?.type !== 'scoped_type_identifier') {
+            parent()?.type !== 'scoped_identifier' &&
+            parent()?.type !== 'scoped_type_identifier') {
             emitInline(pathText(node), node);
             return undefined;
         }
@@ -398,8 +396,7 @@ function join(prefix, tail) {
 function declarations(file) {
     const out = [];
     const root = file.tree.rootNode;
-    for (let i = 0; i < root.namedChildCount; i++) {
-        const node = root.namedChild(i);
+    for (const node of root.namedChildren) {
         if (node === null)
             continue;
         if (node.type === 'struct_item' ||

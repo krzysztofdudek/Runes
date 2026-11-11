@@ -3,14 +3,34 @@ import type { Node } from 'web-tree-sitter';
 /**
  * Visit `root` and every node below it, depth-first in document order, handing each node the scope its ancestors made. The visitor returns `false` to skip the node's children, `undefined` to let them inherit the scope it was given, or a new scope for them. The walk moves a tree cursor (first child, next sibling, parent), each step constant time, and keeps one scope per depth, so a context an extractor needs from the ancestors (the enclosing namespaces, the type parameters in scope) is carried down once instead of being read by climbing `.parent` from every node, which costs the square of the depth.
  */
-export function walkScoped<S>(root: Node, initial: S, visitor: (node: Node, scope: S) => S | false | undefined): void {
+/**
+ * The parent of the node a walk is visiting, valid only during that visit. Tree-sitter keeps no parent pointer: `node.parent` searches down from the root, stepping over the earlier children of every ancestor, so a visitor that asks it for each child of a node with tens of thousands of children costs the square of that number. The walk already came through the parent and hands it over in constant time.
+ */
+export type ParentOf = () => Node | null;
+
+/** Visit `root` and every node below it like `walk`, handing each visit the parent of its node (see `ParentOf`). The walk did not come through the parent of `root` itself: a caller that starts many walks at the children of one wide node, and knows their parent, passes it as `parentOfRoot` instead of leaving it to `root.parent`. */
+export function walkWithParent(root: Node, visitor: (node: Node, parent: ParentOf) => boolean | void, parentOfRoot?: ParentOf): void {
+  walkScoped<null>(root, null, (node, _scope, parent) => (visitor(node, parent) === false ? false : undefined), parentOfRoot);
+}
+
+export function walkScoped<S>(
+  root: Node,
+  initial: S,
+  visitor: (node: Node, scope: S, parent: ParentOf) => S | false | undefined,
+  parentOfRoot: ParentOf = () => root.parent,
+): void {
   const cursor = root.walk();
   try {
     // scopes[d] is the scope the nodes at depth d inherit (depth 0 is `root`, which inherits `initial`).
     const scopes: S[] = [initial];
+    // nodes[d] is the node the walk is at on depth d, so the parent of the node being visited is one read away.
+    const nodes: Node[] = [];
     let depth = 0;
+    const parent: ParentOf = () => (depth === 0 ? parentOfRoot() : nodes[depth - 1]);
     for (;;) {
-      const result = visitor(cursor.currentNode, scopes[depth]);
+      const node = cursor.currentNode;
+      nodes[depth] = node;
+      const result = visitor(node, scopes[depth], parent);
       if (result !== false && cursor.gotoFirstChild()) {
         scopes[depth + 1] = result === undefined ? scopes[depth] : result;
         depth++;
@@ -33,17 +53,17 @@ export function walkScoped<S>(root: Node, initial: S, visitor: (node: Node, scop
 export function indexScopes<S>(
   roots: readonly Node[],
   initial: S,
-  below: (node: Node, seen: S) => S | undefined,
+  below: (node: Node, seen: S, parent: ParentOf) => S | undefined,
   seen?: (node: Node, inherited: S) => S,
   skip?: (node: Node) => boolean,
 ): Map<number, S> {
   const index = new Map<number, S>();
   for (const root of roots) {
-    walkScoped<S>(root, initial, (node, inherited) => {
+    walkScoped<S>(root, initial, (node, inherited, parent) => {
       const own = seen === undefined ? inherited : seen(node, inherited);
       index.set(node.id, own);
       if (skip?.(node) === true) return false;
-      return below(node, own) ?? (own === inherited ? undefined : own);
+      return below(node, own, parent) ?? (own === inherited ? undefined : own);
     });
   }
   return index;

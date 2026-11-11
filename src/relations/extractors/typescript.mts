@@ -62,8 +62,7 @@ import { single } from './types.mjs';
 /** Strip the surrounding quotes from a `string` node by reading its `string_fragment` child. */
 function specifierFromStringNode(stringNode: Node | null): string | undefined {
   if (stringNode === null || stringNode.type !== 'string') return undefined;
-  for (let i = 0; i < stringNode.namedChildCount; i++) {
-    const child = stringNode.namedChild(i);
+  for (const child of stringNode.namedChildren) {
     if (child !== null && child.type === 'string_fragment') return child.text;
   }
   // Empty string literal ('') has no string_fragment child.
@@ -86,8 +85,7 @@ function specifierFromCallArg(arg: Node): string | undefined {
   if (arg.type === 'string') return specifierFromStringNode(arg);
   if (arg.type !== 'template_string') return undefined;
   let fragment: string | undefined;
-  for (let i = 0; i < arg.namedChildCount; i++) {
-    const child = arg.namedChild(i);
+  for (const child of arg.namedChildren) {
     if (child === null) continue;
     if (child.type === 'template_substitution') return undefined; // interpolated → non-static
     if (child.type === 'string_fragment') fragment = child.text;
@@ -109,8 +107,7 @@ function argumentAt(call: Node, index: number): Node | null {
   const args = call.childForFieldName('arguments');
   if (args === null) return null;
   let seen = 0;
-  for (let i = 0; i < args.namedChildCount; i++) {
-    const arg = args.namedChild(i);
+  for (const arg of args.namedChildren) {
     if (arg === null || arg.type === 'comment') continue;
     if (seen === index) return arg;
     seen++;

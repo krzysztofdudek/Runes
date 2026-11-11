@@ -549,6 +549,7 @@ function readHeader(chunk) {
  *  token lies outside all of them (the chunk touches damage). */
 function coveringNodes(chunk, clean) {
     const used = [];
+    const usedSet = new Set();
     for (const t of chunk.toks) {
         if (t.kind === 'nl')
             continue;
@@ -568,8 +569,10 @@ function coveringNodes(chunk, clean) {
         const c = at === -1 ? undefined : clean[at];
         if (c === undefined || t.end > c.endIndex)
             return undefined;
-        if (!used.includes(c))
+        if (!usedSet.has(c)) {
+            usedSet.add(c);
             used.push(c);
+        }
     }
     return used;
 }
@@ -744,8 +747,7 @@ export function kotlinView(tree, content, newParser) {
         // re-parsed on its own.
         const baseToks = base === tree ? toks : tokenize(text).toks;
         const clean = [];
-        for (let i = 0; i < base.rootNode.childCount; i++) {
-            const c = base.rootNode.child(i);
+        for (const c of base.rootNode.children) {
             if (c !== null && !damaged(c))
                 clean.push(c);
         }

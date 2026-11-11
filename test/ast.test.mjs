@@ -139,6 +139,20 @@ describe('walk and closest', () => {
       assert.equal(count, tree.rootNode.descendantCount);
     });
   });
+
+  // A node with 200 000 direct children, as a malformed file gives: unterminated strings, one per line, parse into one flat run under the root. (A well-formed list will not do: tree-sitter stores a repetition balanced, and an index loop reads that quickly.) An index loop over the run counts from the first child on every call, the square of their number: 2 s at 25 000 lines and 9 s at 50 000. The cursor takes one step per child, about half a second here.
+  test('walk reads a node with 200 000 children in time linear in their number', async () => {
+    const lines = 140_000;
+    await host.withParsedFile('wide.js', '"a(\n'.repeat(lines), (tree) => {
+      assert.ok(tree.rootNode.childCount >= 200_000, `the root has ${tree.rootNode.childCount} children`);
+      let count = 0;
+      const start = performance.now();
+      walk(tree.rootNode, () => { count++; });
+      const elapsed = performance.now() - start;
+      assert.equal(count, tree.rootNode.descendantCount);
+      assert.ok(elapsed < 5_000, `took ${Math.round(elapsed)} ms`);
+    });
+  });
 });
 
 describe('the injected parser factory in Kotlin recovery', () => {

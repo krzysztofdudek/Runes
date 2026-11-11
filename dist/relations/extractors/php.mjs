@@ -1,4 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
+import { walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
  * PHP dependency extractor.
@@ -72,8 +73,7 @@ function stripLeadingBackslash(fqn) {
 /** The FQN text of a clause's name node: its `qualified_name`, or a bare `name`.
  *  Returns the raw `.text` (backslashes preserved) or undefined when neither is present. */
 function clauseNameText(clause) {
-    for (let i = 0; i < clause.namedChildCount; i++) {
-        const child = clause.namedChild(i);
+    for (const child of clause.namedChildren) {
         if (child === null)
             continue;
         if (child.type === 'qualified_name' || child.type === 'name')
@@ -89,8 +89,7 @@ function clauseNameText(clause) {
  *  instead (`use Base\{function f, Klass};`) is NOT caught here; that is guarded per clause
  *  by clauseIsFunctionOrConst during expansion. */
 function isFunctionOrConstUse(decl) {
-    for (let j = 0; j < decl.childCount; j++) {
-        const c = decl.child(j);
+    for (const c of decl.children) {
         if (c !== null && !c.isNamed && (c.type === 'function' || c.type === 'const'))
             return true;
     }
@@ -101,8 +100,7 @@ function isFunctionOrConstUse(decl) {
  *  `function format` clause is a function import). Such a clause imports a function/constant,
  *  not a class, and is dropped while its sibling class clauses are kept. */
 function clauseIsFunctionOrConst(clause) {
-    for (let k = 0; k < clause.childCount; k++) {
-        const c = clause.child(k);
+    for (const c of clause.children) {
         if (c !== null && !c.isNamed && (c.type === 'function' || c.type === 'const'))
             return true;
     }
@@ -112,8 +110,7 @@ function clauseIsFunctionOrConst(clause) {
  *  It is the `namespace_name` child sitting directly under the declaration (NOT inside a
  *  clause), present only in the grouped form. */
 function groupBase(decl) {
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const child = decl.namedChild(i);
+    for (const child of decl.namedChildren) {
         if (child !== null && child.type === 'namespace_name')
             return child.text;
     }
@@ -154,12 +151,10 @@ const CLASS_REF_PARENTS = new Set([
 /** True when `qn` is the right operand of an `instanceof` binary expression
  *  (`$x instanceof \App\Y`) — a class reference. Detected by an anonymous `instanceof`
  *  token child on the binary_expression parent. */
-function isInstanceofClassRef(qn) {
-    const parent = qn.parent;
+function isInstanceofClassRef(parent) {
     if (parent === null || parent.type !== 'binary_expression')
         return false;
-    for (let i = 0; i < parent.childCount; i++) {
-        const c = parent.child(i);
+    for (const c of parent.children) {
         if (c !== null && !c.isNamed && c.type === 'instanceof')
             return true;
     }
@@ -169,13 +164,12 @@ function isInstanceofClassRef(qn) {
  *  only positions an inline FQN is emitted from (see CLASS_REF_PARENTS / isInstanceofClassRef).
  *  A function-call (`\App\f()`) parent is `function_call_expression`; a bare constant parent
  *  is a generic expression — neither is in scope, so both are excluded. */
-function isClassReferenceContext(qn) {
-    const parent = qn.parent;
+function isClassReferenceContext(parent) {
     if (parent === null)
         return false;
     if (CLASS_REF_PARENTS.has(parent.type))
         return true;
-    return isInstanceofClassRef(qn);
+    return isInstanceofClassRef(parent);
 }
 /**
  * Class names that are never autoloaded: the relative scope keywords and the built-in type
@@ -205,15 +199,13 @@ function collectAliases(decl, aliases) {
         if (alias !== '')
             aliases.set(alias.toLowerCase(), fqn);
     };
-    for (let i = 0; i < decl.namedChildCount; i++) {
-        const child = decl.namedChild(i);
+    for (const child of decl.namedChildren) {
         if (child === null)
             continue;
         if (child.type === 'namespace_use_clause')
             addClause(child, undefined);
         else if (child.type === 'namespace_use_group') {
-            for (let g = 0; g < child.namedChildCount; g++) {
-                const clause = child.namedChild(g);
+            for (const clause of child.namedChildren) {
                 if (clause !== null && clause.type === 'namespace_use_clause')
                     addClause(clause, base);
             }
@@ -226,8 +218,7 @@ function collectAliases(decl, aliases) {
 function namespaceScopes(root) {
     let current = { start: 0, end: Number.POSITIVE_INFINITY, ns: '', aliases: new Map() };
     const scopes = [current];
-    for (let i = 0; i < root.namedChildCount; i++) {
-        const child = root.namedChild(i);
+    for (const child of root.namedChildren) {
         if (child === null)
             continue;
         if (child.type === 'namespace_definition') {
@@ -235,8 +226,7 @@ function namespaceScopes(root) {
             const body = child.childForFieldName('body');
             if (body !== null) {
                 const scope = { start: child.startIndex, end: child.endIndex, ns, aliases: new Map() };
-                for (let j = 0; j < body.namedChildCount; j++) {
-                    const stmt = body.namedChild(j);
+                for (const stmt of body.namedChildren) {
                     if (stmt !== null && stmt.type === 'namespace_use_declaration')
                         collectAliases(stmt, scope.aliases);
                 }
@@ -268,8 +258,7 @@ function scopeAt(scopes, index) {
  * checks the node's place under its parent, because a plain `name` also spells member names
  * (`X::method`, `X::CONST`), function names and constants.
  */
-function isClassOperand(node) {
-    const parent = node.parent;
+function isClassOperand(node, parent) {
     if (parent === null)
         return false;
     const first = parent.namedChild(0);
@@ -291,7 +280,7 @@ function isClassOperand(node) {
         }
         case 'binary_expression': {
             const right = parent.childForFieldName('right');
-            return right !== null && right.id === node.id && isInstanceofClassRef(node);
+            return right !== null && right.id === node.id && isInstanceofClassRef(parent);
         }
         default:
             return false;
@@ -351,8 +340,7 @@ function staticIncludePath(operand) {
     if (expr === null || expr.type !== 'binary_expression')
         return undefined;
     let isConcat = false;
-    for (let i = 0; i < expr.childCount; i++) {
-        const c = expr.child(i);
+    for (const c of expr.children) {
         if (c !== null && !c.isNamed && c.type === '.')
             isConcat = true;
     }
@@ -376,8 +364,7 @@ function staticIncludePath(operand) {
     else if (left.type === 'function_call_expression' && left.childForFieldName('function')?.text.toLowerCase() === 'dirname') {
         const args = left.childForFieldName('arguments');
         const argNodes = [];
-        for (let i = 0; i < (args?.namedChildCount ?? 0); i++) {
-            const a = args.namedChild(i);
+        for (const a of args?.namedChildren ?? []) {
             if (a !== null && a.type === 'argument')
                 argNodes.push(a);
         }
@@ -426,7 +413,7 @@ function uses(file) {
         out.push(single({ kind: 'path', specifier: cleaned }, 'import', line));
     };
     const scopes = namespaceScopes(file.tree.rootNode);
-    walk(file.tree.rootNode, (node) => {
+    walkWithParent(file.tree.rootNode, (node, parent) => {
         // A statically file-relative require/include (`__DIR__ . '/../lib/x.php'`).
         if (INCLUDE_TYPES.has(node.type)) {
             const spec = staticIncludePath(node.namedChild(0));
@@ -438,7 +425,7 @@ function uses(file) {
         // resolved with PHP's own compile-time rules from the file's namespace and imports.
         if ((node.type === 'name' || node.type === 'relative_name' ||
             (node.type === 'qualified_name' && !node.text.startsWith('\\'))) &&
-            isClassOperand(node)) {
+            isClassOperand(node, parent())) {
             emit(resolveRelativeClassName(node, scopeAt(scopes, node.startIndex)), node);
             return undefined;
         }
@@ -448,7 +435,7 @@ function uses(file) {
         // An import's qualified_name sits under namespace_use_clause (not a class context) and
         // is never matched here, so imports are handled solely by the branch below.
         if (node.type === 'qualified_name') {
-            if (node.text.startsWith('\\') && isClassReferenceContext(node))
+            if (node.text.startsWith('\\') && isClassReferenceContext(parent()))
                 emit(node.text, node);
             return undefined;
         }
@@ -458,8 +445,7 @@ function uses(file) {
         if (isFunctionOrConstUse(node))
             return undefined;
         const base = groupBase(node);
-        for (let i = 0; i < node.namedChildCount; i++) {
-            const child = node.namedChild(i);
+        for (const child of node.namedChildren) {
             if (child === null)
                 continue;
             if (child.type === 'namespace_use_clause') {
@@ -471,8 +457,7 @@ function uses(file) {
             }
             else if (child.type === 'namespace_use_group') {
                 // Grouped form: prepend the leading base namespace to each group clause.
-                for (let g = 0; g < child.namedChildCount; g++) {
-                    const clause = child.namedChild(g);
+                for (const clause of child.namedChildren) {
                     if (clause === null || clause.type !== 'namespace_use_clause')
                         continue;
                     if (clauseIsFunctionOrConst(clause))

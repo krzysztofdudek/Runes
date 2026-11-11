@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { walkScoped, indexScopes } from '../../helpers/internal/relations.mjs';
+import * as relations from '../../helpers/internal/relations.mjs';
 
 const CODE = 'mod a { mod b { use crate::x; } use crate::y; }\nuse crate::z;\n';
 
@@ -27,6 +28,55 @@ describe('walkScoped', () => {
         return node.type === 'mod_item' ? false : undefined;
       });
       assert.deepEqual(uses, ['use crate::z;']);
+    });
+  });
+
+  it('hands each visit the parent of its node, the one `node.parent` names', async () => {
+    await withTree((root) => {
+      let visits = 0;
+      walkScoped(root, 0, (node, _scope, parent) => {
+        visits++;
+        assert.equal(parent()?.id, node.parent?.id, node.type);
+        assert.equal(parent() === null, node.parent === null, node.type);
+        return undefined;
+      });
+      assert.equal(visits, root.descendantCount);
+    });
+  });
+
+  it('started below the root, reads the parent of the node it was given from the tree unless the caller names it', async () => {
+    await withTree((root) => {
+      const mod = root.namedChild(0);
+      const seen = [];
+      walkScoped(mod, 0, (node, _scope, parent) => {
+        if (node.id === mod.id) seen.push(parent()?.type);
+        return false;
+      });
+      walkScoped(mod, 0, (node, _scope, parent) => { seen.push(parent()); return false; }, () => null);
+      assert.deepEqual(seen, ['source_file', null]);
+    });
+  });
+});
+
+describe('walkWithParent', () => {
+  it('visits what walk visits, each node with its parent, and a false return skips the children', async () => {
+    await withTree((root) => {
+      const seen = [];
+      relations.walkWithParent(root, (node, parent) => {
+        if (node.type === 'use_declaration') seen.push([node.text, parent()?.type]);
+        return node.type !== 'mod_item' || node.childForFieldName('name')?.text !== 'b';
+      });
+      assert.deepEqual(seen, [['use crate::y;', 'declaration_list'], ['use crate::z;', 'source_file']]);
+    });
+  });
+
+  it('takes the parent of the node it starts at from the caller when given one', async () => {
+    await withTree((root) => {
+      const mod = root.namedChild(0);
+      const parents = [];
+      relations.walkWithParent(mod, (_node, parent) => { parents.push(parent()?.type); return false; });
+      relations.walkWithParent(mod, (_node, parent) => { parents.push(parent()?.type); return false; }, () => root.namedChild(1));
+      assert.deepEqual(parents, ['source_file', 'use_declaration']);
     });
   });
 });

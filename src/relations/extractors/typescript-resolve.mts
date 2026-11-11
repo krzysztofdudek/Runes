@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { diskFileView, type FileSource } from '../file-view.mjs';
-import { failureOffset, lineColumnAt, reportUnreadable, type DiagnosticSink, type Failure } from '../diagnostics.mjs';
+import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING, type DiagnosticSink, type Failure } from '../diagnostics.mjs';
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
 
@@ -29,7 +29,7 @@ export type TsCallForm = 'require' | 'import';
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. An `exports` target or an entry field that names no file is mapped back to the source it is compiled from, through the package's tsconfig (`outDir` to `rootDir`, see `sourceOfOutput` in {@link makeTsResolveDeps}); one that maps to nothing binds nothing and is reported. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -85,9 +85,16 @@ export interface TsResolveDeps {
   packageNamed(name: string, fromFile: string): TsPackage | 'ambiguous' | undefined;
   /** The package whose package.json sits directly in `dir`, if any. */
   packageAt?(dir: string): TsPackage | undefined;
+  /** The source file a package entry is compiled from, when the entry (`target`, repo-rel) names a file under the build output of a tsconfig of the package in `pkgDir`: `outDir` mapped back to `rootDir`. undefined when no tsconfig maps it, {@link SOURCES_DISAGREE} when two readings name different files. */
+  sourceOfOutput?(pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined;
+  /** Told that an entry of a package's package.json names no file and maps to no source, so an import that resolved to it bound nothing. */
+  entryMissing?(pkg: TsPackage, target: string, sourcesDisagree: boolean): void;
   /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution target, whether or not it is on disk. */
   isExcluded?(repoRelPosix: string): boolean;
 }
+
+/** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
+export const SOURCES_DISAGREE = Symbol('sources disagree');
 
 export interface TsPathConfig {
   /** Repo-rel POSIX directory `baseUrl` resolves to ('' = repo root), when set anywhere in the chain. */
@@ -95,7 +102,11 @@ export interface TsPathConfig {
   /** `moduleResolution` and `module`, lower-cased, and `customConditions`, when set anywhere in the chain: what the conditions of a package's `exports` and `imports` are chosen by. */
   moduleResolution?: string;
   module?: string;
+  /** `target`, lower-cased, when set anywhere in the chain: what the compiler takes its default `module` from. */
+  target?: string;
   customConditions?: string[];
+  /** Whether a base that cannot be read may have set `customConditions`, and nothing read since has set them. */
+  customConditionsUnknown?: boolean;
   /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
   paths?: { base: string; map: Record<string, string[]> };
 }
@@ -109,6 +120,13 @@ interface LoadedConfig extends TsPathConfig {
   /** `outDir` and `declarationDir`, repo-rel, when set anywhere in the chain inside the repository: tsc's default `exclude`. */
   outDir?: string;
   declarationDir?: string;
+  /** `rootDir`, repo-rel, when set anywhere in the chain; null when it lies outside the repository. */
+  rootDir?: string | null;
+  /** `allowJs` and `checkJs`, when set anywhere in the chain: with `allowJs` on (its default is `checkJs`) the project compiles JavaScript sources too. */
+  allowJs?: boolean;
+  checkJs?: boolean;
+  /** `noEmit`, when set anywhere in the chain: a config with it on writes no output. */
+  noEmit?: boolean;
 }
 
 export interface TsPackage {
@@ -193,15 +211,44 @@ function resolveWorkspacePackage(
   if (pkg === undefined || pkg === 'ambiguous') return undefined;
   const { manifest, dir } = pkg;
 
+  // An entry that names no file in the repository (build output a clean checkout does not hold) is read through the package's tsconfig; one that maps to no source either is reported when nothing else binds the import.
+  const missing: MissingEntry[] = [];
+  const reported = (hit: string | undefined): string | undefined => {
+    if (hit === undefined && missing.length > 0) deps.entryMissing?.(pkg, missing[0].target, missing[0].sourcesDisagree);
+    return hit;
+  };
   if (manifest.exports !== undefined && manifest.exports !== null) {
     // `exports` is the package's whole public surface: a subpath it does not list is not
     // importable, so no fallback to the directory layout.
-    return pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) =>
-      target.startsWith('./') ? probe(joinUnder(dir, target), exists) : undefined,
+    return reported(
+      pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) =>
+        target.startsWith('./') ? entryFile(pkg, joinUnder(dir, target), exists, deps, missing) : undefined,
+      ),
     );
   }
   if (subpath !== '.') return probe(joinUnder(dir, subpath), exists, deps);
-  return entryOf(pkg, exists) ?? probe(joinUnder(dir, 'index'), exists);
+  return reported(entryOf(pkg, exists, deps, missing) ?? probe(joinUnder(dir, 'index'), exists));
+}
+
+/** The file a package entry names: the file itself (probed as any path is), else the source it is compiled from ({@link TsResolveDeps.sourceOfOutput}). A target that gives neither is added to `missing`. */
+function entryFile(
+  pkg: TsPackage,
+  target: string | undefined,
+  exists: (repoRelPosix: string) => boolean,
+  deps: TsResolveDeps | undefined,
+  missing?: MissingEntry[],
+): string | undefined {
+  if (target === undefined) return undefined;
+  const hit = probe(target, exists) ?? deps?.sourceOfOutput?.(pkg.dir, target, exists);
+  if (typeof hit === 'string') return hit;
+  missing?.push({ target, sourcesDisagree: hit === SOURCES_DISAGREE });
+  return undefined;
+}
+
+/** A package entry that named no file and gave no source, and whether that was because the package's tsconfigs name different sources for it. */
+interface MissingEntry {
+  target: string;
+  sourcesDisagree: boolean;
 }
 
 /** `exports` shorthand forms (a string, an array, a conditions object) mean the root subpath. */
@@ -216,90 +263,146 @@ function normalizeExports(exportsField: unknown): unknown {
 
 const NODE_MODULE_KINDS = new Set(['node16', 'node18', 'node20', 'nodenext']);
 const IMPORT_CALL_REWRITING_MODULE_KINDS = new Set(['commonjs', 'amd', 'umd', 'system', 'none']);
+// The value of `module`, `moduleResolution` and `target` under a base config that cannot be read: unknown, which is not unset.
+const UNREAD_SETTING = '?';
+const CLASSIC_MODULE_KINDS = new Set(['amd', 'umd', 'system', 'none']);
 const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
+// One `module` for each way a file is read under Bundler when a base that cannot be read sets it: the compiler accepts Bundler with commonjs, an ES kind (es2015 and later) or preserve, and nothing else.
+const UNREAD_BUNDLER_MODULES = ['commonjs', 'esnext', 'preserve'];
 
 /**
  * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
  *
- * The settings decide when the config in effect names the resolution: `moduleResolution` `bundler`, `node16` or `nodenext`, or, with no `moduleResolution`, a `module` that implies it in TypeScript 5 and 6 alike (`node16`, `node18`, `node20` and `nodenext` imply their own, `preserve` implies Bundler). Nothing else decides: with neither set the default moved between TypeScript 5 (Node10 or Classic) and 6 (Bundler), and under Node10 or Classic `exports` is not read at all, a difference Runes does not model.
+ * The settings are read as TypeScript 6 computes them. `moduleResolution` `bundler`, `node16` or `nodenext` names the resolution. With no `moduleResolution` the `module` implies it: `node16`, `node18`, `node20` and `nodenext` imply their own, `amd`, `umd`, `system` and `none` imply Classic, and every other one Bundler. With no `module` the `target` implies it: `es5` gives `commonjs`, and any other target, or none, an ES module kind. Under Node10 or Classic, named or implied, `exports` is not read at all, a difference Runes does not model: the settings then decide nothing. A config that extends a base Runes cannot read (a preset that is installed, not committed) inherits settings that are unknown, not unset: the defaults do not apply to them. `module`, `moduleResolution` and `customConditions` are each known only where a later base or the config itself sets them. An unknown one is taken to be a value the compiler accepts beside the known one, since a project that compiles holds no pair it rejects: Bundler goes with `commonjs`, an ES kind from `es2015` on or `preserve` (error 5095 otherwise), and a Node resolution goes with a Node `module` and with no other (5109, 5110). So a Node `module` the config sets means a Node resolution and any other `module` it sets means Bundler; a Node resolution it sets means a Node `module`, and Bundler leaves `commonjs`, an ES kind or `preserve`; with neither set, all of these remain. Node10 and Classic are not among them: the compiler reports both as deprecated and still applies them, they read no `exports`, and counting them would leave every lookup under an unread preset undecided. A `module` that goes only with those two (`amd`, `umd`, `system`, `none`) decides nothing. Each pairing that remains gives one reading, the branch the file enters together with whether `node` is entered, so a `require()` call, `import x = require()`, a `.mts` or `.mjs` file and a `.cts` or `.cjs` file outside an `import()` keep one branch in every reading. A non-standard key is one that may be entered when the custom conditions are unknown. {@link pickTarget} binds the file all readings name, and where they differ the first listed target that one of them names.
  *
  * A file no tsconfig covers is read as Node reads it, whatever the compiler would default to: `import` or `require` by the file's format, `types`, `node` and `default`, so a key for a runtime or a bundler (`react-server`, `edge-light`, `worker`, `react-native`, `browser`) is passed over.
  *
- * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
+ * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. Under a Node resolution with a `module` that is not a Node one (tsc reports the pair and still resolves), the nearest package.json `"type"` decides when it is `module` or `commonjs`, and with no `type` the file requires under `commonjs`, `amd`, `umd`, `system` or `none` and imports otherwise. Under Bundler with a Node `module` a file imports unless its extension says it requires. Any other file kind (a Vue or Svelte component) decides nothing.
  *
  * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
  */
-function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallForm): Set<string> | undefined {
+function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallForm): ExportConditions | undefined {
   const config = deps.tsconfigFor(from);
   if (config === 'unknown') return undefined;
   const ext = /\.[^./]*$/.exec(from)?.[0].toLowerCase();
-  const typeIsModule = (): boolean => deps.nearestPackage(from)?.manifest.type === 'module';
-  let kind: 'node' | 'bundler' | undefined;
-  let module: string | undefined;
+  const esm = ext === '.mts' || ext === '.mjs';
+  const cjs = ext === '.cts' || ext === '.cjs';
+  if (!esm && !cjs && ext !== '.ts' && ext !== '.tsx' && ext !== '.js' && ext !== '.jsx') return undefined;
+  const type = (): unknown => deps.nearestPackage(from)?.manifest.type;
   if (config === undefined) {
-    kind = 'node';
-  } else {
-    const { moduleResolution: resolution } = config;
-    module = config.module;
-    kind =
-      resolution === 'bundler' || (resolution === undefined && module === 'preserve')
-        ? 'bundler'
-        : resolution === 'node16' || resolution === 'nodenext' || (resolution === undefined && module !== undefined && NODE_MODULE_KINDS.has(module))
-          ? 'node'
-          : undefined;
-    if (kind === undefined || module === undefined) return undefined;
+    const format = esm ? 'import' : cjs ? 'require' : type() === 'module' ? 'import' : 'require';
+    return { readings: [{ form: callForm ?? format, node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
   }
-  let format: TsCallForm | undefined;
-  if (ext === '.mts' || ext === '.mjs') format = 'import';
-  else if (ext === '.cts' || ext === '.cjs') format = 'require';
-  else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
-    if (module === undefined || (kind === 'node' && NODE_MODULE_KINDS.has(module))) format = typeIsModule() ? 'import' : 'require';
-    else if (kind === 'bundler' && module === 'commonjs') format = 'require';
-    else if (kind === 'bundler' && ESM_MODULE_KINDS.has(module)) format = 'import';
+  // undefined: set by a base that cannot be read.
+  const module = config.module === UNREAD_SETTING ? undefined : (config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext'));
+  const resolution = config.moduleResolution;
+  // Each pairing of a resolution and a `module` the settings leave possible. One when both are known, however the compiler judges the pair.
+  let pairings: Array<['node' | 'bundler', string]>;
+  if (resolution === UNREAD_SETTING) {
+    if (module === undefined) pairings = [['node', 'nodenext'], ...UNREAD_BUNDLER_MODULES.map((mod): ['bundler', string] => ['bundler', mod])];
+    else if (CLASSIC_MODULE_KINDS.has(module)) return undefined;
+    else pairings = [[NODE_MODULE_KINDS.has(module) ? 'node' : 'bundler', module]];
+  } else if (resolution === undefined) {
+    // `module` is known here: an unread base leaves both settings unknown, and only an explicit value replaces either.
+    if (CLASSIC_MODULE_KINDS.has(module!)) return undefined;
+    pairings = [[NODE_MODULE_KINDS.has(module!) ? 'node' : 'bundler', module!]];
+  } else if (resolution === 'bundler') pairings = module === undefined ? UNREAD_BUNDLER_MODULES.map((mod): ['bundler', string] => ['bundler', mod]) : [['bundler', module]];
+  else if (resolution === 'node16' || resolution === 'nodenext') pairings = [['node', module ?? 'nodenext']];
+  else return undefined;
+  // The format of the file under one resolution and one `module`.
+  const staticFormat = (kind: 'node' | 'bundler', mod: string): TsCallForm | undefined => {
+    if (esm) return 'import';
+    if (cjs) return 'require';
+    if (kind === 'node') {
+      if (NODE_MODULE_KINDS.has(mod)) return type() === 'module' ? 'import' : 'require';
+      const t = type();
+      return t === 'module' ? 'import' : t === 'commonjs' || IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod) ? 'require' : 'import';
+    }
+    if (NODE_MODULE_KINDS.has(mod)) return 'import';
+    if (mod === 'commonjs') return 'require';
+    return ESM_MODULE_KINDS.has(mod) ? 'import' : undefined;
+  };
+  // What a dynamic import() reads: `import`, unless the compiler emits the call as a require.
+  const dynamicForm = (kind: 'node' | 'bundler', mod: string, format: TsCallForm): TsCallForm => {
+    if (NODE_MODULE_KINDS.has(mod) || mod === 'preserve') return 'import';
+    const rewritten = kind === 'node' ? format === 'require' : cjs || (!esm && IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod));
+    return rewritten ? 'require' : 'import';
+  };
+  const readings: ExportReading[] = [];
+  for (const [kind, mod] of pairings) {
+    const format = staticFormat(kind, mod);
+    if (format === undefined) return undefined;
+    const form = callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
+    const node = kind === 'node';
+    if (!readings.some((r) => r.form === form && r.node === node)) readings.push({ form, node });
   }
-  if (format === undefined) return undefined;
-  const rewritten =
-    callForm === 'import' &&
-    config !== undefined &&
-    module !== undefined &&
-    !NODE_MODULE_KINDS.has(module) &&
-    module !== 'preserve' &&
-    (ext === '.cts' || ext === '.cjs' || (ext !== '.mts' && ext !== '.mjs' && IMPORT_CALL_REWRITING_MODULE_KINDS.has(module)));
-  const conditions = new Set(['default', rewritten ? 'require' : (callForm ?? format), 'types', ...(config?.customConditions ?? [])]);
-  if (kind === 'node') conditions.add('node');
-  return conditions;
+  return { readings, entered: new Set(['default', 'types', ...(config.customConditions ?? [])]), maybeCustom: config.customConditionsUnknown === true };
 }
 
+/** One reading of a lookup: the branch the importing file enters, with whether `node` is entered. The two belong together, since a resolution fixes both. */
+interface ExportReading {
+  form: TsCallForm;
+  node: boolean;
+}
+
+/** The conditions of one lookup, as far as the settings are known. */
+interface ExportConditions {
+  /** One reading when the settings, the file kind or the call form fix the branch and the resolution; several when they depend on a setting that cannot be read. */
+  readings: ExportReading[];
+  /** The other conditions known to be entered: `default`, `types` and the config's `customConditions`. */
+  entered: Set<string>;
+  /** Whether a key that is none of the standard ones may be entered: the `customConditions` are not known. */
+  maybeCustom: boolean;
+}
+
+const STANDARD_CONDITIONS = new Set(['default', 'import', 'require', 'types', 'node']);
+
 /**
- * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing; a versioned `types@<range>` key is entered when the compiler's version satisfies its range and passed over when it does not. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
+ * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing; a versioned `types@<range>` key is entered when the compiler's version satisfies its range and passed over when it does not. Where the conditions leave something open (see {@link ExportConditions}), the map is walked once for each reading, and at a key that may or may not be entered the walk takes both what the key names and what passing it over gives: the lookup binds the file every reading names, and where the readings differ, the first target in declaration order that one of them names, so never a file no reading reaches. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
  */
 function pickTarget(
   match: { value: unknown; captured: string | undefined } | undefined,
-  conditions: Set<string> | undefined,
+  conditions: ExportConditions | undefined,
   resolve: (target: string) => string | undefined,
 ): string | undefined {
   if (match === undefined) return undefined;
   const { value, captured } = match;
-  if (conditions === undefined) {
+  const files = new Map<string, string | undefined>();
+  const fileOf = (target: string): string | undefined => {
+    if (!files.has(target)) files.set(target, resolve(target));
+    return files.get(target);
+  };
+  const firstTarget = (named?: Set<string | null>): string | undefined => {
     for (const target of collectTargets(value, captured) ?? []) {
-      const hit = resolve(target);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
-  }
-  const STOP = null;
-  const walk = (v: unknown): string | typeof STOP | undefined => {
-    if (typeof v === 'string') return resolve(captured === undefined ? v : v.split('*').join(captured));
-    if (v === null) return STOP;
-    const branches = Array.isArray(v) ? v.map((entry): [string, unknown] => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
-    for (const [condition, branch] of branches) {
-      if (!conditions.has(condition) && !(conditions.has('types') && condition.startsWith('types@') && typeScriptSatisfies(condition.slice('types@'.length)))) continue;
-      const hit = walk(branch);
-      if (hit !== undefined) return hit;
+      const hit = fileOf(target);
+      if (hit !== undefined && named?.has(hit) !== false) return hit;
     }
     return undefined;
   };
-  return walk(value) ?? undefined;
+  if (conditions === undefined) return firstTarget();
+  const STOP = null;
+  // What one reading finds in `v`: each file it may name, STOP for a `null` it may reach, and undefined when it may name nothing here, so the lookup goes on.
+  const walk = (v: unknown, reading: ExportReading): Set<string | typeof STOP | undefined> => {
+    if (typeof v === 'string') return new Set([fileOf(captured === undefined ? v : v.split('*').join(captured))]);
+    if (v === null) return new Set([STOP]);
+    const branches = Array.isArray(v) ? v.map((entry): [string, unknown] => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
+    const found = new Set<string | typeof STOP | undefined>();
+    for (const [condition, branch] of branches) {
+      const versioned = condition.startsWith('types@');
+      const isEntered = condition === reading.form || (condition === 'node' && reading.node) || conditions.entered.has(condition) || (versioned && typeScriptSatisfies(condition.slice('types@'.length)));
+      // A key that may or may not be entered: what it names is found, and so is what passing it over gives.
+      const mayBeEntered = !isEntered && conditions.maybeCustom && !versioned && !STANDARD_CONDITIONS.has(condition);
+      if (!isEntered && !mayBeEntered) continue;
+      const hits = walk(branch, reading);
+      for (const hit of hits) if (hit !== undefined) found.add(hit);
+      if (isEntered && !hits.has(undefined)) return found;
+    }
+    return found.add(undefined);
+  };
+  const named = new Set<string | typeof STOP>();
+  for (const reading of conditions.readings) for (const hit of walk(value, reading)) named.add(hit ?? STOP);
+  if (named.size > 1) return firstTarget(named);
+  return [...named][0] ?? undefined;
 }
 
 /** The entry of a subpath map `key` selects: the exact key, else the `*` pattern with the longest prefix, with what its `*` captured. */
@@ -396,7 +499,7 @@ function probe(
   const insideRepo = joined !== '..' && !joined.startsWith('../') && !path.posix.isAbsolute(joined);
   const dirPkg = insideRepo ? deps?.packageAt?.(joined) : undefined;
   if (dirPkg !== undefined) {
-    const hit = entryOf(dirPkg, exists);
+    const hit = entryOf(dirPkg, exists, deps);
     if (hit !== undefined) return hit;
   }
   for (const cand of indexCandidates(joined)) {
@@ -406,17 +509,31 @@ function probe(
 }
 
 /** A package directory's own entry file from its `types`/`typings`/`module`/`main` fields. */
-function entryOf(pkg: TsPackage, exists: (repoRelPosix: string) => boolean): string | undefined {
+function entryOf(pkg: TsPackage, exists: (repoRelPosix: string) => boolean, deps?: TsResolveDeps, missing?: MissingEntry[]): string | undefined {
   const { manifest, dir } = pkg;
   for (const field of [manifest.types, manifest.typings, manifest.module, manifest.main]) {
     if (typeof field !== 'string' || field === '') continue;
     const target = joinUnder(dir, field);
     if (target === undefined || target === dir) continue;
-    const hit = probe(target, exists);
+    const hit = entryFile(pkg, target, exists, deps, missing);
     if (hit !== undefined) return hit;
   }
   return undefined;
 }
+
+// The sources an output file may be emitted from, by the output's extension: tsc writes `a.js` and `a.d.ts` for `a.ts` or `a.tsx` (and for `a.js` or `a.jsx` under `allowJs`), `a.jsx` for `a.tsx` under `jsx: preserve`, `a.mjs` and `a.d.mts` for `a.mts`, `a.cjs` and `a.d.cts` for `a.cts`.
+const OUTPUT_SOURCES: Array<{ suffix: string; declaration: boolean; ts: string[]; js: string[] }> = [
+  { suffix: '.d.ts', declaration: true, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
+  { suffix: '.d.mts', declaration: true, ts: ['.mts'], js: ['.mjs'] },
+  { suffix: '.d.cts', declaration: true, ts: ['.cts'], js: ['.cjs'] },
+  { suffix: '.js', declaration: false, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
+  { suffix: '.jsx', declaration: false, ts: ['.tsx'], js: ['.jsx'] },
+  { suffix: '.mjs', declaration: false, ts: ['.mts'], js: ['.mjs'] },
+  { suffix: '.cjs', declaration: false, ts: ['.cts'], js: ['.cjs'] },
+];
+const COMPILED_TS = /\.(?:ts|tsx|mts|cts)$/;
+const COMPILED_JS = /\.(?:js|jsx|mjs|cjs)$/;
+const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 
 // A declaration file (`.d.ts`, `.d.mts`, `.d.cts`) is probed right after the sources, the
 // way the compiler probes it: a type-only import of `./types` commonly names one.
@@ -874,7 +991,7 @@ export function makeTsResolveDeps(
       }
     }
     // Not installed: a published preset (the only kind a repository extends without
-    // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none.
+    // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none of these; the module settings it sets are unknown (see `loadConfig`).
     return undefined;
   };
   // `${configDir}` (TypeScript 5.5) is the directory of the tsconfig in effect for the file — the leaf of the chain, not the base that spells it. A value using it is rewritten to a repo-root-anchored path (leading '/'), which `joinConfigPath` reads.
@@ -909,7 +1026,12 @@ export function makeTsResolveDeps(
         if (typeof base !== 'string') return 'unknown';
         const baseFile = resolveExtends(file, base);
         if (baseFile === 'unknown') return 'unknown';
-        if (baseFile === undefined) continue;
+        if (baseFile === undefined) {
+          // A preset that is installed, not committed: what it sets is unknown until a later base or this config sets it.
+          merged.module = merged.moduleResolution = merged.target = UNREAD_SETTING;
+          merged.customConditionsUnknown = true;
+          continue;
+        }
         const inherited = loadConfig(baseFile, leafDir);
         if (inherited === 'unknown') return 'unknown';
         merged = { ...merged, ...inherited };
@@ -930,13 +1052,16 @@ export function makeTsResolveDeps(
         }
         merged.paths = { base: dir, map };
       }
-      // tsc reads these two enum options case-insensitively; a value of another type is unset, as tsc then takes the default.
-      for (const field of ['moduleResolution', 'module'] as const) {
+      // tsc reads these enum options case-insensitively; a value of another type is unset, as tsc then takes the default.
+      for (const field of ['moduleResolution', 'module', 'target'] as const) {
         const value = options?.[field];
         if (typeof value === 'string') merged[field] = value.toLowerCase();
       }
       const custom = options?.customConditions;
-      if (Array.isArray(custom)) merged.customConditions = custom.filter((c): c is string => typeof c === 'string');
+      if (Array.isArray(custom)) {
+        merged.customConditions = custom.filter((c): c is string => typeof c === 'string');
+        merged.customConditionsUnknown = false;
+      }
       // `outDir` and `declarationDir` resolve from the config that sets them, like every path option; one outside the repository excludes nothing in it.
       for (const field of ['outDir', 'declarationDir'] as const) {
         const value = options?.[field];
@@ -944,6 +1069,12 @@ export function makeTsResolveDeps(
         const at = joinConfigPath(dir, withConfigDir(value, leafDir));
         if (at === undefined) delete merged[field];
         else merged[field] = at;
+      }
+      // `rootDir` resolves like them; one outside the repository is kept as null: no source in the repository is under it.
+      if (typeof options?.rootDir === 'string') merged.rootDir = joinConfigPath(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
+      for (const field of ['allowJs', 'checkJs', 'noEmit'] as const) {
+        const value = options?.[field];
+        if (typeof value === 'boolean') merged[field] = value;
       }
       // A base's `files`, `include` or `exclude` list is inherited whole unless the inheriting config sets its own.
       return { ...merged, ...ownLists(json, dir, leafDir) };
@@ -979,7 +1110,9 @@ export function makeTsResolveDeps(
     ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
     ...(config.moduleResolution !== undefined ? { moduleResolution: config.moduleResolution } : {}),
     ...(config.module !== undefined ? { module: config.module } : {}),
+    ...(config.target !== undefined ? { target: config.target } : {}),
     ...(config.customConditions !== undefined ? { customConditions: config.customConditions } : {}),
+    ...(config.customConditionsUnknown === true ? { customConditionsUnknown: true } : {}),
     ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
   });
   // Whether a referenced config whose options cannot be read may hold a file. tsc reads such a config without the bases it cannot read (a generated base absent from the commit), so it holds what the `files` and `include` of the configs in its chain it can read name, or by default what lies under its own directory; here its own directory always counts and every `exclude` is ignored, so the answer errs towards holding, which is towards silence. A referenced config that does not parse may hold anything.
@@ -1178,11 +1311,113 @@ export function makeTsResolveDeps(
     return satisfied === true;
   };
 
+  // The tsconfigs a package builds with: `tsconfig.json` and every `tsconfig.*.json` directly in its directory. 'unknown' when one of them cannot be read, since it may be the one that writes the output asked about.
+  const projectsIn = new Map<string, Array<{ file: string; config: LoadedConfig }> | 'unknown'>();
+  const projectsOf = (pkgDir: string): Array<{ file: string; config: LoadedConfig }> | 'unknown' => {
+    const cached = projectsIn.get(pkgDir);
+    if (cached !== undefined) return cached;
+    let found: Array<{ file: string; config: LoadedConfig }> | 'unknown' = [];
+    const names = (files.list(pkgDir) ?? []).filter((e) => e.kind === 'file' && /^tsconfig(?:\..+)?\.json$/.test(e.name)).map((e) => e.name);
+    for (const name of names.sort()) {
+      const file = pkgDir === '' ? name : `${pkgDir}/${name}`;
+      if (!isFile(file)) continue;
+      const config = loadConfig(file, pkgDir);
+      if (config === 'unknown') {
+        found = 'unknown';
+        break;
+      }
+      found.push({ file, config });
+    }
+    projectsIn.set(pkgDir, found);
+    return found;
+  };
+  // The source root tsc computed before TypeScript 6 for a config with no `rootDir`: the longest common directory of the non-declaration files the project holds. undefined when it cannot be known from the config's own directory (a `files` or `include` entry reaches outside it); null when the project holds no source there, so it writes no output.
+  const commonRoots = new Map<string, string | null | undefined>();
+  const commonRoot = (file: string, config: LoadedConfig): string | null | undefined => {
+    if (commonRoots.has(file)) return commonRoots.get(file);
+    const configDir = dirOf(file);
+    const inside = (p: string): boolean => configDir === '' || p === configDir || p.startsWith(`${configDir}/`);
+    let common: string[] | undefined;
+    const knowable = [...(config.files ?? []), ...(config.include ?? [])].every(inside);
+    if (knowable) {
+      const stack: string[] = [configDir];
+      while (stack.length > 0) {
+        const dir = stack.pop()!;
+        for (const e of files.list(dir) ?? []) {
+          const rel = dir === '' ? e.name : `${dir}/${e.name}`;
+          if (isExcluded?.(rel)) continue;
+          if (e.kind === 'dir') {
+            if (!e.name.startsWith('.') && !SKIPPED_DIRS.has(e.name)) stack.push(rel);
+            continue;
+          }
+          const compiled = e.kind === 'file' && !DECLARATION_FILE.test(e.name) && (COMPILED_TS.test(e.name) || (allowsJs(config) && COMPILED_JS.test(e.name)));
+          if (!compiled || !holds(config, configDir, rel)) continue;
+          const segs = dir === '' ? [] : dir.split('/');
+          if (common === undefined) common = segs;
+          else {
+            let k = 0;
+            while (k < common.length && k < segs.length && common[k] === segs[k]) k++;
+            common = common.slice(0, k);
+          }
+        }
+      }
+    }
+    const root = common !== undefined ? common.join('/') : knowable ? null : undefined;
+    commonRoots.set(file, root);
+    return root;
+  };
+  const allowsJs = (config: LoadedConfig): boolean => config.allowJs ?? config.checkJs ?? false;
+  // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
+  const sourceOfOutput = (pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined => {
+    const projects = projectsOf(pkgDir);
+    if (projects === 'unknown' || projects.length === 0) return undefined;
+    const known = OUTPUT_SOURCES.some((o) => target.endsWith(o.suffix));
+    for (const output of known ? [target] : [`${target}.js`, `${target}/index.js`]) {
+      const kind = OUTPUT_SOURCES.find((o) => output.endsWith(o.suffix))!;
+      const stem = output.slice(0, -kind.suffix.length);
+      const hits = new Set<string>();
+      for (const { file, config } of projects) {
+        const out = kind.declaration ? (config.declarationDir ?? config.outDir) : config.outDir;
+        // A config that writes no output (`noEmit`) has no say in where an output file comes from.
+        if (out === undefined || config.rootDir === null || config.noEmit === true) continue;
+        if (out !== '' && !stem.startsWith(`${out}/`)) continue;
+        const rel = out === '' ? stem : stem.slice(out.length + 1);
+        const configDir = dirOf(file);
+        let roots: string[];
+        if (config.rootDir !== undefined) roots = [config.rootDir];
+        else {
+          const common = commonRoot(file, config);
+          // An unknown root may name a file this reading cannot see.
+          if (common === undefined) return undefined;
+          // A project that holds no source writes nothing.
+          if (common === null) continue;
+          roots = common === configDir ? [configDir] : [configDir, common];
+        }
+        for (const root of roots) {
+          const base = root === '' ? rel : `${root}/${rel}`;
+          const source = [...kind.ts, ...(allowsJs(config) ? kind.js : [])].map((ext) => base + ext).find((cand) => cand !== output && exists(cand) && holds(config, configDir, cand));
+          if (source !== undefined) hits.add(source);
+        }
+      }
+      if (hits.size > 1) return SOURCES_DISAGREE;
+      if (hits.size === 1) return [...hits][0];
+    }
+    return undefined;
+  };
+  const entryMissing = (pkg: TsPackage, target: string, sourcesDisagree: boolean): void => {
+    if (report === undefined) return;
+    const manifest = pkg.dir === '' ? 'package.json' : `${pkg.dir}/package.json`;
+    const why = sourcesDisagree ? 'the tsconfigs of the package map it to different sources' : 'no tsconfig of the package maps it to a source';
+    report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and ${why}; an import that resolves to this entry binds nothing`);
+  };
+
   return {
     tsconfigFor,
     nearestPackage,
     packageNamed,
     packageAt,
+    sourceOfOutput,
+    entryMissing,
     ...(isExcluded !== undefined ? { isExcluded } : {}),
   };
 }
