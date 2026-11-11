@@ -286,6 +286,10 @@ export function internalKey(symbolKey) {
 export function baseListKey(typeKey) {
     return `base:${typeKey}`;
 }
+/** The head of the key that records one base of a C#11 `file` type of the key `typeKey`: `file-base:<key>`, with a value like a base record's. Such a type has no published key and belongs to its file alone, so its bases are kept apart from those of a published type of the same name, and they are followed only while one file declares a `file` type of that key: two files may each declare an unrelated one, and a record does not say which of them a reader stands in. */
+export function fileBaseListKey(typeKey) {
+    return `file-base:${typeKey}`;
+}
 /** The head of the key that records the using directives of a file: `usings`. A file that records a written type (`encodeWritten`) declares `usings\t<value>` once, the value (`encodeUsings`) holding what a name written in that file is read with, so each record holds a name and no reading of its own. */
 export const USINGS_KEY = 'usings';
 /** The marker key of an interface: `interface:<key>`, declared beside the type key of every interface declaration. A class inherits the nested types of its base class and of no interface it implements, and the base list of a class does not say which of its names is which. */
@@ -515,7 +519,7 @@ function writtenName(typeNode, scope, typeParameters) {
 }
 /** The declarations that may list bases other types inherit through: an enum's list names its underlying type. */
 const BASE_LIST_OWNERS = new Set(['class_declaration', 'interface_declaration', 'struct_declaration', 'record_declaration', 'record_struct_declaration']);
-/** The access modifiers a declaration node carries. */ /** The access modifiers a declaration node carries. */
+/** The access modifiers a declaration node carries. */
 function accessModifiers(node) {
     const out = new Set();
     for (const c of node.children) {
@@ -744,22 +748,23 @@ function declarations(file) {
         const symbolKey = declaredTypeKey(node, scope, fileNs);
         if (symbolKey === undefined)
             return undefined;
-        // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN.
-        if (isFileLocalType(node, scope)) {
+        // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN; its base list is recorded apart (`fileBaseListKey`).
+        const fileLocal = isFileLocalType(node, scope);
+        if (fileLocal)
             fileLocalTypes.push(symbolKey);
-            return undefined;
+        else {
+            out.push({ symbolKey, line: node.startPosition.row + 1 });
+            if (typeSeen(node, scope.typeDecl) === 'assembly')
+                out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
+            if (node.type === 'interface_declaration')
+                out.push({ symbolKey: interfaceKey(symbolKey), line: node.startPosition.row + 1 });
         }
-        out.push({ symbolKey, line: node.startPosition.row + 1 });
-        if (typeSeen(node, scope.typeDecl) === 'assembly')
-            out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
-        if (node.type === 'interface_declaration')
-            out.push({ symbolKey: interfaceKey(symbolKey), line: node.startPosition.row + 1 });
         // The base list (see `baseListKey`): `class C(int x) : Base(x)` writes the base's type first and its arguments after it.
         const list = BASE_LIST_OWNERS.has(node.type) ? node.namedChildren.find((c) => c.type === 'base_list') : undefined;
         for (const entry of list?.namedChildren ?? []) {
             const typeNode = entry.type === 'primary_constructor_base_type' ? entry.namedChild(0) : entry;
             if (typeNode !== null && typeNode.type !== 'argument_list')
-                record(baseListKey(symbolKey), typeNode, scope, line, typeParameterNames(node));
+                record(fileLocal ? fileBaseListKey(symbolKey) : baseListKey(symbolKey), typeNode, scope, line, typeParameterNames(node));
         }
         return undefined;
     });
@@ -1172,7 +1177,7 @@ function collectDeclaredNames(root, fileNs) {
     walkScoped(root, { cs: TOP_SCOPE, scope: root, type: null, listOf: null }, (node, inherited, parentOf) => {
         const scope = csSeen(node, inherited.cs);
         const { scope: around, type: holderType } = inherited;
-        if (TYPE_DECLARATION_TYPES.has(node.type) && !isFileLocalType(node, scope) && takesMembers(node)) {
+        if (TYPE_DECLARATION_TYPES.has(node.type) && takesMembers(node)) {
             const key = declaredTypeKey(node, scope, fileNs);
             if (key !== undefined)
                 openTypes.add(key);
@@ -2564,7 +2569,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 26,
+    rev: 27,
     declarations,
     uses,
 };

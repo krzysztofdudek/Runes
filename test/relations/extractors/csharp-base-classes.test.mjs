@@ -15,10 +15,11 @@ async function project(sources, fn) {
       for (const d of declared.get(f.path)) table.declare('csharp', d.symbolKey, f.path);
     }
     const ownerOf = (file) => file.split('/').at(-2);
-    const resolver = makeResolver({ ownerIndex: { ownerOf }, symbolTable: table, resolvePathToFile: () => undefined });
-    const edges = (path) => resolveDetectedEdges(csharpExtractor.uses(files.find((f) => f.path === path)), resolver, path, 'csharp')
+    const edgesThrough = (symbolTable, path) => resolveDetectedEdges(csharpExtractor.uses(files.find((f) => f.path === path)), makeResolver({ ownerIndex: { ownerOf }, symbolTable, resolvePathToFile: () => undefined }), path, 'csharp')
       .filter((e) => e.owner !== ownerOf(path)).map((e) => `${e.line}->${e.owner}`);
-    return fn({ table, resolver, edges, files, keys: (path) => declared.get(path).map((d) => d.symbolKey) });
+    const resolver = makeResolver({ ownerIndex: { ownerOf }, symbolTable: table, resolvePathToFile: () => undefined });
+    const edges = (path) => edgesThrough(table, path);
+    return fn({ table, resolver, edges, edgesThrough, declared, files, keys: (path) => declared.get(path).map((d) => d.symbolKey) });
   });
 }
 
@@ -589,6 +590,63 @@ describe('csharp: the using directives a record is read with', () => {
       expect(writtenReadings({ at: at('Thing _t'), name: 'Thing' }, 'App.Web.Use', true, usings)).toEqual(fieldThing);
       expect(writtenReadings({ at: 0, name: '' }, 'App.Web.Use', false, usings)).toEqual([]);
       expect(decodeUsings('{}').scope.prefixDecls).toEqual([]);
+    });
+  });
+});
+
+describe('csharp: a table must hold the usings record of every file that declares it', () => {
+  // Two files with the same using directives declare the very same `usings` key. A consumer that keeps a key for only some of its files (the first of them, say) leaves the other file's records without their using directives.
+  const sources = {
+    'src/core/Base.cs': 'namespace App.Core;\npublic class Bag { public int Get(int k) => k; }\npublic class Base { public class Options { } protected Bag Settings { get; } }\n',
+    'src/cfg/Options.cs': 'namespace App.Web;\npublic class Options { }\n',
+    'src/legacy/Settings.cs': 'namespace App;\npublic static class Settings { public static int Get(int k) => k; }\n',
+    'src/one/First.cs': 'using App.Core;\nnamespace App.Web;\npublic class First : Base {\n  Options _o;\n  int M() => Settings.Get(1);\n}\n',
+    'src/two/Second.cs': 'using App.Core;\nnamespace App.Web;\npublic class Second : Base {\n  Options _o;\n  int M() => Settings.Get(1);\n}\n',
+  };
+
+  it('reads both files alike while the table holds the record for both', async () => {
+    await project(sources, ({ table, edges, declared }) => {
+      const usings = (path) => declared.get(path).map((d) => d.symbolKey).filter((k) => k.startsWith(`${USINGS_KEY}\t`));
+      expect(usings('src/one/First.cs')).toEqual(usings('src/two/Second.cs'));
+      expect(table.valuesOf('csharp', USINGS_KEY).find((u) => u.files.includes('src/one/First.cs')).files).toEqual(['src/one/First.cs', 'src/two/Second.cs']);
+      // Line 3: the base class. Line 4: its nested Options, not node cfg's. Line 5: the inherited property, so no edge to node legacy.
+      expect(edges('src/one/First.cs')).toEqual(['3->core', '4->core']);
+      expect(edges('src/two/Second.cs')).toEqual(['3->core', '4->core']);
+    });
+  });
+
+  it('goes back to the earlier reading for the file whose usings record the table lost', async () => {
+    await project(sources, ({ declared, edgesThrough }) => {
+      const kept = new SymbolTable();
+      const seen = new Set();
+      for (const [path, declarations] of declared) {
+        for (const d of declarations) {
+          // The store under test: a `usings` key is kept for the first file that declares it and dropped for every later one.
+          if (d.symbolKey.startsWith(`${USINGS_KEY}\t`) && seen.has(d.symbolKey)) continue;
+          seen.add(d.symbolKey);
+          kept.declare('csharp', d.symbolKey, path);
+        }
+      }
+      expect(edgesThrough(kept, 'src/one/First.cs')).toEqual(['3->core', '4->core']);
+      // Second's base `Base` is read without `using App.Core;`, binds nothing, and is not followed: Options is the namespace's again, and the receiver Settings the static class.
+      expect(edgesThrough(kept, 'src/two/Second.cs')).toEqual(['3->core', '4->cfg', '5->legacy']);
+    });
+  });
+});
+
+describe('csharp: the bases of a file type', () => {
+  it('are recorded apart from a published type of the same name, and followed only while one file declares such a type', async () => {
+    const base = { 'src/core/Base.cs': 'namespace App;\npublic class Base { public class Options { } }\npublic class Other { public class Options { } }\n', 'src/cfg/Options.cs': 'namespace App.Jobs;\npublic class Options { }\n' };
+    const worker = (of) => `namespace App.Jobs;\nfile class Worker : ${of} {\n  Options _o;\n}\n`;
+    await project({ ...base, 'src/one/Worker.cs': worker('Base') }, ({ edges, keys, table }) => {
+      expect(keys('src/one/Worker.cs').map((k) => k.split('\t')[0])).toEqual(['file-base:App.Jobs.Worker', USINGS_KEY]);
+      expect(table.has('csharp', 'App.Jobs.Worker')).toBe(false);
+      expect(edges('src/one/Worker.cs')).toEqual(['2->core', '3->core']);
+    });
+    // Two files each declare a file type of that key with another base: neither is followed, and the reading is the namespace's.
+    await project({ ...base, 'src/one/Worker.cs': worker('Base'), 'src/two/Worker.cs': worker('Other') }, ({ edges }) => {
+      expect(edges('src/one/Worker.cs')).toEqual(['2->core', '3->cfg']);
+      expect(edges('src/two/Worker.cs')).toEqual(['2->core', '3->cfg']);
     });
   });
 });

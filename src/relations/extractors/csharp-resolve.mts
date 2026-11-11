@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, membersKey, decodeMembers, type CsharpWritten, methodsKey, decodeMethods, type CsharpMethod, shapeTakes } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -72,7 +72,10 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     const result: CsharpBases = { inside: [], outside: [] };
     // Set before the bases are bound: a base list that names its own type through itself ends here.
     memo.set(typeKey, result);
-    for (const { value, files } of table.valuesOf(LANGUAGE, baseListKey(typeKey))) {
+    // The bases of a `file` type of that key count only while one file declares them (see `fileBaseListKey`).
+    const ofFileType = table.valuesOf(LANGUAGE, fileBaseListKey(typeKey));
+    const oneFile = new Set(ofFileType.flatMap(({ files }) => files)).size === 1;
+    for (const { value, files } of [...table.valuesOf(LANGUAGE, baseListKey(typeKey)), ...(oneFile ? ofFileType : [])]) {
       for (const { name, key } of boundIn(value, files, typeKey)) {
         if (key === undefined) {
           if (!result.outside.includes(name)) result.outside.push(name);

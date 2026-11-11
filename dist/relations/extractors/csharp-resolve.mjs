@@ -1,4 +1,4 @@
-import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, fileBaseListKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, membersKey, decodeMembers, methodsKey, decodeMethods, shapeTakes } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -44,7 +44,10 @@ export function makeCsharpTypeLookup(table, bind) {
         const result = { inside: [], outside: [] };
         // Set before the bases are bound: a base list that names its own type through itself ends here.
         memo.set(typeKey, result);
-        for (const { value, files } of table.valuesOf(LANGUAGE, baseListKey(typeKey))) {
+        // The bases of a `file` type of that key count only while one file declares them (see `fileBaseListKey`).
+        const ofFileType = table.valuesOf(LANGUAGE, fileBaseListKey(typeKey));
+        const oneFile = new Set(ofFileType.flatMap(({ files }) => files)).size === 1;
+        for (const { value, files } of [...table.valuesOf(LANGUAGE, baseListKey(typeKey)), ...(oneFile ? ofFileType : [])]) {
             for (const { name, key } of boundIn(value, files, typeKey)) {
                 if (key === undefined) {
                     if (!result.outside.includes(name))
