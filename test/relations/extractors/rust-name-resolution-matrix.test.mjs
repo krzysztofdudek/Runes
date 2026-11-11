@@ -86,6 +86,9 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-bin-declared-package-name-drops-inferred-main-edge', () => runCase('rust-bin-declared-package-name-drops-inferred-main-edge'));
   it('rust-autolib-off-lib-file-module-edge', () => runCase('rust-autolib-off-lib-file-module-edge'));
   it('rust-edition-2015-autolib-off-legacy-bin-path-edge', () => runCase('rust-edition-2015-autolib-off-legacy-bin-path-edge'));
+  it('rust-autolib-off-own-crate-name-from-bin-silence', () => runCase('rust-autolib-off-own-crate-name-from-bin-silence'));
+  it('rust-autolib-off-lib-table-own-crate-name-from-bin-edge', () => runCase('rust-autolib-off-lib-table-own-crate-name-from-bin-edge'));
+  it('rust-autolib-off-path-dependency-without-lib-silence', () => runCase('rust-autolib-off-path-dependency-without-lib-silence'));
   it('rust-test-declared-name-drops-inferred-test-edge', () => runCase('rust-test-declared-name-drops-inferred-test-edge'));
   it('rust-edition-2015-legacy-lib-path-edge', () => runCase('rust-edition-2015-legacy-lib-path-edge'));
   it('rust-edition-2015-use-crate-root-relative-edge', () => runCase('rust-edition-2015-use-crate-root-relative-edge'));
