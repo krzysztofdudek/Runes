@@ -160,3 +160,25 @@ describe('buildCsharpProjectScopes — MSBuild reading edge cases', () => {
     expect(scopes.get('p/A.cs').usings).toEqual(['X']);
   });
 });
+
+describe('buildCsharpProjectScopes — global using static', () => {
+  it('the types a project\'s global using static directives name are that project\'s, sorted and without repeats', () => {
+    const root = project({
+      'api/Api.csproj': '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+      'worker/Worker.csproj': '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+    });
+    const scopes = buildCsharpProjectScopes(root, [
+      { ...cs('api/G.cs'), globalStatics: ['Api.Shapes', 'Api.Colors'] },
+      { ...cs('api/H.cs'), globalStatics: ['Api.Shapes'] },
+      { ...cs('worker/G.cs'), globalStatics: ['Worker.Jobs'] },
+      cs('api/models/Customer.cs'),
+    ]);
+    expect(scopes.get('api/models/Customer.cs').statics).toEqual(['Api.Colors', 'Api.Shapes']);
+    expect(scopes.get('worker/G.cs').statics).toEqual(['Worker.Jobs']);
+  });
+
+  it('a file that lists no global using static adds none', () => {
+    const root = project({ 'p/P.csproj': '<Project />' });
+    expect(buildCsharpProjectScopes(root, [cs('p/A.cs', ['X'])]).get('p/A.cs').statics).toEqual([]);
+  });
+});

@@ -13,7 +13,7 @@ import {
   extractorForLanguage, sfcScriptView, buildCsharpProjectScopes, buildCsharpReachability, SymbolTable, makeResolver, resolveDetectedEdges, makeResolvePathToFile, listedFileView,
 } from '@chrisdudek/runes/relations';
 import {
-  csharpUses, collectGlobalUsings, collectGlobalUsingAliases,
+  csharpUses, collectGlobalUsings, collectGlobalUsingAliases, collectGlobalUsingStatics,
 } from '../helpers/internal/relations.mjs';
 
 /** Support-file basenames the path resolvers read but never parse as source. A `## Files` block whose extension has no grammar language is accepted only when its basename is one of these (anything else is a typo and throws). Go reads go.mod (and go.work), PHP reads composer.json, C/C++ reads compile_commands.json, Rust reads Cargo.toml, C# reads Directory.Build.*, and the TS resolver reads .npmrc and the lockfiles to know the package manager; the lock and sum files are harmless to materialize. */
@@ -175,6 +175,7 @@ export async function caseEdges(doc, through = 'disk') {
             path: f.path,
             globalPrefixes: collectGlobalUsings(parsedByPath.get(f.path)),
             globalAliases: collectGlobalUsingAliases(parsedByPath.get(f.path)),
+            globalStatics: collectGlobalUsingStatics(parsedByPath.get(f.path)),
           })),
           { files },
         );
@@ -187,7 +188,7 @@ export async function caseEdges(doc, through = 'disk') {
           const parsed = parsedByPath.get(f.path);
           const fromOwner = f.owner;
           const detected = f.language === 'csharp'
-            ? csharpUses(parsed, { projectGlobalUsings: csharpScopes.get(f.path)?.usings ?? [], projectGlobalUsingAliases: csharpScopes.get(f.path)?.aliases ?? [] })
+            ? csharpUses(parsed, { projectGlobalUsings: csharpScopes.get(f.path)?.usings ?? [], projectGlobalUsingAliases: csharpScopes.get(f.path)?.aliases ?? [], projectGlobalStatics: csharpScopes.get(f.path)?.statics ?? [] })
             : extractor.uses(parsed);
           for (const { line, owner } of resolveDetectedEdges(detected, resolver, f.path, f.language)) {
             if (owner !== fromOwner) edges.push({ fromFile: f.path, line, owner });

@@ -41,6 +41,8 @@ export interface CsharpGlobalFacts {
     globalPrefixes: readonly string[];
     /** `[alias, target]` pairs of the file's own `global using A = N.T;` directives. */
     globalAliases: Iterable<readonly [string, string]>;
+    /** The types the file's own `global using static T;` directives name, a type argument written as its arity (``Repo`1``). A file that lists none imports none project-wide. */
+    globalStatics?: readonly string[];
 }
 /** The project-wide scope injected into a file's candidate assembly. */
 export interface CsharpProjectScope {
@@ -48,6 +50,8 @@ export interface CsharpProjectScope {
     usings: string[];
     /** Every global alias of the file's project; one name may appear with 2+ targets (ambiguous). */
     aliases: Array<[string, string]>;
+    /** Every type a `global using static` of the file's project names; its nested types and extension methods are imported in every file of the project. */
+    statics: string[];
 }
 /**
  * Build the per-file project scope for every C# file. `projectRoot` is the absolute repository

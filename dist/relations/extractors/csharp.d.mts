@@ -48,8 +48,18 @@ interface UsingScope {
         fqn: string;
         line: number;
     }>;
+    /** Every `using static T;` directive of the file, the global ones included, in file order: `fqn` the written type with its type arguments as arity (``Repo`1``) and its `global::` qualifier stripped (and then `rooted`: it is read from the global namespace only), `body` the enclosing-namespace chain of the body that holds it (innermost first, empty in the compilation unit and for a `global using static`), `start`/`end` the text range of that body's block (`directiveBlock`). The directive imports the nested types of `T` and its extension methods, for the references inside that range, at the level of `body[0]` (C# spec §14.5.4); in the compilation unit it is the last level of the lookup, with the plain usings. */
+    staticDecls: Array<{
+        fqn: string;
+        rooted: boolean;
+        body: string[];
+        start: number;
+        end: number;
+    }>;
+    /** The types the `global using static T;` directives of THIS file name (as `staticDecls` writes them), tracked apart like `globalPrefixes` so the consumer's relation pass can aggregate them project-wide. */
+    globalStatics: string[];
 }
-/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings name (as written, a `global::` qualifier kept: each is read where the declaration stands, a rooted one from the global namespace), `aliases` the names its using aliases declare, `statics` the types its `using static` directives name (as written, type arguments stripped), whose nested types they import (C# spec §14.5.4). */
+/** The using directives of one namespace declaration that encloses, from outside, the body holding a using directive: `ns` is that declaration's namespace, `prefixes` the namespaces its plain usings name (as written, a `global::` qualifier kept: each is read where the declaration stands, a rooted one from the global namespace), `aliases` the names its using aliases declare, `statics` the types its `using static` directives name (as written, type arguments as their arity, a `global::` qualifier kept like a plain using's), whose nested types and extension methods they import (C# spec §14.5.4). */
 interface OuterUsings {
     ns: string;
     prefixes: string[];
@@ -65,6 +75,10 @@ interface OuterUsings {
  * prefix), so only the namespace-import global prefixes are aggregated here.
  */
 export declare function collectGlobalUsings(file: ParsedFile): string[];
+/**
+ * Collect the types the `global using static N.C;` directives of a C# file name (project-wide imports of the nested types and the extension methods of `N.C`), as the cross-file pre-pass of the consumer's relation pass aggregates them per project beside the global namespace imports. A type's type arguments are written as their arity (``Repo`1``), as in a type key.
+ */
+export declare function collectGlobalUsingStatics(file: ParsedFile): string[];
 /**
  * Collect the `global using Alias = Foo.Bar;` aliases a C# file declares (project-wide
  * aliases, A12). Used by the cross-file pre-pass in the consumer's relation pass to aggregate every file's global
@@ -86,6 +100,8 @@ export interface CsharpUsesOptions {
      *  into this file's alias map BELOW any file-local alias of the same name (a file-local alias
      *  takes precedence). A name listed with 2+ distinct targets is ambiguous → silenced (M7). */
     projectGlobalUsingAliases?: Array<[string, string]>;
+    /** The types named by the `global using static T;` directives of EVERY C# file of the project (`CsharpProjectScope.statics`): their nested types and extension methods are imported in every file of the project, at the level of the compilation unit, beside the global usings. Each is read from the global namespace. */
+    projectGlobalStatics?: string[];
 }
 /**
  * One alias-UNRESOLVED per-reference descriptor emitted by `extractCsharpRefs` (the pure half).

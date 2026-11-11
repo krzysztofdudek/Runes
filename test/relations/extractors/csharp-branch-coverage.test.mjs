@@ -133,3 +133,45 @@ describe('csharp extractor — block namespace declaration', () => {
     expect(keys.some((k) => k.endsWith('Models.Customer'))).toBe(true);
   });
 });
+
+describe('csharp extractor — a using static imports nested types and extension methods at the level of its directive', () => {
+  const groupOf = (uses, key) => uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === key));
+
+  it('the compilation unit reads the nested type of the target after the global namespace, as a nested type only', async () => {
+    const { uses } = await run('using static App.Core.Shapes;\nnamespace App.Web;\nclass Draw { Circle c; }\n');
+    const group = groupOf(uses, 'App.Core.Shapes.Circle');
+    const keys = group.candidates.map((c) => c.symbolKey);
+    expect(keys).toEqual(['App.Web.Draw+Circle', 'App.Web.Circle', 'App.Circle', 'Circle', 'App.Core.Shapes.Circle']);
+    expect(group.candidates[4].nestedOnly).toBe(true);
+  });
+
+  it('a namespace body reads it at its own namespace, behind that namespace\'s own member and before the global namespace', async () => {
+    const { uses } = await run('namespace App.Web {\n  using static App.Core.Shapes;\n  class Draw { Circle c; }\n}\n');
+    const keys = groupOf(uses, 'App.Core.Shapes.Circle').candidates.map((c) => c.symbolKey);
+    expect(keys.indexOf('App.Web.Circle')).toBeLessThan(keys.indexOf('App.Web.App.Core.Shapes.Circle'));
+    expect(keys.indexOf('App.Core.Shapes.Circle')).toBeLessThan(keys.indexOf('Circle'));
+  });
+
+  it('a target written after global:: is read from the global namespace only, in the compilation unit and in a namespace body', async () => {
+    const { uses } = await run('namespace A {\n  using static global::App.Core.Shapes;\n  class Draw { Circle c; }\n}\n');
+    const keys = uses.flatMap((u) => u.candidates.map((c) => c.symbolKey));
+    expect(keys).toContain('App.Core.Shapes.Circle');
+    expect(keys).not.toContain('A.App.Core.Shapes.Circle');
+  });
+
+  it('a generic target reads its nested types under its arity', async () => {
+    const { uses } = await run('using static App.Repo<Order>;\nclass C { Item i; }\n');
+    expect(groupOf(uses, 'App.Repo`1.Item')).toBeDefined();
+  });
+
+  it('an extension call reads the key the target class declares for the method, beside the namespaces the usings import', async () => {
+    const { uses } = await run('using App.Plain;\nusing static App.Ext.StringExt;\nclass A { string M(string s) => s.Shout(); }\n');
+    const group = uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === 'App.Ext.StringExt.Shout()'));
+    expect(group.candidates.map((c) => c.symbolKey)).toEqual(['Shout()', 'App.Plain.Shout()', 'App.Ext.StringExt.Shout()']);
+  });
+
+  it('declares each extension method under its namespace and under its class, and the global namespace\'s class as the bare class name', async () => {
+    const { declarations } = await run('namespace N { public static class E { public static void M(this int x) { } } }\npublic static class G { public static void K(this int x) { } }\n');
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E.M()', 'G', 'K()', 'G.K()']);
+  });
+});
