@@ -168,7 +168,9 @@ export function makeResolvePathToFile(
  * `[dependencies.<name>]` table form, the whole table as one inline table, and `{ workspace = true }` inherited from the nearest
  * `[workspace.dependencies]`) map the name code uses (`package =` renames honoured) to that
  * crate's library tree. A path that leaves the repository, or points at a directory with no
- * Cargo.toml, is ignored.
+ * Cargo.toml, is ignored. A registry or git dependency that a `[patch.<source>]` entry with a path
+ * replaces is the path dependency too: Cargo reads `[patch]` from the workspace root only, and the
+ * entry's path is relative to that manifest.
  *
  * Every manifest and crate-root file is read at most once per factory instance (cached) —
  * they are stable across one pass. No Cargo.toml ancestor → undefined crate root, which the
@@ -372,6 +374,7 @@ function makeRustResolveDeps(
     for (const [key, spec] of manifest.dependencies) {
       let depDir: string | undefined;
       let rename = spec.package;
+      let source = spec;
       if (spec.path !== undefined) {
         depDir = under(pkgDir, spec.path);
       } else if (spec.workspace) {
@@ -384,6 +387,7 @@ function makeRustResolveDeps(
           if (inherited !== undefined) {
             if (inherited.path !== undefined) depDir = under(cur, inherited.path);
             rename = rename ?? inherited.package;
+            source = inherited;
             break;
           }
           if (cur === '') break;
@@ -391,6 +395,8 @@ function makeRustResolveDeps(
           cur = packageDirFrom(parent === '.' ? '' : parent);
         }
       }
+      // A registry or git dependency that a `[patch]` of the workspace root replaces with a path: the package it is called by `package =`, else by its key. A dependency with a path of its own is not replaced.
+      if (depDir === undefined && source.path === undefined && !source.workspace) depDir = patchedDir(pkgDir, rename ?? key, source);
       if (depDir === undefined) continue; // registry / git / out-of-repo → external
       const depManifest = manifestAt(depDir);
       if (depManifest === undefined) continue; // no Cargo.toml there → not a crate
@@ -400,6 +406,32 @@ function makeRustResolveDeps(
       if (codeName !== name) continue;
       const tree = libTreeOf(depDir, depManifest);
       if (tree !== undefined) return tree;
+    }
+    return undefined;
+  }
+
+  /** The nearest directory at or above the package at `pkgDir` whose manifest is a workspace root; the package's own when it has none above, which makes it a workspace of its own. */
+  function workspaceRootOf(pkgDir: string): string {
+    let cur = pkgDir;
+    while (manifestAt(cur)?.hasWorkspace !== true) {
+      if (cur === '') return pkgDir;
+      const parent = path.posix.dirname(cur);
+      const up = packageDirFrom(parent === '.' ? '' : parent);
+      if (up === undefined) return pkgDir;
+      cur = up;
+    }
+    return cur;
+  }
+
+  /** The directory a `[patch]` entry with a path puts in place of the dependency `source` (a registry or git dependency) of the package called `packageName`, for the package at `pkgDir`. Cargo reads `[patch]` from the workspace root only, so a member's own is ignored; the entry's path is relative to the manifest that writes it. */
+  function patchedDir(pkgDir: string, packageName: string, source: CargoDependencySpec): string | undefined {
+    const wsDir = workspaceRootOf(pkgDir);
+    const patches = manifestAt(wsDir)?.patches;
+    const sourceId = sourceIdOf(source);
+    if (patches === undefined || sourceId === undefined) return undefined;
+    for (const [table, entries] of patches) {
+      if (patchSourceId(table) !== sourceId) continue;
+      for (const [key, entry] of entries) if ((entry.package ?? key) === packageName && entry.path !== undefined) return under(wsDir, entry.path);
     }
     return undefined;
   }
@@ -537,6 +569,10 @@ interface CargoDependencySpec {
   path?: string;
   package?: string;
   workspace: boolean;
+  /** The `git` URL a dependency comes from; empty when written but not readable as a string. */
+  git?: string;
+  /** The name of the alternative `registry` a dependency comes from; empty when written but not readable as a string. */
+  registry?: string;
 }
 interface CargoManifest {
   crateName: string | undefined;
@@ -577,6 +613,31 @@ interface CargoManifest {
   declaresMainBin: boolean;
   dependencies: Map<string, CargoDependencySpec>;
   workspaceDependencies: Map<string, CargoDependencySpec>;
+  /** The `[patch.<source>]` tables: for each source named (`crates-io`, an alternative registry's name, or a git URL), its entries by the key written, each with the `path` and `package` it gives. */
+  patches: Map<string, Map<string, CargoDependencySpec>>;
+  /** Whether a `[workspace]` table is written at all, in any spelling: the manifest is a workspace root. */
+  hasWorkspace: boolean;
+}
+
+/** The URLs of the default registry's index, which `[patch.crates-io]` names by its alias. */
+const CRATES_IO_INDEXES = new Set(['https://github.com/rust-lang/crates.io-index', 'sparse+https://index.crates.io']);
+
+/** A git or index URL as Cargo compares it: without a trailing slash or `.git`. */
+function canonicalUrl(url: string): string {
+  return url.replace(/\/+$/, '').replace(/\.git$/, '').replace(/\/+$/, '');
+}
+
+/** The source a dependency is fetched from, as the key `patchSourceId` gives the `[patch]` table that replaces it: the default registry unless `git` or `registry` says otherwise; undefined for a source written but not readable. */
+function sourceIdOf(spec: CargoDependencySpec): string | undefined {
+  if (spec.git !== undefined) return spec.git === '' ? undefined : `git:${canonicalUrl(spec.git)}`;
+  if (spec.registry !== undefined) return spec.registry === '' ? undefined : `registry:${spec.registry}`;
+  return 'registry:crates-io';
+}
+
+/** The key of the source a `[patch.<source>]` table names: the default registry by `crates-io` or its index URL, an alternative registry by its name, a git repository by its URL. */
+function patchSourceId(table: string): string {
+  if (table === 'crates-io' || CRATES_IO_INDEXES.has(canonicalUrl(table))) return 'registry:crates-io';
+  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(table) ? `git:${canonicalUrl(table)}` : `registry:${table}`;
 }
 
 function normalizeCrateName(name: string): string {
@@ -586,18 +647,20 @@ function normalizeCrateName(name: string): string {
 /** The names of the per-package dependency tables, each bare or under `target.<cfg>`. */
 const DEP_TABLE_NAMES = new Set(['dependencies', 'dev-dependencies', 'dev_dependencies', 'build-dependencies', 'build_dependencies']);
 
-/** Where a full key path (the table header's segments, then the line's key segments) lands among dependency entries: in `[workspace.dependencies]` or in a package's dependency tables, which crate, and the field path below that crate (empty when the path is the crate's whole value). Undefined for a path that names no crate of a dependency table. */
-function dependencyEntryAt(keyPath: readonly string[]): { workspace: boolean; crate: string; field: string[] } | undefined {
+/** Where a full key path (the table header's segments, then the line's key segments) lands among dependency entries: in `[workspace.dependencies]`, in a `[patch.<source>]` table, or in a package's dependency tables, which crate, and the field path below that crate (empty when the path is the crate's whole value). Undefined for a path that names no crate of a dependency table. */
+function dependencyEntryAt(keyPath: readonly string[]): { workspace: boolean; patch?: string; crate: string; field: string[] } | undefined {
   if (keyPath[0] === 'workspace' && keyPath[1] === 'dependencies') {
     return keyPath.length > 2 ? { workspace: true, crate: keyPath[2], field: keyPath.slice(3) } : undefined;
   }
+  if (keyPath[0] === 'patch') return keyPath.length > 2 ? { workspace: false, patch: keyPath[1], crate: keyPath[2], field: keyPath.slice(3) } : undefined;
   const table = keyPath[0] === 'target' ? 2 : 0;
   if (!DEP_TABLE_NAMES.has(keyPath[table]) || keyPath.length <= table + 1) return undefined;
   return { workspace: false, crate: keyPath[table + 1], field: keyPath.slice(table + 2) };
 }
 
-/** Whether a key path lies above the crates of a dependency table, so a table written there as an inline table can hold dependency entries: a dependency table itself (`dependencies`, `target.<cfg>.dev-dependencies`, `workspace.dependencies`), or `target`, `target.<cfg>` or `workspace`. */
+/** Whether a key path lies above the crates of a dependency table, so a table written there as an inline table can hold dependency entries: a dependency table itself (`dependencies`, `target.<cfg>.dev-dependencies`, `workspace.dependencies`, `patch.<source>`), or `target`, `target.<cfg>`, `workspace` or `patch`. */
 function holdsDependencyEntries(keyPath: readonly string[]): boolean {
+  if (keyPath[0] === 'patch') return keyPath.length <= 2;
   if (keyPath[0] === 'workspace') return keyPath.length === 1 || (keyPath.length === 2 && keyPath[1] === 'dependencies');
   const table = keyPath[0] === 'target' ? 2 : 0;
   return keyPath.length <= table || (keyPath.length === table + 1 && DEP_TABLE_NAMES.has(keyPath[table]));
@@ -760,7 +823,7 @@ function inlineArrayItems(value: string): string[] | undefined {
   return inlineTableMembers(`{${v.slice(1, v.endsWith(']') ? -1 : undefined)}}`);
 }
 
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / git / registry / workspace fields of dependency entries plus `[workspace.dependencies]` and the entries of the `[patch.<source>]` tables, and whether a `[workspace]` table is written, and the `[package]` `build`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text: string): CargoManifest {
   let packageName: string | undefined;
   let libName: string | undefined;
@@ -783,6 +846,8 @@ export function parseCargoManifest(text: string): CargoManifest {
   let inTarget: CargoTarget | undefined;
   const dependencies = new Map<string, CargoDependencySpec>();
   const workspaceDependencies = new Map<string, CargoDependencySpec>();
+  const patches = new Map<string, Map<string, CargoDependencySpec>>();
+  let hasWorkspace = false;
   // The current table header's key segments ([] above the first header).
   let sectionPath: string[] = [];
   // A `key = value` line, the key possibly dotted (`a.b`, `"a".b`, `a . b`), and one segment of such a key or a table header: double-quoted (escapes allowed), single-quoted or bare. The value may hold the newlines of a multi-line string.
@@ -800,12 +865,21 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (field === 'path') spec.path = tomlString(value);
     else if (field === 'package') spec.package = tomlString(value);
     else if (field === 'workspace') spec.workspace = value === 'true';
+    else if (field === 'git') spec.git = tomlString(value) ?? '';
+    else if (field === 'registry') spec.registry = tomlString(value) ?? '';
+  };
+  // The table of entries a dependency entry belongs to: a package's dependencies, `[workspace.dependencies]`, or one `[patch.<source>]` table.
+  const tableOf = (entry: { workspace: boolean; patch?: string }): Map<string, CargoDependencySpec> => {
+    if (entry.patch === undefined) return entry.workspace ? workspaceDependencies : dependencies;
+    let table = patches.get(entry.patch);
+    if (table === undefined) patches.set(entry.patch, (table = new Map()));
+    return table;
   };
   // Crates the current table declared first (by a dotted key or by its `[dependencies.<name>]` header), keyed by map: their later lines in this table fill the same spec, as TOML reads them as one table. A crate an earlier table declared is never filled again.
   let declaredHere = new Set<string>();
-  const declare = (entry: { workspace: boolean; crate: string }): CargoDependencySpec | undefined => {
-    const into = entry.workspace ? workspaceDependencies : dependencies;
-    const id = `${entry.workspace ? 'workspace' : 'package'}:${entry.crate}`;
+  const declare = (entry: { workspace: boolean; patch?: string; crate: string }): CargoDependencySpec | undefined => {
+    const into = tableOf(entry);
+    const id = `${entry.patch !== undefined ? `patch.${entry.patch}` : entry.workspace ? 'workspace' : 'package'}:${entry.crate}`;
     if (!into.has(entry.crate)) {
       into.set(entry.crate, { workspace: false });
       declaredHere.add(id);
@@ -818,6 +892,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     const top = keyPath[0];
     if (top === 'lib') libDeclared = true;
     if (top === 'package') hasPackage = true;
+    if (top === 'workspace') hasWorkspace = true;
     if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'name') packageName = tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'edition') {
       // `edition = { workspace = true }` is the inline-table spelling of `edition.workspace = true`: the same key in TOML.
@@ -858,7 +933,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     }
     if (entry.field.length === 0) {
       // `crate = value`: an inline table gives the fields, a version string only declares the crate; the first declaration keeps it. An inline table is whole, so no later line extends it.
-      const into = entry.workspace ? workspaceDependencies : dependencies;
+      const into = tableOf(entry);
       if (into.has(entry.crate)) return;
       const spec: CargoDependencySpec = { workspace: false };
       into.set(entry.crate, spec);
@@ -878,6 +953,7 @@ export function parseCargoManifest(text: string): CargoManifest {
       sectionPath = keySegments(header[1]);
       if (sectionPath[0] === 'package') hasPackage = true;
       if (sectionPath[0] === 'lib') libDeclared = true;
+      if (sectionPath[0] === 'workspace') hasWorkspace = true;
       inTarget = line.startsWith('[[') && sectionPath.length === 1 && TARGET_TABLES.has(sectionPath[0]) ? { kind: sectionPath[0] } : undefined;
       if (inTarget !== undefined) targets.push(inTarget);
       declaredHere = new Set<string>();
@@ -917,6 +993,8 @@ export function parseCargoManifest(text: string): CargoManifest {
     declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),
     dependencies,
     workspaceDependencies,
+    patches,
+    hasWorkspace,
   };
 }
 

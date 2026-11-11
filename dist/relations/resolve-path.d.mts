@@ -66,6 +66,10 @@ interface CargoDependencySpec {
     path?: string;
     package?: string;
     workspace: boolean;
+    /** The `git` URL a dependency comes from; empty when written but not readable as a string. */
+    git?: string;
+    /** The name of the alternative `registry` a dependency comes from; empty when written but not readable as a string. */
+    registry?: string;
 }
 interface CargoManifest {
     crateName: string | undefined;
@@ -106,6 +110,10 @@ interface CargoManifest {
     declaresMainBin: boolean;
     dependencies: Map<string, CargoDependencySpec>;
     workspaceDependencies: Map<string, CargoDependencySpec>;
+    /** The `[patch.<source>]` tables: for each source named (`crates-io`, an alternative registry's name, or a git URL), its entries by the key written, each with the `path` and `package` it gives. */
+    patches: Map<string, Map<string, CargoDependencySpec>>;
+    /** Whether a `[workspace]` table is written at all, in any spelling: the manifest is a workspace root. */
+    hasWorkspace: boolean;
 }
 /** The `edition` a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` table writes for its own target, and how its root file is told: by `path`, or by `name` alone (Cargo roots it in its kind's directory, or a bin named like the package at `src/main.rs`). */
 interface CargoTargetEdition {
@@ -114,7 +122,7 @@ interface CargoTargetEdition {
     path: string | undefined;
     edition: string;
 }
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / git / registry / workspace fields of dependency entries plus `[workspace.dependencies]` and the entries of the `[patch.<source>]` tables, and whether a `[workspace]` table is written, and the `[package]` `build`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export declare function parseCargoManifest(text: string): CargoManifest;
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
 export declare function rustFileDeclares(text: string, name: string): boolean;

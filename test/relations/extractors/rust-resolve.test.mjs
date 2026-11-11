@@ -725,6 +725,53 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolveWith(`${bench(undefined)}path = "benches/bench.rs"\n`, 'self::helpers', 'src/bench.rs')).toBe('src/bench/helpers.rs');
   });
 
+  it('replaces a registry or git dependency by the path of a [patch] entry of the workspace root, in every spelling of the entry', () => {
+    const kit = (dir) => {
+      put(`${dir}/Cargo.toml`, '[package]\nname = "kit"\nedition = "2021"\n');
+      put(`${dir}/src/lib.rs`, 'pub struct Engine;\n');
+    };
+    for (const dir of ['v/a', 'v/b', 'v/c', 'v/d']) kit(dir);
+    put('app/src/lib.rs', '');
+    const resolve = (root, dep, spec = 'kit::Engine') => {
+      put('Cargo.toml', `${root}[package]\nname = "app"\nedition = "2021"\n[dependencies]\n${dep}\n`);
+      put('src/lib.rs', '');
+      return makeResolvePathToFile(ws)(spec, 'src/lib.rs', 'rust');
+    };
+    // The table, dotted-key, sub-table and inline spellings of the entry, and of the whole [patch] table.
+    expect(resolve('[patch.crates-io]\nkit = { path = "v/a" }\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    expect(resolve('[patch.crates-io]\nkit.path = "v/a"\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    expect(resolve('[patch.crates-io.kit]\npath = "v/a"\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    expect(resolve('patch = { crates-io = { kit = { path = "v/a" } } }\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    expect(resolve('patch.crates-io.kit.path = "v/a"\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    // The default registry by the URL of its index, a git repository by its URL however it ends, an alternative registry by its name.
+    expect(resolve('[patch."https://github.com/rust-lang/crates.io-index"]\nkit = { path = "v/a" }\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    expect(resolve('[patch."sparse+https://index.crates.io/"]\nkit = { path = "v/a" }\n', 'kit = "1"')).toBe('v/a/src/lib.rs');
+    expect(resolve('[patch."https://example.com/kit"]\nkit = { path = "v/b" }\n', 'kit = { git = "https://example.com/kit.git/" }')).toBe('v/b/src/lib.rs');
+    expect(resolve('[patch.corp]\nkit = { path = "v/c" }\n', 'kit = { version = "1", registry = "corp" }')).toBe('v/c/src/lib.rs');
+    // A source that does not match, or cannot be read, is not replaced; nor is a dependency of another package name, or an inherited one nothing declares.
+    expect(resolve('[patch.corp]\nkit = { path = "v/c" }\n', 'kit = "1"')).toBeUndefined();
+    expect(resolve('[patch.crates-io]\nkit = { path = "v/a" }\n', 'kit = { version = "1", registry = "corp" }')).toBeUndefined();
+    expect(resolve('[patch.crates-io]\nkit = { path = "v/a" }\n', 'kit = { git = 1 }')).toBeUndefined();
+    expect(resolve('[patch.crates-io]\nkit = { path = "v/a" }\n', 'kit = { registry = 1 }')).toBeUndefined();
+    expect(resolve('[patch.crates-io]\nother = { path = "v/a" }\n', 'kit = "1"')).toBeUndefined();
+    expect(resolve('[patch.crates-io]\nkit = { path = "v/a" }\n', 'kit = { workspace = true }')).toBeUndefined();
+    // The path stays inside the repository.
+    expect(resolve('[patch.crates-io]\nkit = { path = "../v/a" }\n', 'kit = "1"')).toBeUndefined();
+    // Only the workspace root's [patch] is read: the root of a workspace that lists the package, not the package's own.
+    put('Cargo.toml', '[workspace]\nmembers = ["app"]\n');
+    put('app/Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[dependencies]\nkit = "1"\n[patch.crates-io]\nkit = { path = "../v/a" }\n');
+    expect(makeResolvePathToFile(ws)('kit::Engine', 'app/src/lib.rs', 'rust')).toBeUndefined();
+    put('Cargo.toml', '[workspace]\nmembers = ["app"]\n[patch.crates-io]\nkit = { path = "v/d" }\n');
+    expect(makeResolvePathToFile(ws)('kit::Engine', 'app/src/lib.rs', 'rust')).toBe('v/d/src/lib.rs');
+    // A package with a workspace table of its own is its workspace root, whatever lies above it.
+    put('app/Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n[dependencies]\nkit = "1"\n[workspace]\n[patch.crates-io]\nkit = { path = "../v/a" }\n');
+    expect(makeResolvePathToFile(ws)('kit::Engine', 'app/src/lib.rs', 'rust')).toBe('v/a/src/lib.rs');
+    expect(parseCargoManifest('[package]\nname = "app"\n').hasWorkspace).toBe(false);
+    expect(parseCargoManifest('[workspace]\n').hasWorkspace).toBe(true);
+    expect(parseCargoManifest('workspace.members = []\n').hasWorkspace).toBe(true);
+    expect(parseCargoManifest('[workspace.dependencies]\nkit = "1"\n').hasWorkspace).toBe(true);
+  });
+
   it('roots crate:: of a [[test]], [[example]] or [[bench]] path at that target, also below tests/ where no main.rs is (the zed shape)', () => {
     // Issue 173: those paths were ignored, so such a target's root was a module of the default tree and its modules resolved under src/ or under tests/.
     put('Cargo.toml', '[package]\nname = "app"\n[[test]]\nname = "integration"\npath = "tests/integration/suite.rs"\n[[example]]\nname = "viewer"\npath = "demos/viewer/app.rs"\n[[bench]]\nname = "perf"\npath = "perf/bench_main.rs"\n');
@@ -1084,13 +1131,13 @@ path = "..\u002fmore"
     );
     expect(workspaceDependencies).toEqual(
       new Map([
-        ['reqwest', { path: undefined, package: 'zed-reqwest', workspace: false }],
+        ['reqwest', { path: undefined, package: 'zed-reqwest', workspace: false, git: 'https://github.com/zed-industries/reqwest.git' }],
         ['next', { path: 'crates/next', package: undefined, workspace: false }],
       ]),
     );
     expect(dependencies).toEqual(
       new Map([
-        ['kit', { path: '../kit', package: undefined, workspace: false }],
+        ['kit', { path: '../kit', package: undefined, workspace: false, git: 'https://example.com/a[b{c' }],
         ['tail', { path: '../tail', package: undefined, workspace: false }],
         ['list', { path: '../list', workspace: false }],
       ]),
