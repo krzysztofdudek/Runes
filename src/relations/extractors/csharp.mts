@@ -474,26 +474,19 @@ const MEMBER_DECLARATION_TYPES = new Set(['method_declaration', 'property_declar
 
 /** The names a member declaration gives its type, with the declaration that says how far they are seen; none for a declaration that names no member a simple name can read (an explicit interface implementation, an indexer, an operator, a nested type, which has a key of its own). */
 function memberNames(node: Node): string[] {
-  switch (node.type) {
-    case 'method_declaration':
-    case 'property_declaration':
-    case 'event_declaration':
-      return node.namedChildren.some((c) => c!.type === 'explicit_interface_specifier') ? [] : [node.childForFieldName('name')!.text];
-    case 'field_declaration':
-    case 'event_field_declaration': {
-      const names: string[] = [];
-      for (const declaration of node.namedChildren) {
-        if (declaration!.type !== 'variable_declaration') continue;
-        for (const d of declaration!.namedChildren) {
-          const name = d!.type === 'variable_declarator' ? d!.childForFieldName('name') : null;
-          if (name !== null && name.type === 'identifier') names.push(name.text);
-        }
-      }
-      return names;
-    }
-    default:
-      return [];
+  if (node.type !== 'field_declaration' && node.type !== 'event_field_declaration') {
+    // A method, a property or an event (`MEMBER_DECLARATION_TYPES`): its own name.
+    return node.namedChildren.some((c) => c!.type === 'explicit_interface_specifier') ? [] : [node.childForFieldName('name')!.text];
   }
+  const names: string[] = [];
+  for (const declaration of node.namedChildren) {
+    if (declaration!.type !== 'variable_declaration') continue;
+    for (const d of declaration!.namedChildren) {
+      const name = d!.type === 'variable_declarator' ? d!.childForFieldName('name') : null;
+      if (name !== null && name.type === 'identifier') names.push(name.text);
+    }
+  }
+  return names;
 }
 
 /** True when a member declaration is private: it says `private` without `protected`, or it carries no access modifier in a class, struct or record, where that is the default (a member of an interface is public by default). */
