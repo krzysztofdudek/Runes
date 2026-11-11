@@ -8,7 +8,7 @@ cites: "Rust Reference, Tokens (a raw string literal ends at its own `\"` and ha
 
 ## Rule
 
-`src/lib.rs` holds a raw string with a quote and an opening brace inside it and declares `mod late;` after it, and `src/main.rs` is a second crate with an `Opts` of its own. The string is one token, so `mod late;` is a module of the library and `src/late/mod.rs` binds `crate::Opts` to `src/lib.rs` (owner root).
+`src/lib.rs` holds a raw string with one quote and an opening brace inside it (a reader that pairs the quotes takes the brace for code) and declares `mod late;` after it, and `src/main.rs` is a second crate with an `Opts` of its own. The string is one token, so `mod late;` is a module of the library and `src/late/mod.rs` binds `crate::Opts` to `src/lib.rs` (owner root).
 
 ## Files
 
@@ -19,7 +19,7 @@ edition = "2021"
 ```
 
 ```rust path=src/lib.rs owner=root
-pub const TEMPLATE: &str = r#"say "hi" {"#;
+pub const TEMPLATE: &str = r#"say "hi {"#;
 mod late;
 pub struct Opts;
 ```
