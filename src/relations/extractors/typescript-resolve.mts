@@ -249,13 +249,15 @@ function normalizeExports(exportsField: unknown): unknown {
 
 const NODE_MODULE_KINDS = new Set(['node16', 'node18', 'node20', 'nodenext']);
 const IMPORT_CALL_REWRITING_MODULE_KINDS = new Set(['commonjs', 'amd', 'umd', 'system', 'none']);
+// The value of `module`, `moduleResolution` and `target` under a base config that cannot be read: unknown, which is not unset.
+const UNREAD_SETTING = '?';
 const CLASSIC_MODULE_KINDS = new Set(['amd', 'umd', 'system', 'none']);
 const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext', 'preserve', 'amd', 'umd', 'system', 'none']);
 
 /**
  * The conditions TypeScript matches in a package's `exports` and `imports` for an import written in `from`, as its `getConditions` builds them: `import` or `require` by the importing file's module format, `types`, `node` except under `moduleResolution` Bundler, the config's `customConditions`, and `default`, which always matches. undefined when the settings in effect do not decide them, and the reading then is the one Runes gave before it read conditions: every target in declaration order, the first that names a file.
  *
- * The settings are read as TypeScript 6 computes them. `moduleResolution` `bundler`, `node16` or `nodenext` names the resolution. With no `moduleResolution` the `module` implies it: `node16`, `node18`, `node20` and `nodenext` imply their own, `amd`, `umd`, `system` and `none` imply Classic, and every other one Bundler. With no `module` the `target` implies it: `es5` gives `commonjs`, and any other target, or none, an ES module kind. Under Node10 or Classic, named or implied, `exports` is not read at all, a difference Runes does not model: the settings then decide nothing.
+ * The settings are read as TypeScript 6 computes them. `moduleResolution` `bundler`, `node16` or `nodenext` names the resolution. With no `moduleResolution` the `module` implies it: `node16`, `node18`, `node20` and `nodenext` imply their own, `amd`, `umd`, `system` and `none` imply Classic, and every other one Bundler. With no `module` the `target` implies it: `es5` gives `commonjs`, and any other target, or none, an ES module kind. Under Node10 or Classic, named or implied, `exports` is not read at all, a difference Runes does not model: the settings then decide nothing. A config that extends a base Runes cannot read (a preset that is installed, not committed) inherits settings that are unknown, not unset: the defaults do not apply to them, and they decide only where the config sets them itself or sets a `module` that implies its resolution (a Node one, or `preserve`).
  *
  * A file no tsconfig covers is read as Node reads it, whatever the compiler would default to: `import` or `require` by the file's format, `types`, `node` and `default`, so a key for a runtime or a bundler (`react-server`, `edge-light`, `worker`, `react-native`, `browser`) is passed over.
  *
@@ -274,8 +276,10 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
     kind = 'node';
   } else {
     const { moduleResolution: resolution } = config;
+    if (config.module === UNREAD_SETTING) return undefined;
     module = config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext');
-    if (resolution === undefined) kind = NODE_MODULE_KINDS.has(module) ? 'node' : CLASSIC_MODULE_KINDS.has(module) ? undefined : 'bundler';
+    if (resolution === UNREAD_SETTING) kind = NODE_MODULE_KINDS.has(module) ? 'node' : module === 'preserve' ? 'bundler' : undefined;
+    else if (resolution === undefined) kind = NODE_MODULE_KINDS.has(module) ? 'node' : CLASSIC_MODULE_KINDS.has(module) ? undefined : 'bundler';
     else kind = resolution === 'bundler' ? 'bundler' : resolution === 'node16' || resolution === 'nodenext' ? 'node' : undefined;
     if (kind === undefined) return undefined;
   }
@@ -924,7 +928,7 @@ export function makeTsResolveDeps(
       }
     }
     // Not installed: a published preset (the only kind a repository extends without
-    // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none.
+    // vendoring). Those set compiler flags, not `paths`/`baseUrl`, so it contributes none of these; the module settings it sets are unknown (see `loadConfig`).
     return undefined;
   };
   // `${configDir}` (TypeScript 5.5) is the directory of the tsconfig in effect for the file — the leaf of the chain, not the base that spells it. A value using it is rewritten to a repo-root-anchored path (leading '/'), which `joinConfigPath` reads.
@@ -959,7 +963,11 @@ export function makeTsResolveDeps(
         if (typeof base !== 'string') return 'unknown';
         const baseFile = resolveExtends(file, base);
         if (baseFile === 'unknown') return 'unknown';
-        if (baseFile === undefined) continue;
+        if (baseFile === undefined) {
+          // A preset that is installed, not committed: what it sets is unknown until a later base or this config sets it.
+          merged.module = merged.moduleResolution = merged.target = UNREAD_SETTING;
+          continue;
+        }
         const inherited = loadConfig(baseFile, leafDir);
         if (inherited === 'unknown') return 'unknown';
         merged = { ...merged, ...inherited };
