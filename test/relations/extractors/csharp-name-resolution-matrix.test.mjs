@@ -406,3 +406,34 @@ describe('MATRIX — C# ref types, query range variable types and function point
   it('csharp-query-range-variable-type-edge', () => runCase('csharp-query-range-variable-type-edge'));
   it('csharp-function-pointer-type-edge', () => runCase('csharp-function-pointer-type-edge'));
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — using static: nested types and extension methods at the level of the directive', () => {
+  it('csharp-using-static-nested-type-edge', () => runCase('csharp-using-static-nested-type-edge'));
+  it('csharp-using-static-nested-type-namespace-body-hides-global-edge', () => runCase('csharp-using-static-nested-type-namespace-body-hides-global-edge'));
+  it('csharp-global-using-static-nested-type-edge', () => runCase('csharp-global-using-static-nested-type-edge'));
+  it('csharp-using-static-nested-type-beside-global-type-edge', () => runCase('csharp-using-static-nested-type-beside-global-type-edge'));
+  it('csharp-using-static-nested-type-loses-to-enclosing-namespace-edge', () => runCase('csharp-using-static-nested-type-loses-to-enclosing-namespace-edge'));
+  it('csharp-using-static-nested-type-beside-using-ambiguous-silence', () => runCase('csharp-using-static-nested-type-beside-using-ambiguous-silence'));
+  it('csharp-using-static-extension-method-edge', () => runCase('csharp-using-static-extension-method-edge'));
+  it('csharp-using-static-extension-method-namespace-body-edge', () => runCase('csharp-using-static-extension-method-namespace-body-edge'));
+  it('csharp-global-using-static-extension-method-edge', () => runCase('csharp-global-using-static-extension-method-edge'));
+  it('csharp-using-static-extension-method-other-class-silence', () => runCase('csharp-using-static-extension-method-other-class-silence'));
+  it('csharp-using-static-extension-class-named-like-namespace-silence', () => runCase('csharp-using-static-extension-class-named-like-namespace-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — file-local types shadow within their own file and level', () => {
+  it('csharp-file-local-type-in-own-file-silence', () => runCase('csharp-file-local-type-in-own-file-silence'));
+  it('csharp-file-local-type-hides-outer-namespace-type-silence', () => runCase('csharp-file-local-type-hides-outer-namespace-type-silence'));
+  it('csharp-file-local-type-hides-using-imported-type-silence', () => runCase('csharp-file-local-type-hides-using-imported-type-silence'));
+  it('csharp-file-local-type-nearer-nested-type-edge', () => runCase('csharp-file-local-type-nearer-nested-type-edge'));
+  it('csharp-file-local-type-nearer-inner-namespace-type-edge', () => runCase('csharp-file-local-type-nearer-inner-namespace-type-edge'));
+  it('csharp-file-local-type-alias-target-silence', () => runCase('csharp-file-local-type-alias-target-silence'));
+  it('csharp-file-local-type-using-static-target-silence', () => runCase('csharp-file-local-type-using-static-target-silence'));
+  it('csharp-file-local-type-alias-qualified-silence', () => runCase('csharp-file-local-type-alias-qualified-silence'));
+  it('csharp-file-local-type-alias-qualified-attribute-silence', () => runCase('csharp-file-local-type-alias-qualified-attribute-silence'));
+  it('csharp-file-local-type-other-file-hides-nothing-edge', () => runCase('csharp-file-local-type-other-file-hides-nothing-edge'));
+  it('csharp-file-local-nested-type-in-own-file-silence', () => runCase('csharp-file-local-nested-type-in-own-file-silence'));
+  it('csharp-alias-colon-colon-generic-middle-arity-edge', () => runCase('csharp-alias-colon-colon-generic-middle-arity-edge'));
+});
