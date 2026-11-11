@@ -217,6 +217,9 @@ describe('MATRIX — what a crate root binds', () => {
   it('rust-edition-2015-root-extern-crate-alias-edge', () => runCase('rust-edition-2015-root-extern-crate-alias-edge'));
   it('rust-root-extern-crate-alias-edge', () => runCase('rust-root-extern-crate-alias-edge'));
   it('rust-module-extern-crate-alias-own-module-only-edge', () => runCase('rust-module-extern-crate-alias-own-module-only-edge'));
+  it('rust-edition-2015-root-module-over-path-dependency-edge', () => runCase('rust-edition-2015-root-module-over-path-dependency-edge'));
+  it('rust-edition-2015-path-dependency-without-extern-crate-silence', () => runCase('rust-edition-2015-path-dependency-without-extern-crate-silence'));
+  it('rust-edition-2015-root-extern-crate-path-dependency-edge', () => runCase('rust-edition-2015-root-extern-crate-path-dependency-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

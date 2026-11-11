@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { rustExternBindingKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { rustExternBindingKey, rustExternCrateKey, rustExternNameKey, rustModuleFileKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -396,7 +396,10 @@ function join(prefix, tail) {
  * items, these are the names a `crate::` path or a path into a dependency can go through in a
  * crate-root file. The crate each such name stands for is declared under
  * `rustExternBindingKey(name, crate)` (`extern:<name>=<crate>`), which lets a path that starts
- * with the name resolve to the crate.
+ * with the name resolve to the crate. And every crate the file names in an `extern crate`
+ * declaration, at any depth, is declared under `rustExternCrateKey(crate)`
+ * (`externcrate:<crate>`): in edition 2015 only such a declaration names a dependency by its
+ * crate name.
  *
  * Every module the file places in a file of its own by name alone is declared under
  * `rustModuleFileKey(path, conditional)`, read by `plainModuleFiles`: `modfile:<path>` for a
@@ -427,6 +430,11 @@ function declarations(file) {
         out.push({ symbolKey: rustExternNameKey(name), line });
         if (crate !== undefined)
             out.push({ symbolKey: rustExternBindingKey(name, crate), line });
+    }
+    for (const node of root.descendantsOfType('extern_crate_declaration')) {
+        const crate = node?.childForFieldName('name') ?? null;
+        if (node !== null && crate !== null && crate.type === 'identifier' && crate.text !== 'self')
+            out.push({ symbolKey: rustExternCrateKey(unraw(crate.text)), line: node.startPosition.row + 1 });
     }
     for (const { path, line, conditional } of plainModuleFiles(root))
         out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
@@ -669,7 +677,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 8,
+    rev: 9,
     declarations,
     uses,
 };

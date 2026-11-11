@@ -35,6 +35,7 @@ dependencies.serde.version = "1"
 
 [package]
 name = "app"
+edition = "2021"
 ```
 
 ```rust path=crates/core/src/lib.rs

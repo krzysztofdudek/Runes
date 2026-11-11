@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, rustExternCrateKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
@@ -427,6 +427,45 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolveOld('core2::Engine', 'old/src/api/mod.rs', 'rust', false, older)).toBe('engine-core/src/lib.rs');
     expect(resolveOld('local::Engine', 'old/src/api/mod.rs', 'rust', false, older)).toBeUndefined();
     expect(resolveOld('engine_core', 'old/src/api/mod.rs', 'rust', false, older)).toBe('engine-core/src/lib.rs');
+  });
+
+  it('in edition 2015 reaches a path dependency from a use only through the root\'s extern crate, and takes the root\'s own module of that name first', async () => {
+    const manifest = (edition) => `[package]\nname = "app"\n${edition}\n[dependencies]\nutil = { path = "../util" }\n`;
+    put('util/Cargo.toml', '[package]\nname = "util"\n');
+    put('util/src/lib.rs', 'pub fn slug() {}\n');
+    // The root declares a module `util` and no extern crate.
+    put('local/Cargo.toml', manifest(''));
+    put('local/src/lib.rs', 'mod util;\nmod api;\n');
+    put('local/src/util/mod.rs', 'pub fn slug() {}\n');
+    put('local/src/api/mod.rs', 'use util::slug;\n');
+    put('local/src/tool.rs', 'fn f() {\n    extern crate util;\n}\n');
+    // The root binds nothing called `util`.
+    put('bare/Cargo.toml', manifest(''));
+    put('bare/src/lib.rs', 'pub struct Unrelated;\n');
+    put('bare/src/api/mod.rs', 'use util::slug;\n');
+    // The root writes the extern crate.
+    put('linked/Cargo.toml', manifest(''));
+    put('linked/src/lib.rs', '#[macro_use]\nextern crate util;\n');
+    put('linked/src/api/mod.rs', 'use util::slug;\n');
+    // Edition 2018: the dependency is in the extern prelude.
+    put('newer/Cargo.toml', manifest('edition = "2018"'));
+    put('newer/src/lib.rs', 'pub struct Unrelated;\n');
+    put('newer/src/api/mod.rs', 'use util::slug;\n');
+    const table = await tableNow();
+    const resolve = makeResolvePathToFile(ws);
+    const from = (file, specifier) => resolve(specifier, file, 'rust', false, table);
+    expect(from('local/src/api/mod.rs', 'util::slug')).toBe('local/src/util/mod.rs');
+    expect(from('local/src/lib.rs', 'util::slug')).toBe('local/src/util/mod.rs');
+    // The declaration's own path names the crate, wherever it stands.
+    expect(from('local/src/tool.rs', 'util')).toBe('util/src/lib.rs');
+    expect(from('bare/src/api/mod.rs', 'util::slug')).toBeUndefined();
+    expect(from('bare/src/lib.rs', 'util::slug')).toBeUndefined();
+    expect(from('linked/src/api/mod.rs', 'util::slug')).toBe('util/src/lib.rs');
+    expect(from('linked/src/lib.rs', 'util')).toBe('util/src/lib.rs');
+    expect(from('newer/src/api/mod.rs', 'util::slug')).toBe('util/src/lib.rs');
+    // Without the table what the root binds is not known, and the dependency binds as it does from 2018 on.
+    expect(resolve('util::slug', 'bare/src/api/mod.rs', 'rust')).toBe('util/src/lib.rs');
+    expect(resolve('util::slug', 'local/src/api/mod.rs', 'rust')).toBe('util/src/lib.rs');
   });
 
   it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', async () => {
@@ -1548,6 +1587,16 @@ path = "..\u002fmore"
         { symbolKey: rustExternNameKey('me'), line: 4 },
       ]);
       expect(keys.some((d) => d.symbolKey === rustTopLevelItemKey('log') || d.symbolKey === rustTopLevelItemKey('printer'))).toBe(false);
+    });
+  });
+
+  it('declares every crate a file names in an extern crate declaration, at any depth, under its extern crate key', async () => {
+    const code = 'extern crate log;\npub extern crate grep_printer as printer;\nextern crate self as me;\nmod m {\n    extern crate r#inner;\n}\nfn f() {\n    extern crate local as l;\n}\nconst S: &str = "extern crate text;";\n';
+    await withParsedFile('src/lib.rs', code, (tree) => {
+      const keys = rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust'));
+      expect(keys.filter((d) => d.symbolKey.startsWith('externcrate:'))).toEqual([
+        { symbolKey: rustExternCrateKey('log'), line: 1 }, { symbolKey: rustExternCrateKey('grep_printer'), line: 2 }, { symbolKey: rustExternCrateKey('inner'), line: 5 }, { symbolKey: rustExternCrateKey('local'), line: 8 },
+      ]);
     });
   });
 

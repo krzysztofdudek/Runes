@@ -24,7 +24,7 @@ import path from 'node:path';
  *
  * EDITION: in edition 2015 (also what Cargo assumes when `[package]` gives no edition) a `use` path
  * is relative to the crate root, so `use a::b;` names the module `a` the root declares
- * (`crateRelativeUses`). From edition 2018 on the same path names an external crate and stays silent.
+ * (`crateRelativeUses`), before any path dependency of that name. From edition 2018 on the same path names an external crate.
  *
  * CRATE-ROOT ITEMS: the module file of `crate` itself is the crate root file, so
  * `crate::Error` for an `enum Error` defined in `src/lib.rs` binds `src/lib.rs`. Because
@@ -40,7 +40,10 @@ import path from 'node:path';
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
  * from `[workspace.dependencies]`) resolves inside that crate's library tree. Registry
- * crates are never path dependencies, so they stay external.
+ * crates are never path dependencies, so they stay external. In edition 2015 a `use`
+ * path cannot start with a crate of the extern prelude: the first segment is a module or an
+ * item of the crate root, or a crate the root binds with `extern crate`, and a dependency the
+ * root does not bind stays silent. Only an `extern crate` declaration names its crate directly.
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
@@ -95,6 +98,8 @@ export interface RustResolveDeps {
   rootDeclares?(rootFile: string, name: string, asItem?: boolean): boolean;
   /** The library tree of the crate that the top level of `file` binds as `name` with `extern crate` (`extern crate a as name;`, or `extern crate name;`), when that crate is an in-repo path dependency of the package of `fromFile`, or that package's own library. Undefined when `file` binds no such name there or the crate is not in the repository. Absent → no name is known to be bound that way. */
   externCrateFor?(fromFile: string, file: string, name: string): RustCrateTree | undefined;
+  /** Does `file` write an `extern crate` declaration that names the crate `crate`, anywhere in it? Absent → not known, and an edition 2015 path to a dependency binds as it does from 2018 on. */
+  writesExternCrate?(file: string, crate: string): boolean;
 }
 
 /** The crate-root lookup context handed to `resolveFromModuleDir`: when the module being
@@ -148,9 +153,9 @@ export function resolveRustPath(
     return resolveFromModuleDir(lib.srcDir, rest, exists, rootContext(lib.srcDir, lib.rootFiles, declares));
   }
 
-  // An in-repo path dependency of this crate → that crate's library tree.
+  // An in-repo path dependency of this crate → that crate's library tree. In edition 2015 a crate is no name a `use` path can start with: the path is relative to the crate root, which reaches a dependency only through its own `extern crate` (followed above). What still names the dependency by its crate name there is an `extern crate` declaration itself, which the importing file then writes.
   const dep = deps.dependencyFor?.(fromFile, root);
-  if (dep !== undefined) {
+  if (dep !== undefined && (crate.crateRelativeUses !== true || deps.writesExternCrate === undefined || deps.writesExternCrate(toPosix(fromFile), root))) {
     return resolveFromModuleDir(dep.srcDir, rest, exists, rootContext(dep.srcDir, dep.rootFiles, declares));
   }
 
@@ -178,6 +183,11 @@ export function rustExternNameKey(name: string): string {
 /** The symbol key under which the Rust extractor declares, for a file whose top level writes `extern crate <crate> as <name>;` or `extern crate <name>;`, that `name` stands for the crate `crate` there (both as written in code, with `r#` stripped). A table answers only whether a key is declared, so the resolver asks it for each crate the importing package can name. */
 export function rustExternBindingKey(name: string, crate: string): string {
   return `extern:${name}=${crate}`;
+}
+
+/** The symbol key under which the Rust extractor declares, for a file, a crate that the file names in an `extern crate` declaration anywhere in it (`extern crate <crate>;`, with or without an alias, also inside an inline module or a function body). The extractor emits such a declaration as the bare path `<crate>`, and in edition 2015 this key is what tells that path from a `use` path of the same name, which is relative to the crate root. */
+export function rustExternCrateKey(crate: string): string {
+  return `externcrate:${crate}`;
 }
 
 /** The symbol key under which the Rust extractor declares, for a file, a module that the file places in a file of its own by name alone: a `mod x;` with no `path` attribute and no macro around it. `modulePath` is the module's names from the declaring file's own module, joined by `/` (`x`, or `outer/x` for one inside the inline module `outer`). A declaration that a `cfg` may remove (`conditional`) has a key of its own, `modfile?:<path>`, so it is never taken for one that always holds, `modfile:<path>`. Neither prefix can be a Rust identifier. */

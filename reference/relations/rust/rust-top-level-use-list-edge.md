@@ -20,6 +20,7 @@ name = "core-lib"
 ```toml path=crates/app/Cargo.toml
 [package]
 name = "app"
+edition = "2021"
 
 [dependencies]
 core-lib = { path = "../core-lib" }

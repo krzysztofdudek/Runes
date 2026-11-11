@@ -31,6 +31,7 @@ dependencies = { shop-core = { workspace = true }, util = { path = "../util" }, 
 
 [package]
 name = "app"
+edition = "2021"
 ```
 
 ```rust path=crates/core/src/lib.rs

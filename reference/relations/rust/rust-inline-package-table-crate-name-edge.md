@@ -24,6 +24,7 @@ package = { name = "text-util" }
 ```toml path=crates/app/Cargo.toml
 [package]
 name = "app"
+edition = "2021"
 
 [dependencies]
 kit = { path = "../kit" }
