@@ -1200,7 +1200,7 @@ describe('resolveTsPath — an excluded file acts as though it does not exist', 
   });
   it('an excluded exports condition target is skipped, so the next condition wins as in a clean checkout', () => {
     const conditions = {
-      'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "types": "./dist/index.d.ts", "development": "./src/index.ts" } } }',
+      'packages/core/package.json': '{ "name": "@acme/core", "exports": { ".": { "types": "./dist/index.d.ts", "default": "./src/index.ts" } } }',
       'packages/core/src/index.ts': '',
     };
     expect(project(conditions, ignoredDist)('@acme/core', 'packages/app/src/main.ts')).toBe('packages/core/src/index.ts');

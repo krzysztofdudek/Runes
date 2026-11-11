@@ -2,6 +2,7 @@ import path from 'node:path';
 import { diskFileView } from '../file-view.mjs';
 import { failureOffset, lineColumnAt, reportUnreadable } from '../diagnostics.mjs';
 import { satisfiesRange } from './semver-range.mjs';
+import { typeScriptSatisfies } from './typescript-version-range.mjs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
@@ -33,7 +34,7 @@ import { satisfiesRange } from './semver-range.mjs';
  *   directory holding a package.json, its `types`/`typings`/`module`/`main` entry; then
  *   the directory index (`index.ts|tsx|js|jsx|mjs|cjs`).
  */
-export function resolveTsPath(specifier, fromFile, existsAny, deps) {
+export function resolveTsPath(specifier, fromFile, existsAny, deps, callForm) {
     const spec = stripQuery(specifier);
     if (spec === '')
         return undefined;
@@ -56,15 +57,15 @@ export function resolveTsPath(specifier, fromFile, existsAny, deps) {
         const pkg = deps.nearestPackage(from);
         if (pkg === undefined)
             return undefined;
-        return pickTarget(matchSubpathKey(pkg.manifest.imports, spec), exportConditions(from, deps), (target) => target.startsWith('./')
+        return pickTarget(matchSubpathKey(pkg.manifest.imports, spec), exportConditions(from, deps, callForm), (target) => target.startsWith('./')
             ? probe(joinUnder(pkg.dir, target), exists, deps)
             : target.startsWith('#') || target.startsWith('/') || target.startsWith('.')
                 ? undefined
-                : resolveBare(target, from, exists, deps));
+                : resolveBare(target, from, exists, deps, callForm));
     }
-    return resolveBare(spec, from, exists, deps);
+    return resolveBare(spec, from, exists, deps, callForm);
 }
-function resolveBare(spec, from, exists, deps) {
+function resolveBare(spec, from, exists, deps, callForm) {
     const config = deps.tsconfigFor(from);
     // A tsconfig that exists but cannot be read may remap this very specifier: resolving it
     // any other way could name a file the compiler would not. Stay silent.
@@ -84,7 +85,7 @@ function resolveBare(spec, from, exists, deps) {
             if (hits.size === 1)
                 return [...hits][0];
             // A matched pattern with no hit: the compiler moves on to package lookup.
-            return resolveWorkspacePackage(spec, from, exists, deps);
+            return resolveWorkspacePackage(spec, from, exists, deps, callForm);
         }
     }
     if (config?.baseUrl !== undefined) {
@@ -92,7 +93,7 @@ function resolveBare(spec, from, exists, deps) {
         if (hit !== undefined)
             return hit;
     }
-    return resolveWorkspacePackage(spec, from, exists, deps);
+    return resolveWorkspacePackage(spec, from, exists, deps, callForm);
 }
 /** `@scope/name/sub/path` → ['@scope/name', './sub/path']; `name` → ['name', '.']. */
 function splitPackageSpecifier(spec) {
@@ -104,7 +105,7 @@ function splitPackageSpecifier(spec) {
     const rest = segs.slice(nameLen).join('/');
     return [name, rest === '' ? '.' : `./${rest}`];
 }
-function resolveWorkspacePackage(spec, from, exists, deps) {
+function resolveWorkspacePackage(spec, from, exists, deps, callForm) {
     const split = splitPackageSpecifier(spec);
     if (split === undefined)
         return undefined;
@@ -116,7 +117,7 @@ function resolveWorkspacePackage(spec, from, exists, deps) {
     if (manifest.exports !== undefined && manifest.exports !== null) {
         // `exports` is the package's whole public surface: a subpath it does not list is not
         // importable, so no fallback to the directory layout.
-        return pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps), (target) => target.startsWith('./') ? probe(joinUnder(dir, target), exists) : undefined);
+        return pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) => target.startsWith('./') ? probe(joinUnder(dir, target), exists) : undefined);
     }
     if (subpath !== '.')
         return probe(joinUnder(dir, subpath), exists, deps);
@@ -140,31 +141,43 @@ const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext',
  *
  * The settings decide when the config in effect names the resolution: `moduleResolution` `bundler`, `node16` or `nodenext`, or, with no `moduleResolution`, a `module` that implies it in TypeScript 5 and 6 alike (`node16`, `node18`, `node20` and `nodenext` imply their own, `preserve` implies Bundler). Nothing else decides: with neither set the default moved between TypeScript 5 (Node10 or Classic) and 6 (Bundler), and under Node10 or Classic `exports` is not read at all, a difference Runes does not model.
  *
- * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
+ * A file no tsconfig covers is read as Node reads it, whatever the compiler would default to: `import` or `require` by the file's format, `types`, `node` and `default`, so a key for a runtime or a bundler (`react-server`, `edge-light`, `worker`, `react-native`, `browser`) is passed over.
  *
- * The format is the file's, which is what TypeScript reads for an `import` or `export` statement; a `require()` call or `import x = require()` reads `require` and a dynamic `import()` may read `import` in a file of the other format, and the extractor does not say which form an import was written in, so those take the file's conditions too.
+ * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. A `module` left unset (its default moved between the two versions), a Node resolution with a non-Node `module` or the reverse (both rejected by tsc), and any other file kind (a Vue or Svelte component) decide nothing.
+ *
+ * The format is the file's, which is what TypeScript reads for an `import` or `export` statement. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, a dynamic `import()` reads `import`.
  */
-function exportConditions(from, deps) {
+function exportConditions(from, deps, callForm) {
     const config = deps.tsconfigFor(from);
-    if (config === undefined || config === 'unknown')
-        return undefined;
-    const { moduleResolution: resolution, module } = config;
-    const kind = resolution === 'bundler' || (resolution === undefined && module === 'preserve')
-        ? 'bundler'
-        : resolution === 'node16' || resolution === 'nodenext' || (resolution === undefined && module !== undefined && NODE_MODULE_KINDS.has(module))
-            ? 'node'
-            : undefined;
-    if (kind === undefined || module === undefined)
+    if (config === 'unknown')
         return undefined;
     const ext = /\.[^./]*$/.exec(from)?.[0].toLowerCase();
+    const typeIsModule = () => deps.nearestPackage(from)?.manifest.type === 'module';
+    let kind;
+    let module;
+    if (config === undefined) {
+        kind = 'node';
+    }
+    else {
+        const { moduleResolution: resolution } = config;
+        module = config.module;
+        kind =
+            resolution === 'bundler' || (resolution === undefined && module === 'preserve')
+                ? 'bundler'
+                : resolution === 'node16' || resolution === 'nodenext' || (resolution === undefined && module !== undefined && NODE_MODULE_KINDS.has(module))
+                    ? 'node'
+                    : undefined;
+        if (kind === undefined || module === undefined)
+            return undefined;
+    }
     let format;
     if (ext === '.mts' || ext === '.mjs')
         format = 'import';
     else if (ext === '.cts' || ext === '.cjs')
         format = 'require';
     else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
-        if (kind === 'node' && NODE_MODULE_KINDS.has(module))
-            format = deps.nearestPackage(from)?.manifest.type === 'module' ? 'import' : 'require';
+        if (module === undefined || (kind === 'node' && NODE_MODULE_KINDS.has(module)))
+            format = typeIsModule() ? 'import' : 'require';
         else if (kind === 'bundler' && module === 'commonjs')
             format = 'require';
         else if (kind === 'bundler' && ESM_MODULE_KINDS.has(module))
@@ -172,13 +185,13 @@ function exportConditions(from, deps) {
     }
     if (format === undefined)
         return undefined;
-    const conditions = new Set(['default', format, 'types', ...(config.customConditions ?? [])]);
+    const conditions = new Set(['default', callForm ?? format, 'types', ...(config?.customConditions ?? [])]);
     if (kind === 'node')
         conditions.add('node');
     return conditions;
 }
 /**
- * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing, and so does a versioned `types@<range>` key, whose match depends on the compiler's version. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
+ * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing; a versioned `types@<range>` key is entered when the compiler's version satisfies its range and passed over when it does not. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
  */
 function pickTarget(match, conditions, resolve) {
     if (match === undefined)
@@ -200,9 +213,7 @@ function pickTarget(match, conditions, resolve) {
             return STOP;
         const branches = Array.isArray(v) ? v.map((entry) => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
         for (const [condition, branch] of branches) {
-            if (condition.startsWith('types@') && conditions.has('types'))
-                return STOP;
-            if (!conditions.has(condition))
+            if (!conditions.has(condition) && !(conditions.has('types') && condition.startsWith('types@') && typeScriptSatisfies(condition.slice('types@'.length))))
                 continue;
             const hit = walk(branch);
             if (hit !== undefined)

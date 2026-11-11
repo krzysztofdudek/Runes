@@ -1,5 +1,7 @@
 import { type FileSource } from '../file-view.mjs';
 import { type DiagnosticSink, type Failure } from '../diagnostics.mjs';
+/** How a specifier was written when it is a call: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. */
+export type TsCallForm = 'require' | 'import';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
@@ -31,7 +33,7 @@ import { type DiagnosticSink, type Failure } from '../diagnostics.mjs';
  *   directory holding a package.json, its `types`/`typings`/`module`/`main` entry; then
  *   the directory index (`index.ts|tsx|js|jsx|mjs|cjs`).
  */
-export declare function resolveTsPath(specifier: string, fromFile: string, existsAny: (repoRelPosix: string) => boolean, deps?: TsResolveDeps): string | undefined;
+export declare function resolveTsPath(specifier: string, fromFile: string, existsAny: (repoRelPosix: string) => boolean, deps?: TsResolveDeps, callForm?: TsCallForm): string | undefined;
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
     /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, a referenced config that may hold the file and cannot be read), or undefined when the file has none. */

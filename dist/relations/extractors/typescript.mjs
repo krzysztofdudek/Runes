@@ -230,16 +230,16 @@ function augmentationSpecifier(moduleNode, inModuleFile) {
 function uses(file) {
     const out = [];
     const seen = new Set();
-    const emitAt = (specifier, line) => {
+    const emitAt = (specifier, line, callForm) => {
         if (specifier === undefined || !isCandidateSpecifier(specifier))
             return;
-        const dedupKey = `${specifier}\n${line}`;
+        const dedupKey = `${specifier}\n${line}\n${callForm ?? ''}`;
         if (seen.has(dedupKey))
             return;
         seen.add(dedupKey);
-        out.push(single({ kind: 'path', specifier }, 'import', line));
+        out.push(single(callForm === undefined ? { kind: 'path', specifier } : { kind: 'path', specifier, callForm }, 'import', line));
     };
-    const emit = (specifier, node) => emitAt(specifier, node.startPosition.row + 1);
+    const emit = (specifier, node, callForm) => emitAt(specifier, node.startPosition.row + 1, callForm);
     const inModuleFile = isModuleFile(file.tree.rootNode);
     walk(file.tree.rootNode, (node) => {
         switch (node.type) {
@@ -250,7 +250,7 @@ function uses(file) {
                 // other form carries its source on the statement itself.
                 const requireClause = node.namedChildren.find((c) => c !== null && c.type === 'import_require_clause');
                 if (requireClause) {
-                    emit(specifierFromSource(requireClause), node);
+                    emit(specifierFromSource(requireClause), node, 'require');
                     break;
                 }
                 emit(specifierFromSource(node), node);
@@ -281,7 +281,7 @@ function uses(file) {
                 // A plain string literal OR a no-substitution template literal yields a
                 // static specifier; an interpolated template literal / identifier / other
                 // expression is non-literal and skipped (specifierFromCallArg returns undefined).
-                emit(specifierFromCallArg(arg), node);
+                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : 'import');
                 break;
             }
             case 'module': {
@@ -349,11 +349,13 @@ function declarations(file) {
 }
 export const typescriptExtractor = {
     languages: new Set(['typescript', 'tsx', 'javascript']),
+    // rev 4: a require() call or `import x = require()` and a dynamic import() carry their call form, which
+    // picks the `require` or `import` condition of an `exports` entry;
     // rev 3: every type-only reference gives its edge (statement forms, type-position
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
     // `new URL(…, import.meta.url)`; ERROR-region recovery.
-    rev: 3,
+    rev: 4,
     declarations,
     uses,
 };

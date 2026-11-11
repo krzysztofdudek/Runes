@@ -47,10 +47,10 @@ describe('typescript extractor — uses()', () => {
   it('detects require() and import-equals-require', async () => {
     const { uses } = await run(`const a = require('./a');\nimport b = require('./b');`);
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a', callForm: 'require' }] }),
     );
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b', callForm: 'require' }] }),
     );
   });
   it('detects literal dynamic import, skips non-literal', async () => {
@@ -58,7 +58,7 @@ describe('typescript extractor — uses()', () => {
       "const d = import('./d');\nconst e = import(`./x-${v}`);\nconst f = import(v);",
     );
     expect(uses.filter((u) => u.candidates[0].kind === 'path')).toHaveLength(1);
-    expect(uses[0].candidates[0]).toEqual({ kind: 'path', specifier: './d' });
+    expect(uses[0].candidates[0]).toEqual({ kind: 'path', specifier: './d', callForm: 'import' });
   });
   it('detects a no-substitution template-literal dynamic import() and require(), still skips interpolated', async () => {
     // A backtick specifier with no `${…}` is static and statically resolvable — TS/esbuild/Node
@@ -68,12 +68,21 @@ describe('typescript extractor — uses()', () => {
       'const a = import(`./a`);\nconst b = require(`./b`);\nconst c = import(`./x-${v}`);',
     );
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './a', callForm: 'import' }] }),
     );
     expect(uses).toContainEqual(
-      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b' }] }),
+      expect.objectContaining({ candidates: [{ kind: 'path', specifier: './b', callForm: 'require' }] }),
     );
     expect(uses.filter((u) => u.candidates[0].kind === 'path')).toHaveLength(2);
+  });
+  it('carries no call form on an import or export statement, and one per call when both forms name a specifier on a line', async () => {
+    const { uses } = await run(`import a from './a';\nexport * from './b';\nconst c = [require('./c'), import('./c')];`);
+    expect(uses.map((u) => [u.candidates[0], u.line])).toEqual([
+      [{ kind: 'path', specifier: './a' }, 1],
+      [{ kind: 'path', specifier: './b' }, 2],
+      [{ kind: 'path', specifier: './c', callForm: 'require' }, 3],
+      [{ kind: 'path', specifier: './c', callForm: 'import' }, 3],
+    ]);
   });
   it('javascript: detects require + import, no crash on no-type-syntax', async () => {
     const { uses } = await run(`import x from './x';\nconst y = require('./y');`, '.js', 'javascript');
@@ -250,7 +259,7 @@ describe('typescript extractor — one type-only rule, new forms, grammar recove
         [{ kind: 'path', specifier: './a' }, 1],
         [{ kind: 'path', specifier: './b' }, 2],
         [{ kind: 'path', specifier: './star' }, 5],
-        [{ kind: 'path', specifier: './c' }, 6],
+        [{ kind: 'path', specifier: './c', callForm: 'require' }, 6],
       ]),
     );
     expect(uses).toHaveLength(4);
