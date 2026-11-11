@@ -2,7 +2,7 @@ import type { SymbolTable } from './symbol-table.mjs';
 import type { CsharpCondition, DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
-import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey } from './extractors/csharp.mjs';
+import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey, shapeTakes } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
 import { attributeReading, makeCsharpTypeLookup, type CsharpTypeLookup } from './extractors/csharp-resolve.mjs';
 
@@ -357,16 +357,26 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   /**
-   * Whether the definers a C# extension-method reading binds can take its call (`TargetHint.takes`): true when one of `files` declares, under a key of the reading, an extension method whose shape takes the call's counts, or declares no shapes at all. It is asked only of a reading that would bind: a reading whose definers cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
+   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. True when one of those shapes takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
    */
-  const takesCall = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: Iterable<string>, language: string, fromFile: string): boolean => {
+  const takesCall = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: ReadonlySet<string>, language: string, fromFile: string): boolean => {
     const takes = hint.takes;
     if (takes === undefined || language !== 'csharp') return true;
-    const keys = [...new Set(hintKeys(hint, language, fromFile))];
+    const owners = new Set<string>();
     for (const f of files) {
-      if (keys.some((k) => deps.symbolTable.filesFor(language, k).includes(f) && csharp().extensionTakes(k, f, takes))) return true;
+      const owner = deps.ownerIndex.ownerOf(f);
+      if (owner !== undefined) owners.add(owner);
     }
-    return false;
+    const recorded = new Set<string>();
+    for (const key of new Set(hintKeys(hint, language, fromFile))) {
+      for (const [file, shapes] of csharp().extensionShapes(key)) {
+        const owner = files.has(file) ? undefined : deps.ownerIndex.ownerOf(file);
+        if (!files.has(file) && (owner === undefined || !owners.has(owner))) continue;
+        if (shapes.some((shape) => shapeTakes(shape, takes.typeArgs, takes.args))) return true;
+        recorded.add(file);
+      }
+    }
+    return [...files].some((f) => !recorded.has(f));
   };
 
   /** The one C# type an ordered group of readings binds for `fromFile`, with the files in reach that declare it: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */

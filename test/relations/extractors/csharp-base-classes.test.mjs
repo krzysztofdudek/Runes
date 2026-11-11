@@ -770,6 +770,30 @@ describe('csharp: an extension method takes a call only by its counts', () => {
     });
   });
 
+  it('reads the shapes of the bound owner from the records themselves: a table that keeps one file per owner for a name gives the same edge', async () => {
+    await project({
+      'src/core/Order.cs': 'public class Order { }\n',
+      'src/ext/A.cs': 'public static class A { public static void Tag(this Order o) { } }\n',
+      'src/ext/B.cs': 'public static class B { public static void Tag(this Order o, string k) { } }\n',
+      'src/web/Page.cs': 'class Page {\n  void M() {\n    var o = Make();\n    o.Tag("k");\n    o.Tag("k", 1, 2);\n  }\n}\n',
+    }, ({ edges, edgesThrough, declared }) => {
+      expect(edges('src/web/Page.cs')).toEqual(['4->ext']);
+      // A consumer that keeps the first file of each owner for a name key, and every key with a tab whole: the method that takes the call sits in the file the name key no longer lists.
+      const compacted = new SymbolTable();
+      const kept = new Set();
+      for (const [file, keys] of declared) {
+        for (const { symbolKey } of keys) {
+          const once = `${symbolKey}\0${file.split('/').at(-2)}`;
+          if (!symbolKey.includes('\t') && kept.has(once)) continue;
+          kept.add(once);
+          compacted.declare('csharp', symbolKey, file);
+        }
+      }
+      expect(compacted.filesFor('csharp', 'Tag()')).toEqual(['src/ext/A.cs']);
+      expect(edgesThrough(compacted, 'src/web/Page.cs')).toEqual(['4->ext']);
+    });
+  });
+
   it('two owners that declare the name at one level stay an ambiguity, whatever their shapes', async () => {
     await project({
       'src/lib/E.cs': 'namespace Lib;\npublic static class E { public static void Add(this object o, int a) { } }\n',

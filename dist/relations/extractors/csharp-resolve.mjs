@@ -316,7 +316,7 @@ export function makeCsharpTypeLookup(table, bind, declared = () => true) {
         return keys;
     };
     const shapesMemo = new Map();
-    const extensionTakes = (key, file, call) => {
+    const extensionShapes = (key) => {
         let byFile = shapesMemo.get(key);
         if (byFile === undefined) {
             shapesMemo.set(key, (byFile = new Map()));
@@ -325,11 +325,10 @@ export function makeCsharpTypeLookup(table, bind, declared = () => true) {
                     byFile.set(f, [...(byFile.get(f) ?? []), ...value.split(' ')]);
             }
         }
-        const shapes = byFile.get(file);
-        return shapes === undefined || shapes.some((shape) => shapeTakes(shape, call.typeArgs, call.args));
+        return byFile;
     };
     return {
-        extensionTakes,
+        extensionShapes,
         bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
         nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
         simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),

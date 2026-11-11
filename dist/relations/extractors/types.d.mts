@@ -95,7 +95,7 @@ export type TargetHint = {
         written: TargetHint[];
         suffixed?: TargetHint[];
     };
-    /** C#: the counts of the call an extension-method reading stands for, its arguments beside the receiver and its written type arguments. Where the reading would bind, the resolver asks whether one of its definers declares, under the reading's key, an extension method that can take them (the `shapes:<key>` record of that file; a definer that declares no such record takes any call): when none can, the reading binds nothing, as a name the repository does not declare. A reading that names two owners stays ambiguous. Absent = the reading binds whatever the call passes. */
+    /** C#: the counts of the call an extension-method reading stands for, its arguments beside the receiver and its written type arguments. Where the reading would bind, the resolver asks whether the owner it binds declares, under the reading's key, an extension method that can take them (the `shapes:<key>` records of the bound files and of the other files of their owner, read from the records themselves; a bound file without a record takes any call): when none can, the reading binds nothing, as a name the repository does not declare. A reading that names two owners stays ambiguous. Absent = the reading binds whatever the call passes. */
     takes?: {
         args: number;
         typeArgs: number;

@@ -23,8 +23,8 @@ export interface CsharpTypeLookup {
   hasMethod(typeKey: string, call: { method: string; args: number; typeArgs: number; argTypes?: CsharpArgType[] }, from: readonly string[], fromFile?: string): boolean;
   /** The keys of the types the member `name` is written with, where `simpleName(typeKey, name)` answers `member` for a field or a property: the written type of each declaration of it at the level that declares it, bound where it is declared. Empty when the member writes no type of the repository. */
   memberTypes(typeKey: string, name: string, fromFile?: string): string[];
-  /** True when one of the extension methods `file` declares under the extension key `key` can take a call with `call.args` arguments beside the receiver and `call.typeArgs` written type arguments (`shapeTakes` over the file's `shapes:<key>` record), or when the file declares no such record. */
-  extensionTakes(key: string, file: string, call: { args: number; typeArgs: number }): boolean;
+  /** The shapes of the extension methods each file declares under the extension key `key`, by file: what the `shapes:<key>` records hold. They are read from the records themselves, never through the files the table lists under `key`: a consumer may keep one file per owner for a name and still keeps every record whole. */
+  extensionShapes(key: string): ReadonlyMap<string, readonly string[]>;
 }
 
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
@@ -334,7 +334,7 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
   };
 
   const shapesMemo = new Map<string, Map<string, string[]>>();
-  const extensionTakes = (key: string, file: string, call: { args: number; typeArgs: number }): boolean => {
+  const extensionShapes = (key: string): Map<string, string[]> => {
     let byFile = shapesMemo.get(key);
     if (byFile === undefined) {
       shapesMemo.set(key, (byFile = new Map()));
@@ -342,12 +342,11 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
         for (const f of files) byFile.set(f, [...(byFile.get(f) ?? []), ...value.split(' ')]);
       }
     }
-    const shapes = byFile.get(file);
-    return shapes === undefined || shapes.some((shape) => shapeTakes(shape, call.typeArgs, call.args));
+    return byFile;
   };
 
   return {
-    extensionTakes,
+    extensionShapes,
     bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
     nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
     simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),
