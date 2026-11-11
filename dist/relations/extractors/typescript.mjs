@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { walk } from '../../ast/walk.mjs';
+import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
  * TypeScript / TSX / JavaScript dependency extractor.
@@ -227,21 +228,96 @@ function augmentationSpecifier(moduleNode, inModuleFile) {
         return spec;
     return undefined;
 }
+// The grammar reads `typeof import('x')` and `import('x').T` as call expressions inside these type nodes.
+const TYPE_POSITION_ANCESTORS = new Set([
+    'type_query',
+    'type_annotation',
+    'type_predicate',
+    'conditional_type',
+    'readonly_type',
+    'infer_type',
+    'index_type_query',
+    'lookup_type',
+    'parenthesized_type',
+    'type_arguments',
+    'constraint',
+    'default_type',
+    'union_type',
+    'intersection_type',
+    'tuple_type',
+    'array_type',
+    'generic_type',
+    'function_type',
+    'object_type',
+]);
+// Nodes whose first named child is a value or a name and whose other named children are types.
+const TYPE_ON_THE_RIGHT = new Set(['type_alias_declaration', 'as_expression', 'satisfies_expression']);
+// The grammar cannot read an import type in some places and parses the line as expressions, in an ERROR node or not. Where a token that only introduces a type comes right before the import chain, the chain is a type.
+const TYPE_INTRODUCERS = new Set(['keyof', 'is', 'infer', 'readonly', 'unique', '|', '&', '${']);
+/** The import() call at the foot of `import('x')`, `import('x').T` or `import('x').T.U`, or undefined when the node is not such a chain. */
+function importCallOf(node) {
+    let cur = node;
+    while (cur !== null && cur.type === 'member_expression')
+        cur = cur.childForFieldName('object');
+    return cur !== null && cur.type === 'call_expression' && cur.childForFieldName('function')?.type === 'import' ? cur : undefined;
+}
+/**
+ * The import() calls a node's own children make import types where the grammar does not say so: the one type argument of `B<import('x').T>` read as `B < import('x').T > …` (a class heritage, a tagged template, a call, whose `>` and parameters come as an ERROR node beside the comparison), an import chain in the pattern of a parameter, where a parenthesized type `(import('x').T)` was read as an arrow function's parameters, and a chain after a token that only introduces a type inside an ERROR node (`keyof`, a template literal type's `${`).
+ */
+function misreadImportTypes(node) {
+    const found = [];
+    const add = (chain) => {
+        const call = importCallOf(chain);
+        if (call !== undefined)
+            found.push(call);
+    };
+    if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '>') {
+        const left = node.childForFieldName('left');
+        if (left !== null && left.type === 'binary_expression' && left.childForFieldName('operator')?.type === '<')
+            add(left.childForFieldName('right'));
+    }
+    else if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '<') {
+        // `g<import('x').T>()`: the `>` and the empty parameters that follow are an ERROR node beside the comparison.
+        if (node.nextSibling?.type === 'ERROR' && node.nextSibling.child(0)?.type === '>')
+            add(node.childForFieldName('right'));
+    }
+    else if (node.type === 'required_parameter' || node.type === 'optional_parameter') {
+        add(node.namedChild(0));
+    }
+    else if (node.type === 'ERROR') {
+        const children = node.children;
+        for (let i = 1; i < children.length; i++) {
+            const before = children[i - 1];
+            if (before !== null && !before.isNamed && TYPE_INTRODUCERS.has(before.type))
+                add(children[i]);
+        }
+    }
+    return found;
+}
 function uses(file) {
     const out = [];
     const seen = new Set();
-    const emitAt = (specifier, line) => {
+    const emitAt = (specifier, line, callForm) => {
         if (specifier === undefined || !isCandidateSpecifier(specifier))
             return;
-        const dedupKey = `${specifier}\n${line}`;
+        const dedupKey = `${specifier}\n${line}\n${callForm ?? ''}`;
         if (seen.has(dedupKey))
             return;
         seen.add(dedupKey);
-        out.push(single({ kind: 'path', specifier }, 'import', line));
+        out.push(single(callForm === undefined ? { kind: 'path', specifier } : { kind: 'path', specifier, callForm }, 'import', line));
     };
-    const emit = (specifier, node) => emitAt(specifier, node.startPosition.row + 1);
+    const emit = (specifier, node, callForm) => emitAt(specifier, node.startPosition.row + 1, callForm);
     const inModuleFile = isModuleFile(file.tree.rootNode);
-    walk(file.tree.rootNode, (node) => {
+    // Whether a node lies in a type, carried down the walk: an import('x') there is an import type, which TypeScript resolves by the format of its file as an import statement is, not a dynamic import() call.
+    const typeSide = new Set();
+    walkScoped(file.tree.rootNode, false, (node, inheritedInType) => {
+        const inType = inheritedInType || typeSide.has(node.id);
+        if (TYPE_ON_THE_RIGHT.has(node.type))
+            for (const c of node.namedChildren.slice(1))
+                if (c !== null)
+                    typeSide.add(c.id);
+        for (const call of misreadImportTypes(node))
+            typeSide.add(call.id);
         switch (node.type) {
             case 'import_statement': {
                 // Every form gives its edge, type-only ones included (`import type …`,
@@ -250,7 +326,7 @@ function uses(file) {
                 // other form carries its source on the statement itself.
                 const requireClause = node.namedChildren.find((c) => c !== null && c.type === 'import_require_clause');
                 if (requireClause) {
-                    emit(specifierFromSource(requireClause), node);
+                    emit(specifierFromSource(requireClause), node, 'require');
                     break;
                 }
                 emit(specifierFromSource(node), node);
@@ -281,7 +357,7 @@ function uses(file) {
                 // A plain string literal OR a no-substitution template literal yields a
                 // static specifier; an interpolated template literal / identifier / other
                 // expression is non-literal and skipped (specifierFromCallArg returns undefined).
-                emit(specifierFromCallArg(arg), node);
+                emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inType ? undefined : 'import');
                 break;
             }
             case 'module': {
@@ -310,7 +386,7 @@ function uses(file) {
             default:
                 break;
         }
-        return undefined;
+        return inType || TYPE_POSITION_ANCESTORS.has(node.type) ? true : undefined;
     });
     for (const { specifier, line } of recoverFromErrors(file))
         emitAt(specifier, line);
@@ -349,11 +425,13 @@ function declarations(file) {
 }
 export const typescriptExtractor = {
     languages: new Set(['typescript', 'tsx', 'javascript']),
+    // rev 4: a require() call or `import x = require()` and a dynamic import() (not an import type) carry
+    // their call form, which picks the `require` or `import` condition of an `exports` entry;
     // rev 3: every type-only reference gives its edge (statement forms, type-position
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
     // `new URL(…, import.meta.url)`; ERROR-region recovery.
-    rev: 3,
+    rev: 4,
     declarations,
     uses,
 };

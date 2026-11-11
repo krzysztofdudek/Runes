@@ -21,11 +21,9 @@ __tests__/context/state.test.js:6	lib/application.js
 __tests__/context/throw.test.js:4	test-helpers/context.js
 __tests__/context/toJSON.test.js:5	test-helpers/context.js
 __tests__/lib/search-params.test.js:2	lib/search-params.js
-__tests__/load-with-esm.test.js:12	lib/application.js
 __tests__/load-with-esm.test.js:13	lib/application.js
 __tests__/load-with-esm.test.js:29	lib/application.js
 __tests__/load-with-esm.test.js:34	lib/application.js
-__tests__/load-with-esm.test.js:6	lib/application.js
 __tests__/load-with-esm.test.js:7	lib/application.js
 __tests__/request/accept.test.js:6	test-helpers/context.js
 __tests__/request/accepts.test.js:5	test-helpers/context.js

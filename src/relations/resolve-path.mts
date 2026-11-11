@@ -56,7 +56,7 @@ export function makeResolvePathToFile(
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
   options?: ResolvePathOptions,
-): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable) => string | undefined {
+): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import') => string | undefined {
   // Every read goes through one of two sources, and with a view given they are the same one. On the disk they differ in a single manner: a candidate probe exists only under the name its directory lists (on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs, issue 482), while a configuration read or a repository walk takes the file system's own rule.
   const probe: FileSource = options?.files ?? diskFileView(projectRoot, true);
   const plain: FileSource = options?.files ?? diskFileView(projectRoot, false);
@@ -84,9 +84,9 @@ export function makeResolvePathToFile(
   // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
   const isFile = (repoRelPosix: string): boolean => probe.isFile(repoRelPosix);
   const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
-  return (specifier, fromFile, language, isPackage = false, symbolTable = undefined) => {
+  return (specifier, fromFile, language, isPackage = false, symbolTable = undefined, callForm = undefined) => {
     if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
-      return resolveTsPath(specifier, fromFile, isFile, tsDeps);
+      return resolveTsPath(specifier, fromFile, isFile, tsDeps, callForm);
     }
     if (language === 'python') {
       return python(specifier, fromFile);

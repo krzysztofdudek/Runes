@@ -14,8 +14,8 @@ export interface ResolvedTarget { owner: string; resolvedFile: string }
 export interface ResolverDeps {
   ownerIndex: OwnerLookup;
   symbolTable: SymbolTable;
-  /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items; a function that takes four ignores it. */
-  resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable) => string | undefined;
+  /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()`; a function that takes four ignores both. */
+  resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import') => string | undefined;
   /**
    * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). A definer that declares the name only as internal to its assembly (the C# extractor's `internal:<key>` marker) is dropped too for a caller in another project its project does not name as a friend, when the `Reachability` answers `internalsVisible`. Both `resolve`, `classify` and `resolveFile` apply it.
    */
@@ -446,7 +446,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       // absent / ambiguous (2+ owners) → silence; resolved (one file, or one owner) → edge.
       return outcome.kind === 'resolved' ? { owner: outcome.owner, resolvedFile: outcome.resolvedFile } : undefined;
     }
-    const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable);
+    const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
     if (!file) {
       const fallback = jvmOutcome(hint, language, true, fromFile);
       if (fallback === undefined) return undefined; // unresolved → silence
@@ -487,7 +487,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     // so the path probe itself has no `ambiguous` outcome — only resolved or absent. The one
     // exception is Java's miss fallback into the shared JVM namespace, where a duplicate
     // declaration or a split package IS an ambiguity.
-    const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable);
+    const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
     if (!file) {
       const fallback = jvmOutcome(hint, language, true, fromFile);
       return fallback !== undefined ? classifyJvm(fallback) : { kind: 'absent' };
@@ -505,7 +505,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       if (language === 'ruby' && rubyGate(hint, files, deps.symbolTable) !== undefined) return undefined;
       return files.size === 1 ? [...files][0] : undefined; // 0 → unresolved; ≥2 → ambiguous
     }
-    const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable);
+    const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
     if (file) return file;
     const fallback = jvmOutcome(hint, language, true, fromFile);
     return fallback?.kind === 'file' ? fallback.file : undefined;
