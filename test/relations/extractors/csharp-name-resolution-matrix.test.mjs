@@ -441,4 +441,11 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-base-class-nested-type-deep-partial-edge', () => runCase('csharp-base-class-nested-type-deep-partial-edge'));
   it('csharp-base-class-nested-type-own-first-edge', () => runCase('csharp-base-class-nested-type-own-first-edge'));
   it('csharp-interface-nested-type-not-inherited-edge', () => runCase('csharp-interface-nested-type-not-inherited-edge'));
+  it('csharp-attribute-written-name-no-attribute-class-edge', () => runCase('csharp-attribute-written-name-no-attribute-class-edge'));
+  it('csharp-attribute-suffixed-nearer-than-written-edge', () => runCase('csharp-attribute-suffixed-nearer-than-written-edge'));
+  it('csharp-attribute-plain-class-of-that-name-silence', () => runCase('csharp-attribute-plain-class-of-that-name-silence'));
+  it('csharp-attribute-suffixed-outside-base-edge', () => runCase('csharp-attribute-suffixed-outside-base-edge'));
+  it('csharp-attribute-written-outside-base-silence', () => runCase('csharp-attribute-written-outside-base-silence'));
+  it('csharp-attribute-written-with-suffix-outside-base-edge', () => runCase('csharp-attribute-written-with-suffix-outside-base-edge'));
+  it('csharp-attribute-both-readings-attribute-classes-silence', () => runCase('csharp-attribute-both-readings-attribute-classes-silence'));
 });

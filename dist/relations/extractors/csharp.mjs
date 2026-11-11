@@ -1949,13 +1949,13 @@ export function assembleCsharpCandidates(extract, options = {}) {
         // candidate.
         if (rooted) {
             if (isFileLocalReading(ref))
-                return;
+                return true;
             const candidates = [{ kind: 'symbol', symbolKey: ref }];
             // `global::Program` names the global `Program`, which may be the implicit class of a file of top-level statements (the fallback after an explicit one).
             if (ref === 'Program')
                 candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
             out.push({ candidates, kind: 'import', line });
-            return;
+            return false;
         }
         // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
         const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}`, within: t }));
@@ -1968,7 +1968,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
             // M7: an alias with 2+ project-wide targets → silence, unless a nested type of an enclosing type, which comes before every alias, binds.
             if (nestedReadings.length > 0)
                 out.push({ candidates: nestedReadings, kind: 'import', line });
-            return;
+            return localNested >= 0;
         }
         const multi = ref.includes('.');
         const aliasView = viewAlias(lead, enclosingNs, at);
@@ -2029,21 +2029,36 @@ export function assembleCsharpCandidates(extract, options = {}) {
         // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
         if (ref === 'Program')
             add({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
-        if (candidates.length === 0)
-            return;
-        out.push({ candidates, kind: 'import', line });
+        if (candidates.length > 0)
+            out.push({ candidates, kind: 'import', line });
+        return ended;
     };
     /** Emit a two-reading attribute group (`written` and its `Attribute`-suffixed form) as ONE
      *  ordered group, each reading carrying its own alias/enclosing-ns/using/verbatim candidates,
      *  concatenated so the verbatim short form is reached only when nothing nearer binds. */
     const pushAttribute = (written, suffixed, enclosingNs, line, rooted, at, types = []) => {
         const before = out.length;
-        pushRef(written, enclosingNs, line, rooted, at, types);
-        if (suffixed !== undefined)
-            pushRef(suffixed, enclosingNs, line, rooted, at, types);
-        // Merge the (at most two) groups just pushed into one ordered group so both readings live
-        // in a single reference (an attribute is ONE dependency, resolved by whichever name binds).
-        mergeGroupsFrom(before, line);
+        const writtenLocal = pushRef(written, enclosingNs, line, rooted, at, types);
+        const writtenGroup = out.splice(before)[0]?.candidates ?? [];
+        const suffixedLocal = suffixed !== undefined && pushRef(suffixed, enclosingNs, line, rooted, at, types);
+        const suffixedGroup = suffixed === undefined ? undefined : (out.splice(before)[0]?.candidates ?? []);
+        pushReadings(written, writtenGroup, suffixedGroup, writtenLocal || suffixedLocal, line);
+    };
+    /**
+     * Push the one reference an attribute is, from the group of each of its readings. C# resolves the written name and the suffixed name each by itself and takes the one that is an attribute class (spec §23.3), so the two groups travel apart in one candidate (`attribute`) and the resolver chooses. Where a reading ends at a type this file keeps to itself (`local`), which no key names, the readings stay one ordered group as before: the first that binds wins.
+     */
+    const pushReadings = (written, writtenGroup, suffixedGroup, local, line) => {
+        if (local) {
+            const before = out.length;
+            for (const candidates of [writtenGroup, suffixedGroup ?? []])
+                if (candidates.length > 0)
+                    out.push({ candidates, kind: 'import', line });
+            mergeGroupsFrom(before, line);
+            return;
+        }
+        if (writtenGroup.length === 0 && (suffixedGroup ?? []).length === 0)
+            return;
+        out.push({ candidates: [{ kind: 'symbol', symbolKey: written, attribute: { written: writtenGroup, ...(suffixedGroup === undefined ? {} : { suffixed: suffixedGroup }) } }], kind: 'import', line });
     };
     /** Merge every group pushed since `before` into ONE ordered group (first-seen key order), so
      *  several readings of one reference resolve as a single dependency: the first reading that
@@ -2129,11 +2144,11 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 // `[S::Foo]`: both readings in the namespace `S` names, from the root (B5); nothing when `S` is no confirmed alias.
                 const view = viewAlias(r.alias, r.enclosingNs, r.at);
                 if (view !== undefined) {
-                    const before = out.length;
-                    pushHints(aliasTargetHints(view, `.${r.written}`), r.line);
-                    if (r.suffixed !== undefined)
-                        pushHints(aliasTargetHints(view, `.${r.suffixed}`), r.line);
-                    mergeGroupsFrom(before, r.line);
+                    const writtenAll = aliasTargetHints(view, `.${r.written}`);
+                    const suffixedAll = r.suffixed === undefined ? undefined : aliasTargetHints(view, `.${r.suffixed}`);
+                    const writtenGroup = beforeFileLocal(writtenAll);
+                    const suffixedGroup = suffixedAll === undefined ? undefined : beforeFileLocal(suffixedAll);
+                    pushReadings(r.written, writtenGroup, suffixedGroup, writtenGroup.length < writtenAll.length || (suffixedGroup?.length ?? 0) < (suffixedAll?.length ?? 0), r.line);
                 }
                 break;
             }
@@ -2167,7 +2182,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 20,
+    rev: 21,
     declarations,
     uses,
 };

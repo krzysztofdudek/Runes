@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -18,7 +18,7 @@ async function project(sources, fn) {
     const resolver = makeResolver({ ownerIndex: { ownerOf }, symbolTable: table, resolvePathToFile: () => undefined });
     const edges = (path) => resolveDetectedEdges(csharpExtractor.uses(files.find((f) => f.path === path)), resolver, path, 'csharp')
       .filter((e) => e.owner !== ownerOf(path)).map((e) => `${e.line}->${e.owner}`);
-    return fn({ table, resolver, edges, keys: (path) => declared.get(path).map((d) => d.symbolKey) });
+    return fn({ table, resolver, edges, files, keys: (path) => declared.get(path).map((d) => d.symbolKey) });
   });
 }
 
@@ -177,6 +177,87 @@ describe('csharp: what a type inherits through its recorded bases', () => {
       'src/web/Use.cs': 'using Lib.One;\nusing Lib.Two;\nnamespace App;\npublic class Use : Shared {\n  Options _o;\n}\n',
     }, ({ edges }) => {
       expect(edges('src/web/Use.cs')).toEqual(['5->cfg']);
+    });
+  });
+});
+
+describe('csharp: an attribute is the reading that binds an attribute class', () => {
+  const lookupOver = (table, resolver) => makeCsharpTypeLookup(table, (readings, fromFile) => readings.find((hint) => resolver.resolveFile(hint, fromFile, 'csharp') !== undefined)?.symbolKey);
+
+  it('takes the reading C# takes, from what each reading binds', () => {
+    // [written, suffixed, has a suffixed reading] -> the reading taken
+    const table = [
+      ['yes', undefined, true, 'written'], ['yes', 'no', true, 'written'], ['yes', 'maybe', true, 'written'], ['yes', 'yes', true, undefined],
+      ['no', 'yes', true, 'suffixed'], ['maybe', 'yes', true, 'suffixed'], [undefined, 'yes', true, 'suffixed'],
+      ['no', 'maybe', true, 'suffixed'], ['maybe', 'maybe', true, 'suffixed'], [undefined, 'maybe', true, 'suffixed'],
+      ['no', undefined, true, undefined], ['no', 'no', true, undefined], [undefined, 'no', true, undefined], [undefined, undefined, true, undefined],
+      ['maybe', undefined, true, undefined], ['maybe', 'no', true, undefined],
+      ['yes', undefined, false, 'written'], ['maybe', undefined, false, 'written'], ['no', undefined, false, undefined], [undefined, undefined, false, undefined],
+    ];
+    for (const [written, suffixed, hasSuffixed, taken] of table) expect(attributeReading(written, suffixed, hasSuffixed), `${written}/${suffixed}/${hasSuffixed}`).toBe(taken);
+  });
+
+  it('says whether a type is an attribute class from its base chain', async () => {
+    await project({
+      'src/a/Types.cs': [
+        'using System;',
+        'namespace App;',
+        'public class DirectAttribute : Attribute { }',
+        'public class QualifiedAttribute : System.Attribute { }',
+        'public class RootedAttribute : global::System.Attribute { }',
+        'public class DerivedAttribute : DirectAttribute, IMark { }',
+        'public class Plain { }',
+        'public class PlainChild : Plain, IMark { }',
+        'public class Outside : Vendor.EntityBase { }',
+        'public class OutsideChild : Outside { }',
+        'public class Disposable : IDisposable { }',
+        'public interface IMark : IDisposable { }',
+        'public struct Value { }',
+        'public enum Kind { One }',
+        'public class LoopA : LoopB { }',
+        'public class LoopB : LoopA { }',
+        'public partial class Split { }',
+        'public partial class Split : Attribute { }',
+      ].join('\n'),
+    }, ({ table, resolver }) => {
+      const lookup = lookupOver(table, resolver);
+      const state = (name) => lookup.attributeClass(`App.${name}`);
+      for (const name of ['DirectAttribute', 'QualifiedAttribute', 'RootedAttribute', 'DerivedAttribute', 'Split']) expect(state(name), name).toBe('yes');
+      for (const name of ['Plain', 'PlainChild', 'IMark', 'Value', 'Kind', 'LoopA', 'LoopB', 'Missing']) expect(state(name), name).toBe('no');
+      for (const name of ['Outside', 'OutsideChild', 'Disposable']) expect(state(name), name).toBe('maybe');
+      expect(state('DirectAttribute')).toBe('yes'); // read once, answered again
+    });
+  });
+
+  it('carries the two readings apart in one candidate, and after a using alias too', async () => {
+    await project({
+      'src/attrs/Marks.cs': 'namespace Lib.Attrs;\npublic class MarkAttribute : System.Attribute { }\npublic class Mark { }\n',
+      'src/web/Use.cs': 'using S = Lib.Attrs;\nusing Lib.Attrs;\npublic class Use {\n  [Mark] void A() { }\n  [S::Mark] void B() { }\n  [MarkAttribute] void C() { }\n  [S::Missing] void D() { }\n}\n',
+    }, ({ files, edges }) => {
+      const uses = csharpUses(files.find((f) => f.path === 'src/web/Use.cs'));
+      const attributes = uses.filter((u) => u.candidates[0].attribute !== undefined).map((u) => u.candidates);
+      expect(attributes.map((c) => c.length)).toEqual([1, 1, 1, 1]);
+      expect(attributes.map(([c]) => [c.symbolKey, c.attribute.written.map((r) => r.symbolKey), c.attribute.suffixed?.map((r) => r.symbolKey)])).toEqual([
+        ['Mark', ['Use+Mark', 'Mark', 'Lib.Attrs.Mark'], ['Use+MarkAttribute', 'MarkAttribute', 'Lib.Attrs.MarkAttribute']],
+        ['Mark', ['Lib.Attrs.Mark'], ['Lib.Attrs.MarkAttribute']],
+        ['MarkAttribute', ['Use+MarkAttribute', 'MarkAttribute', 'Lib.Attrs.MarkAttribute'], undefined],
+        ['Missing', ['Lib.Attrs.Missing'], ['Lib.Attrs.MissingAttribute']],
+      ]);
+      expect(edges('src/web/Use.cs')).toEqual(['4->attrs', '5->attrs', '6->attrs']);
+    });
+  });
+
+  it('keeps the readings one ordered group where one of them ends at a type the file keeps to itself', async () => {
+    await project({
+      'src/attrs/Mark.cs': 'namespace Lib;\npublic class Mark : System.Attribute { }\n',
+      'src/web/Use.cs': 'using S = Lib;\nnamespace Lib;\nfile class MarkAttribute : System.Attribute { }\npublic class Use {\n  [Mark] void A() { }\n  [S::Mark] void B() { }\n}\n',
+    }, ({ files }) => {
+      const uses = csharpUses(files.find((f) => f.path === 'src/web/Use.cs'));
+      const groups = uses.filter((u) => u.line === 5 || u.line === 6).map((u) => u.candidates.map((c) => [c.symbolKey, c.attribute]));
+      expect(groups).toEqual([
+        [['Lib.Use+Mark', undefined], ['Lib.Mark', undefined], ['Mark', undefined], ['Lib.Use+MarkAttribute', undefined]],
+        [['Lib.Mark', undefined]],
+      ]);
     });
   });
 });

@@ -4,7 +4,7 @@ import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
 import { IMPLICIT_PROGRAM_KEY, internalKey } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
-import { makeCsharpTypeLookup, type CsharpTypeLookup } from './extractors/csharp-resolve.mjs';
+import { attributeReading, makeCsharpTypeLookup, type CsharpTypeLookup } from './extractors/csharp-resolve.mjs';
 
 /**
  * Who owns a repository file: the unit a resolved reference is attributed to (a module, a package, a directory, whatever the caller groups files by). `undefined` means the file is not owned by any unit, which the resolver treats as the non-event of an unmapped target.
@@ -318,6 +318,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     language: string,
     fromFile: string,
   ): Set<string> => {
+    if (hint.attribute !== undefined) return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
     let files: Set<string>;
     if (hint.set !== undefined) {
       files = new Set<string>();
@@ -338,18 +339,27 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
   };
 
-  /** The key of the one C# type an ordered group of readings binds for `fromFile`: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
-  const bindCsharpType = (readings: Array<Extract<TargetHint, { kind: 'symbol' }>>, fromFile: string): string | undefined => {
+  /** The one C# type an ordered group of readings binds for `fromFile`, with the files in reach that declare it: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
+  const bindCsharpType = (readings: readonly TargetHint[], fromFile: string): { key: string; files: Set<string> } | undefined => {
     for (const hint of readings) {
+      if (hint.kind !== 'symbol') continue;
       const files = hintFiles(hint, 'csharp', fromFile);
       if (files.size === 0) continue;
       const keys = [...new Set(hintKeys(hint, 'csharp'))].filter((k) => deps.symbolTable.filesFor('csharp', k).some((f) => files.has(f)));
-      return keys.length === 1 ? keys[0] : undefined;
+      return keys.length === 1 ? { key: keys[0], files: new Set(deps.symbolTable.filesFor('csharp', keys[0]).filter((f) => files.has(f))) } : undefined;
     }
     return undefined;
   };
   let csharpLookup: CsharpTypeLookup | undefined;
-  const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, bindCsharpType));
+  const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
+
+  /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
+  const attributeBinding = (attribute: { written: TargetHint[]; suffixed?: TargetHint[] }, fromFile: string): { key: string; files: Set<string> } | undefined => {
+    const written = bindCsharpType(attribute.written, fromFile);
+    const suffixed = attribute.suffixed === undefined ? undefined : bindCsharpType(attribute.suffixed, fromFile);
+    const taken = attributeReading(written && csharp().attributeClass(written.key), suffixed && csharp().attributeClass(suffixed.key), attribute.suffixed !== undefined);
+    return taken === 'written' ? written : taken === 'suffixed' ? suffixed : undefined;
+  };
 
   /**
    * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import

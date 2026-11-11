@@ -29,6 +29,8 @@ export type TargetHint =
       shadow?: string[];
       /** C#: the key of a type whose body holds the reference. `symbolKey` is `<within>+<name>`, the nested type of that type as the reference names it. The resolver reads it in that type and, when the type declares none, among the nested types of its base classes declared in the repository, nearest first (C# spec §7.6.1). Absent = `symbolKey` is read as it stands. */
       within?: string;
+      /** C#: the two readings of an attribute `[Name]`, each an ordered group of its own: the name as written and, unless the written name already ends in `Attribute`, the name with that suffix. `symbolKey` is the written name. The resolver binds each group by itself and takes the reading that binds an attribute class, a class whose base classes reach `System.Attribute` (C# spec §23.3); see `makeResolver`. Absent = an ordinary reading. */
+      attribute?: { written: TargetHint[]; suffixed?: TargetHint[] };
       /** Ruby only: a lexical nesting candidate `N::A::B` carries its first-segment name
        *  `N::A`. When `N::A` has an in-repo definition but the candidate itself has none, Ruby
        *  has already committed to `N::A` and will not look further out, so the reference is

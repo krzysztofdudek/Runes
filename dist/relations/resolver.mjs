@@ -1,7 +1,7 @@
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import { IMPLICIT_PROGRAM_KEY, internalKey } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
-import { makeCsharpTypeLookup } from './extractors/csharp-resolve.mjs';
+import { attributeReading, makeCsharpTypeLookup } from './extractors/csharp-resolve.mjs';
 /**
  * The ordered first-unique-match-wins walk over a detected reference's candidate group:
  * nearest binding first (member → enclosing namespace → unique using-import → verbatim),
@@ -239,6 +239,8 @@ export function makeResolver(deps) {
      *  its own `nestedOnly`) when a set is present, else the single `symbolKey` honoring the hint's
      *  own `nestedOnly`. ≥2 distinct files anywhere = a real ambiguity (CS0104 / co-definition). */
     const hintFiles = (hint, language, fromFile) => {
+        if (hint.attribute !== undefined)
+            return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
         let files;
         if (hint.set !== undefined) {
             files = new Set();
@@ -262,19 +264,28 @@ export function makeResolver(deps) {
         // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
         return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
     };
-    /** The key of the one C# type an ordered group of readings binds for `fromFile`: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
+    /** The one C# type an ordered group of readings binds for `fromFile`, with the files in reach that declare it: that of the first reading some file in reach declares, or undefined when no reading binds or that reading names more than one type. */
     const bindCsharpType = (readings, fromFile) => {
         for (const hint of readings) {
+            if (hint.kind !== 'symbol')
+                continue;
             const files = hintFiles(hint, 'csharp', fromFile);
             if (files.size === 0)
                 continue;
             const keys = [...new Set(hintKeys(hint, 'csharp'))].filter((k) => deps.symbolTable.filesFor('csharp', k).some((f) => files.has(f)));
-            return keys.length === 1 ? keys[0] : undefined;
+            return keys.length === 1 ? { key: keys[0], files: new Set(deps.symbolTable.filesFor('csharp', keys[0]).filter((f) => files.has(f))) } : undefined;
         }
         return undefined;
     };
     let csharpLookup;
-    const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, bindCsharpType));
+    const csharp = () => (csharpLookup ??= makeCsharpTypeLookup(deps.symbolTable, (readings, fromFile) => bindCsharpType(readings, fromFile)?.key));
+    /** The type an attribute names (see `TargetHint.attribute`): each reading bound by itself, and the one C# takes among them (`attributeReading`). */
+    const attributeBinding = (attribute, fromFile) => {
+        const written = bindCsharpType(attribute.written, fromFile);
+        const suffixed = attribute.suffixed === undefined ? undefined : bindCsharpType(attribute.suffixed, fromFile);
+        const taken = attributeReading(written && csharp().attributeClass(written.key), suffixed && csharp().attributeClass(suffixed.key), attribute.suffixed !== undefined);
+        return taken === 'written' ? written : taken === 'suffixed' ? suffixed : undefined;
+    };
     /**
      * One dotted JVM symbol (a Kotlin import, a Java or Kotlin inline FQN type, or a Java import
      * the source-root probe missed) in the shared JVM namespace: the verbatim key plus its guarded
