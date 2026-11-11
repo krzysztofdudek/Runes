@@ -262,6 +262,12 @@ function extensionKey(ns, name) {
     return ns === '' ? `${name}()` : `${ns}.${name}()`;
 }
 /**
+ * The symbol key of an extension method `name` in its static class `classKey` (the class's own type key, `<ns>.<Class>`): `<ns>.<Class>#<name>()`. A `using static` directive imports the extension methods of the one class it names, which the namespace's key (`extensionKey`) cannot tell from those of the other classes of the namespace. The `#` is in no C# name, so no namespace can spell this key, whatever a repository calls its namespaces and classes.
+ */
+function classExtensionKey(classKey, name) {
+    return `${classKey}#${name}()`;
+}
+/**
  * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). A resolver given the reference graph (`ResolverDeps.reach`) reads the explicit and the implicit class as ONE name instead, as the compiler does, and chooses among those the referencing project can see, as long as the graph can say something about each of them. `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
  */
 export const IMPLICIT_PROGRAM_KEY = '<Program>$';
@@ -376,6 +382,29 @@ function extensionMethodName(node, scope) {
     const first = node.childForFieldName('parameters').namedChild(0);
     return first?.type === 'parameter' && isThisParameter(first) ? name : undefined;
 }
+/** The key a type declaration `node` declares, read in `scope` of a file whose file-scoped namespace is `fileNs` (see `declarations`), or undefined for one that has no name. */
+function declaredTypeKey(node, scope, fileNs) {
+    const nameField = node.childForFieldName('name');
+    if (nameField === null || nameField.text === '')
+        return undefined;
+    const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
+    const own = declaredTypeName(node);
+    const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
+    return ns === '' ? typeKey : `${ns}.${typeKey}`;
+}
+/** The keys of the types the file declares but keeps to itself: the C#11 `file` types and the types nested in them. Inside the file they are found by their names like any other type, and, found at a lookup level, they remove the public types of that level (the C# 11 file-local types proposal, Lookup). */
+function fileLocalTypeKeys(root, fileNs) {
+    const keys = [];
+    walkCs(root, (node, scope) => {
+        if (!TYPE_KEY_DECLARATION_TYPES.has(node.type) || !isFileLocalType(node, scope))
+            return undefined;
+        const key = declaredTypeKey(node, scope, fileNs);
+        if (key !== undefined)
+            keys.push(key);
+        return undefined;
+    });
+    return keys;
+}
 /**
  * The FULLY-QUALIFIED symbol keys this file DEFINES. The namespace for each type is the
  * file-scoped namespace (if any) joined with the block-namespace ancestor chain. The TYPE
@@ -402,25 +431,25 @@ function declarations(file) {
         const extName = extensionMethodName(node, scope);
         if (extName !== undefined) {
             const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
-            const symbolKey = extensionKey(ns, extName);
-            out.push({ symbolKey, line: node.startPosition.row + 1 });
-            if (assemblyOnlyExtension(node, scope.typeDecl))
-                out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
+            const line = node.startPosition.row + 1;
+            const assemblyOnly = assemblyOnlyExtension(node, scope.typeDecl);
+            // The key of the method in its namespace (`extensionKey`), and the key it has in its class: `using static T;` imports the extension methods of T alone.
+            const className = declaredTypeName(scope.typeDecl.node);
+            for (const symbolKey of [extensionKey(ns, extName), classExtensionKey(ns === '' ? className : `${ns}.${className}`, extName)]) {
+                out.push({ symbolKey, line });
+                if (assemblyOnly)
+                    out.push({ symbolKey: internalKey(symbolKey), line });
+            }
             return undefined;
         }
         if (!TYPE_KEY_DECLARATION_TYPES.has(node.type))
             return undefined;
-        const nameField = node.childForFieldName('name');
-        if (nameField === null || nameField.text === '')
+        const symbolKey = declaredTypeKey(node, scope, fileNs);
+        if (symbolKey === undefined)
             return undefined;
         // C#11 `file`-local type → not a cross-file resolution target. Skip publishing its FQN.
         if (isFileLocalType(node, scope))
             return undefined;
-        const blockNs = blockNamespace(scope);
-        const ns = [fileNs, blockNs].filter((p) => p !== '').join('.');
-        const own = declaredTypeName(node);
-        const typeKey = scope.chain === '' ? own : `${scope.chain}+${own}`;
-        const symbolKey = ns === '' ? typeKey : `${ns}.${typeKey}`;
         out.push({ symbolKey, line: node.startPosition.row + 1 });
         if (typeSeen(node, scope.typeDecl) === 'assembly')
             out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
@@ -577,6 +606,8 @@ function buildUsingScope(file) {
     const aliasDecls = new Map();
     const prefixDecls = [];
     const staticTargets = [];
+    const staticDecls = [];
+    const globalStatics = [];
     const info = fileNsInfo(file.tree.rootNode);
     walkCs(file.tree.rootNode, (node, scope) => {
         if (node.type !== 'using_directive')
@@ -588,6 +619,11 @@ function buildUsingScope(file) {
             const target = directiveNamespaceText(node);
             if (target !== undefined && target !== '') {
                 staticTargets.push({ fqn: target, line: node.startPosition.row + 1 });
+                const block = directiveBlock(file, node, scope, info);
+                const fqn = withArity(target);
+                staticDecls.push({ fqn, rooted: isRootedDirective(node), body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
+                if (hasTokenChild(node, 'global'))
+                    globalStatics.push(fqn);
             }
             return undefined;
         }
@@ -628,7 +664,7 @@ function buildUsingScope(file) {
         }
         return undefined;
     });
-    return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, prefixDecls, staticTargets };
+    return { prefixes, globalPrefixes, aliases, globalAliases, aliasDecls, prefixDecls, staticTargets, staticDecls, globalStatics };
 }
 /** The enclosing-namespace chain of a using directive, innermost first: the namespace body that holds it. A directive above a file-scoped `namespace X;` sits in the compilation unit (empty chain), one below it in the namespace body. */
 /** The text range of the block that holds a using directive: the namespace declaration around it, or from a file-scoped `namespace X;` to the end of the file when the directive sits below one, or the whole file when it sits in the compilation unit. An alias reaches the uses inside that range and no other. */
@@ -660,7 +696,7 @@ function nsEntry(frame, info) {
         if (hasTokenChild(d, 'static')) {
             const target = directiveNamespaceText(d);
             if (target !== undefined && target !== '')
-                statics.push(withArity(target));
+                statics.push(isRootedDirective(d) ? `global::${withArity(target)}` : withArity(target));
             continue;
         }
         const aliasName = d.childForFieldName('name');
@@ -710,6 +746,12 @@ function directiveBodyChain(info, directive, scope) {
  */
 export function collectGlobalUsings(file) {
     return buildUsingScope(file).globalPrefixes;
+}
+/**
+ * Collect the types the `global using static N.C;` directives of a C# file name (project-wide imports of the nested types and the extension methods of `N.C`), as the cross-file pre-pass of the consumer's relation pass aggregates them per project beside the global namespace imports. A type's type arguments are written as their arity (``Repo`1``), as in a type key.
+ */
+export function collectGlobalUsingStatics(file) {
+    return buildUsingScope(file).globalStatics;
 }
 /**
  * Collect the `global using Alias = Foo.Bar;` aliases a C# file declares (project-wide
@@ -1566,7 +1608,7 @@ export function extractCsharpRefs(file) {
         }
         return undefined;
     });
-    return { fileNs, scope, refs };
+    return { fileNs, scope, refs, fileLocalTypes: fileLocalTypeKeys(file.tree.rootNode, fileNs) };
 }
 /**
  * Assemble the final `DetectedDep[]` from a pure C# extract plus the LIVE project-global scope.
@@ -1581,6 +1623,22 @@ export function extractCsharpRefs(file) {
 export function assembleCsharpCandidates(extract, options = {}) {
     const out = [];
     const { scope, refs } = extract;
+    /** True when the reading `key` names a type this file keeps to itself, or a member of one (C#11 file-local types). Such a type is found at its lookup level, where it removes the public types of that level, so a candidate group ends there. A dotted key is read with each dot after a type boundary as the `+` of a nested type. */
+    const fileLocal = new Set(extract.fileLocalTypes);
+    const isFileLocalReading = (key) => {
+        if (fileLocal.size === 0)
+            return false;
+        const segments = key.split('.');
+        for (let end = 1; end <= segments.length; end++) {
+            for (let dots = 1; dots <= end; dots++) {
+                const head = segments.slice(0, dots).join('.');
+                const rest = segments.slice(dots, end);
+                if (fileLocal.has(rest.length === 0 ? head : `${head}+${rest.join('+')}`))
+                    return true;
+            }
+        }
+        return false;
+    };
     // Project-wide `global using` aliases (A12): a `global using Alias = N.Type;` declared in ANY
     // file is usable in EVERY file. Merge the aggregated set BELOW this file's own aliases — a
     // file-local alias of the same name takes precedence (the local directive wins for this file).
@@ -1622,10 +1680,19 @@ export function assembleCsharpCandidates(extract, options = {}) {
             ...(options.projectGlobalUsings ?? []),
         ]),
     ].sort();
-    // The plain usings and aliases that sit in a namespace body, the only ones whose reach depends on where a reference stands.
+    // The types the using static directives of the compilation unit name: this file's own, its global ones and the project's. They import nested types and extension methods at the same level as the usings above.
+    const compilationUnitStatics = [
+        ...new Set([
+            ...scope.staticDecls.filter((d) => d.body.length === 0).map((d) => d.fqn),
+            ...scope.globalStatics,
+            ...(options.projectGlobalStatics ?? []),
+        ]),
+    ].sort();
+    // The plain usings, using statics and aliases that sit in a namespace body, the only ones whose reach depends on where a reference stands.
     const blockPrefixes = scope.prefixDecls.filter((d) => d.body.length > 0);
+    const blockStatics = scope.staticDecls.filter((d) => d.body.length > 0);
     const blockAliases = [...scope.aliasDecls].flatMap(([name, decls]) => decls.filter((d) => d.body.length > 0).map((d) => ({ name, d })));
-    /** The using directives of the namespace declarations around a reference at `at` whose enclosing namespaces are `enclosingNs`, innermost first, those without any left out: each plain using and each alias whose block holds `at`, at the namespace of the body that holds it. A using directive reaches the references of its own body, nested bodies included, and of no other (C# spec §14.5.1). */
+    /** The using directives of the namespace declarations around a reference at `at` whose enclosing namespaces are `enclosingNs`, innermost first, those without any left out: each plain using, each using static and each alias whose block holds `at`, at the namespace of the body that holds it. A using directive reaches the references of its own body, nested bodies included, and of no other (C# spec §14.5.1). */
     const levelsAt = (enclosingNs, at) => {
         const byNs = new Map();
         const level = (ns) => {
@@ -1642,6 +1709,9 @@ export function assembleCsharpCandidates(extract, options = {}) {
         for (const { name, d } of blockAliases)
             if (at >= d.start && at < d.end)
                 level(d.body[0]).aliases.push(name);
+        for (const d of blockStatics)
+            if (at >= d.start && at < d.end)
+                level(d.body[0]).statics.push(d.rooted ? `global::${d.fqn}` : d.fqn);
         return enclosingNs.filter((ns) => byNs.has(ns)).map((ns) => byNs.get(ns));
     };
     /** The directive of the alias `name` declared in a body of namespace `ns` whose block holds `at`. */
@@ -1673,13 +1743,24 @@ export function assembleCsharpCandidates(extract, options = {}) {
         out.push({ key: name, shadow });
         return out;
     };
-    /** One CS0104 set: the readings `key(namespace)` of each namespace the plain usings of `levels[k]` import (each read where that declaration stands: `chain` starts at its namespace, and the declarations farther out take part), behind the nearer names `base`. `nestedOnly` is carried on each member when given (R4). */
-    const levelSet = (chain, levels, k, at, key, nestedOnly, base) => {
+    /** One CS0104 set: the readings `key(namespace)` of each namespace the plain usings of `levels[k]` import (each read where that declaration stands: `chain` starts at its namespace, and the declarations farther out take part), behind the nearer names `base`. `nestedOnly` is carried on each member when given (R4). When `imported` is given, the set also holds the readings `imported.key(type)` of each type the `using static` directives of `levels[k]` name (a nested type, or an extension method, of the type; C# spec §14.5.4), the type read where its directive stands without the `using static` directives farther out (a limit: a type only an outer `using static` reaches is not seen there, which keeps a deep nest of them from multiplying the readings). */
+    const levelSet = (chain, levels, k, at, key, nestedOnly, base, imported) => {
         const set = [];
         for (const p of levels[k].prefixes) {
             for (const r of namespaceReadings(chain, levels.slice(k + 1), at, p)) {
                 const shadow = [...base, ...r.shadow];
                 set.push({ symbolKey: key(r.key), ...(nestedOnly === undefined ? {} : { nestedOnly }), ...(shadow.length > 0 ? { shadow } : {}) });
+            }
+        }
+        if (imported === undefined)
+            return set;
+        const plain = levels.slice(k + 1).map((o) => (o.statics.length === 0 ? o : { ...o, statics: [] }));
+        for (const s of levels[k].statics) {
+            const rooted = s.startsWith('global::');
+            for (const h of typeReadings(rooted ? [] : chain, rooted ? [] : plain, at, rooted ? s.slice('global::'.length) : s)) {
+                for (const m of h.set ?? [h]) {
+                    set.push({ symbolKey: imported.key(m.symbolKey), ...(imported.nestedOnly ? { nestedOnly: true } : {}), shadow: [...base, ...(m.shadow ?? [])] });
+                }
             }
         }
         return set;
@@ -1750,18 +1831,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 return hints;
             }
             const from = chain.slice(i);
-            const farther = outer.slice(k + 1);
-            const set = levelSet(from, outer, k, at, (p) => `${p}.${name}`, nested, shadow);
-            // A `using static T;` imports the nested types of T: the member `T.<name>` read as a nested type only, wherever T is read. T itself is read without the `using static` directives farther out (a limit: a type only an outer `using static` reaches is not seen there), which keeps a deep nest of them from multiplying the readings.
-            for (const s of outer[k].statics) {
-                const plain = farther.map((o) => (o.statics.length === 0 ? o : { ...o, statics: [] }));
-                for (const h of typeReadings(from, plain, at, s)) {
-                    for (const m of h.set ?? [h]) {
-                        const behindShadow = [...shadow, ...(m.shadow ?? [])];
-                        set.push({ symbolKey: `${m.symbolKey}.${name}`, nestedOnly: true, shadow: behindShadow });
-                    }
-                }
-            }
+            // A `using static T;` imports the nested types of T: the member `T.<name>` read as a nested type only, wherever T is read.
+            const set = levelSet(from, outer, k, at, (p) => `${p}.${name}`, nested, shadow, { key: (t) => `${t}.${name}`, nestedOnly: true });
             for (const m of set)
                 add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set });
         }
@@ -1770,9 +1841,16 @@ export function assembleCsharpCandidates(extract, options = {}) {
     };
     /** The readings of an alias target (plus a dotted `tail`): where its directive reads it (`typeReadings`). */
     const aliasTargetHints = (view, tail) => typeReadings(view.chain, view.outer, view.at, `${view.target}${tail}`);
+    /** The readings up to the first that names a file-local type of this file, or a set one member of which does: a name found there ends the lookup (see `isFileLocalReading`). */
+    const beforeFileLocal = (hints) => {
+        const end = hints.findIndex((h) => h.kind === 'symbol' && (isFileLocalReading(h.symbolKey) || (h.set ?? []).some((m) => isFileLocalReading(m.symbolKey))));
+        return end < 0 ? hints : hints.slice(0, end);
+    };
     /** Push ONE group of readings in order (an alias rewrite, `S::Tail`): the first that binds wins. */
     const pushHints = (candidates, line) => {
-        out.push({ candidates, kind: 'import', line });
+        const kept = beforeFileLocal(candidates);
+        if (kept.length > 0)
+            out.push({ candidates: kept, kind: 'import', line });
     };
     /**
      * Build and push ONE ordered candidate group for a reference whose written text is `ref` (a
@@ -1795,6 +1873,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
         // no alias, no enclosing-namespace, no using-prefix expansion; the verbatim is the sole
         // candidate.
         if (rooted) {
+            if (isFileLocalReading(ref))
+                return;
             const candidates = [{ kind: 'symbol', symbolKey: ref }];
             // `global::Program` names the global `Program`, which may be the implicit class of a file of top-level statements (the fallback after an explicit one).
             if (ref === 'Program')
@@ -1804,6 +1884,10 @@ export function assembleCsharpCandidates(extract, options = {}) {
         }
         // The nested types of each enclosing type, innermost type first, from every part of a partial type: C# reads them before any namespace, alias or using (spec §7.6.1, §12.8.4). A dotted `X.Y` reads `<Outer>+X.Y`, which the resolver's guarded split binds as `<Outer>+X+Y`.
         const nestedReadings = types.map((t) => ({ kind: 'symbol', symbolKey: `${t}+${ref}` }));
+        // A nested type of a file-local type is found there, before any namespace: the group ends at it.
+        const localNested = nestedReadings.findIndex((h) => isFileLocalReading(h.symbolKey));
+        if (localNested >= 0)
+            nestedReadings.length = localNested;
         const lead = ref.split('.')[0];
         if (ambiguousAliases.has(lead)) {
             // M7: an alias with 2+ project-wide targets → silence, unless a nested type of an enclosing type, which comes before every alias, binds.
@@ -1815,8 +1899,16 @@ export function assembleCsharpCandidates(extract, options = {}) {
         const aliasView = viewAlias(lead, enclosingNs, at);
         const candidates = [...nestedReadings];
         const pushed = new Set();
+        // Set once a reading names a file-local type: nothing farther is a candidate.
+        let ended = localNested >= 0;
         const add = (hint) => {
+            if (ended)
+                return;
             if (hint.kind === 'symbol') {
+                if (isFileLocalReading(hint.symbolKey)) {
+                    ended = true;
+                    return;
+                }
                 if (pushed.has(hint.symbolKey))
                     return;
                 pushed.add(hint.symbolKey);
@@ -1824,6 +1916,8 @@ export function assembleCsharpCandidates(extract, options = {}) {
             candidates.push(hint);
         };
         const addSet = (set) => {
+            if (set.some((m) => isFileLocalReading(m.symbolKey)))
+                ended = true;
             for (const m of set)
                 add({ kind: 'symbol', symbolKey: m.symbolKey, nestedOnly: m.nestedOnly, set });
         };
@@ -1848,15 +1942,15 @@ export function assembleCsharpCandidates(extract, options = {}) {
             add({ kind: 'symbol', symbolKey: `${ns}.${ref}` });
             const k = levels.findIndex((o) => o.ns === ns);
             if (k >= 0)
-                addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => `${p}.${ref}`, multi, []));
+                addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => `${p}.${ref}`, multi, [], { key: (t) => `${t}.${ref}`, nestedOnly: true }));
         }
         // An alias of the compilation unit, or a project-wide `global using` alias, comes after every enclosing namespace.
         if (aliasView !== undefined && aliasView.bodyNs === undefined)
             pushAlias(aliasView);
         // The global namespace's own member (the verbatim reading), before the using directives of the compilation unit, which is the declaration of the global namespace (C# spec §7.8.1): `using Lib;` beside a global `Order` leaves `Order` the global type.
         add({ kind: 'symbol', symbolKey: ref });
-        // The using-prefix expansions of the compilation unit and the project (one CS0104 set), the last of the explicit readings.
-        addSet(usingPrefixes.map((p) => ({ symbolKey: `${p}.${ref}`, nestedOnly: multi })));
+        // The using-prefix expansions of the compilation unit and the project (one CS0104 set), the last of the explicit readings, with the nested types the using static directives of the compilation unit and the project import (a type read from the global namespace).
+        addSet([...usingPrefixes.map((p) => ({ symbolKey: `${p}.${ref}`, nestedOnly: multi })), ...compilationUnitStatics.map((t) => ({ symbolKey: `${t}.${ref}`, nestedOnly: true }))]);
         // A bare `Program` may name the implicit class of a file of top-level statements, but only when no explicit reading binds: its fallback key comes after all of them.
         if (ref === 'Program')
             add({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
@@ -1900,7 +1994,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *  namespaces innermost first, each followed by the namespaces the plain usings of its declarations
      *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
      *  in-scope `Name` → ambiguous → silence). Aliases import no
-     *  extension methods, and `using static` is not modelled, so neither contributes. */
+     *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
     const pushExtension = (name, enclosingNs, line, at) => {
         const candidates = [];
         const pushed = new Set();
@@ -1918,13 +2012,13 @@ export function assembleCsharpCandidates(extract, options = {}) {
             candidates.push({ kind: 'symbol', symbolKey: extensionKey(ns, name) });
             const k = levels.findIndex((o) => o.ns === ns);
             if (k >= 0)
-                addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, []));
+                addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, [], { key: (t) => classExtensionKey(t, name), nestedOnly: false }));
         }
         // The compilation unit is the last level, and its namespace is the global one: the global namespace's own static classes come before the namespaces its using directives import (C# spec §12.8.10.3, §7.8.1).
         pushed.add(extensionKey('', name));
         candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
         // A namespace both enclosing and imported only repeats a key already read.
-        addSet(usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })));
+        addSet([...usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })), ...compilationUnitStatics.map((t) => ({ symbolKey: classExtensionKey(t, name) }))]);
         out.push({ candidates, kind: 'import', line });
     };
     // Replay the descriptors in original emit order (static targets first, then alias-RHS embedded
@@ -1936,7 +2030,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 const candidates = typeReadings(r.enclosingNs, r.outer ?? [], r.at, r.fqn);
                 if (r.fqn === 'Program')
                     candidates.push({ kind: 'symbol', symbolKey: IMPLICIT_PROGRAM_KEY });
-                out.push({ candidates, kind: 'import', line: r.line });
+                pushHints(candidates, r.line);
                 break;
             }
             case 'plain':
@@ -1998,7 +2092,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 18,
+    rev: 19,
     declarations,
     uses,
 };

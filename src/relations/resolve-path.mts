@@ -4,7 +4,7 @@ import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
+import { resolveRustPath, rustModuleFileKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot } from './extractors/rust-resolve.mjs';
 import type { SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -50,7 +50,7 @@ export interface ResolvePathOptions {
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate.
  *
- *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for one question only: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs; the Rust extractor declares those names from the file's parse tree (`rustTopLevelItemKey`). Without the table no name is known to be such an item, so those paths stay silent. */
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for two questions, both answered by what the Rust extractor declares from each file's parse tree: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs (`rustTopLevelItemKey`), and which files a file declares as its modules by name alone, which tells the crate roots that compile a file where a package has several in one tree (`rustModuleFileKey`). Without the table no name is known to be such an item, so those paths stay silent, and no module is known to be declared, so no root is preferred. */
 export function makeResolvePathToFile(
   projectRoot: string,
   ownerOf?: (repoRelPosix: string) => string | undefined,
@@ -67,13 +67,19 @@ export function makeResolvePathToFile(
   const layout = makeRepoLayout(projectRoot, plain, isExcluded, report);
   const phpDeps = makePhpResolveDeps(plain, exists, isExcluded, layout.composerMaps, report);
   const rustDeps = makeRustResolveDeps(plain, exists);
-  // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`).
+  // The Rust deps for one symbol table: a crate-root file binds `name` as a top-level item only when the table says so (see `rustTopLevelItemKey`), and a file declares a module by name alone only when the table says so (see `rustModuleFileKey`).
   const rustDepsByTable = new WeakMap<SymbolTable, RustResolveDeps>();
   const rustDepsFor = (table: SymbolTable | undefined): RustResolveDeps => {
     if (table === undefined) return rustDeps;
     let deps = rustDepsByTable.get(table);
     if (deps === undefined) {
-      deps = { ...rustDeps, rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares!(rootFile, name)) };
+      const declared = (file: string, key: string): boolean => table.has('rust', key) && table.filesFor('rust', key).includes(file);
+      const declaresModule: RustModuleDeclared = (file, modulePath) => (declared(file, rustModuleFileKey(modulePath)) ? 'always' : declared(file, rustModuleFileKey(modulePath, true)) ? 'cfg' : undefined);
+      deps = {
+        ...rustDeps,
+        crateRootFor: (fromFile) => rustDeps.crateRootFor(fromFile, declaresModule),
+        rootDeclares: (rootFile, name, asItem = false) => (asItem ? table.filesFor('rust', rustTopLevelItemKey(name)).includes(rootFile) : rustDeps.rootDeclares!(rootFile, name)),
+      };
       rustDepsByTable.set(table, deps);
     }
     return deps;
@@ -160,7 +166,7 @@ export function makeResolvePathToFile(
  * ancestor of the importing file that contains a `Cargo.toml`; which CRATE of that package
  * the file belongs to follows Cargo's target auto-discovery (`src/lib.rs` / `src/main.rs`
  * for `src/**`, `src/bin/<x>.rs` and `src/bin/<x>/main.rs`, `tests/`, `examples/`,
- * `benches/`, `build.rs`, each of the last three unless `[package]` turns its discovery off) and the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table, written as tables or inline — see `rustTargetFor`. The package's crate name (`[lib].name`,
+ * `benches/`, `build.rs` (or the file `[package] build` names, none with `build = false`), each of the last three unless `[package]` turns its discovery off) and the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table, written as tables or inline — see `rustTargetFor`. The package's crate name (`[lib].name`,
  * else `[package].name`, hyphens → underscores) addresses its library from any target.
  *
  * In-repo PATH DEPENDENCIES (`[dependencies]`, `[dev-dependencies]`,
@@ -168,7 +174,9 @@ export function makeResolvePathToFile(
  * `[dependencies.<name>]` table form, the whole table as one inline table, and `{ workspace = true }` inherited from the nearest
  * `[workspace.dependencies]`) map the name code uses (`package =` renames honoured) to that
  * crate's library tree. A path that leaves the repository, or points at a directory with no
- * Cargo.toml, is ignored.
+ * Cargo.toml, is ignored. A registry or git dependency that a `[patch.<source>]` entry with a path
+ * replaces is the path dependency too: Cargo reads `[patch]` from the workspace root only, and the
+ * entry's path is relative to that manifest.
  *
  * Every manifest and crate-root file is read at most once per factory instance (cached) —
  * they are stable across one pass. No Cargo.toml ancestor → undefined crate root, which the
@@ -181,7 +189,7 @@ export function makeResolvePathToFile(
 function makeRustResolveDeps(
   plain: FileSource,
   exists: (repoRelPosix: string) => boolean,
-): RustResolveDeps {
+): RustResolveDeps & { crateRootFor(fromFile: string, declaresModule?: RustModuleDeclared): RustCrateRoot | undefined } {
   // Cache: directory (repo-rel POSIX, '' = root) → the Cargo.toml read there (null = none).
   const manifestByDir = new Map<string, CargoManifest | null>();
   // Cache: directory → the nearest Cargo.toml directory at or above it (null = none).
@@ -247,7 +255,7 @@ function makeRustResolveDeps(
     return !exists(at('src/lib.rs')) && exists(at(legacy)) && isEdition2015(pkgDir, manifest) ? legacy : undefined;
   }
 
-  function crateRootFor(fromFile: string): RustCrateRoot | undefined {
+  function crateRootFor(fromFile: string, declaresModule?: RustModuleDeclared): RustCrateRoot | undefined {
     const file = toPosix(fromFile);
     const pkgDir = packageDirFrom(dirOf(file));
     if (pkgDir === undefined) return undefined;
@@ -260,18 +268,23 @@ function makeRustResolveDeps(
     // Cargo (edition 2015 only, `target_path` and `legacy_bin_path`): a `[[bin]]` that gives a name and no `path`, and is found as neither or as more than one of `src/bin/<name>.rs`, `src/bin/<name>/main.rs` and (named like the package) `src/main.rs`, is built from `src/<name>.rs` when the package has no library, else `src/main.rs`, else `src/bin/main.rs`. A bin found twice that takes such a path is rooted there alone.
     // Cargo (`normalize_lib`, `autolib`): with `autolib = false` and no `[lib]` table the package has no library, and `src/lib.rs` is no root. `has_lib` is whether a library is configured (a `[lib]` table) or inferred, not whether a file stands at its path.
     const inferLib = manifest === undefined || !manifest.autolibOff || manifest.libDeclared;
-    const legacyBinPaths: string[] = [];
+    const legacyPaths: string[] = [];
     const sharedNameBins = new Set<string>();
     if (manifest !== undefined && isEdition2015(pkgDir, manifest)) {
       const hasLib = manifest.libDeclared || (inferLib && exists(at('src/lib.rs')));
       for (const named of manifest.namedTargets) {
+        // Cargo (edition 2015 only, `target_path` and `legacy_bench_path`): a `[[bench]]` named `bench` that gives no path and is found as neither or as more than one of `benches/bench.rs` and `benches/bench/main.rs` is built from `src/bench.rs`, when that file exists.
+        if (named === 'benches/bench') {
+          if (['benches/bench.rs', 'benches/bench/main.rs'].filter((p) => exists(at(p))).length !== 1 && exists(at('src/bench.rs'))) legacyPaths.push('src/bench.rs');
+          continue;
+        }
         if (!named.startsWith('src/bin/')) continue;
         const name = named.slice('src/bin/'.length);
         const inferred = [`${named}.rs`, `${named}/main.rs`, ...(name === manifest.packageName ? ['src/main.rs'] : [])].filter((p) => exists(at(p)));
         if (inferred.length === 1) continue;
         const legacy = [...(hasLib ? [] : [`src/${name}.rs`]), 'src/main.rs', 'src/bin/main.rs'].find((p) => exists(at(p)));
         if (legacy === undefined) continue;
-        legacyBinPaths.push(legacy);
+        legacyPaths.push(legacy);
         if (inferred.length > 1) sharedNameBins.add(named);
       }
     }
@@ -281,15 +294,82 @@ function makeRustResolveDeps(
     const declaresMainBin = (manifest?.declaresMainBin ?? false) && !sharedNameBins.has(`src/bin/${manifest?.packageName}`);
     // Cargo (`toml_targets_and_inferred`, every edition): an inferred target whose name a declared target of its kind has (`seen_names`) is left out, whatever path the declared one takes, and so is the one that shares its path (`seen_paths`, which leaves the file a root through the declared target). The inferred `src/main.rs` carries the package's name. A file left out is a root only through a declared target.
     const droppedInferred = (manifest?.declaredNames ?? []).flatMap((n) => [`${n}.rs`, `${n}/main.rs`, ...(n === `src/bin/${manifest?.packageName}` && !declaresMainBin ? ['src/main.rs'] : [])]).filter((p) => exists(at(p)));
-    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyBinPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib);
+    const target = rustTargetFor(rel, (sub) => exists(at(sub)), libPathOf(pkgDir, manifest), [...(manifest?.targetPaths ?? []), ...legacyPaths], undiscovered, namedTargets, !undiscovered.includes('src/bin') || declaresMainBin, droppedInferred, inferLib, rel.startsWith('src/bin/') ? srcBinFiles(pkgDir) : [], buildScriptOf(manifest));
+    // Where a tree has several crate roots (`src/lib.rs` beside `src/main.rs`, a `[[bin]]` in `src/`, the binaries of `src/bin/` over a directory without `main.rs`), the roots that compile the file are those a chain of plain `mod` declarations leads to (`rootsCompiling`): certainly, or under a `cfg`. Nothing is concluded from a root the chain does not reach: it may still compile the file through a `path` attribute, `include!` or a macro.
+    const existingRoots = target.rootFiles.filter((f) => exists(at(f)));
+    const declaredRoots = target.declaredRoots ?? [];
+    const severalRoots = target.byDeclaration === true || (!target.fileIsRoot && (existingRoots.length > 1 || existingRoots.some((f) => declaredRoots.includes(f))));
+    const compiling = severalRoots && declaresModule !== undefined ? rootsCompiling(rel, target.srcDir, existingRoots, at, declaresModule) : { certain: [], conditional: [] };
+    const reached = [...compiling.certain, ...compiling.conditional];
+    if (target.byDeclaration === true) {
+      // A directory of `src/bin/` without `main.rs` is no crate, so nothing is read from a root of its own. Its files are modules of the one binary known to declare them, under a `cfg` or not; with none known, or several, `crate::` names no root that can be told.
+      const unrooted = reached.length !== 1;
+      return { srcDir: at(target.srcDir), crateName, rootFiles: unrooted ? [] : reached.map(at), fileIsRoot: false, lib: lib ?? null, crateRelativeUses: !unrooted && targetIsEdition2015(pkgDir, manifest, reached), ...(unrooted ? { unrooted } : {}) };
+    }
+    // Two or more roots that certainly compile the file: `crate::` is a different root in each, so a root item binds none. Otherwise the roots are probed in order: the one that certainly compiles the file, then those that compile it under a `cfg`, which proves nothing about the others, then the rest in their usual order, since one of them may compile the file too.
+    const rootsShared = compiling.certain.length > 1;
+    const rootFiles = rootsShared ? compiling.certain : [...reached, ...target.rootFiles.filter((f) => !reached.includes(f))];
+    // The edition of a file is the edition of the crates that compile it. The roots a chain reaches decide it when they agree; so do the roots Cargo infers for the tree (the library and `src/main.rs`), which decided it before a target declared in `src/` was a root of the tree, and one of which may compile the file by a way that is not followed. An edition 2015 `use` path then names an item of the roots that are edition 2015, never of a root with another edition.
+    const inferredRoots = existingRoots.filter((f) => !declaredRoots.includes(f));
+    const relativeRoots = severalRoots
+      ? [...new Set([...(reached.length > 0 && targetIsEdition2015(pkgDir, manifest, reached) ? reached : []), ...(inferredRoots.length > 0 && targetIsEdition2015(pkgDir, manifest, inferredRoots) ? inferredRoots : [])])]
+      : undefined;
     return {
       srcDir: at(target.srcDir),
       crateName,
-      rootFiles: target.rootFiles.map(at),
+      rootFiles: rootFiles.map(at),
       fileIsRoot: target.fileIsRoot,
       lib: lib ?? null,
-      crateRelativeUses: targetIsEdition2015(pkgDir, manifest, target.rootFiles.filter((f) => exists(at(f)))),
+      crateRelativeUses: relativeRoots === undefined ? targetIsEdition2015(pkgDir, manifest, existingRoots) : relativeRoots.length > 0,
+      ...(rootsShared ? { rootsShared } : {}),
+      ...(relativeRoots === undefined ? {} : { crateRelativeRoots: relativeRoots.map(at) }),
     };
+  }
+
+  /** The package-relative path of the build script (Cargo's `normalize_build`): `build.rs` unless `[package] build` names a file, or is `false`, which means none. A path that climbs out of the package names none. */
+  function buildScriptOf(manifest: CargoManifest | undefined): string | undefined {
+    if (manifest?.build === false) return undefined;
+    return under('', manifest?.build ?? 'build.rs');
+  }
+
+  /** The `.rs` files lying directly in `src/bin/` of the package at `pkgDir`, package-relative. */
+  function srcBinFiles(pkgDir: string): string[] {
+    return (plain.list(joinRel(pkgDir, 'src/bin')) ?? []).filter((e) => e.kind === 'file' && e.name.endsWith('.rs')).map((e) => `src/bin/${e.name}`);
+  }
+
+  /** The roots among `roots` that compile `file`, a file below the tree directory `srcDir` (all package-relative; `at` makes a path repository-relative): those from which a chain of plain `mod` declarations leads down to the file. A module file is declared by the file of a module above it, which names the path between them (`declaresModule`: `x` for `mod x;`, `outer/x` for one inside the inline module `outer`), and so on up to a root lying in `srcDir` itself. `certain` holds the roots with a chain no `cfg` can remove; `conditional` those whose every chain passes a declaration under a `cfg`, so they compile the file in some configuration at most. Both are lower bounds: a root in neither may compile the file as well, through a `path` attribute, `include!`, a macro, or a declaration in a file that did not parse. A file outside `srcDir` has no chain, so none. */
+  function rootsCompiling(file: string, srcDir: string, roots: string[], at: (sub: string) => string, declaresModule: RustModuleDeclared): { certain: string[]; conditional: string[] } {
+    const below = srcDir === '' ? file : file.startsWith(`${srcDir}/`) ? file.slice(srcDir.length + 1) : undefined;
+    if (below === undefined || !below.endsWith('.rs')) return { certain: [], conditional: [] };
+    // Root → whether a chain without a `cfg` reaches it.
+    const found = new Map<string, boolean>();
+    // Module file → whether it was climbed from a chain without a `cfg`; such a climb covers a later one under a `cfg`.
+    const climbed = new Map<string, boolean>();
+    // `moduleFile` is the file of the module whose names from the tree's root are `names`; `sure` says no declaration below it on this chain stands under a `cfg`.
+    const climb = (moduleFile: string, names: string[], sure: boolean): void => {
+      const before = climbed.get(moduleFile);
+      if (names.length === 0 || before === true || (before === false && !sure)) return;
+      climbed.set(moduleFile, sure);
+      for (let k = names.length - 1; k >= 0; k--) {
+        const pathBelow = names.slice(k).join('/');
+        if (k === 0) {
+          for (const root of roots) {
+            const how = root !== moduleFile && dirOf(root) === srcDir ? declaresModule(at(root), pathBelow) : undefined;
+            if (how !== undefined) found.set(root, found.get(root) === true || (sure && how === 'always'));
+          }
+          continue;
+        }
+        const parent = joinRel(srcDir, names.slice(0, k).join('/'));
+        for (const parentFile of [`${parent}.rs`, `${parent}/mod.rs`]) {
+          const how = exists(at(parentFile)) ? declaresModule(at(parentFile), pathBelow) : undefined;
+          if (how !== undefined) climb(parentFile, names.slice(0, k), sure && how === 'always');
+        }
+      }
+    };
+    const names = below.slice(0, -'.rs'.length).split('/');
+    if (names[names.length - 1] === 'mod') names.pop();
+    climb(file, names, true);
+    return { certain: roots.filter((r) => found.get(r) === true), conditional: roots.filter((r) => found.get(r) === false) };
   }
 
   /** Whether the file of a target rooted at one of `roots` (package-relative, existing) reads its paths as edition 2015. A target that writes its own `edition` (`[lib]`, or a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` found by its `path`, or by its `name` where Cargo roots it) decides for its files; any other target takes the package's edition. A file that belongs to several targets of different editions (a module of both `src/lib.rs` and `src/main.rs`) is not told, so not 2015. */
@@ -339,6 +419,7 @@ function makeRustResolveDeps(
     for (const [key, spec] of manifest.dependencies) {
       let depDir: string | undefined;
       let rename = spec.package;
+      let source = spec;
       if (spec.path !== undefined) {
         depDir = under(pkgDir, spec.path);
       } else if (spec.workspace) {
@@ -351,6 +432,7 @@ function makeRustResolveDeps(
           if (inherited !== undefined) {
             if (inherited.path !== undefined) depDir = under(cur, inherited.path);
             rename = rename ?? inherited.package;
+            source = inherited;
             break;
           }
           if (cur === '') break;
@@ -358,6 +440,8 @@ function makeRustResolveDeps(
           cur = packageDirFrom(parent === '.' ? '' : parent);
         }
       }
+      // A registry or git dependency that a `[patch]` of the workspace root replaces with a path: the package it is called by `package =`, else by its key. A dependency with a path of its own is not replaced.
+      if (depDir === undefined && source.path === undefined && !source.workspace) depDir = patchedDir(pkgDir, rename ?? key, source);
       if (depDir === undefined) continue; // registry / git / out-of-repo → external
       const depManifest = manifestAt(depDir);
       if (depManifest === undefined) continue; // no Cargo.toml there → not a crate
@@ -367,6 +451,32 @@ function makeRustResolveDeps(
       if (codeName !== name) continue;
       const tree = libTreeOf(depDir, depManifest);
       if (tree !== undefined) return tree;
+    }
+    return undefined;
+  }
+
+  /** The nearest directory at or above the package at `pkgDir` whose manifest is a workspace root; the package's own when it has none above, which makes it a workspace of its own. */
+  function workspaceRootOf(pkgDir: string): string {
+    let cur = pkgDir;
+    while (manifestAt(cur)?.hasWorkspace !== true) {
+      if (cur === '') return pkgDir;
+      const parent = path.posix.dirname(cur);
+      const up = packageDirFrom(parent === '.' ? '' : parent);
+      if (up === undefined) return pkgDir;
+      cur = up;
+    }
+    return cur;
+  }
+
+  /** The directory a `[patch]` entry with a path puts in place of the dependency `source` (a registry or git dependency) of the package called `packageName`, for the package at `pkgDir`. Cargo reads `[patch]` from the workspace root only, so a member's own is ignored; the entry's path is relative to the manifest that writes it. */
+  function patchedDir(pkgDir: string, packageName: string, source: CargoDependencySpec): string | undefined {
+    const wsDir = workspaceRootOf(pkgDir);
+    const patches = manifestAt(wsDir)?.patches;
+    const sourceId = sourceIdOf(source);
+    if (patches === undefined || sourceId === undefined) return undefined;
+    for (const [table, entries] of patches) {
+      if (patchSourceId(table) !== sourceId) continue;
+      for (const [key, entry] of entries) if ((entry.package ?? key) === packageName && entry.path !== undefined) return under(wsDir, entry.path);
     }
     return undefined;
   }
@@ -386,6 +496,9 @@ function makeRustResolveDeps(
   return { crateRootFor, dependencyFor, rootDeclares };
 }
 
+/** Whether `file` (repository-relative) declares, by name alone, the module at `modulePath` below its own module (`x`, `outer/x`): `always` when nothing can switch the declaration off, `cfg` when a `cfg` may remove it, undefined when the file is not known to declare it. It is what the Rust extractor reads from the file's parse tree and declares under `rustModuleFileKey`. */
+type RustModuleDeclared = (file: string, modulePath: string) => 'always' | 'cfg' | undefined;
+
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the
@@ -393,6 +506,12 @@ function makeRustResolveDeps(
  *  crate declares it, so it gets the `tests/` tree with no root file to bind items to.
  *
  *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`.
+ *
+ *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare it, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller that the directory is no crate of its own: the file's root is the one binary known to declare it, or none.
+ *
+ *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`. Such a root decides the edition of a file only when it is known to compile the file; otherwise the library and `src/main.rs` decide it, as they did before those roots were told.
+ *
+ *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
  *
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
  *
@@ -407,8 +526,12 @@ export function rustTargetFor(
   inferMain = true,
   droppedInferred: readonly string[] = [],
   inferLib = true,
-): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean } {
-  const targets = [...new Set(targetPaths.map((p) => path.posix.normalize(p)))];
+  binFiles: readonly string[] = [],
+  buildScript?: string,
+): { srcDir: string; rootFiles: string[]; fileIsRoot: boolean; byDeclaration?: boolean; declaredRoots?: string[] } {
+  const buildRoot = buildScript === undefined ? undefined : path.posix.normalize(buildScript);
+  // A build script in a directory of its own roots the files below that directory like any other target; one at the package root roots only itself, since every file of the package lies below it.
+  const targets = [...new Set([...targetPaths, ...(buildRoot !== undefined && path.posix.dirname(buildRoot) !== '.' ? [buildRoot] : [])].map((p) => path.posix.normalize(p)))];
   // `src/main.rs` is a crate root when Cargo infers it (`inferMain`, false under `autobins = false` unless a `[[bin]]` is named like the package, and when a declared bin of the package's name left it out) or a `[[bin]]` names it by `path`; otherwise it belongs to no crate.
   const mainIsRoot = (inferMain && !droppedInferred.includes('src/main.rs')) || targets.includes('src/main.rs');
   // Whether the auto-discovered root `root` (`src/bin/x.rs`, `tests/x/main.rs`, …) is still one: not when a declared target of its kind and name left it out, unless a declared target roots it (by `path`, or by its name alone).
@@ -416,7 +539,7 @@ export function rustTargetFor(
     !droppedInferred.includes(root) || targets.includes(root) || namedTargets.some((n) => n.startsWith(`${dir}/`) && !n.slice(dir.length + 1).includes('/') && (root === `${n}.rs` || root === `${n}/main.rs`));
   const mainRoots = mainIsRoot ? ['src/main.rs'] : [];
   const dirOfRoot = (root: string): string => (path.posix.dirname(root) === '.' ? '' : path.posix.dirname(root));
-  if (targets.includes(rel)) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
+  if (targets.includes(rel) || rel === buildRoot) return { srcDir: dirOfRoot(rel), rootFiles: [rel], fileIsRoot: true };
   const libRoot = path.posix.normalize(libPath ?? 'src/lib.rs');
   const libRoots = inferLib ? [libRoot] : [];
   // The tree of the deepest directory that holds `rel` and one of `roots` (below `floor` when given), or undefined.
@@ -442,7 +565,9 @@ export function rustTargetFor(
     if (segs.length === 3) return { srcDir: 'src/bin', rootFiles: [rel], fileIsRoot: true };
     const dir = `src/bin/${segs[2]}`;
     const main = `${dir}/main.rs`;
-    return { srcDir: dir, rootFiles: [main], fileIsRoot: rel === main };
+    if (rel === main || existsInPackage(main)) return { srcDir: dir, rootFiles: [main], fileIsRoot: rel === main };
+    // Cargo (`infer_subdirectory`): a directory of `src/bin/` is a target only when it holds a `main.rs`. Without one its files are modules of the binaries of `src/bin/` that declare them, over the tree of `src/bin/` itself.
+    return { srcDir: 'src/bin', rootFiles: binFiles.filter((f) => inferredLive(f, 'src/bin')), fileIsRoot: false, byDeclaration: true };
   }
   if ((segs[0] === 'tests' || segs[0] === 'examples' || segs[0] === 'benches') && segs.length >= 2 && (undiscoveredDirs.includes(segs[0]) || !inferredLive(segs.length === 2 ? rel : `${segs[0]}/${segs[1]}/main.rs`, segs[0]))) {
     const named = namedTargets.filter((n) => n.startsWith(`${segs[0]}/`) && !n.slice(segs[0].length + 1).includes('/')).flatMap((n) => [`${n}.rs`, `${n}/main.rs`]).filter(existsInPackage);
@@ -455,7 +580,6 @@ export function rustTargetFor(
     if (rel === main) return { srcDir: dirOfRoot(main), rootFiles: [main], fileIsRoot: true };
     return deepestTree([...libRoots, ...(existsInPackage(main) ? [main] : []), ...targets], segs[0]) ?? { srcDir: segs[0], rootFiles: [], fileIsRoot: false };
   }
-  if (rel === 'build.rs') return { srcDir: '', rootFiles: [rel], fileIsRoot: true };
   const mainRoot = 'src/main.rs';
   if ((inferLib && rel === libRoot) || (rel === mainRoot && mainIsRoot)) return { srcDir: path.posix.dirname(rel), rootFiles: [rel], fileIsRoot: true };
   if (segs[0] !== 'src') {
@@ -467,7 +591,11 @@ export function rustTargetFor(
     const libTree = deepestTree(libRoots, 'src');
     if (libTree !== undefined) return libTree;
   }
-  return { srcDir: 'src', rootFiles: [...(inferLib && libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots], fileIsRoot: false };
+  // A declared target whose path lies directly in `src/` (`[[bin]] path = "src/cli.rs"`) roots a crate over the same tree as the library and `src/main.rs`.
+  const inSrc = targets.filter((t) => path.posix.dirname(t) === 'src');
+  const inferred = [...(inferLib && libRoot.startsWith('src/') ? [libRoot] : []), ...mainRoots];
+  const declaredRoots = inSrc.filter((t) => !inferred.includes(t));
+  return { srcDir: 'src', rootFiles: [...inferred, ...declaredRoots], fileIsRoot: false, ...(declaredRoots.length > 0 ? { declaredRoots } : {}) };
 }
 
 /** The parts of a Cargo.toml the Rust resolver needs. */
@@ -475,6 +603,10 @@ interface CargoDependencySpec {
   path?: string;
   package?: string;
   workspace: boolean;
+  /** The `git` URL a dependency comes from; empty when written but not readable as a string. */
+  git?: string;
+  /** The name of the alternative `registry` a dependency comes from; empty when written but not readable as a string. */
+  registry?: string;
 }
 interface CargoManifest {
   crateName: string | undefined;
@@ -505,6 +637,8 @@ interface CargoManifest {
   libDeclared: boolean;
   /** `[package].autolib` written as `false`: with no `[lib]` table Cargo then infers no library from `src/lib.rs`. */
   autolibOff: boolean;
+  /** `[package].build` as written: the build script's path, `false` for none; undefined when absent, written `true` or not readable, where Cargo looks for `build.rs`. */
+  build: string | false | undefined;
   /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
   packageName: string | undefined;
   /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
@@ -513,6 +647,31 @@ interface CargoManifest {
   declaresMainBin: boolean;
   dependencies: Map<string, CargoDependencySpec>;
   workspaceDependencies: Map<string, CargoDependencySpec>;
+  /** The `[patch.<source>]` tables: for each source named (`crates-io`, an alternative registry's name, or a git URL), its entries by the key written, each with the `path` and `package` it gives. */
+  patches: Map<string, Map<string, CargoDependencySpec>>;
+  /** Whether a `[workspace]` table is written at all, in any spelling: the manifest is a workspace root. */
+  hasWorkspace: boolean;
+}
+
+/** The URLs of the default registry's index, which `[patch.crates-io]` names by its alias. */
+const CRATES_IO_INDEXES = new Set(['https://github.com/rust-lang/crates.io-index', 'sparse+https://index.crates.io']);
+
+/** A git or index URL as Cargo compares it: without a trailing slash or `.git`. */
+function canonicalUrl(url: string): string {
+  return url.replace(/\/+$/, '').replace(/\.git$/, '').replace(/\/+$/, '');
+}
+
+/** The source a dependency is fetched from, as the key `patchSourceId` gives the `[patch]` table that replaces it: the default registry unless `git` or `registry` says otherwise; undefined for a source written but not readable. */
+function sourceIdOf(spec: CargoDependencySpec): string | undefined {
+  if (spec.git !== undefined) return spec.git === '' ? undefined : `git:${canonicalUrl(spec.git)}`;
+  if (spec.registry !== undefined) return spec.registry === '' ? undefined : `registry:${spec.registry}`;
+  return 'registry:crates-io';
+}
+
+/** The key of the source a `[patch.<source>]` table names: the default registry by `crates-io` or its index URL, an alternative registry by its name, a git repository by its URL. */
+function patchSourceId(table: string): string {
+  if (table === 'crates-io' || CRATES_IO_INDEXES.has(canonicalUrl(table))) return 'registry:crates-io';
+  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(table) ? `git:${canonicalUrl(table)}` : `registry:${table}`;
 }
 
 function normalizeCrateName(name: string): string {
@@ -522,18 +681,20 @@ function normalizeCrateName(name: string): string {
 /** The names of the per-package dependency tables, each bare or under `target.<cfg>`. */
 const DEP_TABLE_NAMES = new Set(['dependencies', 'dev-dependencies', 'dev_dependencies', 'build-dependencies', 'build_dependencies']);
 
-/** Where a full key path (the table header's segments, then the line's key segments) lands among dependency entries: in `[workspace.dependencies]` or in a package's dependency tables, which crate, and the field path below that crate (empty when the path is the crate's whole value). Undefined for a path that names no crate of a dependency table. */
-function dependencyEntryAt(keyPath: readonly string[]): { workspace: boolean; crate: string; field: string[] } | undefined {
+/** Where a full key path (the table header's segments, then the line's key segments) lands among dependency entries: in `[workspace.dependencies]`, in a `[patch.<source>]` table, or in a package's dependency tables, which crate, and the field path below that crate (empty when the path is the crate's whole value). Undefined for a path that names no crate of a dependency table. */
+function dependencyEntryAt(keyPath: readonly string[]): { workspace: boolean; patch?: string; crate: string; field: string[] } | undefined {
   if (keyPath[0] === 'workspace' && keyPath[1] === 'dependencies') {
     return keyPath.length > 2 ? { workspace: true, crate: keyPath[2], field: keyPath.slice(3) } : undefined;
   }
+  if (keyPath[0] === 'patch') return keyPath.length > 2 ? { workspace: false, patch: keyPath[1], crate: keyPath[2], field: keyPath.slice(3) } : undefined;
   const table = keyPath[0] === 'target' ? 2 : 0;
   if (!DEP_TABLE_NAMES.has(keyPath[table]) || keyPath.length <= table + 1) return undefined;
   return { workspace: false, crate: keyPath[table + 1], field: keyPath.slice(table + 2) };
 }
 
-/** Whether a key path lies above the crates of a dependency table, so a table written there as an inline table can hold dependency entries: a dependency table itself (`dependencies`, `target.<cfg>.dev-dependencies`, `workspace.dependencies`), or `target`, `target.<cfg>` or `workspace`. */
+/** Whether a key path lies above the crates of a dependency table, so a table written there as an inline table can hold dependency entries: a dependency table itself (`dependencies`, `target.<cfg>.dev-dependencies`, `workspace.dependencies`, `patch.<source>`), or `target`, `target.<cfg>`, `workspace` or `patch`. */
 function holdsDependencyEntries(keyPath: readonly string[]): boolean {
+  if (keyPath[0] === 'patch') return keyPath.length <= 2;
   if (keyPath[0] === 'workspace') return keyPath.length === 1 || (keyPath.length === 2 && keyPath[1] === 'dependencies');
   const table = keyPath[0] === 'target' ? 2 : 0;
   return keyPath.length <= table || (keyPath.length === table + 1 && DEP_TABLE_NAMES.has(keyPath[table]));
@@ -696,7 +857,7 @@ function inlineArrayItems(value: string): string[] | undefined {
   return inlineTableMembers(`{${v.slice(1, v.endsWith(']') ? -1 : undefined)}}`);
 }
 
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / git / registry / workspace fields of dependency entries plus `[workspace.dependencies]` and the entries of the `[patch.<source>]` tables, and whether a `[workspace]` table is written, and the `[package]` `build`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text: string): CargoManifest {
   let packageName: string | undefined;
   let libName: string | undefined;
@@ -714,10 +875,13 @@ export function parseCargoManifest(text: string): CargoManifest {
   let libEdition: string | undefined;
   let libDeclared = false;
   let autolibOff = false;
+  let build: string | false | undefined;
   // The element of a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` array of tables the current table header opened.
   let inTarget: CargoTarget | undefined;
   const dependencies = new Map<string, CargoDependencySpec>();
   const workspaceDependencies = new Map<string, CargoDependencySpec>();
+  const patches = new Map<string, Map<string, CargoDependencySpec>>();
+  let hasWorkspace = false;
   // The current table header's key segments ([] above the first header).
   let sectionPath: string[] = [];
   // A `key = value` line, the key possibly dotted (`a.b`, `"a".b`, `a . b`), and one segment of such a key or a table header: double-quoted (escapes allowed), single-quoted or bare. The value may hold the newlines of a multi-line string.
@@ -735,12 +899,21 @@ export function parseCargoManifest(text: string): CargoManifest {
     if (field === 'path') spec.path = tomlString(value);
     else if (field === 'package') spec.package = tomlString(value);
     else if (field === 'workspace') spec.workspace = value === 'true';
+    else if (field === 'git') spec.git = tomlString(value) ?? '';
+    else if (field === 'registry') spec.registry = tomlString(value) ?? '';
+  };
+  // The table of entries a dependency entry belongs to: a package's dependencies, `[workspace.dependencies]`, or one `[patch.<source>]` table.
+  const tableOf = (entry: { workspace: boolean; patch?: string }): Map<string, CargoDependencySpec> => {
+    if (entry.patch === undefined) return entry.workspace ? workspaceDependencies : dependencies;
+    let table = patches.get(entry.patch);
+    if (table === undefined) patches.set(entry.patch, (table = new Map()));
+    return table;
   };
   // Crates the current table declared first (by a dotted key or by its `[dependencies.<name>]` header), keyed by map: their later lines in this table fill the same spec, as TOML reads them as one table. A crate an earlier table declared is never filled again.
   let declaredHere = new Set<string>();
-  const declare = (entry: { workspace: boolean; crate: string }): CargoDependencySpec | undefined => {
-    const into = entry.workspace ? workspaceDependencies : dependencies;
-    const id = `${entry.workspace ? 'workspace' : 'package'}:${entry.crate}`;
+  const declare = (entry: { workspace: boolean; patch?: string; crate: string }): CargoDependencySpec | undefined => {
+    const into = tableOf(entry);
+    const id = `${entry.patch !== undefined ? `patch.${entry.patch}` : entry.workspace ? 'workspace' : 'package'}:${entry.crate}`;
     if (!into.has(entry.crate)) {
       into.set(entry.crate, { workspace: false });
       declaredHere.add(id);
@@ -753,6 +926,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     const top = keyPath[0];
     if (top === 'lib') libDeclared = true;
     if (top === 'package') hasPackage = true;
+    if (top === 'workspace') hasWorkspace = true;
     if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'name') packageName = tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'edition') {
       // `edition = { workspace = true }` is the inline-table spelling of `edition.workspace = true`: the same key in TOML.
@@ -765,6 +939,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'path') libPath = tomlString(value);
     else if (keyPath.length === 2 && top === 'lib' && keyPath[1] === 'edition') libEdition = tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'autolib') autolibOff = value === 'false';
+    else if (keyPath.length === 2 && top === 'package' && keyPath[1] === 'build') build = value === 'false' ? false : tomlString(value);
     else if (keyPath.length === 2 && top === 'package' && Object.values(DISCOVERED_DIRS).some((d) => d.flag === keyPath[1])) {
       const { dir } = Object.values(DISCOVERED_DIRS).find((d) => d.flag === keyPath[1])!;
       if (value === 'false' && !undiscoveredDirs.includes(dir)) undiscoveredDirs.push(dir);
@@ -792,7 +967,7 @@ export function parseCargoManifest(text: string): CargoManifest {
     }
     if (entry.field.length === 0) {
       // `crate = value`: an inline table gives the fields, a version string only declares the crate; the first declaration keeps it. An inline table is whole, so no later line extends it.
-      const into = entry.workspace ? workspaceDependencies : dependencies;
+      const into = tableOf(entry);
       if (into.has(entry.crate)) return;
       const spec: CargoDependencySpec = { workspace: false };
       into.set(entry.crate, spec);
@@ -812,6 +987,7 @@ export function parseCargoManifest(text: string): CargoManifest {
       sectionPath = keySegments(header[1]);
       if (sectionPath[0] === 'package') hasPackage = true;
       if (sectionPath[0] === 'lib') libDeclared = true;
+      if (sectionPath[0] === 'workspace') hasWorkspace = true;
       inTarget = line.startsWith('[[') && sectionPath.length === 1 && TARGET_TABLES.has(sectionPath[0]) ? { kind: sectionPath[0] } : undefined;
       if (inTarget !== undefined) targets.push(inTarget);
       declaredHere = new Set<string>();
@@ -845,11 +1021,14 @@ export function parseCargoManifest(text: string): CargoManifest {
     libEdition,
     libDeclared,
     autolibOff,
+    build,
     packageName,
     targetEditions: targets.flatMap((t) => (typeof t.edition === 'string' ? [{ kind: t.kind, name: typeof t.name === 'string' ? t.name : undefined, path: typeof t.path === 'string' ? t.path : undefined, edition: t.edition }] : [])),
     declaresMainBin: packageName !== undefined && targets.some((t) => t.kind === 'bin' && t.path === undefined && t.name === packageName),
     dependencies,
     workspaceDependencies,
+    patches,
+    hasWorkspace,
   };
 }
 

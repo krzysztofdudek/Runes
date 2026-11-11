@@ -89,6 +89,7 @@ export function buildCsharpProjectScopes(projectRoot, files, options) {
     for (const key of keys) {
         const group = byProject.get(key);
         const usings = new Set();
+        const statics = new Set();
         const aliases = [];
         const aliasSeen = new Set();
         const addAlias = (name, target) => {
@@ -138,10 +139,12 @@ export function buildCsharpProjectScopes(projectRoot, files, options) {
         for (const f of group) {
             for (const p of f.globalPrefixes)
                 usings.add(p);
+            for (const t of f.globalStatics ?? [])
+                statics.add(t);
             for (const [name, target] of f.globalAliases)
                 addAlias(name, target);
         }
-        const scope = { usings: [...usings].sort(), aliases };
+        const scope = { usings: [...usings].sort(), aliases, statics: [...statics].sort() };
         for (const f of group)
             out.set(f.path, scope);
     }

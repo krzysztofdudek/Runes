@@ -38,7 +38,7 @@ export interface ResolvePathOptions {
  *  Java, still wins the walk), which can silence a real cross-owner dependency reached through
  *  the surviving, non-excluded, fully enforced candidate.
  *
- *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for one question only: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs; the Rust extractor declares those names from the file's parse tree (`rustTopLevelItemKey`). Without the table no name is known to be such an item, so those paths stay silent. */
+ *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for two questions, both answered by what the Rust extractor declares from each file's parse tree: whether a crate-root file binds a name at its top level, which an edition 2015 `use` path from the crate root needs (`rustTopLevelItemKey`), and which files a file declares as its modules by name alone, which tells the crate roots that compile a file where a package has several in one tree (`rustModuleFileKey`). Without the table no name is known to be such an item, so those paths stay silent, and no module is known to be declared, so no root is preferred. */
 export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import') => string | undefined;
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
@@ -48,19 +48,31 @@ export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (re
  *
  *  `targetPaths` are the `path`s of the manifest's `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` tables. Such a file is the root of its own crate, wherever it lies (ripgrep's `crates/core/main.rs`). A file outside `src/` belongs to the tree of the root whose directory is the deepest one holding it, a target's path or the library's path alike, not to the `src/` tree that holds no part of it; below `tests/`, `examples/` or `benches/` an auto-discovered `<dir>/<name>/main.rs` competes too. In that directory the library's root is probed first and one other root after it, as `src/lib.rs` before `src/main.rs`; two or more other roots there give none, since which of them declares the file's module cannot be told (as for `tests/common/`). A file under `src/` keeps the auto-discovered targets, so a `[[bin]]` that names `src/main.rs` changes nothing for the library beside it, and a library whose path lies outside `src/` is no root of a `src/` file, which is a module of `src/main.rs`.
  *
+ *  `binFiles` are the `.rs` files lying directly in `src/bin/`, package-relative. A file of a directory there that holds no `main.rs` is a module of the binaries among them that declare it, so it gets the `src/bin/` tree with those files as `rootFiles`, and `byDeclaration` tells the caller that the directory is no crate of its own: the file's root is the one binary known to declare it, or none.
+ *
+ *  `declaredRoots` are the roots among `rootFiles` that are there only through a declared target lying directly in `src/`: they stand after the library and `src/main.rs`. Such a root decides the edition of a file only when it is known to compile the file; otherwise the library and `src/main.rs` decide it, as they did before those roots were told.
+ *
+ *  `buildScript` is the build script's path (`build.rs` unless `[package] build` names another file or turns it off), which roots its own crate; a file below its directory, when that is not the package root, is a module of it.
+ *
  *  `inferMain` says whether Cargo infers `src/main.rs` as a binary; it does not when `autobins = false`, and then the file is a root only when a `[[bin]]` names it by `path` (or by a name equal to the package's, which the caller reports as `inferMain`), and is otherwise no root of any crate.
  *
  *  `undiscoveredDirs` are the directories among `src/bin`, `tests`, `examples` and `benches` whose auto-discovery the manifest turns off (`autobins = false`, `autotests = false`, …): there only declared targets are crates, a target's `path` or, for one that gives only a name (`namedTargets`, `<dir>/<name>`), `<dir>/<name>.rs` or `<dir>/<name>/main.rs` as Cargo infers it, and every other file belongs to the deepest root holding it, as a file outside `src/` does, or to no root. */
-export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, targetPaths?: readonly string[], undiscoveredDirs?: readonly string[], namedTargets?: readonly string[], inferMain?: boolean, droppedInferred?: readonly string[], inferLib?: boolean): {
+export declare function rustTargetFor(rel: string, existsInPackage: (sub: string) => boolean, libPath?: string, targetPaths?: readonly string[], undiscoveredDirs?: readonly string[], namedTargets?: readonly string[], inferMain?: boolean, droppedInferred?: readonly string[], inferLib?: boolean, binFiles?: readonly string[], buildScript?: string): {
     srcDir: string;
     rootFiles: string[];
     fileIsRoot: boolean;
+    byDeclaration?: boolean;
+    declaredRoots?: string[];
 };
 /** The parts of a Cargo.toml the Rust resolver needs. */
 interface CargoDependencySpec {
     path?: string;
     package?: string;
     workspace: boolean;
+    /** The `git` URL a dependency comes from; empty when written but not readable as a string. */
+    git?: string;
+    /** The name of the alternative `registry` a dependency comes from; empty when written but not readable as a string. */
+    registry?: string;
 }
 interface CargoManifest {
     crateName: string | undefined;
@@ -91,6 +103,8 @@ interface CargoManifest {
     libDeclared: boolean;
     /** `[package].autolib` written as `false`: with no `[lib]` table Cargo then infers no library from `src/lib.rs`. */
     autolibOff: boolean;
+    /** `[package].build` as written: the build script's path, `false` for none; undefined when absent, written `true` or not readable, where Cargo looks for `build.rs`. */
+    build: string | false | undefined;
     /** The `[package].name` as written (a bin of that name and no path is rooted at `src/main.rs`). */
     packageName: string | undefined;
     /** Every `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` that writes an `edition` of its own. */
@@ -99,6 +113,10 @@ interface CargoManifest {
     declaresMainBin: boolean;
     dependencies: Map<string, CargoDependencySpec>;
     workspaceDependencies: Map<string, CargoDependencySpec>;
+    /** The `[patch.<source>]` tables: for each source named (`crates-io`, an alternative registry's name, or a git URL), its entries by the key written, each with the `path` and `package` it gives. */
+    patches: Map<string, Map<string, CargoDependencySpec>>;
+    /** Whether a `[workspace]` table is written at all, in any spelling: the manifest is a workspace root. */
+    hasWorkspace: boolean;
 }
 /** The `edition` a `[[bin]]`, `[[test]]`, `[[example]]` or `[[bench]]` table writes for its own target, and how its root file is told: by `path`, or by `name` alone (Cargo roots it in its kind's directory, or a bin named like the package at `src/main.rs`). */
 interface CargoTargetEdition {
@@ -107,7 +125,7 @@ interface CargoTargetEdition {
     path: string | undefined;
     edition: string;
 }
-/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / workspace fields of dependency entries plus `[workspace.dependencies]`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
+/** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / git / registry / workspace fields of dependency entries plus `[workspace.dependencies]` and the entries of the `[patch.<source>]` tables, and whether a `[workspace]` table is written, and the `[package]` `build`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export declare function parseCargoManifest(text: string): CargoManifest;
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? Whether it does so at the top level, as an item a `use` path from the crate root names, is read from the parse tree instead (`topLevelItemNames` in the Rust extractor). */
 export declare function rustFileDeclares(text: string, name: string): boolean;
