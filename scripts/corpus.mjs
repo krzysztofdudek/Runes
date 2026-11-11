@@ -4,7 +4,7 @@
 //
 // Usage: node scripts/corpus.mjs [gate|verify|update|oracles] [--only <id>[,<id>]] [--tier routine|heavy|all] [--strict] [--runes <dir>] [--manifest <file>] [--goldens <dir>] [--explained <file>] [--cache <dir>]
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -384,15 +384,27 @@ function diffAgainstGolden(repo, golden, current, explained) {
 
 const formatChange = (c) => `${c.sign} ${c.from}:${c.line} -> ${c.target}`;
 
-/** Prints the first unexplained findings and writes all of them to a report file in the cache, so a long list stays readable in a CI log. */
-function reportUnexplained(cache, repo, label, items) {
+/** The commit a Runes tree is at, and whether it holds changes it has not committed, as text that follows its directory: a report names the code that made it. */
+function describeTree(dir) {
+  const git = (...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  const head = git('rev-parse', '--show-toplevel', 'HEAD');
+  const [top, sha] = head.status === 0 ? head.stdout.trim().split('\n') : [];
+  if (top === undefined || realpathSync.native(top) !== realpathSync.native(dir)) return ', not a git checkout of its own';
+  return git('status', '--porcelain').stdout.trim() === '' ? ` at ${sha}` : ` at ${sha}, with uncommitted changes`;
+}
+
+/** Prints the first unexplained findings and writes all of them to a report file, so a long list stays readable in a CI log. The file lies in a directory of this run's own under the cache's reports, made when the run writes its first report, because several runs may share one cache at once; it opens with the repository and the Runes tree it was made from. */
+function reportUnexplained(run, repo, label, items) {
   const shown = items.slice(0, 100);
   for (const s of shown) process.stdout.write(`    UNEXPLAINED ${s}\n`);
   if (items.length > shown.length) {
-    const reportDir = path.join(cache, 'reports');
-    mkdirSync(reportDir, { recursive: true });
-    const file = path.join(reportDir, `${repo.id}.${label}.txt`);
-    writeFileSync(file, items.map((s) => `${s}\n`).join(''));
+    if (run.reports === undefined) {
+      const all = path.join(run.cache, 'reports');
+      mkdirSync(all, { recursive: true });
+      run.reports = mkdtempSync(path.join(all, `${new Date().toISOString().replace(/[:.]/g, '-')}-`));
+    }
+    const file = path.join(run.reports, `${repo.id}.${label}.txt`);
+    writeFileSync(file, `# runes corpus ${label} report: ${repo.id} at ${repo.commit}\n# runes tree: ${run.tree}\n${items.map((s) => `${s}\n`).join('')}`);
     process.stdout.write(`    ... and ${items.length - shown.length} more; the whole list is in ${file}\n`);
   }
 }
@@ -1009,7 +1021,7 @@ function compareEdges(opts, repo, result, head, explained) {
   const summary = `${head}; ${added} added, ${changes.length - added} removed, ${changes.length - unexplained.length} explained`;
   if (unexplained.length > 0) {
     process.stdout.write(`FAIL ${summary}${opts.command === 'update' ? '; the golden is not rewritten while a change is unexplained' : ''}\n`);
-    reportUnexplained(opts.cache, repo, opts.command === 'gate' ? 'verify' : opts.command, unexplained.map(formatChange));
+    reportUnexplained(opts.run, repo, opts.command === 'gate' ? 'verify' : opts.command, unexplained.map(formatChange));
     return false;
   }
   if (opts.command === 'update' && changes.length > 0) {
@@ -1050,7 +1062,7 @@ async function compareOracles(opts, repo, dir, result, runes, head, explained, s
   }
   const status = unexplained.length > 0 ? 'FAIL' : 'ok  ';
   process.stdout.write(`${status} ${head}; checked: ${parts.join(', ') || 'no oracle applies'}; ${findings.length} disagreements, ${findings.length - unexplained.length} explained\n`);
-  reportUnexplained(opts.cache, repo, 'oracles', unexplained.map((f) => oracleEntry(repo.id, f)));
+  reportUnexplained(opts.run, repo, 'oracles', unexplained.map((f) => oracleEntry(repo.id, f)));
   // An entry of an oracle that ran here and matched nothing no longer explains anything: one of the answers moved, or the disagreement is gone. A plain run names it, because a toolchain of another machine can see a disagreement this one does not; --strict, which CI runs with every toolchain installed, fails on it.
   const ran = new Set(Object.entries(outcomes).filter(([, o]) => o.skipped === undefined).map(([name]) => name));
   const unused = [...explained].filter(([key, e]) => e.repo === repo.id && ran.has(e.kind.split(':')[0]) && !used.has(key)).map(([, e]) => `${e.where}: ${e.text.slice(0, 200)}`);
@@ -1069,7 +1081,9 @@ async function main() {
   const selected = selectRepositories(repos, opts);
   const explained = loadExplained(opts.explained, new Set(repos.map((r) => r.id)));
   const runes = await loadRunes(opts.runes);
-  process.stdout.write(`corpus ${opts.command}: ${selected.length} repositories, Runes ${runes.version} from ${path.relative(process.cwd(), runes.dir) || '.'}, cache ${opts.cache}\n`);
+  const tree = describeTree(runes.dir);
+  opts.run = { cache: opts.cache, tree: `${runes.dir}${tree}`, reports: undefined };
+  process.stdout.write(`corpus ${opts.command}: ${selected.length} repositories, Runes ${runes.version} from ${path.relative(process.cwd(), runes.dir) || '.'}${tree}, cache ${opts.cache}\n`);
   let failed = 0;
   const skips = [];
   for (const repo of selected) {
@@ -1081,7 +1095,7 @@ async function main() {
     if (result.failures.length > 0) {
       failed++;
       process.stdout.write(`FAIL ${head}: ${result.failures.length} extraction or resolution failures\n`);
-      reportUnexplained(opts.cache, repo, 'failures', result.failures);
+      reportUnexplained(opts.run, repo, 'failures', result.failures);
       continue;
     }
     // gate: the edges and the oracles over one resolution of the repository.
