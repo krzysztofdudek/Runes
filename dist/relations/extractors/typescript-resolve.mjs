@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { diskFileView } from '../file-view.mjs';
-import { failureOffset, lineColumnAt, reportUnreadable } from '../diagnostics.mjs';
+import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING } from '../diagnostics.mjs';
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
 /**
@@ -25,7 +25,7 @@ import { typeScriptSatisfies } from './typescript-version-range.mjs';
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
- *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. Two candidates with the same name → undefined.
+ *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. An `exports` target or an entry field that names no file is mapped back to the source it is compiled from, through the package's tsconfig (`outDir` to `rootDir`, see `sourceOfOutput` in {@link makeTsResolveDeps}); one that maps to nothing binds nothing and is reported. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
  *   first tries the TS source it compiles from (NodeNext) then itself; an explicit
@@ -114,14 +114,30 @@ function resolveWorkspacePackage(spec, from, exists, deps, callForm) {
     if (pkg === undefined || pkg === 'ambiguous')
         return undefined;
     const { manifest, dir } = pkg;
+    // An entry that names no file in the repository (build output a clean checkout does not hold) is read through the package's tsconfig; one that maps to no source either is reported when nothing else binds the import.
+    const missing = [];
+    const reported = (hit) => {
+        if (hit === undefined && missing.length > 0)
+            deps.entryMissing?.(pkg, missing[0]);
+        return hit;
+    };
     if (manifest.exports !== undefined && manifest.exports !== null) {
         // `exports` is the package's whole public surface: a subpath it does not list is not
         // importable, so no fallback to the directory layout.
-        return pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) => target.startsWith('./') ? probe(joinUnder(dir, target), exists) : undefined);
+        return reported(pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) => target.startsWith('./') ? entryFile(pkg, joinUnder(dir, target), exists, deps, missing) : undefined));
     }
     if (subpath !== '.')
         return probe(joinUnder(dir, subpath), exists, deps);
-    return entryOf(pkg, exists) ?? probe(joinUnder(dir, 'index'), exists);
+    return reported(entryOf(pkg, exists, deps, missing) ?? probe(joinUnder(dir, 'index'), exists));
+}
+/** The file a package entry names: the file itself (probed as any path is), else the source it is compiled from ({@link TsResolveDeps.sourceOfOutput}). A target that gives neither is added to `missing`. */
+function entryFile(pkg, target, exists, deps, missing) {
+    if (target === undefined)
+        return undefined;
+    const hit = probe(target, exists) ?? deps?.sourceOfOutput?.(pkg.dir, target, exists);
+    if (hit === undefined)
+        missing?.push(target);
+    return hit;
 }
 /** `exports` shorthand forms (a string, an array, a conditions object) mean the root subpath. */
 function normalizeExports(exportsField) {
@@ -343,7 +359,7 @@ function probe(joined, exists, deps) {
     const insideRepo = joined !== '..' && !joined.startsWith('../') && !path.posix.isAbsolute(joined);
     const dirPkg = insideRepo ? deps?.packageAt?.(joined) : undefined;
     if (dirPkg !== undefined) {
-        const hit = entryOf(dirPkg, exists);
+        const hit = entryOf(dirPkg, exists, deps);
         if (hit !== undefined)
             return hit;
     }
@@ -354,7 +370,7 @@ function probe(joined, exists, deps) {
     return undefined;
 }
 /** A package directory's own entry file from its `types`/`typings`/`module`/`main` fields. */
-function entryOf(pkg, exists) {
+function entryOf(pkg, exists, deps, missing) {
     const { manifest, dir } = pkg;
     for (const field of [manifest.types, manifest.typings, manifest.module, manifest.main]) {
         if (typeof field !== 'string' || field === '')
@@ -362,12 +378,25 @@ function entryOf(pkg, exists) {
         const target = joinUnder(dir, field);
         if (target === undefined || target === dir)
             continue;
-        const hit = probe(target, exists);
+        const hit = entryFile(pkg, target, exists, deps, missing);
         if (hit !== undefined)
             return hit;
     }
     return undefined;
 }
+// The sources an output file may be emitted from, by the output's extension: tsc writes `a.js` and `a.d.ts` for `a.ts` or `a.tsx` (and for `a.js` or `a.jsx` under `allowJs`), `a.jsx` for `a.tsx` under `jsx: preserve`, `a.mjs` and `a.d.mts` for `a.mts`, `a.cjs` and `a.d.cts` for `a.cts`.
+const OUTPUT_SOURCES = [
+    { suffix: '.d.ts', declaration: true, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
+    { suffix: '.d.mts', declaration: true, ts: ['.mts'], js: ['.mjs'] },
+    { suffix: '.d.cts', declaration: true, ts: ['.cts'], js: ['.cjs'] },
+    { suffix: '.js', declaration: false, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
+    { suffix: '.jsx', declaration: false, ts: ['.tsx'], js: ['.jsx'] },
+    { suffix: '.mjs', declaration: false, ts: ['.mts'], js: ['.mjs'] },
+    { suffix: '.cjs', declaration: false, ts: ['.cts'], js: ['.cjs'] },
+];
+const COMPILED_TS = /\.(?:ts|tsx|mts|cts)$/;
+const COMPILED_JS = /\.(?:js|jsx|mjs|cjs)$/;
+const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 // A declaration file (`.d.ts`, `.d.mts`, `.d.cts`) is probed right after the sources, the
 // way the compiler probes it: a type-only import of `./types` commonly names one.
 const JS_REWRITES = {
@@ -959,6 +988,14 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                 else
                     merged[field] = at;
             }
+            // `rootDir` resolves like them; one outside the repository is kept as null: no source in the repository is under it.
+            if (typeof options?.rootDir === 'string')
+                merged.rootDir = joinConfigPath(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
+            for (const field of ['allowJs', 'checkJs']) {
+                const value = options?.[field];
+                if (typeof value === 'boolean')
+                    merged[field] = value;
+            }
             // A base's `files`, `include` or `exclude` list is inherited whole unless the inheriting config sets its own.
             return { ...merged, ...ownLists(json, dir, leafDir) };
         })();
@@ -1223,11 +1260,124 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         }
         return satisfied === true;
     };
+    // The tsconfigs a package builds with: `tsconfig.json` and every `tsconfig.*.json` directly in its directory. 'unknown' when one of them cannot be read, since it may be the one that writes the output asked about.
+    const projectsIn = new Map();
+    const projectsOf = (pkgDir) => {
+        const cached = projectsIn.get(pkgDir);
+        if (cached !== undefined)
+            return cached;
+        let found = [];
+        const names = (files.list(pkgDir) ?? []).filter((e) => e.kind === 'file' && /^tsconfig(?:\..+)?\.json$/.test(e.name)).map((e) => e.name);
+        for (const name of names.sort()) {
+            const file = pkgDir === '' ? name : `${pkgDir}/${name}`;
+            if (!isFile(file))
+                continue;
+            const config = loadConfig(file, pkgDir);
+            if (config === 'unknown') {
+                found = 'unknown';
+                break;
+            }
+            found.push({ file, config });
+        }
+        projectsIn.set(pkgDir, found);
+        return found;
+    };
+    // The source root tsc computed before TypeScript 6 for a config with no `rootDir`: the longest common directory of the non-declaration files the project holds. undefined when it cannot be known from the config's own directory (a `files` or `include` entry reaches outside it) or the project holds no source.
+    const commonRoots = new Map();
+    const commonRoot = (file, config) => {
+        if (commonRoots.has(file))
+            return commonRoots.get(file);
+        const configDir = dirOf(file);
+        const inside = (p) => configDir === '' || p === configDir || p.startsWith(`${configDir}/`);
+        let common;
+        if ([...(config.files ?? []), ...(config.include ?? [])].every(inside)) {
+            const stack = [configDir];
+            while (stack.length > 0) {
+                const dir = stack.pop();
+                for (const e of files.list(dir) ?? []) {
+                    const rel = dir === '' ? e.name : `${dir}/${e.name}`;
+                    if (isExcluded?.(rel))
+                        continue;
+                    if (e.kind === 'dir') {
+                        if (!e.name.startsWith('.') && !SKIPPED_DIRS.has(e.name))
+                            stack.push(rel);
+                        continue;
+                    }
+                    const compiled = e.kind === 'file' && !DECLARATION_FILE.test(e.name) && (COMPILED_TS.test(e.name) || (allowsJs(config) && COMPILED_JS.test(e.name)));
+                    if (!compiled || !holds(config, configDir, rel))
+                        continue;
+                    const segs = dir === '' ? [] : dir.split('/');
+                    if (common === undefined)
+                        common = segs;
+                    else {
+                        let k = 0;
+                        while (k < common.length && k < segs.length && common[k] === segs[k])
+                            k++;
+                        common = common.slice(0, k);
+                    }
+                }
+            }
+        }
+        const root = common?.join('/');
+        commonRoots.set(file, root);
+        return root;
+    };
+    const allowsJs = (config) => config.allowJs ?? config.checkJs ?? false;
+    // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
+    const sourceOfOutput = (pkgDir, target, exists) => {
+        const projects = projectsOf(pkgDir);
+        if (projects === 'unknown' || projects.length === 0)
+            return undefined;
+        const known = OUTPUT_SOURCES.some((o) => target.endsWith(o.suffix));
+        for (const output of known ? [target] : [`${target}.js`, `${target}/index.js`]) {
+            const kind = OUTPUT_SOURCES.find((o) => output.endsWith(o.suffix));
+            const stem = output.slice(0, -kind.suffix.length);
+            const hits = new Set();
+            for (const { file, config } of projects) {
+                const out = kind.declaration ? (config.declarationDir ?? config.outDir) : config.outDir;
+                if (out === undefined || config.rootDir === null)
+                    continue;
+                if (out !== '' && !stem.startsWith(`${out}/`))
+                    continue;
+                const rel = out === '' ? stem : stem.slice(out.length + 1);
+                const configDir = dirOf(file);
+                let roots;
+                if (config.rootDir !== undefined)
+                    roots = [config.rootDir];
+                else {
+                    const common = commonRoot(file, config);
+                    // An unknown root may name a file this reading cannot see.
+                    if (common === undefined)
+                        return undefined;
+                    roots = common === configDir ? [configDir] : [configDir, common];
+                }
+                for (const root of roots) {
+                    const base = root === '' ? rel : `${root}/${rel}`;
+                    const source = [...kind.ts, ...(allowsJs(config) ? kind.js : [])].map((ext) => base + ext).find((cand) => cand !== output && exists(cand) && holds(config, configDir, cand));
+                    if (source !== undefined)
+                        hits.add(source);
+                }
+            }
+            if (hits.size > 1)
+                return undefined;
+            if (hits.size === 1)
+                return [...hits][0];
+        }
+        return undefined;
+    };
+    const entryMissing = (pkg, target) => {
+        if (report === undefined)
+            return;
+        const manifest = pkg.dir === '' ? 'package.json' : `${pkg.dir}/package.json`;
+        report(PACKAGE_ENTRY_MISSING, manifest, `${manifest} names ${target}, which is not in the repository, and no tsconfig of the package maps it to a source; imports of the package are not resolved`);
+    };
     return {
         tsconfigFor,
         nearestPackage,
         packageNamed,
         packageAt,
+        sourceOfOutput,
+        entryMissing,
         ...(isExcluded !== undefined ? { isExcluded } : {}),
     };
 }
