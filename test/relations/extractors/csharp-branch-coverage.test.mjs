@@ -166,13 +166,13 @@ describe('csharp extractor — a using static imports nested types and extension
 
   it('an extension call reads the key the target class declares for the method, beside the namespaces the usings import', async () => {
     const { uses } = await run('using App.Plain;\nusing static App.Ext.StringExt;\nclass A { string M(string s) => s.Shout(); }\n');
-    const group = uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === 'App.Ext.StringExt.Shout()'));
-    expect(group.candidates.map((c) => c.symbolKey)).toEqual(['Shout()', 'App.Plain.Shout()', 'App.Ext.StringExt.Shout()']);
+    const group = uses.find((u) => u.candidates.some((c) => c.kind === 'symbol' && c.symbolKey === 'App.Ext.StringExt#Shout()'));
+    expect(group.candidates.map((c) => c.symbolKey)).toEqual(['Shout()', 'App.Plain.Shout()', 'App.Ext.StringExt#Shout()']);
   });
 
   it('declares each extension method under its namespace and under its class, and the global namespace\'s class as the bare class name', async () => {
     const { declarations } = await run('namespace N { public static class E { public static void M(this int x) { } } }\npublic static class G { public static void K(this int x) { } }\n');
-    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E.M()', 'G', 'K()', 'G.K()']);
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()']);
   });
 });
 

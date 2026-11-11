@@ -1314,7 +1314,7 @@ describe('csharp — a declaration only its own assembly sees carries the intern
       'public static class Open { public static void A(this int x) { } internal static void B(this int x) { } static void C(this int x) { } }',
       'internal static class Shut { public static void D(this int x) { } }',
       'static class Bare { public static void E(this int x) { } }',
-    ])).toEqual(['N.B()', 'N.Open.B()', 'N.C()', 'N.Open.C()', 'N.Shut', 'N.D()', 'N.Shut.D()', 'N.Bare', 'N.E()', 'N.Bare.E()']);
+    ])).toEqual(['N.B()', 'N.Open#B()', 'N.C()', 'N.Open#C()', 'N.Shut', 'N.D()', 'N.Shut#D()', 'N.Bare', 'N.E()', 'N.Bare#E()']);
   });
 });
 

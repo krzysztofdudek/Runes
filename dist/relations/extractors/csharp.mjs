@@ -264,10 +264,10 @@ function extensionKey(ns, name) {
     return ns === '' ? `${name}()` : `${ns}.${name}()`;
 }
 /**
- * The symbol key of an extension method `name` in its static class `owner` (a non-generic top-level class of namespace `ns`): `<ns>.<Class>.<name>()`. A `using static` directive imports the extension methods of the one class it names, which the namespace's key (`extensionKey`) cannot tell from those of the other classes of the namespace. A C# namespace and a type of one parent never share a name, so no namespace's own key is this string.
+ * The symbol key of an extension method `name` in its static class `classKey` (the class's own type key, `<ns>.<Class>`): `<ns>.<Class>#<name>()`. A `using static` directive imports the extension methods of the one class it names, which the namespace's key (`extensionKey`) cannot tell from those of the other classes of the namespace. The `#` is in no C# name, so no namespace can spell this key, whatever a repository calls its namespaces and classes.
  */
-function classExtensionKey(ns, owner, name) {
-    return extensionKey(ns === '' ? declaredTypeName(owner) : `${ns}.${declaredTypeName(owner)}`, name);
+function classExtensionKey(classKey, name) {
+    return `${classKey}#${name}()`;
 }
 /**
  * The symbol key of the class the compiler synthesizes for a file of top-level statements. That class is the global `Program`, but it is published under this separate key so that it only ever acts as a FALLBACK: a bare `Program` reference tries every explicit reading first (the enclosing namespaces, the usings, and the verbatim global `Program`, which a `public partial class Program { }` declares) and reaches this key last. An explicit global `Program` anywhere therefore binds before any implicit one, and only when none is declared do the implicit classes count (one owner gives the edge, several give silence). A resolver given the reference graph (`ResolverDeps.reach`) reads the explicit and the implicit class as ONE name instead, as the compiler does, and chooses among those the referencing project can see, as long as the graph can say something about each of them. `<Program>$` is the name the compiler gave the class before C# 10; no C# source can write it, so no type key or use candidate other than that fallback can ever produce it.
@@ -439,7 +439,8 @@ function declarations(file) {
             const line = node.startPosition.row + 1;
             const assemblyOnly = assemblyOnlyExtension(node, scope.typeDecl);
             // The key of the method in its namespace (`extensionKey`), and the key it has in its class: `using static T;` imports the extension methods of T alone.
-            for (const symbolKey of [extensionKey(ns, extName), classExtensionKey(ns, scope.typeDecl.node, extName)]) {
+            const className = declaredTypeName(scope.typeDecl.node);
+            for (const symbolKey of [extensionKey(ns, extName), classExtensionKey(ns === '' ? className : `${ns}.${className}`, extName)]) {
                 out.push({ symbolKey, line });
                 if (assemblyOnly)
                     out.push({ symbolKey: internalKey(symbolKey), line });
@@ -2002,7 +2003,7 @@ export function assembleCsharpCandidates(extract, options = {}) {
      *  namespaces innermost first, each followed by the namespaces the plain usings of its declarations
      *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
      *  in-scope `Name` → ambiguous → silence). Aliases import no
-     *  extension methods. A `using static T;` imports those of the class T, read as the key `T.Name()` the class declares beside the namespace's key, at the level of its directive. */
+     *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
     const pushExtension = (name, enclosingNs, line, at) => {
         const candidates = [];
         const pushed = new Set();
@@ -2020,13 +2021,13 @@ export function assembleCsharpCandidates(extract, options = {}) {
             candidates.push({ kind: 'symbol', symbolKey: extensionKey(ns, name) });
             const k = levels.findIndex((o) => o.ns === ns);
             if (k >= 0)
-                addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, [], { key: (t) => `${t}.${name}()`, nestedOnly: false }));
+                addSet(levelSet(enclosingNs.slice(i), levels, k, at, (p) => extensionKey(p, name), undefined, [], { key: (t) => classExtensionKey(t, name), nestedOnly: false }));
         }
         // The compilation unit is the last level, and its namespace is the global one: the global namespace's own static classes come before the namespaces its using directives import (C# spec §12.8.10.3, §7.8.1).
         pushed.add(extensionKey('', name));
         candidates.push({ kind: 'symbol', symbolKey: extensionKey('', name) });
         // A namespace both enclosing and imported only repeats a key already read.
-        addSet([...usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })), ...compilationUnitStatics.map((t) => ({ symbolKey: `${t}.${name}()` }))]);
+        addSet([...usingPrefixes.filter((p) => !enclosingNs.includes(p)).map((p) => ({ symbolKey: extensionKey(p, name) })), ...compilationUnitStatics.map((t) => ({ symbolKey: classExtensionKey(t, name) }))]);
         out.push({ candidates, kind: 'import', line });
     };
     // Replay the descriptors in original emit order (static targets first, then alias-RHS embedded
