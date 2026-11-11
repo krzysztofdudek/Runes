@@ -1,4 +1,4 @@
-import { baseListKey, decodeBase, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
 const ATTRIBUTE_BASE_NAMES = new Set(['System.Attribute', 'Attribute']);
 /**
@@ -17,6 +17,26 @@ const LANGUAGE = 'csharp';
  */
 export function makeCsharpTypeLookup(table, bind) {
     const memo = new Map();
+    /** What each file reads a written name with (its `usings` record), read from the table when first asked. */
+    let usingsByFile;
+    const NO_USINGS = decodeUsings('{}');
+    const usingsOf = (file) => {
+        if (usingsByFile === undefined) {
+            usingsByFile = new Map();
+            for (const { value, files } of table.valuesOf(LANGUAGE, USINGS_KEY)) {
+                const usings = decodeUsings(value);
+                for (const f of files)
+                    usingsByFile.set(f, usings);
+            }
+        }
+        return usingsByFile.get(file) ?? NO_USINGS;
+    };
+    /** The keys of the types the written type of a record names, one per file that declares the record, undefined where that file's reading binds no one type. */
+    const boundIn = (value, files, holder, inBody) => {
+        const written = decodeWritten(value);
+        const name = written.name.startsWith('global::') ? written.name.slice('global::'.length) : written.name;
+        return files.map((file) => ({ name, key: bind(writtenReadings(written, holder, inBody, usingsOf(file)), file) }));
+    };
     const bases = (typeKey) => {
         const known = memo.get(typeKey);
         if (known !== undefined)
@@ -25,12 +45,10 @@ export function makeCsharpTypeLookup(table, bind) {
         // Set before the bases are bound: a base list that names its own type through itself ends here.
         memo.set(typeKey, result);
         for (const { value, files } of table.valuesOf(LANGUAGE, baseListKey(typeKey))) {
-            const base = decodeBase(value);
-            for (const file of files) {
-                const key = bind(base.readings, file);
+            for (const { name, key } of boundIn(value, files, typeKey, false)) {
                 if (key === undefined) {
-                    if (!result.outside.includes(base.name))
-                        result.outside.push(base.name);
+                    if (!result.outside.includes(name))
+                        result.outside.push(name);
                 }
                 else if (!result.inside.includes(key))
                     result.inside.push(key);
@@ -125,9 +143,7 @@ export function makeCsharpTypeLookup(table, bind) {
         const keys = [];
         for (const owner of find(typeKey, name, true).owners ?? []) {
             for (const { value, files } of table.valuesOf(LANGUAGE, memberTypeKey(owner, name))) {
-                const written = decodeBase(value);
-                for (const file of files) {
-                    const key = bind(written.readings, file);
+                for (const { key } of boundIn(value, files, owner, true)) {
                     if (key !== undefined && !keys.includes(key))
                         keys.push(key);
                 }

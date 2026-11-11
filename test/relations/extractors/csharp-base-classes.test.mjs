@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeBase, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodKey, privateMethodKey, memberKey, privateMemberKey, memberTypeKey, shapeTakes } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodKey, privateMethodKey, memberKey, privateMemberKey, memberTypeKey, shapeTakes } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -22,11 +22,14 @@ async function project(sources, fn) {
   });
 }
 
+/** What the one file of a record reads names with: its `usings` record. */
+const usingsOf = (table, file) => decodeUsings(table.valuesOf('csharp', USINGS_KEY).find((u) => u.files.includes(file))?.value ?? '{}');
+
+/** The readings of one record of `typeKey`'s base list, as its first file reads them. */
+const readingsOf = (table, typeKey, { value, files }) => writtenReadings(decodeWritten(value), typeKey, false, usingsOf(table, files[0]));
+
 /** The bases recorded for `typeKey`: `[name, first reading's key, files]` each. */
-const basesOf = (table, typeKey) => table.valuesOf('csharp', baseListKey(typeKey)).map(({ value, files }) => {
-  const base = decodeBase(value);
-  return [base.name, base.readings[0]?.symbolKey, files];
-});
+const basesOf = (table, typeKey) => table.valuesOf('csharp', baseListKey(typeKey)).map((record) => [decodeWritten(record.value).name, readingsOf(table, typeKey, record)[0]?.symbolKey, record.files]);
 
 describe('csharp: the base list of a type is recorded with its declarations', () => {
   it('records each base of a class with its readings where the declaration stands', async () => {
@@ -37,11 +40,12 @@ describe('csharp: the base list of a type is recorded with its declarations', ()
         ['HandlerBase', 'App.Web.HandlerBase', ['src/web/Handler.cs']],
         ['IHandler', 'App.Web.IHandler', ['src/web/Handler.cs']],
       ]);
-      const base = decodeBase(table.valuesOf('csharp', baseListKey('App.Web.Handler'))[0].value);
-      expect(base.readings.map((r) => r.symbolKey)).toEqual(['App.Web.HandlerBase', 'App.HandlerBase', 'HandlerBase', 'App.Core.HandlerBase']);
-      expect(base.readings.every((r) => r.kind === 'symbol')).toBe(true);
-      // The record is a declared key of the file, and no name of the table.
-      expect(keys('src/web/Handler.cs').filter((k) => k.startsWith('base:App.Web.Handler\t'))).toHaveLength(2);
+      const readings = readingsOf(table, 'App.Web.Handler', table.valuesOf('csharp', baseListKey('App.Web.Handler'))[0]);
+      expect(readings.map((r) => r.symbolKey)).toEqual(['App.Web.HandlerBase', 'App.HandlerBase', 'HandlerBase', 'App.Core.HandlerBase']);
+      expect(readings.every((r) => r.kind === 'symbol')).toBe(true);
+      // Each record is a declared key of the file that holds a position and a name, the file's using directives are declared once, and none is a name of the table.
+      expect(keys('src/web/Handler.cs').filter((k) => k.startsWith('base:App.Web.Handler\t')).map((k) => k.split('\t')[1])).toEqual(['58:HandlerBase', '71:IHandler']);
+      expect(keys('src/web/Handler.cs').filter((k) => k.startsWith(`${USINGS_KEY}\t`))).toEqual([`${USINGS_KEY}\t{"prefixes":["App.Core"]}`]);
       expect(table.has('csharp', keys('src/web/Handler.cs').find((k) => k.startsWith('base:')))).toBe(false);
     });
   });
@@ -64,9 +68,8 @@ describe('csharp: the base list of a type is recorded with its declarations', ()
       'src/a/Outer.cs': 'namespace App;\npublic class Outer {\n  public class Inner : InnerBase { }\n  public class InnerBase { }\n}\n',
     }, ({ table }) => {
       const [record] = table.valuesOf('csharp', baseListKey('App.Outer+Inner'));
-      const base = decodeBase(record.value);
-      expect(base.name).toBe('InnerBase');
-      expect(base.readings[0]).toEqual({ kind: 'symbol', symbolKey: 'App.Outer+InnerBase', within: 'App.Outer' });
+      expect(decodeWritten(record.value).name).toBe('InnerBase');
+      expect(readingsOf(table, 'App.Outer+Inner', record)[0]).toEqual({ kind: 'symbol', symbolKey: 'App.Outer+InnerBase', within: 'App.Outer' });
       expect(table.valuesOf('csharp', baseListKey('App.Outer'))).toEqual([]);
     });
   });
@@ -90,8 +93,8 @@ describe('csharp: the base list of a type is recorded with its declarations', ()
       ].join('\n'),
     }, ({ table, keys }) => {
       expect(basesOf(table, 'App.A')[0].slice(0, 2)).toEqual(['Repo`1', 'App.Repo`1']);
-      expect(basesOf(table, 'App.B')[0].slice(0, 2)).toEqual(['Lib.Base', 'Lib.Base']);
-      expect(basesOf(table, 'App.C')[0].slice(0, 2)).toEqual(['', 'Lib.Core.Thing']);
+      expect(basesOf(table, 'App.B')[0].slice(0, 2)).toEqual(['global::Lib.Base', 'Lib.Base']);
+      expect(basesOf(table, 'App.C')[0].slice(0, 2)).toEqual(['S::Thing', 'Lib.Core.Thing']);
       expect(basesOf(table, 'App.D')[0].slice(0, 2)).toEqual(['Lib.Core.Thing', 'App.Lib.Core.Thing']);
       expect(basesOf(table, 'App.E')[0].slice(0, 2)).toEqual(['EBase', 'App.EBase']);
       expect(basesOf(table, 'App.F')[0].slice(0, 2)).toEqual(['IThing', 'App.IThing']);
@@ -110,8 +113,7 @@ describe('csharp: the base list of a type is recorded with its declarations', ()
     await project({
       'src/a/Use.cs': 'using Lib.One;\nusing Lib.Two;\npublic class Use : Shared { }\n',
     }, ({ table }) => {
-      const base = decodeBase(table.valuesOf('csharp', baseListKey('Use'))[0].value);
-      const [, one, two] = base.readings;
+      const [, one, two] = readingsOf(table, 'Use', table.valuesOf('csharp', baseListKey('Use'))[0]);
       expect(one.set.map((m) => m.symbolKey)).toEqual(['Lib.One.Shared', 'Lib.Two.Shared']);
       expect(two.set).toBe(one.set);
     });
@@ -417,7 +419,7 @@ describe('csharp: a member of the enclosing type, from another part or a base cl
         memberKey('App.Order', 'Changed'), memberKey('App.Order', 'Custom'), memberKey('App.Order', 'Shared'), memberKey('App.Order', 'Empty'), memberKey('App.Order', 'Save'),
         memberKey('App.IOrder', 'Explicit'), memberKey('App.Money', 'Amount'), privateMemberKey('App.Money', 'Rounded'), memberKey('App.Money', 'Kind2'), privateMemberKey('App.Point', 'x'), memberKey('App.Point', 'Y'),
       ]); // `Kind Kind` and `Lib.Kind? Kind` are named as their own type and declare no member; `Kind2` beside it does
-      const typed = keys('src/a/Types.cs').filter((k) => k.startsWith('member-type:')).map((k) => [k.split('\t')[0], decodeBase(k.split('\t')[1]).name]);
+      const typed = keys('src/a/Types.cs').filter((k) => k.startsWith('member-type:')).map((k) => [k.split('\t')[0], decodeWritten(k.split('\t')[1]).name]);
       expect(typed).toEqual([
         [memberTypeKey('App.Order', 'Settings'), 'Settings'], [memberTypeKey('App.Order', 'Changed'), 'System.Action'], [memberTypeKey('App.Order', 'Empty'), 'Order'],
         [memberTypeKey('App.Money', 'Kind'), 'Kind'], [memberTypeKey('App.Money', 'Kind2'), 'Lib.Kind'], [memberTypeKey('App.Money', 'Kind'), 'Lib.Kind'],
@@ -519,5 +521,43 @@ describe('resolver: a nested-only reading outside C#', () => {
     const resolver = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: table, resolvePathToFile: () => undefined });
     expect(resolver.resolveFile({ kind: 'symbol', symbolKey: 'A.B.T', nestedOnly: true }, 'x.php', 'php')).toBe('src/a/T.php');
     expect(resolver.resolveFile({ kind: 'symbol', symbolKey: 'A.C.T', nestedOnly: true }, 'x.php', 'php')).toBe(undefined);
+  });
+});
+
+describe('csharp: the using directives a record is read with', () => {
+  it('keeps what the readings of a name depend on, and reads a name as its own file does', async () => {
+    const code = [
+      'global using Lib.Everywhere;',
+      'using Lib.One;',
+      'using static Lib.Tools;',
+      'global using static Lib.Shared;',
+      'using A = Lib.Two.Thing;',
+      'namespace App.Web {',
+      '  using Lib.Block;',
+      '  using static Lib.BlockTools;',
+      '  using B = Lib.Three.Other;',
+      '  file class Hidden { }',
+      '  public class Use : A { B _b; Thing _t; }',
+      '}',
+    ].join('\n');
+    await project({ 'src/web/Use.cs': code }, ({ table, files }) => {
+      const usings = usingsOf(table, 'src/web/Use.cs');
+      expect(decodeUsings(encodeUsings(usings))).toEqual(usings);
+      expect(usings.fileLocalTypes).toEqual(['App.Web.Hidden']);
+      expect(usings.scope.prefixDecls.map((d) => [d.ns, d.body])).toEqual([['Lib.One', []], ['Lib.Block', ['App.Web', 'App']]]);
+      expect(usings.scope.globalPrefixes).toEqual(['Lib.Everywhere']);
+      expect(usings.scope.staticDecls.map((d) => d.fqn)).toEqual(['Lib.Tools', 'Lib.Shared', 'Lib.BlockTools']);
+      expect(usings.scope.globalStatics).toEqual(['Lib.Shared']);
+      expect([...usings.scope.aliases]).toEqual([['A', 'Lib.Two.Thing'], ['B', 'Lib.Three.Other']]);
+      // The base `A` and the field types `B` and `Thing` read exactly as the references in the file do.
+      const uses = csharpUses(files[0]);
+      const [baseA, fieldB, fieldThing] = uses.filter((u) => u.line === 11).map((u) => u.candidates);
+      const at = (text) => code.indexOf(text);
+      expect(writtenReadings({ at: at(': A {') + 2, name: 'A' }, 'App.Web.Use', false, usings)).toEqual(baseA);
+      expect(writtenReadings({ at: at('B _b'), name: 'B' }, 'App.Web.Use', true, usings)).toEqual(fieldB);
+      expect(writtenReadings({ at: at('Thing _t'), name: 'Thing' }, 'App.Web.Use', true, usings)).toEqual(fieldThing);
+      expect(writtenReadings({ at: 0, name: '' }, 'App.Web.Use', false, usings)).toEqual([]);
+      expect(decodeUsings('{}').scope.prefixDecls).toEqual([]);
+    });
   });
 });

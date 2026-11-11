@@ -8,9 +8,11 @@ export declare const IMPLICIT_PROGRAM_KEY = "<Program>$";
  */
 export declare function internalKey(symbolKey: string): string;
 /**
- * The head of the key that records one base of the type `typeKey`: `base:<key>`. A type declaration with a base list declares, for each base it lists, the key `base:<key>\t<value>`, the value (`encodeBase`) holding the base's written name and its readings where the declaration stands. The symbol table lists such a key under its head (`SymbolTable.valuesOf`) and never as a name, and every part of a partial type adds its own. The colon and the tab are in no C# name.
+ * The head of the key that records one base of the type `typeKey`: `base:<key>`. A type declaration with a base list declares, for each base it lists, the key `base:<key>\t<value>`, the value (`encodeWritten`) holding where the base's name is written and the name. The symbol table lists such a key under its head (`SymbolTable.valuesOf`) and never as a name, and every part of a partial type adds its own. The colon and the tab are in no C# name.
  */
 export declare function baseListKey(typeKey: string): string;
+/** The head of the key that records the using directives of a file: `usings`. A file that records a written type (`encodeWritten`) declares `usings\t<value>` once, the value (`encodeUsings`) holding what a name written in that file is read with, so each record holds a name and no reading of its own. */
+export declare const USINGS_KEY = "usings";
 /** The marker key of an interface: `interface:<key>`, declared beside the type key of every interface declaration. A class inherits the nested types of its base class and of no interface it implements, and the base list of a class does not say which of its names is which. */
 export declare function interfaceKey(typeKey: string): string;
 /** The head of the keys that record the instance methods `name` of the type `typeKey` that code outside the type can call: `method:<key>#<name>`. Each overload declares `method:<key>#<name>\t<shape>`, its shape (`methodShape`) as the value, listed under the head like a base record (`baseListKey`). A static method, an explicit interface implementation (callable through the interface alone) and an extension method declare none. The `#` and the colon are in no C# name. */
@@ -19,21 +21,31 @@ export declare function methodKey(typeKey: string, name: string): string;
 export declare function privateMethodKey(typeKey: string, name: string): string;
 /** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers. */
 export declare function shapeTakes(shape: string, typeArguments: number, args: number): boolean;
-/** The head of the key that records the written type of the field or property `name` of the type `typeKey`: `member-type:<key>#<name>`, with a value like a base record's (`encodeBase`): the type's name and its readings where the member is declared. */
+/** The head of the key that records the written type of the field or property `name` of the type `typeKey`: `member-type:<key>#<name>`, with a value like a base record's (`encodeWritten`). */
 export declare function memberTypeKey(typeKey: string, name: string): string;
 /** The marker key of a member `name` of the type `typeKey` that is no type (a field, a constant, a property, an event or a method, static ones included) and that a derived type can name: `member:<key>#<name>`. C# reads the members of the types around a simple name, inherited ones included, before any namespace (spec §12.8.4), so such a name is that member and no type of a namespace. A field or a property named as its own type (`Color Color`) declares none: where a type fits, C# reads that name as the type (spec §12.8.7.2). */
 export declare function memberKey(typeKey: string, name: string): string;
 /** The marker key of a private member (see `memberKey`), a class's or a struct's primary constructor parameter among them: `private-member:<key>#<name>`. Every part of the type itself sees it, and no derived type does. */
 export declare function privateMemberKey(typeKey: string, name: string): string;
-/** One base of a type as its declaration records it: the written name (type arguments as their arity, a `global::` qualifier stripped; empty for a name led by a using alias) and its readings in C# lookup order where the declaration stands, read with the usings and aliases of the declaring file alone. */
-export interface CsharpBase {
+/** A type name as a record holds it: `at`, where the name is written in its file (which says which using directives of a namespace block reach it), and `name`, the name with its type arguments as their arity: `Base`, ``Repo`1``, `Lib.Base`, `global::Lib.Base` for a rooted one, `S::Thing` for one led by a using alias, and the empty string for a name that is no reference (a type parameter). */
+export interface CsharpWritten {
+    at: number;
     name: string;
-    readings: SymbolHint[];
 }
-/** The value of a base record (see `baseListKey`). A CS0104 set many readings share is written once. */
-export declare function encodeBase(base: CsharpBase): string;
-/** The base a record's value holds (see `encodeBase`). */
-export declare function decodeBase(value: string): CsharpBase;
+/** The value of a record of a written type (see `baseListKey`). */
+export declare function encodeWritten(written: CsharpWritten): string;
+/** The written type a record's value holds (see `encodeWritten`). */
+export declare function decodeWritten(value: string): CsharpWritten;
+/** What a written type of a file is read with: the file's using scope, as far as the readings need it, and the keys of the types the file keeps to itself. */
+export type CsharpUsings = Pick<CsharpExtract, 'scope' | 'fileLocalTypes'>;
+/** The value of a file's `usings` record (see `USINGS_KEY`): the using directives the readings of a name depend on, an empty list left out. A directive of the compilation unit is its namespace or type alone; one in a namespace block keeps its block. */
+export declare function encodeUsings({ scope, fileLocalTypes }: CsharpUsings): string;
+/** The using scope a `usings` record's value holds (see `encodeUsings`). */
+export declare function decodeUsings(value: string): CsharpUsings;
+/**
+ * The readings of a written type of a record, in C# lookup order where it is written: `holder` is the key of the type that writes it, in its base list or, with `inBody`, as the type of one of its members, and `usings` what its file reads names with. The namespaces and the types around the name are those of `holder` itself; the project's own scope (a global using of another file) takes no part.
+ */
+export declare function writtenReadings(written: CsharpWritten, holder: string, inBody: boolean, usings: CsharpUsings): SymbolHint[];
 interface UsingScope {
     /** Namespace prefixes from plain `using Foo.Bar;` directives (file-local). */
     prefixes: string[];

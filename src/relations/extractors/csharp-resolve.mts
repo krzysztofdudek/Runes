@@ -1,6 +1,6 @@
 import type { SymbolTable } from '../symbol-table.mjs';
 import type { TargetHint } from './types.mjs';
-import { baseListKey, decodeBase, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
+import { USINGS_KEY, baseListKey, decodeUsings, decodeWritten, writtenReadings, type CsharpUsings, interfaceKey, memberKey, memberTypeKey, methodKey, privateMemberKey, privateMethodKey, shapeTakes } from './csharp.mjs';
 
 type SymbolHint = Extract<TargetHint, { kind: 'symbol' }>;
 
@@ -45,6 +45,27 @@ const LANGUAGE = 'csharp';
 export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: SymbolHint[], fromFile: string) => string | undefined): CsharpTypeLookup {
   const memo = new Map<string, CsharpBases>();
 
+  /** What each file reads a written name with (its `usings` record), read from the table when first asked. */
+  let usingsByFile: Map<string, CsharpUsings> | undefined;
+  const NO_USINGS: CsharpUsings = decodeUsings('{}');
+  const usingsOf = (file: string): CsharpUsings => {
+    if (usingsByFile === undefined) {
+      usingsByFile = new Map();
+      for (const { value, files } of table.valuesOf(LANGUAGE, USINGS_KEY)) {
+        const usings = decodeUsings(value);
+        for (const f of files) usingsByFile.set(f, usings);
+      }
+    }
+    return usingsByFile.get(file) ?? NO_USINGS;
+  };
+
+  /** The keys of the types the written type of a record names, one per file that declares the record, undefined where that file's reading binds no one type. */
+  const boundIn = (value: string, files: readonly string[], holder: string, inBody: boolean): Array<{ name: string; key: string | undefined }> => {
+    const written = decodeWritten(value);
+    const name = written.name.startsWith('global::') ? written.name.slice('global::'.length) : written.name;
+    return files.map((file) => ({ name, key: bind(writtenReadings(written, holder, inBody, usingsOf(file)), file) }));
+  };
+
   const bases = (typeKey: string): CsharpBases => {
     const known = memo.get(typeKey);
     if (known !== undefined) return known;
@@ -52,11 +73,9 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     // Set before the bases are bound: a base list that names its own type through itself ends here.
     memo.set(typeKey, result);
     for (const { value, files } of table.valuesOf(LANGUAGE, baseListKey(typeKey))) {
-      const base = decodeBase(value);
-      for (const file of files) {
-        const key = bind(base.readings, file);
+      for (const { name, key } of boundIn(value, files, typeKey, false)) {
         if (key === undefined) {
-          if (!result.outside.includes(base.name)) result.outside.push(base.name);
+          if (!result.outside.includes(name)) result.outside.push(name);
         } else if (!result.inside.includes(key)) result.inside.push(key);
       }
     }
@@ -146,9 +165,7 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     const keys: string[] = [];
     for (const owner of find(typeKey, name, true).owners ?? []) {
       for (const { value, files } of table.valuesOf(LANGUAGE, memberTypeKey(owner, name))) {
-        const written = decodeBase(value);
-        for (const file of files) {
-          const key = bind(written.readings, file);
+        for (const { key } of boundIn(value, files, owner, true)) {
           if (key !== undefined && !keys.includes(key)) keys.push(key);
         }
       }
