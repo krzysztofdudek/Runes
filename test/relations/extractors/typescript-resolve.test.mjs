@@ -273,6 +273,27 @@ describe('resolveTsPath — export conditions follow the importing file\'s modul
       expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
     }
   });
+  it('an extends Runes cannot read leaves module and moduleResolution unknown, not unset', () => {
+    // An installed preset (@tsconfig/node18) is not in the repository: what it sets is not known, so the compiler's defaults do not apply.
+    const preset = (options, bases = '@tsconfig/node18/tsconfig.json', extra = {}) => project({ ...lib, 'app/package.json': '{ "name": "app" }', 'app/tsconfig.json': JSON.stringify({ extends: bases, compilerOptions: options }), ...extra });
+    for (const options of [{}, { strict: true }, { target: 'es2022' }, { module: 'esnext' }, { module: 'commonjs' }, { moduleResolution: 'bundler' }, { moduleResolution: 'nodenext' }]) {
+      const r = preset(options);
+      expect(r('lib', 'app/a.ts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.ts', 'import'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+      expect(r('lib', 'app/a.mts'), JSON.stringify(options)).toBe('lib/cjs/index.cts');
+    }
+    // What the config sets itself is known: both settings, or a module that implies its resolution.
+    expect(preset({ module: 'esnext', moduleResolution: 'bundler' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'preserve' })('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'nodenext' })('lib', 'app/a.mts')).toBe('lib/esm/index.ts');
+    expect(preset({ module: 'nodenext' })('lib', 'app/a.ts', 'import')).toBe('lib/esm/index.ts');
+    // Among several bases a later one wins: a readable base after the preset decides, the preset after a readable base does not.
+    const base = { 'base.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }' };
+    expect(preset({}, ['@tsconfig/node18/tsconfig.json', '../base.json'], base)('lib', 'app/a.ts')).toBe('lib/esm/index.ts');
+    expect(preset({}, ['../base.json', '@tsconfig/node18/tsconfig.json'], base)('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+    // A readable base that sets neither leaves the preset's settings unknown.
+    expect(preset({}, ['@tsconfig/node18/tsconfig.json', '../base.json'], { 'base.json': '{ "compilerOptions": { "strict": true } }' })('lib', 'app/a.ts')).toBe('lib/cjs/index.cts');
+  });
   it('under a Node resolution with a module that is not a Node one, the package type decides, then the module', () => {
     const typed = (type) => ({ 'app/package.json': JSON.stringify({ name: 'app', type }) });
     const es = { moduleResolution: 'nodenext' };
