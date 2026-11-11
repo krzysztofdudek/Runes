@@ -102,6 +102,8 @@ export interface TsPathConfig {
   /** `target`, lower-cased, when set anywhere in the chain: what the compiler takes its default `module` from. */
   target?: string;
   customConditions?: string[];
+  /** Whether a base that cannot be read may have set `customConditions`, and nothing read since has set them. */
+  customConditionsUnknown?: boolean;
   /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
   paths?: { base: string; map: Record<string, string[]> };
 }
@@ -267,81 +269,128 @@ const ESM_MODULE_KINDS = new Set(['es6', 'es2015', 'es2020', 'es2022', 'esnext',
  *
  * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
  */
-function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallForm): Set<string> | undefined {
+function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallForm): ExportConditions | undefined {
   const config = deps.tsconfigFor(from);
   if (config === 'unknown') return undefined;
   const ext = /\.[^./]*$/.exec(from)?.[0].toLowerCase();
-  const typeIsModule = (): boolean => deps.nearestPackage(from)?.manifest.type === 'module';
-  let kind: 'node' | 'bundler' | undefined;
-  let module: string | undefined;
+  const esm = ext === '.mts' || ext === '.mjs';
+  const cjs = ext === '.cts' || ext === '.cjs';
+  if (!esm && !cjs && ext !== '.ts' && ext !== '.tsx' && ext !== '.js' && ext !== '.jsx') return undefined;
+  const type = (): unknown => deps.nearestPackage(from)?.manifest.type;
   if (config === undefined) {
-    kind = 'node';
-  } else {
-    const { moduleResolution: resolution } = config;
-    if (config.module === UNREAD_SETTING) return undefined;
-    module = config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext');
-    if (resolution === UNREAD_SETTING) kind = NODE_MODULE_KINDS.has(module) ? 'node' : module === 'preserve' ? 'bundler' : undefined;
-    else if (resolution === undefined) kind = NODE_MODULE_KINDS.has(module) ? 'node' : CLASSIC_MODULE_KINDS.has(module) ? undefined : 'bundler';
-    else kind = resolution === 'bundler' ? 'bundler' : resolution === 'node16' || resolution === 'nodenext' ? 'node' : undefined;
-    if (kind === undefined) return undefined;
+    const format = esm ? 'import' : cjs ? 'require' : type() === 'module' ? 'import' : 'require';
+    return { forms: [callForm ?? format], entered: new Set(['default', 'types', 'node']), maybeNode: false, maybeCustom: false };
   }
-  let format: TsCallForm | undefined;
-  if (ext === '.mts' || ext === '.mjs') format = 'import';
-  else if (ext === '.cts' || ext === '.cjs') format = 'require';
-  else if (ext === '.ts' || ext === '.tsx' || ext === '.js' || ext === '.jsx') {
-    if (module === undefined || (kind === 'node' && NODE_MODULE_KINDS.has(module))) format = typeIsModule() ? 'import' : 'require';
-    else if (kind === 'node') {
-      const type = deps.nearestPackage(from)?.manifest.type;
-      format = type === 'module' ? 'import' : type === 'commonjs' || IMPORT_CALL_REWRITING_MODULE_KINDS.has(module) ? 'require' : 'import';
+  // undefined: set by a base that cannot be read.
+  const module = config.module === UNREAD_SETTING ? undefined : (config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext'));
+  const resolution = config.moduleResolution;
+  let kinds: Array<'node' | 'bundler'>;
+  if (resolution === UNREAD_SETTING) kinds = ['node', 'bundler'];
+  else if (resolution === undefined) {
+    // `module` is known here: an unread base leaves both settings unknown, and only an explicit value replaces either.
+    if (CLASSIC_MODULE_KINDS.has(module!)) return undefined;
+    kinds = [NODE_MODULE_KINDS.has(module!) ? 'node' : 'bundler'];
+  } else if (resolution === 'bundler') kinds = ['bundler'];
+  else if (resolution === 'node16' || resolution === 'nodenext') kinds = ['node'];
+  else return undefined;
+  // The format of the file under one resolution and one `module`.
+  const staticFormat = (kind: 'node' | 'bundler', mod: string): TsCallForm | undefined => {
+    if (esm) return 'import';
+    if (cjs) return 'require';
+    if (kind === 'node') {
+      if (NODE_MODULE_KINDS.has(mod)) return type() === 'module' ? 'import' : 'require';
+      const t = type();
+      return t === 'module' ? 'import' : t === 'commonjs' || IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod) ? 'require' : 'import';
     }
-    else if (kind === 'bundler' && module === 'commonjs') format = 'require';
-    else if (kind === 'bundler' && ESM_MODULE_KINDS.has(module)) format = 'import';
+    if (NODE_MODULE_KINDS.has(mod)) return 'import';
+    if (mod === 'commonjs') return 'require';
+    return ESM_MODULE_KINDS.has(mod) ? 'import' : undefined;
+  };
+  // What a dynamic import() reads: `import`, unless the compiler emits the call as a require.
+  const dynamicForm = (kind: 'node' | 'bundler', mod: string, format: TsCallForm): TsCallForm => {
+    if (NODE_MODULE_KINDS.has(mod) || mod === 'preserve') return 'import';
+    const rewritten = kind === 'node' ? format === 'require' : cjs || (!esm && IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod));
+    return rewritten ? 'require' : 'import';
+  };
+  const forms = new Set<TsCallForm>();
+  if (module === undefined) {
+    // No `module` is known: the call form or the file kind may still fix the branch.
+    if (callForm === 'require') forms.add('require');
+    else if (esm) forms.add('import');
+    else if (cjs && callForm === undefined) forms.add('require');
+    else forms.add('import').add('require');
+  } else {
+    for (const kind of kinds) {
+      const format = staticFormat(kind, module);
+      if (format === undefined) return undefined;
+      forms.add(callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, module, format) : format);
+    }
   }
-  if (format === undefined) return undefined;
-  // Under a Node resolution with a `module` that is not a Node one, a dynamic import() is resolved in the file's own format, except under `preserve`.
-  const mixed = kind === 'node' && module !== undefined && !NODE_MODULE_KINDS.has(module);
-  const rewritten =
-    callForm === 'import' &&
-    config !== undefined &&
-    module !== undefined &&
-    !NODE_MODULE_KINDS.has(module) &&
-    module !== 'preserve' &&
-    (mixed ? format === 'require' : ext === '.cts' || ext === '.cjs' || (ext !== '.mts' && ext !== '.mjs' && IMPORT_CALL_REWRITING_MODULE_KINDS.has(module)));
-  const conditions = new Set(['default', rewritten ? 'require' : (callForm ?? format), 'types', ...(config?.customConditions ?? [])]);
-  if (kind === 'node') conditions.add('node');
-  return conditions;
+  const entered = new Set(['default', 'types', ...(config.customConditions ?? [])]);
+  if (kinds.length === 1 && kinds[0] === 'node') entered.add('node');
+  return { forms: [...forms], entered, maybeNode: kinds.length > 1, maybeCustom: config.customConditionsUnknown === true };
 }
+
+/** The conditions of one lookup, as far as the settings are known. */
+interface ExportConditions {
+  /** `import` or `require`: one when the settings, the file kind or the call form fix it, both when it depends on a setting that cannot be read. */
+  forms: TsCallForm[];
+  /** The other conditions known to be entered: `default`, `types`, the config's `customConditions`, and `node` under a Node resolution. */
+  entered: Set<string>;
+  /** Whether `node` may be entered: the resolution is not known. */
+  maybeNode: boolean;
+  /** Whether a key that is none of the standard ones may be entered: the `customConditions` are not known. */
+  maybeCustom: boolean;
+}
+
+const STANDARD_CONDITIONS = new Set(['default', 'import', 'require', 'types', 'node']);
 
 /**
  * The file a package.json `exports` or `imports` entry names: `resolve` turns one string target into a file, or undefined. With `conditions` it is read as TypeScript reads it (`loadModuleFromTargetExportOrImport`): a conditions object's keys in declaration order, each key that is `default` or one of the conditions entered, an array's entries in order, and a target that names no file passes the lookup on to the next key or entry; a `null` reached ends it with nothing; a versioned `types@<range>` key is entered when the compiler's version satisfies its range and passed over when it does not. Without conditions every target is tried in declaration order. undefined when `match` is undefined or nothing names a file.
  */
 function pickTarget(
   match: { value: unknown; captured: string | undefined } | undefined,
-  conditions: Set<string> | undefined,
+  conditions: ExportConditions | undefined,
   resolve: (target: string) => string | undefined,
 ): string | undefined {
   if (match === undefined) return undefined;
   const { value, captured } = match;
-  if (conditions === undefined) {
+  const firstTarget = (): string | undefined => {
     for (const target of collectTargets(value, captured) ?? []) {
       const hit = resolve(target);
       if (hit !== undefined) return hit;
     }
     return undefined;
-  }
+  };
+  if (conditions === undefined) return firstTarget();
   const STOP = null;
-  const walk = (v: unknown): string | typeof STOP | undefined => {
+  const DEPENDS = 0;
+  type Found = string | typeof STOP | typeof DEPENDS | undefined;
+  const walk = (v: unknown, form: TsCallForm): Found => {
     if (typeof v === 'string') return resolve(captured === undefined ? v : v.split('*').join(captured));
     if (v === null) return STOP;
     const branches = Array.isArray(v) ? v.map((entry): [string, unknown] => ['default', entry]) : isRecord(v) ? Object.entries(v) : [];
-    for (const [condition, branch] of branches) {
-      if (!conditions.has(condition) && !(conditions.has('types') && condition.startsWith('types@') && typeScriptSatisfies(condition.slice('types@'.length)))) continue;
-      const hit = walk(branch);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
+    const from = (i: number): Found => {
+      for (; i < branches.length; i++) {
+        const [condition, branch] = branches[i];
+        const versioned = condition.startsWith('types@');
+        const isEntered = condition === form || conditions.entered.has(condition) || (versioned && typeScriptSatisfies(condition.slice('types@'.length)));
+        const mayBeEntered = !isEntered && ((condition === 'node' && conditions.maybeNode) || (conditions.maybeCustom && !versioned && !STANDARD_CONDITIONS.has(condition)));
+        if (!isEntered && !mayBeEntered) continue;
+        const hit = walk(branch, form);
+        if (hit === undefined) continue;
+        if (isEntered || hit === DEPENDS) return hit;
+        // A key that may or may not be entered: the answer holds only when passing it over gives the same.
+        return from(i + 1) === hit ? hit : DEPENDS;
+      }
+      return undefined;
+    };
+    return from(0);
   };
-  return walk(value) ?? undefined;
+  const found = new Set(conditions.forms.map((form) => walk(value, form) ?? STOP));
+  if (found.size > 1 || found.has(DEPENDS)) return firstTarget();
+  const only = [...found][0];
+  return typeof only === 'string' ? only : undefined;
 }
 
 /** The entry of a subpath map `key` selects: the exact key, else the `*` pattern with the longest prefix, with what its `*` captured. */
@@ -968,6 +1017,7 @@ export function makeTsResolveDeps(
         if (baseFile === undefined) {
           // A preset that is installed, not committed: what it sets is unknown until a later base or this config sets it.
           merged.module = merged.moduleResolution = merged.target = UNREAD_SETTING;
+          merged.customConditionsUnknown = true;
           continue;
         }
         const inherited = loadConfig(baseFile, leafDir);
@@ -996,7 +1046,10 @@ export function makeTsResolveDeps(
         if (typeof value === 'string') merged[field] = value.toLowerCase();
       }
       const custom = options?.customConditions;
-      if (Array.isArray(custom)) merged.customConditions = custom.filter((c): c is string => typeof c === 'string');
+      if (Array.isArray(custom)) {
+        merged.customConditions = custom.filter((c): c is string => typeof c === 'string');
+        merged.customConditionsUnknown = false;
+      }
       // `outDir` and `declarationDir` resolve from the config that sets them, like every path option; one outside the repository excludes nothing in it.
       for (const field of ['outDir', 'declarationDir'] as const) {
         const value = options?.[field];
@@ -1047,6 +1100,7 @@ export function makeTsResolveDeps(
     ...(config.module !== undefined ? { module: config.module } : {}),
     ...(config.target !== undefined ? { target: config.target } : {}),
     ...(config.customConditions !== undefined ? { customConditions: config.customConditions } : {}),
+    ...(config.customConditionsUnknown === true ? { customConditionsUnknown: true } : {}),
     ...(config.paths !== undefined ? { paths: { base: config.baseUrl ?? config.paths.base, map: config.paths.map } } : {}),
   });
   // Whether a referenced config whose options cannot be read may hold a file. tsc reads such a config without the bases it cannot read (a generated base absent from the commit), so it holds what the `files` and `include` of the configs in its chain it can read name, or by default what lies under its own directory; here its own directory always counts and every `exclude` is ignored, so the answer errs towards holding, which is towards silence. A referenced config that does not parse may hold anything.

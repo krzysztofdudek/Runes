@@ -60,6 +60,8 @@ export interface TsPathConfig {
     /** `target`, lower-cased, when set anywhere in the chain: what the compiler takes its default `module` from. */
     target?: string;
     customConditions?: string[];
+    /** Whether a base that cannot be read may have set `customConditions`, and nothing read since has set them. */
+    customConditionsUnknown?: boolean;
     /** `paths`, when set anywhere in the chain, with the directory its substitutions resolve from. */
     paths?: {
         base: string;
