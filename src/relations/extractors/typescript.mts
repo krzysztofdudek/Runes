@@ -133,12 +133,47 @@ function isImportMetaUrl(node: Node | null): boolean {
 const RECOVERY_PATTERNS: RegExp[] = [
   // import x from '…' · import { a, type B } from '…' · import * as ns from '…' · import type … · import defer * as …
   // export { a } from '…' · export * from '…' · export * as ns from '…' · export type { … } from '…'
-  /^[ \t]*(?:import|export)\b([\w$\s{},*]*?)\bfrom[ \t]*(['"])([^'"\r\n]+)\2/gm,
+  // A type-only one may carry `with { 'resolution-mode': 'import' }`, which groups 4 and 5 read.
+  /^[ \t]*(?:import|export)\b([\w$\s{},*]*?)\bfrom[ \t]*(['"])([^'"\r\n]+)\2(?:\s*(?:with|assert)\s*\{\s*(['"])resolution-mode\4\s*:\s*(['"])(import|require)\5)?/gm,
   // import './side-effect'
   /^[ \t]*import()[ \t]*(['"])([^'"\r\n]+)\2/gm,
   // import x = require('…') · export import x = require('…') · import type x = require('…')
   /^[ \t]*(?:export[ \t]+)?import([ \t]+(?:type[ \t]+)?)[\w$]+[ \t]*=[ \t]*require[ \t]*\([ \t]*(['"])([^'"\r\n]+)\2/gm,
 ];
+
+/** The call form a `resolution-mode` value stands for: `require` reads as a `require()` does, `import` is `'esm'`, the `import` condition whatever the file and the module setting. Any other value is no mode. */
+function modeOf(value: string | undefined): 'require' | 'esm' | undefined {
+  return value === 'require' ? 'require' : value === 'import' ? 'esm' : undefined;
+}
+
+/** The mode a `{ 'resolution-mode': '…' }` object names, or undefined. */
+function modeOfAttributes(object: Node | null | undefined): 'require' | 'esm' | undefined {
+  if (object === null || object === undefined || object.type !== 'object') return undefined;
+  for (const pair of object.namedChildren) {
+    if (pair === null || pair.type !== 'pair') continue;
+    if (specifierFromStringNode(pair.childForFieldName('key')) === 'resolution-mode') return modeOf(specifierFromStringNode(pair.childForFieldName('value')));
+  }
+  return undefined;
+}
+
+/** The mode the `resolution-mode` attribute of a type-only import declaration names (`import type … from 'x' with { 'resolution-mode': 'import' }`), or undefined. The compiler reads the attribute only where the whole declaration is type-only, so an inline `import { type T }` and a value import carry none. */
+function modeOfImportStatement(node: Node): 'require' | 'esm' | undefined {
+  if (node.child(1)?.type !== 'type') return undefined;
+  const attribute = node.namedChildren.find((c) => c !== null && c.type === 'import_attribute');
+  return attribute === null || attribute === undefined ? undefined : modeOfAttributes(attribute.namedChild(0));
+}
+
+/** The mode the options of an import type name (`import('x', { with: { 'resolution-mode': 'import' } }).T`), or undefined. */
+function modeOfImportType(call: Node): 'require' | 'esm' | undefined {
+  const options = argumentAt(call, 1);
+  if (options === null || options.type !== 'object') return undefined;
+  for (const pair of options.namedChildren) {
+    if (pair === null || pair.type !== 'pair') continue;
+    const key = pair.childForFieldName('key')?.text;
+    if (key === 'with' || key === 'assert') return modeOfAttributes(pair.childForFieldName('value'));
+  }
+  return undefined;
+}
 
 /** Zero-based rows touched by any ERROR node in the tree (empty for an error-free parse). An ERROR node's rows hold those of every node below it, so the walk does not descend into one: each row is added once per outermost ERROR, not once per nested one. */
 function errorRows(root: Node): Set<number> {
@@ -159,10 +194,10 @@ function errorRows(root: Node): Set<number> {
  * a regex never second-guesses a statement the grammar parsed. Returns
  * (specifier, 1-based line of the statement keyword) pairs.
  */
-function recoverFromErrors(file: ParsedFile): Array<{ specifier: string; line: number }> {
+function recoverFromErrors(file: ParsedFile): Array<{ specifier: string; line: number; mode?: 'require' | 'esm' }> {
   const rows = errorRows(file.tree.rootNode);
   if (rows.size === 0) return [];
-  const out: Array<{ specifier: string; line: number }> = [];
+  const out: Array<{ specifier: string; line: number; mode?: 'require' | 'esm' }> = [];
   const content = file.content;
   // Row of every offset, computed lazily from newline positions.
   const lineStarts: number[] = [0];
@@ -187,7 +222,8 @@ function recoverFromErrors(file: ParsedFile): Array<{ specifier: string; line: n
       let touched = false;
       for (let r = first; r <= last && !touched; r++) touched = rows.has(r);
       if (!touched) continue;
-      out.push({ specifier: m[3], line: first + 1 });
+      const mode = m[6] !== undefined && /^\s*type\b/.test(m[1]) ? modeOf(m[6]) : undefined;
+      out.push(mode === undefined ? { specifier: m[3], line: first + 1 } : { specifier: m[3], line: first + 1, mode });
     }
   }
   return out;
@@ -253,7 +289,7 @@ function importCallOf(node: Node | null): Node | undefined {
 }
 
 /**
- * The import() calls a node's own children make import types where the grammar does not say so: the one type argument of `B<import('x').T>` read as `B < import('x').T > …` (a class heritage, a tagged template, a call, whose `>` and parameters come as an ERROR node beside the comparison), an import chain in the pattern of a parameter, where a parenthesized type `(import('x').T)` was read as an arrow function's parameters, and a chain after a token that only introduces a type inside an ERROR node (`keyof`, a template literal type's `${`).
+ * The import() calls a node's own children make import types where the grammar does not say so: the one type argument of `B<import('x').T>` read as `B < import('x').T > …` (a class heritage, a tagged template, a call, whose `>` and parameters come as an ERROR node beside the comparison, found among the children of the node that holds both), an import chain in the pattern of a parameter, where a parenthesized type `(import('x').T)` was read as an arrow function's parameters, and a chain after a token that only introduces a type inside an ERROR node (`keyof`, a template literal type's `${`).
  */
 function misreadImportTypes(node: Node): Node[] {
   const found: Node[] = [];
@@ -264,17 +300,19 @@ function misreadImportTypes(node: Node): Node[] {
   if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '>') {
     const left = node.childForFieldName('left');
     if (left !== null && left.type === 'binary_expression' && left.childForFieldName('operator')?.type === '<') add(left.childForFieldName('right'));
-  } else if (node.type === 'binary_expression' && node.childForFieldName('operator')?.type === '<') {
-    // `g<import('x').T>()`: the `>` and the empty parameters that follow are an ERROR node beside the comparison.
-    if (node.nextSibling?.type === 'ERROR' && node.nextSibling.child(0)?.type === '>') add(node.childForFieldName('right'));
   } else if (node.type === 'required_parameter' || node.type === 'optional_parameter') {
     add(node.namedChild(0));
-  } else if (node.type === 'ERROR') {
-    const children = node.children;
-    for (let i = 1; i < children.length; i++) {
-      const before = children[i - 1];
-      if (before !== null && !before.isNamed && TYPE_INTRODUCERS.has(before.type)) add(children[i]);
-    }
+  }
+  // Only a node that holds an ERROR node can hold either shape below, so a file that parses cleanly lists no children here.
+  if (!node.hasError) return found;
+  const children = node.children;
+  for (let i = 1; i < children.length; i++) {
+    const before = children[i - 1];
+    const here = children[i];
+    if (before === null || here === null) continue;
+    // `g<import('x').T>()`: the `>` and the empty parameters that follow are an ERROR node beside the comparison. Read from the parent, because tree-sitter finds a node's next sibling by searching down from the root.
+    if (here.type === 'ERROR' && before.type === 'binary_expression' && here.child(0)?.type === '>' && before.childForFieldName('operator')?.type === '<') add(before.childForFieldName('right'));
+    if (node.type === 'ERROR' && !before.isNamed && TYPE_INTRODUCERS.has(before.type)) add(here);
   }
   return found;
 }
@@ -283,14 +321,14 @@ function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
 
-  const emitAt = (specifier: string | undefined, line: number, callForm?: 'require' | 'import'): void => {
+  const emitAt = (specifier: string | undefined, line: number, callForm?: 'require' | 'import' | 'esm'): void => {
     if (specifier === undefined || !isCandidateSpecifier(specifier)) return;
     const dedupKey = `${specifier}\n${line}\n${callForm ?? ''}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
     out.push(single(callForm === undefined ? { kind: 'path', specifier } : { kind: 'path', specifier, callForm }, 'import', line));
   };
-  const emit = (specifier: string | undefined, node: Node, callForm?: 'require' | 'import'): void =>
+  const emit = (specifier: string | undefined, node: Node, callForm?: 'require' | 'import' | 'esm'): void =>
     emitAt(specifier, node.startPosition.row + 1, callForm);
 
   const inModuleFile = isModuleFile(file.tree.rootNode);
@@ -314,7 +352,7 @@ function uses(file: ParsedFile): DetectedDep[] {
           emit(specifierFromSource(requireClause), node, 'require');
           break;
         }
-        emit(specifierFromSource(node), node);
+        emit(specifierFromSource(node), node, modeOfImportStatement(node));
         break;
       }
       case 'export_statement': {
@@ -339,7 +377,7 @@ function uses(file: ParsedFile): DetectedDep[] {
         // A plain string literal OR a no-substitution template literal yields a
         // static specifier; an interpolated template literal / identifier / other
         // expression is non-literal and skipped (specifierFromCallArg returns undefined).
-        emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inType ? undefined : 'import');
+        emit(specifierFromCallArg(arg), node, isRequire ? 'require' : inType ? modeOfImportType(node) : 'import');
         break;
       }
       case 'module': {
@@ -368,7 +406,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     return inType || TYPE_POSITION_ANCESTORS.has(node.type) ? true : undefined;
   });
 
-  for (const { specifier, line } of recoverFromErrors(file)) emitAt(specifier, line);
+  for (const { specifier, line, mode } of recoverFromErrors(file)) emitAt(specifier, line, mode);
 
   return out;
 }
@@ -401,13 +439,14 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const typescriptExtractor: DependencyExtractor = {
   languages: new Set(['typescript', 'tsx', 'javascript']),
+  // rev 5: a type-only import or re-export and an import type that carry the `resolution-mode` attribute carry the mode it names, `require` or `esm`;
   // rev 4: a require() call or `import x = require()` and a dynamic import() (not an import type) carry
   // their call form, which picks the `require` or `import` condition of an `exports` entry;
   // rev 3: every type-only reference gives its edge (statement forms, type-position
   // import(), `import type = require`) and a module augmentation names its module.
   // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
   // `new URL(…, import.meta.url)`; ERROR-region recovery.
-  rev: 4,
+  rev: 5,
   declarations,
   uses,
 };

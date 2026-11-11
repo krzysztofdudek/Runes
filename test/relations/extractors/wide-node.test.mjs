@@ -51,6 +51,20 @@ describe('a node with very many children is read in time linear in their number'
     assert.deepEqual([uses.length, declarations.length], [0, 0]);
   });
 
+  // Each line is a comparison with an import() chain on its right: whether the chain is a type argument is read from what follows the comparison, which the walk hands over without asking the comparison for its sibling.
+  for (const [name, filePath, language] of [
+    ['TypeScript', 'm.ts', 'typescript'],
+    ['TSX', 'm.tsx', 'tsx'],
+  ]) {
+    it(`malformed ${name} of 388 000 characters whose lines compare with an import type`, async () => {
+      const line = "g<import('x').T>(\n";
+      const { uses, declarations } = await readsLinearly(relations.typescriptExtractor, filePath, language, (scale) => repeatTo(line, SIZE * scale));
+      assert.equal(uses.length, Math.floor(SIZE / line.length));
+      assert.deepEqual(uses[0], { candidates: [{ kind: 'path', specifier: 'x', callForm: 'import' }], kind: 'import', line: 1 });
+      assert.equal(declarations.length, 0);
+    });
+  }
+
   it('a Go file whose one string literal holds 6 million characters of escapes', async () => {
     const make = (scale) => `package a\n\nimport "fmt"\n\nvar _x = "${repeatTo('\\x1f', 6_000_000 * scale)}"\n\nfunc main() { fmt.Println(_x) }\n`;
     const { uses, declarations } = await readsLinearly(relations.goExtractor, 'b.go', 'go', make);

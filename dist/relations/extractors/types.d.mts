@@ -69,7 +69,7 @@ export type TargetHint = {
     kind: 'path';
     specifier: string;
     isPackage?: boolean;
-    callForm?: 'require' | 'import';
+    callForm?: 'require' | 'import' | 'esm';
 } | {
     kind: 'symbol';
     /** The candidate's OWN display key — what `groupContaining`/`symbolKeys` read, and what

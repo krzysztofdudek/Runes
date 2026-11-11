@@ -25,6 +25,7 @@ name = "cli"
 
 ```rust path=src/app.rs
 use self::tools::Helper;
+mod tools;
 ```
 
 ```rust path=src/tools/mod.rs
@@ -33,6 +34,7 @@ pub struct Helper;
 
 ```rust path=src/main.rs
 use self::store::Db;
+mod store;
 ```
 
 ```rust path=src/store/mod.rs
@@ -45,6 +47,8 @@ fn main() {}
 
 ## Expect
 
+- src/main.rs:2 -> node:store      # the `mod` that makes the file a module
+- src/app.rs:2 -> node:tools      # the `mod` that makes the file a module
 - src/app.rs:1 -> node:tools          # the 2015 library found only at src/<libname>.rs is its root
 - src/main.rs:1 -> node:store         # with that library, the bin `cli` takes src/main.rs, not src/cli.rs
 

@@ -227,6 +227,58 @@ describe('MATRIX — what a crate root binds', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a use path that starts with a name in scope (edition 2018 on)', () => {
+  it('rust-edition-2018-use-crate-not-local-name-edge', () => runCase('rust-edition-2018-use-crate-not-local-name-edge'));
+  it('rust-edition-2018-use-imported-module-edge', () => runCase('rust-edition-2018-use-imported-module-edge'));
+  it('rust-edition-2018-use-imported-module-in-function-body-edge', () => runCase('rust-edition-2018-use-imported-module-in-function-body-edge'));
+  it('rust-edition-2018-use-local-module-edge', () => runCase('rust-edition-2018-use-local-module-edge'));
+  it('rust-edition-2018-use-local-module-over-crate-edge', () => runCase('rust-edition-2018-use-local-module-over-crate-edge'));
+  it('rust-path-dependency-root-glob-reexport-edge', () => runCase('rust-path-dependency-root-glob-reexport-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a path through a glob re-export of a crate root', () => {
+  it('rust-crate-root-glob-module-without-name-silence', () => runCase('rust-crate-root-glob-module-without-name-silence'));
+  it('rust-crate-root-glob-reexport-edge', () => runCase('rust-crate-root-glob-reexport-edge'));
+  it('rust-crate-root-glob-reexport-spellings-edge', () => runCase('rust-crate-root-glob-reexport-spellings-edge'));
+  it('rust-crate-root-two-globs-same-name-silence', () => runCase('rust-crate-root-two-globs-same-name-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a use path that starts with ::', () => {
+  it('rust-edition-2015-use-leading-colons-root-module-edge', () => runCase('rust-edition-2015-use-leading-colons-root-module-edge'));
+  it('rust-edition-2018-use-leading-colons-crate-only-edge', () => runCase('rust-edition-2018-use-leading-colons-crate-only-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a path attribute that comments or other attributes separate from its mod', () => {
+  it('rust-mod-path-attribute-before-doc-comment-silence', () => runCase('rust-mod-path-attribute-before-doc-comment-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — mod declarations inside cfg_if!', () => {
+  it('rust-mod-decl-inside-cfg-if-edge', () => runCase('rust-mod-decl-inside-cfg-if-edge'));
+  it('rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge', () => runCase('rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — a file is a module only when a mod declares it', () => {
+  it('rust-function-named-like-undeclared-sibling-file-edge', () => runCase('rust-function-named-like-undeclared-sibling-file-edge'));
+  it('rust-inline-module-over-stale-sibling-file-edge', () => runCase('rust-inline-module-over-stale-sibling-file-edge'));
+  it('rust-module-declared-by-unknown-macro-keeps-file-edge', () => runCase('rust-module-declared-by-unknown-macro-keeps-file-edge'));
+  it('rust-module-declared-in-cfg-if-and-stale-root-file-edge', () => runCase('rust-module-declared-in-cfg-if-and-stale-root-file-edge'));
+  it('rust-other-binary-root-declared-as-module-edge', () => runCase('rust-other-binary-root-declared-as-module-edge'));
+  it('rust-other-binary-root-not-a-module-silence', () => runCase('rust-other-binary-root-not-a-module-silence'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — the children of a file loaded through a path attribute', () => {
+  it('rust-file-module-children-under-own-directory-edge', () => runCase('rust-file-module-children-under-own-directory-edge'));
+  it('rust-path-loaded-file-children-beside-it-edge', () => runCase('rust-path-loaded-file-children-beside-it-edge'));
+  it('rust-path-loaded-file-relative-path-forms-edge', () => runCase('rust-path-loaded-file-relative-path-forms-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one

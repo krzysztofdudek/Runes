@@ -13,6 +13,25 @@ export declare function plainModuleFiles(root: Node): Array<{
     conditional: boolean;
 }>;
 /**
+ * Every module a Rust file declares without a body: each `mod x;` that is an item of the file itself or of inline modules nested in it, and each one in a branch of a `cfg_if!` that stands among those items, as the path of its names from the file's own module (`x`, `outer/x`), with `r#` stripped. Whatever stands in front of the `mod` (a `cfg`, a `path` attribute, an attribute macro) is not read: the list says which names are modules with a file of their own, not where the file is.
+ *
+ * `known` says that the list holds every such module of the file. It is false where a `mod` may exist that the tree does not show: in a file the grammar could not parse to the end, in one whose head holds an inner attribute that is not one of the compiler's, and in one that invokes, among those items or in a `cfg_if!` branch, a macro other than the item macros Runes reads (`ITEM_MACROS`, `cfg_if!`), since a macro can expand to a `mod` or include a file that holds one.
+ */
+export declare function declaredModules(root: Node): {
+    declared: Array<{
+        path: string;
+        line: number;
+    }>;
+    known: boolean;
+};
+/**
+ * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
+ */
+export declare function pathModules(root: Node): Array<{
+    path: string;
+    line: number;
+}>;
+/**
  * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`; for a function with `#[proc_macro_derive(Name, …)]` in front of it the derive `Name` as well as the function), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
  */
 export declare function topLevelItemNames(root: Node): Array<{
@@ -24,5 +43,18 @@ export declare function topLevelExternCrates(root: Node): Array<{
     name: string;
     crate: string | undefined;
     line: number;
+}>;
+/** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. */
+export declare function topLevelGlobs(root: Node): Array<{
+    path: string;
+    line: number;
+}>;
+/**
+ * The file-backed modules a `cfg_if!` body declares: each `mod x;` in a braced branch, in a `cfg_if!` nested in one, and in an inline `mod y { … }` written there, which adds its name in front (`names`, `r#` stripped: `x`, or `y`, `x`). `at` is the `mod` keyword. `moved` is true when a `path` attribute stands in front of the `mod` or of an inline module around it, behind a visibility, comments or other attributes: the file is then not where the names put it. Every branch is listed, since each is the crate's on some target.
+ */
+export declare function cfgIfModules(body: Node): Array<{
+    names: string[];
+    at: Node;
+    moved: boolean;
 }>;
 export declare const rustExtractor: DependencyExtractor;

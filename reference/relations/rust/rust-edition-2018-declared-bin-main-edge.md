@@ -36,6 +36,7 @@ pub struct Helper;
 
 ```rust path=src/main.rs
 use self::tools::Helper;
+mod tools;
 ```
 
 ```rust path=cli/main.rs
@@ -44,6 +45,7 @@ fn main() {}
 
 ## Expect
 
+- src/main.rs:2 -> node:tools      # the `mod` that makes the file a module
 - src/main.rs:1 -> node:tools          # edition 2018: bin auto-discovery stays on, src/main.rs is a crate root and `self::tools` is src/tools/mod.rs
 
 ## Why

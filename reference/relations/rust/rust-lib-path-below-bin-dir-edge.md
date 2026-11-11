@@ -35,6 +35,7 @@ pub struct Helper;
 
 ```rust path=app/lib/lib.rs
 pub struct Item;
+pub mod util;
 ```
 
 ```rust path=app/lib/util/mod.rs
@@ -48,6 +49,7 @@ use crate::Item;
 
 ## Expect
 
+- app/lib/lib.rs:2 -> node:util      # the `mod` that makes the file a module
 - app/lib/jobs/run.rs:1 -> node:util    # crate:: from a library module → the library's tree app/lib/, never the binary's app/util.rs (node:app)
 - app/lib/jobs/run.rs:2 -> node:lib     # a crate-root item → the library root app/lib/lib.rs, never the binary root app/main.rs (node:app)
 

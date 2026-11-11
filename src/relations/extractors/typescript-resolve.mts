@@ -4,8 +4,8 @@ import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING, t
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
 
-/** How a specifier was written when it is a call: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. */
-export type TsCallForm = 'require' | 'import';
+/** How a specifier was written when its form decides the condition: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. A type-only import or an import type whose `resolution-mode` attribute names `require` reads as a `require` does; one that names `import` is `'esm'`, the `import` condition wherever it stands, which a dynamic `import()` is not (the compiler may emit that as a `require`). */
+export type TsCallForm = 'require' | 'import' | 'esm';
 
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
@@ -280,6 +280,8 @@ const UNREAD_BUNDLER_MODULES = ['commonjs', 'esnext', 'preserve'];
  * The format, as `getImpliedNodeFormatForFile` and `getEmitModuleFormatOfFile` give it: a `.mts` or `.mjs` file imports, a `.cts` or `.cjs` file requires. Under the Node resolutions with a Node `module`, and for a file no tsconfig covers, a `.ts`, `.tsx`, `.js` or `.jsx` file imports when the nearest package.json says `"type": "module"` and requires otherwise; under Bundler it requires when `module` is `commonjs` and imports for any ES, `preserve` or other non-Node `module`. Under a Node resolution with a `module` that is not a Node one (tsc reports the pair and still resolves), the nearest package.json `"type"` decides when it is `module` or `commonjs`, and with no `type` the file requires under `commonjs`, `amd`, `umd`, `system` or `none` and imports otherwise. Under Bundler with a Node `module` a file imports unless its extension says it requires. Any other file kind (a Vue or Svelte component) decides nothing.
  *
  * The format is the file's, which is what TypeScript reads for an `import` or `export` statement, an import type (`typeof import('x')`, `import('x').T`) included. A call overrides it with its own form, as TypeScript resolves the call: a `require()` call or `import x = require()` reads `require`, and a dynamic `import()` reads `import`, except where the compiler emits it as a `require` (`shouldTransformImportCall`): under a `module` that is neither a Node one nor `preserve`, in a file emitted as CommonJS (a `.cts` or `.cjs` file, any other TypeScript or JavaScript file under `module` commonjs, amd, umd, system or none), the call is resolved in CommonJS mode and reads `require`. For a file no tsconfig covers the call stays `import`, as Node reads it.
+ *
+ * The `resolution-mode` import attribute overrides the format too, and nothing overrides it: the compiler reads it on a type-only import or export declaration and on an import type (`getModeForUsageLocation`), and resolves the specifier in the mode it names under every setting that reads `exports`.
  */
 function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallForm): ExportConditions | undefined {
   const config = deps.tsconfigFor(from);
@@ -291,7 +293,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
   const type = (): unknown => deps.nearestPackage(from)?.manifest.type;
   if (config === undefined) {
     const format = esm ? 'import' : cjs ? 'require' : type() === 'module' ? 'import' : 'require';
-    return { readings: [{ form: callForm ?? format, node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
+    return { readings: [{ form: callForm === 'esm' ? 'import' : (callForm ?? format), node: true }], entered: new Set(['default', 'types']), maybeCustom: false };
   }
   // undefined: set by a base that cannot be read.
   const module = config.module === UNREAD_SETTING ? undefined : (config.module ?? (config.target === 'es5' ? 'commonjs' : 'esnext'));
@@ -310,7 +312,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
   else if (resolution === 'node16' || resolution === 'nodenext') pairings = [['node', module ?? 'nodenext']];
   else return undefined;
   // The format of the file under one resolution and one `module`.
-  const staticFormat = (kind: 'node' | 'bundler', mod: string): TsCallForm | undefined => {
+  const staticFormat = (kind: 'node' | 'bundler', mod: string): ExportReading['form'] | undefined => {
     if (esm) return 'import';
     if (cjs) return 'require';
     if (kind === 'node') {
@@ -323,7 +325,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
     return ESM_MODULE_KINDS.has(mod) ? 'import' : undefined;
   };
   // What a dynamic import() reads: `import`, unless the compiler emits the call as a require.
-  const dynamicForm = (kind: 'node' | 'bundler', mod: string, format: TsCallForm): TsCallForm => {
+  const dynamicForm = (kind: 'node' | 'bundler', mod: string, format: ExportReading['form']): ExportReading['form'] => {
     if (NODE_MODULE_KINDS.has(mod) || mod === 'preserve') return 'import';
     const rewritten = kind === 'node' ? format === 'require' : cjs || (!esm && IMPORT_CALL_REWRITING_MODULE_KINDS.has(mod));
     return rewritten ? 'require' : 'import';
@@ -332,7 +334,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
   for (const [kind, mod] of pairings) {
     const format = staticFormat(kind, mod);
     if (format === undefined) return undefined;
-    const form = callForm === 'require' ? 'require' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
+    const form = callForm === 'require' ? 'require' : callForm === 'esm' ? 'import' : callForm === 'import' ? dynamicForm(kind, mod, format) : format;
     const node = kind === 'node';
     if (!readings.some((r) => r.form === form && r.node === node)) readings.push({ form, node });
   }
@@ -341,7 +343,7 @@ function exportConditions(from: string, deps: TsResolveDeps, callForm?: TsCallFo
 
 /** One reading of a lookup: the branch the importing file enters, with whether `node` is entered. The two belong together, since a resolution fixes both. */
 interface ExportReading {
-  form: TsCallForm;
+  form: 'require' | 'import';
   node: boolean;
 }
 
@@ -521,15 +523,15 @@ function entryOf(pkg: TsPackage, exists: (repoRelPosix: string) => boolean, deps
   return undefined;
 }
 
-// The sources an output file may be emitted from, by the output's extension: tsc writes `a.js` and `a.d.ts` for `a.ts` or `a.tsx` (and for `a.js` or `a.jsx` under `allowJs`), `a.jsx` for `a.tsx` under `jsx: preserve`, `a.mjs` and `a.d.mts` for `a.mts`, `a.cjs` and `a.d.cts` for `a.cts`.
-const OUTPUT_SOURCES: Array<{ suffix: string; declaration: boolean; ts: string[]; js: string[] }> = [
+// The sources an output file may be emitted from, by the output's extension: tsc writes `a.js` and `a.d.ts` for `a.ts` or `a.tsx` (and for `a.js` or `a.jsx` under `allowJs`), `a.jsx` for `a.tsx` under `jsx: preserve`, `a.mjs` and `a.d.mts` for `a.mts`, `a.cjs` and `a.d.cts` for `a.cts`. A bundler (tsup, unbuild) names the two builds of a dual package by format instead: `a.mjs` and `a.d.mts`, `a.cjs` and `a.d.cts`, all from `a.ts` or `a.tsx`; `bundled` holds those sources, read only where none of the compiler's is there.
+const OUTPUT_SOURCES: Array<{ suffix: string; declaration: boolean; ts: string[]; js: string[]; bundled?: string[] }> = [
   { suffix: '.d.ts', declaration: true, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
-  { suffix: '.d.mts', declaration: true, ts: ['.mts'], js: ['.mjs'] },
-  { suffix: '.d.cts', declaration: true, ts: ['.cts'], js: ['.cjs'] },
+  { suffix: '.d.mts', declaration: true, ts: ['.mts'], js: ['.mjs'], bundled: ['.ts', '.tsx'] },
+  { suffix: '.d.cts', declaration: true, ts: ['.cts'], js: ['.cjs'], bundled: ['.ts', '.tsx'] },
   { suffix: '.js', declaration: false, ts: ['.ts', '.tsx'], js: ['.js', '.jsx'] },
   { suffix: '.jsx', declaration: false, ts: ['.tsx'], js: ['.jsx'] },
-  { suffix: '.mjs', declaration: false, ts: ['.mts'], js: ['.mjs'] },
-  { suffix: '.cjs', declaration: false, ts: ['.cts'], js: ['.cjs'] },
+  { suffix: '.mjs', declaration: false, ts: ['.mts'], js: ['.mjs'], bundled: ['.ts', '.tsx'] },
+  { suffix: '.cjs', declaration: false, ts: ['.cts'], js: ['.cjs'], bundled: ['.ts', '.tsx'] },
 ];
 const COMPILED_TS = /\.(?:ts|tsx|mts|cts)$/;
 const COMPILED_JS = /\.(?:js|jsx|mjs|cjs)$/;
@@ -1228,6 +1230,7 @@ export function makeTsResolveDeps(
     // The nearest workspace declaration above the importer, then each enclosing one while the declaring directory is a member of it: npm and pnpm install a member from the enclosing root and ignore its own declaration, and yarn links nested worktrees into one project, so the enclosing members are linked too. A name two of them bind to different packages is ambiguous (npm takes the enclosing one, yarn refuses the pair). A declaration that is no member of the one above is a project installed on its own, whose node_modules may hold a registry package under any name, so nothing above it is looked at.
     let found: TsPackage | 'ambiguous' | undefined;
     let declared: string | undefined;
+    const workspaces: Array<{ root: string; globs: string[] }> = [];
     for (const dir of ancestors(fromFile)) {
       const globs = workspaceGlobs(dir);
       if (globs === undefined) continue;
@@ -1236,10 +1239,21 @@ export function makeTsResolveDeps(
       if (hit !== undefined && found !== undefined && hit !== found) return 'ambiguous';
       found ??= hit;
       declared = dir;
+      workspaces.push({ root: dir, globs });
     }
     if (declared === undefined) return packageIndex().get(lookup);
     // A member declared by a range (not `workspace:`, not a local path) is linked only where the package manager links by range; otherwise the install takes it from the registry. A peer dependency is not installed by the package that declares it (yarn 1 never installs peers, npm 7 and later and pnpm with auto-install-peers install them by rules of their own), so a member declared only as a peer stays bound, as before.
     if (found !== undefined && found !== 'ambiguous' && typeof spec === 'string' && !spec.startsWith('workspace:') && field !== own!.manifest.peerDependencies && linksByRange(declared, spec, found) === false) return undefined;
+    // pnpm links a member only into the node_modules of a project that declares it, and the lookup of Node and TypeScript walks the node_modules of every directory above the file: with no project above the file declaring the name, nothing is linked under it. A project is the root of a workspace met above or one of its members; a package.json of any other directory is installed by nobody. npm and yarn link every workspace at the root, so there a declaration decides nothing, and under an unknown manager the member stays bound, as before.
+    if (found !== undefined && found !== 'ambiguous' && managerAt(declared)?.name === 'pnpm' && !pnpmMayHoist(declared, name, managerAt(declared)!)) {
+      const declares = (dir: string): boolean => {
+        const manifest = packageAt(dir)?.manifest;
+        if (manifest === undefined || !workspaces.some((w) => isMemberDir(w.root, w.globs, dir))) return false;
+        return DEPENDENCY_FIELDS.some((f) => isRecord(manifest[f]) && Object.hasOwn(manifest[f], name));
+      };
+      const above = ancestors(fromFile);
+      if (!above.slice(0, above.indexOf(declared) + 1).some(declares)) return undefined;
+    }
     return found;
   };
 
@@ -1288,6 +1302,14 @@ export function makeTsResolveDeps(
     ].filter((v) => v !== undefined);
     if (values.length > 0) return values.every((v) => v === values[0]) ? values[0] : undefined;
     return major === undefined ? undefined : major < 9;
+  };
+  // Whether pnpm may link a member named `name` into the node_modules of the workspace root although the root does not declare it. pnpm hoists the dependencies of every project there, workspace members among them (`hoistWorkspacePackages`, on by default), when `shamefully-hoist` is on, when the linker is `hoisted`, or for the names a `public-hoist-pattern` matches; before pnpm 10 that pattern defaulted to `*eslint*` and `*prettier*`. The settings are read from .npmrc and pnpm-workspace.yaml, whichever the version reads; a pattern that is set is not matched against the name, it leaves the answer open.
+  const pnpmMayHoist = (root: string, name: string, manager: Manager): boolean => {
+    const at = (file: string): string => (root === '' ? file : `${root}/${file}`);
+    const text = (file: string): string => (isFile(at(file)) ? (files.read(at(file)) ?? '') : '');
+    if (/^\s*(?:shamefully-hoist\s*=\s*['"]?true|node-linker\s*=\s*['"]?hoisted|public-hoist-pattern(?:\[\])?\s*=)/m.test(text('.npmrc'))) return true;
+    if (/^(?:shamefullyHoist\s*:\s*['"]?true|nodeLinker\s*:\s*['"]?hoisted|publicHoistPattern\s*:)/m.test(text('pnpm-workspace.yaml'))) return true;
+    return (manager.major === undefined || manager.major < 10) && /eslint|prettier/.test(name);
   };
   // Whether the package manager of the workspace rooted at `root` links `member` for a dependency declared as `spec` (a range or a tag, not `workspace:` and not a local path): false when it installs that dependency from the registry, undefined when the manager is not known (the member stays bound, as before). npm's arborist links a workspace when "the workspace node will satisfy the edge", `*` and the empty spec always, a range by `semver.satisfies(version, range, true)`, a tag never (it is valid only with a registry resolution). pnpm links by range only with link-workspace-packages on, and then picks by `resolveWorkspaceRange`: `*`, `^`, `~` and the empty spec match any version, a tag matches as `*` does, a range as `semver.maxSatisfying(versions, range, { loose: true })`. yarn 2 and later accept a pure semver range when `enableTransparentWorkspaces` (default true) is on and the workspace has a version (`Workspace.accepts`); yarn 1 links when `semver.satisfies(workspace version, range)`. Any other spec (`npm:` aliases, URLs, git) is never the member.
   const linksByRange = (root: string, spec: string, member: TsPackage): boolean | undefined => {
@@ -1367,7 +1389,7 @@ export function makeTsResolveDeps(
     return root;
   };
   const allowsJs = (config: LoadedConfig): boolean => config.allowJs ?? config.checkJs ?? false;
-  // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
+  // A package entry under a tsconfig's `outDir` (a declaration under its `declarationDir` when that is set), mapped back to the source it is emitted from, as the compiler maps the output of a referenced project. The root is the config's `rootDir`; without one it is what the compiler computes, which differs by version (the common directory of the project's sources before TypeScript 6, the config's directory from 6 on), so both are tried. A config that sets `noEmit` or holds no source writes no output and is not asked. A reading counts when it names a file the project holds, and every reading of every config that counts must name the same file. A `.mjs`, `.d.mts`, `.cjs` or `.d.cts` entry with no `.mts` or `.cts` source is read as a bundler's build of the `.ts` or `.tsx` source of that name. An entry with no extension is read as `<entry>.js`, then `<entry>/index.js`.
   const sourceOfOutput = (pkgDir: string, target: string, exists: (repoRelPosix: string) => boolean): string | typeof SOURCES_DISAGREE | undefined => {
     const projects = projectsOf(pkgDir);
     if (projects === 'unknown' || projects.length === 0) return undefined;
@@ -1395,7 +1417,7 @@ export function makeTsResolveDeps(
         }
         for (const root of roots) {
           const base = root === '' ? rel : `${root}/${rel}`;
-          const source = [...kind.ts, ...(allowsJs(config) ? kind.js : [])].map((ext) => base + ext).find((cand) => cand !== output && exists(cand) && holds(config, configDir, cand));
+          const source = [...kind.ts, ...(allowsJs(config) ? kind.js : []), ...(kind.bundled ?? [])].map((ext) => base + ext).find((cand) => cand !== output && exists(cand) && holds(config, configDir, cand));
           if (source !== undefined) hits.add(source);
         }
       }

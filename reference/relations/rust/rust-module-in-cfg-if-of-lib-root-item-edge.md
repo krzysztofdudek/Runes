@@ -8,7 +8,7 @@ cites: "Rust Reference, Paths (`crate` is the root of the current crate); the cf
 
 ## Rule
 
-`src/lib.rs` declares `mod unix;` inside `cfg_if! { … }`, and `src/main.rs` is a second crate with an `Opts` of its own. `src/unix/mod.rs` is a module of the library, but a `mod` inside a macro's tokens is no item of the parse tree. Nothing is known about the file, so the roots are tried in their usual order and its `crate::Opts` binds `src/lib.rs` (owner root).
+`src/lib.rs` declares `mod unix;` inside `cfg_if! { … }`, and `src/main.rs` is a second crate with an `Opts` of its own. `src/unix/mod.rs` is a module of the library, but a `mod` inside a macro's tokens is no item of the parse tree, and it is not followed when the roots that compile a file are told (the `mod` itself gives its edge, from line 3). Nothing is known about the file, so the roots are tried in their usual order and its `crate::Opts` binds `src/lib.rs` (owner root).
 
 ## Files
 
@@ -40,4 +40,5 @@ use crate::Opts;
 
 ## Expect
 
+- src/lib.rs:3 -> node:unix      # the `mod unix;` of the branch itself
 - src/unix/mod.rs:1 -> node:root
