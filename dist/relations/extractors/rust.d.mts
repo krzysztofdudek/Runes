@@ -30,4 +30,12 @@ export declare function topLevelGlobs(root: Node): Array<{
     path: string;
     line: number;
 }>;
+/**
+ * The file-backed modules a `cfg_if!` body declares: each `mod x;` in a braced branch, in a `cfg_if!` nested in one, and in an inline `mod y { … }` written there, which adds its name in front (`names`, `r#` stripped: `x`, or `y`, `x`). `at` is the `mod` keyword. `moved` is true when a `path` attribute stands in front of the `mod` or of an inline module around it, behind a visibility, comments or other attributes: the file is then not where the names put it. Every branch is listed, since each is the crate's on some target.
+ */
+export declare function cfgIfModules(body: Node): Array<{
+    names: string[];
+    at: Node;
+    moved: boolean;
+}>;
 export declare const rustExtractor: DependencyExtractor;

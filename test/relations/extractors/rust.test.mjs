@@ -386,3 +386,20 @@ describe('rust extractor — a path attribute and what stands between it and its
     expect(specs(uses)).toEqual([]);
   });
 });
+
+describe('rust extractor — mod declarations inside cfg_if!', () => {
+  it('emits each file-backed mod of each branch from its own line, under either name of the macro', async () => {
+    const { uses } = await run('cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        mod unix;\n    } else if #[cfg(windows)] {\n        pub mod r#gen;\n    } else {\n        pub(crate) mod other;\n    }\n}\ncfg_if! { if #[cfg(a)] { mod plain; } }');
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['self::unix@3', 'self::gen@5', 'self::other@7', 'self::plain@10']);
+  });
+
+  it('reads a nested cfg_if!, an inline mod, and skips a mod with a path attribute or under an inline mod with one', async () => {
+    const { uses } = await run('cfg_if! {\n    if #[cfg(a)] {\n        // mod commented;\n        #[cfg(b)] #[path = "x.rs"] /* c */ pub mod moved;\n        #[path = "dir"] mod relocated { mod inside; }\n        #[allow(unused)] mod kept;\n        mod inline { mod deep; fn mod_like() {} }\n        cfg_if! { if #[cfg(c)] { mod nested; } }\n        const MOD: u8 = 1;\n    }\n}');
+    expect(specs(uses)).toEqual(['self::kept', 'self::inline::deep', 'self::nested']);
+  });
+
+  it('reads a cfg_if! inside an inline module relative to it, and none in a function body, an impl aside', async () => {
+    const { uses } = await run('mod outer {\n    cfg_if! { if #[cfg(a)] { mod leaf; } }\n}\nfn f() {\n    cfg_if! { if #[cfg(a)] { mod local; } }\n    cfg_if! { if #[cfg(a)] { mod stmt; } };\n}\ncfg_if! { if #[cfg(a)] { mod top; } };\nother_macro! { mod not_read; }\n#[path = "p"]\nmod pinned { cfg_if! { if #[cfg(a)] { mod unpinned; } } }\ncfg_if!();');
+    expect(specs(uses)).toEqual(['self::outer::leaf', 'self::top']);
+  });
+});

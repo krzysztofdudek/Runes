@@ -75,7 +75,7 @@ import { rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey
  *
  * MACROS are invisible: a path appearing inside a `macro_invocation` token_tree is
  * unparsed tokens, never a `use_declaration`, so macro-generated deps are never
- * emitted. EXTERNAL crates (std, serde, …) emit a path hint too, but the resolver
+ * emitted (the `mod` declarations of a `cfg_if!` aside, see below). EXTERNAL crates (std, serde, …) emit a path hint too, but the resolver
  * returns undefined for any path whose root is not `crate`/`super`/`self` (and not
  * the current crate's own name) — so they never become a violation.
  *
@@ -89,6 +89,13 @@ import { rustExternBindingKey, rustExternNameKey, rustGlobKey, rustModuleFileKey
  * (silence) rather than risk binding the wrong file. An INLINE `mod foo { … }` (with a body)
  * declares no separate file — its contents are walked in place (its own `use`/paths are
  * caught), and the `mod` itself emits nothing.
+ *
+ * `cfg_if!`: its body is tokens to the grammar, so a `mod x;` in a branch is read from them
+ * (`cfgIfModules`). Each branch is the crate's on some target, so every file-backed `mod` of
+ * every branch is emitted, from the line of its `mod`, under the rules it follows outside the
+ * macro: inside an inline `mod y { … }` written there it is `self::y::x`, and with a `#[path]`
+ * attribute on it or on such an inline module it is skipped. Only a `cfg_if!` that stands
+ * among the items of a module is read.
  *
  * INLINE PATHS: a fully-qualified path used WITHOUT a `use` — in TYPE position
  * (`field: crate::orders::Order`, `impl crate::traits::T`) a `scoped_type_identifier`, in
@@ -422,6 +429,14 @@ function uses(file: ParsedFile): DetectedDep[] {
       // An inline module: what sits inside it is read relative to it.
       const name = node.childForFieldName('name')?.text ?? '';
       return { name: unraw(name), unpinned: (scope?.unpinned ?? false) || name === '' || modHasPathOverride(node), outer: scope };
+    }
+
+    // `cfg_if! { … }` among the items of a module: each file-backed `mod` in its branches is a module on some target, addressed like one written outside the macro.
+    if (node.type === 'macro_invocation') {
+      const body = cfgIfBody(node, parent());
+      if (body === null) return undefined;
+      for (const mod of cfgIfModules(body)) if (!mod.moved) emit(`self::${mod.names.join('::')}`, mod.at);
+      return false;
     }
 
     // `extern crate name [as alias];` → `extern::name` (never `self`); the resolver binds it
@@ -801,6 +816,55 @@ function useBindings(arg: Node, last: string | undefined): string[] {
   }
 }
 
+/** The token tree of a `cfg_if!` invocation that stands among the items of a module (the file's, or an inline module's), or null for any other node. `parent` is the invocation's parent. */
+function cfgIfBody(call: Node, parent: Node | null): Node | null {
+  const macro = call.childForFieldName('macro');
+  const name = macro?.type === 'scoped_identifier' ? macro.childForFieldName('name')?.text : macro?.text;
+  if (name !== 'cfg_if') return null;
+  const holder = parent?.type === 'expression_statement' ? parent.parent : parent;
+  if (holder === null || (holder.type !== 'source_file' && holder.type !== 'declaration_list')) return null;
+  return call.namedChildren.find((c) => c?.type === 'token_tree') ?? null;
+}
+
+/**
+ * The file-backed modules a `cfg_if!` body declares: each `mod x;` in a braced branch, in a `cfg_if!` nested in one, and in an inline `mod y { … }` written there, which adds its name in front (`names`, `r#` stripped: `x`, or `y`, `x`). `at` is the `mod` keyword. `moved` is true when a `path` attribute stands in front of the `mod` or of an inline module around it, behind a visibility, comments or other attributes: the file is then not where the names put it. Every branch is listed, since each is the crate's on some target.
+ */
+export function cfgIfModules(body: Node): Array<{ names: string[]; at: Node; moved: boolean }> {
+  const out: Array<{ names: string[]; at: Node; moved: boolean }> = [];
+  const braced = (tree: Node | undefined): tree is Node => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+  const branches = (tree: Node, names: readonly string[], moved: boolean): void => {
+    for (const c of tree.namedChildren) if (c !== null && braced(c)) items(c, names, moved);
+  };
+  const items = (tree: Node, names: readonly string[], moved: boolean): void => {
+    const tokens = tree.children.filter((c): c is Node => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i]!;
+      const next = tokens[i + 1];
+      if (t.type === 'identifier' && t.text === 'cfg_if' && next?.type === '!' && tokens[i + 2]?.type === 'token_tree') {
+        branches(tokens[i + 2]!, names, moved);
+        i += 2;
+      } else if (!t.isNamed && t.type === 'mod' && next?.type === 'identifier') {
+        // Back over the visibility (`pub`, `pub(crate)`) to the attributes: `#` and its bracketed tree, one pair each.
+        let j = i - 1;
+        if (tokens[j]?.type === 'token_tree' && tokens[j - 1]?.type === 'pub') j -= 2;
+        else if (tokens[j]?.type === 'pub') j -= 1;
+        let path = false;
+        for (; j >= 1 && tokens[j]!.type === 'token_tree' && tokens[j - 1]!.type === '#'; j -= 2) {
+          const id = tokens[j]!.namedChild(0);
+          if (id !== null && id.type === 'identifier' && id.text === 'path') path = true;
+        }
+        const here = [...names, unraw(next.text)];
+        const after = tokens[i + 2];
+        if (after?.type === ';') out.push({ names: here, at: t, moved: moved || path });
+        else if (braced(after)) items(after, here, moved || path);
+        i += 2;
+      }
+    }
+  };
+  branches(body, [], false);
+  return out;
+}
+
 /** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
 function cfgIfItems(body: Node): string[] {
   return body.namedChildren.flatMap((c) => (c !== null && c.type === 'token_tree' && c.child(0)?.type === '{' ? tokenItems(c) : []));
@@ -844,7 +908,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 15,
+  rev: 16,
   declarations,
   uses,
 };

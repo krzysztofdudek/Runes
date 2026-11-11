@@ -40,6 +40,7 @@ use imp::Backend;
 
 ## Expect
 
+- src/lib.rs:6 -> node:imp           # the `mod imp;` of the branch itself
 - src/api/client.rs:1 -> node:imp    # `cfg_if!` declares the module `imp` at the top level of the crate root
 
 ## Why
