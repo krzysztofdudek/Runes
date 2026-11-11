@@ -33,6 +33,7 @@ name = "util"
 ```toml path=crates/app/Cargo.toml
 [package]
 name = "app"
+edition = "2021"
 
 [dependencies]
 shop-core.workspace = true

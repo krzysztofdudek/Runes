@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable } from '@chrisdudek/runes/relations';
-import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, rustTopLevelItemKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
+import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey } from '../../helpers/internal/relations.mjs';
 import { resolveRustPath } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
@@ -360,6 +360,121 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
     expect(resolver.resolveFile({ kind: 'path', specifier: 'shapes::Circle' }, 'src/api/client.rs', 'rust')).toBe('src/shapes.rs');
     // The same tables answer a crate:: path from the file's text, as before.
     expect(makeResolvePathToFile(ws)('crate::shapes::Circle', 'src/api/client.rs', 'rust', false, table)).toBe('src/shapes.rs');
+  });
+
+  it('binds a crate root for a crate:: path or a path into a dependency by what its parse tree binds at the top level, and by its text only without the pass\'s symbol table', async () => {
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n\n[dependencies]\nkit = { path = "kit" }\n');
+    put('src/lib.rs', 'pub const HELP: &str = "call fn ensure first";\nfn setup() { fn nested() {} }\nmod inner { pub struct Deep; }\npub struct Top;\npub use std::fmt::Debug as Shown;\npub extern crate kit as tools;\n');
+    put('src/api/mod.rs', '');
+    put('kit/Cargo.toml', '[package]\nname = "kit"\nedition = "2021"\n');
+    put('kit/src/lib.rs', '// struct Ghost;\npub struct Real;\nconst S: &str = "struct Quoted;";\n');
+    const table = await tableNow();
+    const resolve = makeResolvePathToFile(ws);
+    const withTable = (specifier) => resolve(specifier, 'src/api/mod.rs', 'rust', false, table);
+    for (const name of ['Top', 'Shown', 'tools', 'HELP', 'setup', 'inner']) expect(withTable(`crate::${name}`), name).toBe('src/lib.rs');
+    for (const name of ['ensure', 'nested', 'Deep', 'Debug', 'kit', 'Missing']) expect(withTable(`crate::${name}`), name).toBeUndefined();
+    expect(withTable('kit::Real')).toBe('kit/src/lib.rs');
+    expect(withTable('kit::Ghost')).toBeUndefined();
+    expect(withTable('kit::Quoted')).toBeUndefined();
+    // Without the table there is no parse tree: the text is read, as 1.0 read it, and a word in a string or a nested item passes for a declaration.
+    const withoutTable = (specifier) => resolve(specifier, 'src/api/mod.rs', 'rust');
+    for (const name of ['Top', 'ensure', 'nested', 'Deep']) expect(withoutTable(`crate::${name}`), name).toBe('src/lib.rs');
+    expect(withoutTable('kit::Quoted')).toBe('kit/src/lib.rs');
+    expect(withoutTable('kit::Ghost')).toBeUndefined();
+    // A root file the pass did not extract binds nothing.
+    const partial = new SymbolTable();
+    partial.declare('rust', rustTopLevelItemKey('Real'), 'src/api/mod.rs');
+    expect(resolve('crate::Top', 'src/api/mod.rs', 'rust', false, partial)).toBeUndefined();
+    expect(resolve('kit::Real', 'src/api/mod.rs', 'rust', false, partial)).toBeUndefined();
+  });
+
+  it('follows a name bound with extern crate to its crate: from the crate root in every module, from another module in that module only', async () => {
+    put('Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n\n[dependencies]\nengine-core = { path = "engine-core" }\nrenamed = { path = "other", package = "other-kit" }\nserde = "1"\n');
+    put('engine-core/Cargo.toml', '[package]\nname = "engine-core"\nedition = "2021"\n');
+    put('engine-core/src/lib.rs', 'pub struct Engine;\npub mod parts;\n');
+    put('engine-core/src/parts.rs', 'pub struct Gear;\n');
+    put('other/Cargo.toml', '[package]\nname = "other-kit"\nedition = "2021"\n');
+    put('other/src/lib.rs', 'pub struct Kit;\n');
+    put('src/lib.rs', 'extern crate engine_core as core2;\nextern crate renamed as rn;\nextern crate serde as ser;\nextern crate self as me;\nextern crate app as again;\npub struct Own;\n');
+    put('src/main.rs', 'fn main() {}\n');
+    put('src/api/mod.rs', 'extern crate engine_core as local;\n');
+    put('src/other/mod.rs', '');
+    const table = await tableNow();
+    const resolve = makeResolvePathToFile(ws);
+    const from = (file, specifier) => resolve(specifier, file, 'rust', false, table);
+    for (const file of ['src/lib.rs', 'src/api/mod.rs', 'src/other/mod.rs']) {
+      expect(from(file, 'core2::Engine'), file).toBe('engine-core/src/lib.rs');
+      expect(from(file, 'core2::parts::Gear'), file).toBe('engine-core/src/parts.rs');
+      expect(from(file, 'rn::Kit'), file).toBe('other/src/lib.rs');
+      // The package's own library, bound under another name.
+      expect(from(file, 'again::Own'), file).toBe('src/lib.rs');
+      // A registry crate under an alias, and the crate itself under one, name nothing to follow.
+      expect(from(file, 'ser::Serialize'), file).toBeUndefined();
+      expect(from(file, 'me::Own'), file).toBeUndefined();
+    }
+    // The alias of a module that is not the root is no name of the crate: a bare path that starts with it binds nothing, in that module's file either, whose inline modules are other scopes. The extractor emits a use of the alias's own scope as the crate and the path as written.
+    for (const file of ['src/api/mod.rs', 'src/other/mod.rs', 'src/lib.rs']) expect(from(file, 'local::Engine'), file).toBeUndefined();
+    expect(from('src/api/mod.rs', 'extern::engine_core::as::local::Engine')).toBe('engine-core/src/lib.rs');
+    expect(from('src/api/mod.rs', 'extern::engine_core::as::local::parts::Gear')).toBe('engine-core/src/parts.rs');
+    expect(from('src/api/mod.rs', 'extern::engine_core')).toBe('engine-core/src/lib.rs');
+    expect(from('src/main.rs', 'extern::app')).toBe('src/lib.rs');
+    expect(from('src/api/mod.rs', 'extern::serde')).toBeUndefined();
+    expect(from('src/api/mod.rs', 'extern::serde::as::ser::Serialize')).toBeUndefined();
+    expect(from('src/api/mod.rs', 'extern')).toBeUndefined();
+    // Without the table no alias is known.
+    expect(resolve('core2::Engine', 'src/other/mod.rs', 'rust')).toBeUndefined();
+    // Edition 2015: a use path starts at the crate root, so the root's alias binds everywhere and a module's own alias nowhere.
+    put('old/Cargo.toml', '[package]\nname = "old"\n\n[dependencies]\nengine-core = { path = "../engine-core" }\n');
+    put('old/src/lib.rs', 'extern crate engine_core as core2;\n');
+    put('old/src/api/mod.rs', 'extern crate engine_core as local;\n');
+    const older = await tableNow();
+    const resolveOld = makeResolvePathToFile(ws);
+    expect(resolveOld('core2::Engine', 'old/src/api/mod.rs', 'rust', false, older)).toBe('engine-core/src/lib.rs');
+    expect(resolveOld('extern::engine_core::as::local::Engine', 'old/src/api/mod.rs', 'rust', false, older)).toBeUndefined();
+    expect(resolveOld('extern::engine_core::as::core2::Engine', 'old/src/lib.rs', 'rust', false, older)).toBe('engine-core/src/lib.rs');
+    expect(resolveOld('extern::engine_core', 'old/src/api/mod.rs', 'rust', false, older)).toBe('engine-core/src/lib.rs');
+  });
+
+  it('in edition 2015 reaches a path dependency from a use only through the root\'s extern crate, and takes the root\'s own module of that name first', async () => {
+    const manifest = (edition) => `[package]\nname = "app"\n${edition}\n[dependencies]\nutil = { path = "../util" }\n`;
+    put('util/Cargo.toml', '[package]\nname = "util"\n');
+    put('util/src/lib.rs', 'pub fn slug() {}\n');
+    // The root declares a module `util` and no extern crate.
+    put('local/Cargo.toml', manifest(''));
+    put('local/src/lib.rs', 'mod util;\nmod api;\n');
+    put('local/src/util/mod.rs', 'pub fn slug() {}\n');
+    put('local/src/api/mod.rs', 'use util::slug;\n');
+    put('local/src/tool.rs', 'fn f() {\n    extern crate util;\n}\n');
+    // The root binds nothing called `util`.
+    put('bare/Cargo.toml', manifest(''));
+    put('bare/src/lib.rs', 'pub struct Unrelated;\n');
+    put('bare/src/api/mod.rs', 'use util::slug;\n');
+    // The root writes the extern crate.
+    put('linked/Cargo.toml', manifest(''));
+    put('linked/src/lib.rs', '#[macro_use]\nextern crate util;\n');
+    put('linked/src/api/mod.rs', 'use util::slug;\n');
+    // Edition 2018: the dependency is in the extern prelude.
+    put('newer/Cargo.toml', manifest('edition = "2018"'));
+    put('newer/src/lib.rs', 'pub struct Unrelated;\n');
+    put('newer/src/api/mod.rs', 'use util::slug;\n');
+    const table = await tableNow();
+    const resolve = makeResolvePathToFile(ws);
+    const from = (file, specifier) => resolve(specifier, file, 'rust', false, table);
+    expect(from('local/src/api/mod.rs', 'util::slug')).toBe('local/src/util/mod.rs');
+    expect(from('local/src/lib.rs', 'util::slug')).toBe('local/src/util/mod.rs');
+    // The declaration's own path names the crate, wherever it stands; a use beside it still starts at the crate root.
+    expect(from('local/src/tool.rs', 'extern::util')).toBe('util/src/lib.rs');
+    expect(from('local/src/tool.rs', 'util::slug')).toBe('local/src/util/mod.rs');
+    expect(from('local/src/tool.rs', 'extern::util::as::util::slug')).toBe('local/src/util/mod.rs');
+    expect(from('bare/src/api/mod.rs', 'util::slug')).toBeUndefined();
+    expect(from('bare/src/lib.rs', 'util::slug')).toBeUndefined();
+    expect(from('linked/src/api/mod.rs', 'util::slug')).toBe('util/src/lib.rs');
+    expect(from('linked/src/lib.rs', 'extern::util')).toBe('util/src/lib.rs');
+    expect(from('linked/src/lib.rs', 'extern::util::as::util::slug')).toBe('util/src/lib.rs');
+    expect(from('newer/src/api/mod.rs', 'util::slug')).toBe('util/src/lib.rs');
+    // Without the table what the root binds is not known, and the dependency binds as it does from 2018 on.
+    expect(resolve('util::slug', 'bare/src/api/mod.rs', 'rust')).toBe('util/src/lib.rs');
+    expect(resolve('util::slug', 'local/src/api/mod.rs', 'rust')).toBe('util/src/lib.rs');
   });
 
   it('reads a use path as relative to the crate root in edition 2015, which is also the default, and as an external crate from 2018 on', async () => {
@@ -802,10 +917,11 @@ describe('resolveRustPath — Cargo targets, crate-root items, path dependencies
       ['#!/usr/bin/env run-script {\nconst X: u8 = 1;\nmod a;\n', 'a', lib],
       ['#![allow(dead_code)]\nmod a;\n', 'a', lib],
       ['const C: &core::ffi::CStr = cr#"say " {"#;\nconst D: &core::ffi::CStr = c"{";\nmod a;\n', 'a', lib],
-      ['mod a;\nconst S: &str = "open', 'a', lib],
-      ['mod a;\nconst S: &str = r#"open', 'a', lib],
-      ["mod a;\nconst C: char = '\\", 'a', lib],
-      ['mod a;\n/* open', 'a', lib],
+      // A string, a character or a comment left open swallows the rest of the library's text, its `struct Opts` with it: the library's tree binds no such item, and the binary, the next root in the usual order, does.
+      ['mod a;\nconst S: &str = "open', 'a', main],
+      ['mod a;\nconst S: &str = r#"open', 'a', main],
+      ["mod a;\nconst C: char = '\\", 'a', main],
+      ['mod a;\n/* open', 'a', main],
       // The binary declares the module by name alone, so the binary certainly compiles it, whatever the library's text holds.
       ['#[path = "imp/thing.rs"]\nmod thing;\n', 'imp', main, 'mod imp;\n'],
       ['macro_rules! m { () => {}; }\n', 'b', main, 'mod b;\n'],
@@ -1455,6 +1571,32 @@ path = "..\u002fmore"
     expect(rustFileDeclares('extern crate printers;', 'printer')).toBe(false);
     // Anywhere in the file: the top level is the parse tree's question, not this one's.
     expect(rustFileDeclares('pub mod m { pub struct Error; }', 'Error')).toBe(true);
+  });
+
+  it('takes the derive a `proc_macro_derive` function defines as one more item beside the function, and no helper attribute', async () => {
+    expect(await itemsOf('#[proc_macro_derive(Builder)]\npub fn builder(input: TokenStream) -> TokenStream { input }')).toEqual(['builder', 'Builder']);
+    expect(await itemsOf('/// Doc.\n#[proc_macro_derive(r#Builder, attributes(setter, skip))]\n#[allow(dead_code)]\npub fn derive_builder(input: TokenStream) -> TokenStream { input }')).toEqual(['derive_builder', 'Builder']);
+    // The other kinds of procedural macro are named by their function.
+    expect(await itemsOf('#[proc_macro]\npub fn make(input: TokenStream) -> TokenStream { input }\n#[proc_macro_attribute]\npub fn route(a: TokenStream, b: TokenStream) -> TokenStream { b }')).toEqual(['make', 'route']);
+    // An attribute with no name to read adds nothing; one on another kind of item is not read.
+    expect(await itemsOf('#[proc_macro_derive()]\npub fn a(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive]\npub fn b(input: TokenStream) -> TokenStream { input }\n#[proc_macro_derive("C")]\npub fn c(input: TokenStream) -> TokenStream { input }')).toEqual(['a', 'b', 'c']);
+    expect(await itemsOf('#[proc_macro_derive(Builder)]\nstruct S;\n#[some::proc_macro_derive(X)]\nfn plain() {}')).toEqual(['S', 'plain']);
+  });
+
+  it('reads the names the top level binds with `extern crate` from the parse tree: the alias when renamed, else the crate, with the crate each stands for, and none below the top level', async () => {
+    const externsOf = (code) => withParsedFile('x.rs', code, (tree) => topLevelExternCrates(tree.rootNode).map((x) => [x.name, x.crate]));
+    expect(await externsOf('pub extern crate grep_printer as printer;\n#[macro_use]\nextern crate log;\nextern crate r#async as r#await ;\nextern crate self as facade;')).toEqual([['printer', 'grep_printer'], ['log', 'log'], ['await', 'async'], ['facade', undefined]]);
+    expect(await externsOf('extern crate a as _;\nmod m { extern crate inner; }\nfn f() { extern crate local; }\nconst S: &str = "extern crate text;";\n// extern crate comment;')).toEqual([]);
+    const code = 'struct A;\nextern crate log;\npub extern crate grep_printer as printer;\nextern crate self as me;\n';
+    await withParsedFile('src/lib.rs', code, (tree) => {
+      const keys = rustExtractor.declarations(parsedFile('src/lib.rs', code, tree, 'rust'));
+      expect(keys.filter((d) => d.symbolKey.startsWith('extern:'))).toEqual([
+        { symbolKey: rustExternNameKey('log'), line: 2 }, { symbolKey: rustExternBindingKey('log', 'log'), line: 2 },
+        { symbolKey: rustExternNameKey('printer'), line: 3 }, { symbolKey: rustExternBindingKey('printer', 'grep_printer'), line: 3 },
+        { symbolKey: rustExternNameKey('me'), line: 4 },
+      ]);
+      expect(keys.some((d) => d.symbolKey === rustTopLevelItemKey('log') || d.symbolKey === rustTopLevelItemKey('printer'))).toBe(false);
+    });
   });
 
   it('declares each module a file places by name alone under its module file key, with the line of the mod item, and under a key of its own when a cfg may remove it', async () => {

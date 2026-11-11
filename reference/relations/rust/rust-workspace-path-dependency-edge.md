@@ -33,6 +33,7 @@ name = "util"
 ```toml path=crates/server/Cargo.toml
 [package]
 name = "server"
+edition = "2021"
 
 [dependencies]
 core-lib = { workspace = true }

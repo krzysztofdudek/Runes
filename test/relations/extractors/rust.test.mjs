@@ -210,13 +210,44 @@ describe('rust extractor — uses()', () => {
     expect(specs(uses)).toEqual(['self::gen', 'crate::gen::try::X']);
   });
 
-  it('emits the crate name of `extern crate name as alias;` and drops the alias', async () => {
+  it('emits `extern crate name as alias;` as `extern::name`, the crate named for certain', async () => {
     const { uses } = await run('extern crate core_lib as cl;\nextern crate self as me;\n');
-    expect(specs(uses)).toEqual(['core_lib']);
+    expect(specs(uses)).toEqual(['extern::core_lib']);
   });
 });
 
 describe('rust extractor — inline modules rebase self/super to the file module', () => {
+
+  it('emits a use that starts with a name an extern crate of its own scope binds as the crate and the path as written, and leaves every other scope alone', async () => {
+    const code = [
+      'extern crate core_lib as cl;',
+      'extern crate r#plain;',
+      'extern crate self as me;',
+      'use cl::Engine;',
+      'use plain::{A, deep::B};',
+      'use me::Own;',
+      'use other::X;',
+      'mod inner {',
+      '    use cl::Hidden;',
+      '    extern crate tools as t;',
+      '    use t::Wrench;',
+      '}',
+      'fn f() {',
+      '    extern crate local as l;',
+      '    use l::Thing;',
+      '    use cl::NotHere;',
+      '}',
+      'use t::Outside;',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(specs(uses)).toEqual([
+      'extern::core_lib', 'extern::plain',
+      'extern::core_lib::as::cl::Engine', 'extern::plain::as::plain::A', 'extern::plain::as::plain::deep::B', 'me::Own', 'other::X',
+      'cl::Hidden', 'extern::tools', 'extern::tools::as::t::Wrench',
+      'extern::local', 'extern::local::as::l::Thing', 'cl::NotHere',
+      't::Outside',
+    ]);
+  });
   it('`use super::*` inside one inline `mod tests` is the file module itself (`self`)', async () => {
     const { uses } = await run('mod tests {\n    use super::*;\n    use super::place as p;\n}\n');
     expect(specs(uses)).toEqual(['self', 'self::place']);
