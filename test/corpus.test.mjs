@@ -157,7 +157,7 @@ describe('the corpus gate', () => {
     return PLUG_ENTRY;
   }
 
-  // A file no tsconfig covers. TypeScript's own default for it, node10, reads no `exports`: it would take `legacy.js` by the package's `main` and find nothing in a package that has only `exports`, so it could not check the conditions Runes enters for such a file.
+  // A file no tsconfig covers. TypeScript's own default for it, node10, reads no `exports`: it would take `legacy.js` by the package's `main` and find nothing in a package that has only `exports`, so it could not check the conditions Runes enters for such a file. A dynamic import() in a CommonJS file enters `import`, as Node enters it, not the file's `require`.
   test('the TypeScript oracle reads a package\'s exports for a file no tsconfig covers, with the conditions Node enters, and a relative path as before', () => {
     const repo = join(tmp, 'conditions');
     mkdirSync(repo);
@@ -169,7 +169,7 @@ describe('the corpus gate', () => {
     put(repo, 'packages/dual/esm.mjs', 'export default 1;\n');
     put(repo, 'packages/dual/cjs.cjs', 'module.exports = 1;\n');
     put(repo, 'util.js', 'module.exports = 1;\n');
-    put(repo, 'app.js', "const lib = require('lib');\nconst dual = require('dual');\nconst util = require('./util');\nmodule.exports = [lib, dual, util];\n");
+    put(repo, 'app.js', "const lib = require('lib');\nconst dual = require('dual');\nconst util = require('./util');\nconst lazy = import('dual');\nmodule.exports = [lib, dual, util, lazy];\n");
     put(repo, 'app.mjs', "import dual from 'dual';\nimport util from './util';\nexport default [dual, util];\n");
     git(repo, 'add', '.');
     git(repo, 'commit', '-q', '-m', 'conditions');
@@ -181,12 +181,13 @@ describe('the corpus gate', () => {
       'app.js:1\tpackages/lib/node.js',
       'app.js:2\tpackages/dual/cjs.cjs',
       'app.js:3\tutil.js',
+      'app.js:4\tpackages/dual/esm.mjs',
       'app.mjs:1\tpackages/dual/esm.mjs',
       'app.mjs:2\tutil.js',
     ]);
     const r = corpus('oracles');
     assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /ok {3}conditions .*checked: typescript 5; 0 disagreements/);
+    assert.match(r.out, /ok {3}conditions .*checked: typescript 6; 0 disagreements/);
     manifest([fixture()]);
   });
 
