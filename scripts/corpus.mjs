@@ -941,6 +941,14 @@ function csharpOracle(repoDir, result, findings) {
   return { checked };
 }
 
+/** A compiler's message with what differs between compilers taken out, so that one explanation matches on every machine: gcc echoes the directive (`error: #error "text"`) where clang prints the text (`error: "text"`), and the text may or may not be quoted. */
+function compilerMessage(message) {
+  const m = /^(.*?: error: )(?:#error\s+)?(.*)$/.exec(message);
+  if (m === null) return message;
+  const text = m[2].length >= 2 && m[2].startsWith('"') && m[2].endsWith('"') ? m[2].slice(1, -1) : m[2];
+  return `${m[1]}${text}`;
+}
+
 /** The C preprocessor's own include closure (`cc -MM -MG` with the manifest's include directories and defines) of every C and C++ source file, against the include edges Runes gives that file: an include target outside the closure is a false edge. Headers are not compiled on their own, and a target the preprocessor reaches through another header is in the closure too, so only what Runes adds is caught, not what it misses. */
 function cOracle(repoDir, repo, result, findings) {
   const deps = result.references.filter((r) => (r.language === 'c' || r.language === 'cpp') && r.resolved !== undefined && r.candidates.every((c) => c.kind === 'path') && /\.(c|cc|cpp|cxx|c\+\+)$/i.test(r.from));
@@ -960,7 +968,7 @@ function cOracle(repoDir, repo, result, findings) {
     const run = spawnSync('cc', ['-MM', '-MG', '-x', lang, ...(lang === 'c++' ? ['-std=c++17'] : []), ...flags, path.join(repoDir, file)], { encoding: 'utf8', cwd: path.join(repoDir, dirOf(file)), maxBuffer: 1 << 26 });
     if (run.error || run.status !== 0) {
       // The preprocessor's first message, with the clone's own directory taken out so that it reads the same on every machine.
-      const message = (run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join('');
+      const message = compilerMessage((run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join(''));
       findings.push({ oracle: 'c', kind: 'unreadable', from: file, line: 0, subject: file, runes: 'not compared', answer: `cc -MM failed: ${message}` });
       continue;
     }
