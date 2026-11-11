@@ -15,6 +15,7 @@ A dependency's `path` is a TOML string, and a multi-line string is one too: `pat
 ```toml path=crates/app/Cargo.toml
 [package]
 name = "app"
+edition = "2021"
 
 [dependencies]
 engine = { path = """../engine""", package = "engine" }

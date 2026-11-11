@@ -206,6 +206,27 @@ describe('MATRIX — a library under a src subdirectory, and an edition inherite
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('MATRIX — what a crate root binds', () => {
+  it('rust-crate-path-root-name-in-string-or-nested-fn-silence', () => runCase('rust-crate-path-root-name-in-string-or-nested-fn-silence'));
+  it('rust-crate-path-root-name-in-comment-silence', () => runCase('rust-crate-path-root-name-in-comment-silence'));
+  it('rust-crate-path-root-item-of-known-macro-edge', () => runCase('rust-crate-path-root-item-of-known-macro-edge'));
+  it('rust-path-dependency-root-name-in-string-silence', () => runCase('rust-path-dependency-root-name-in-string-silence'));
+  it('rust-proc-macro-derive-name-edge', () => runCase('rust-proc-macro-derive-name-edge'));
+  it('rust-proc-macro-derive-through-facade-edge', () => runCase('rust-proc-macro-derive-through-facade-edge'));
+  it('rust-proc-macro-derive-helper-attribute-silence', () => runCase('rust-proc-macro-derive-helper-attribute-silence'));
+  it('rust-edition-2015-root-extern-crate-alias-edge', () => runCase('rust-edition-2015-root-extern-crate-alias-edge'));
+  it('rust-root-extern-crate-alias-edge', () => runCase('rust-root-extern-crate-alias-edge'));
+  it('rust-module-extern-crate-alias-own-module-only-edge', () => runCase('rust-module-extern-crate-alias-own-module-only-edge'));
+  it('rust-edition-2015-root-module-over-path-dependency-edge', () => runCase('rust-edition-2015-root-module-over-path-dependency-edge'));
+  it('rust-edition-2015-path-dependency-without-extern-crate-silence', () => runCase('rust-edition-2015-path-dependency-without-extern-crate-silence'));
+  it('rust-edition-2015-root-extern-crate-path-dependency-edge', () => runCase('rust-edition-2015-root-extern-crate-path-dependency-edge'));
+  it('rust-edition-2015-extern-crate-elsewhere-root-module-edge', () => runCase('rust-edition-2015-extern-crate-elsewhere-root-module-edge'));
+  it('rust-edition-2015-main-module-over-library-extern-crate-edge', () => runCase('rust-edition-2015-main-module-over-library-extern-crate-edge'));
+  it('rust-module-extern-crate-alias-not-in-inline-module-edge', () => runCase('rust-module-extern-crate-alias-not-in-inline-module-edge'));
+  it('rust-proc-macro-derive-function-in-own-crate-edge', () => runCase('rust-proc-macro-derive-function-in-own-crate-edge'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESOLVER-LEVEL assertions — verified directly against `resolveRustPath` over a fixed
 // known file-set. These pin module-tree mechanics that the catalogue/runCase harness
 // cannot express (it materializes the EXACT `## Files` layout, whereas these isolate one
