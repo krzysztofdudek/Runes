@@ -1315,9 +1315,9 @@ export interface CsharpExtract {
   refs: CsharpRefDescriptor[];
   /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
   fileLocalTypes: string[];
-  /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent when no descriptor names one. */
+  /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent only when no descriptor names one: whoever stores `refs` stores this with them, and a descriptor that names a place this does not hold gives no candidate group. */
   lists?: string[][];
-  /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent when no call has one. */
+  /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent only when no call has one, and stored with `refs` like `lists`. */
   receiverTypes?: CsharpRefDescriptor[];
 }
 
@@ -2674,12 +2674,17 @@ export function assembleCsharpCandidates(
     out.push({ candidates, kind: 'import', line });
   };
 
-  /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it. */
+  // The two parts the descriptors name by place. An extract a store kept without them (it copied `refs` and the fields it knew) names places that hold nothing: a descriptor that does gives no group, since the condition it carries cannot be read and the edge without it may be the false one.
   const lists = (extract.lists ?? []).map((list) => list.map(typeRef));
+  /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it; undefined where the extract holds nothing at that place. */
   const receiverGroups = new Map<number, TargetHint[]>();
-  const receiverReadings = (place: number): TargetHint[] => {
+  const receiverReadings = (place: number): TargetHint[] | undefined => {
     let group = receiverGroups.get(place);
-    if (group === undefined) receiverGroups.set(place, (group = groupOf(extract.receiverTypes![place])));
+    if (group === undefined) {
+      const written = extract.receiverTypes?.[place];
+      if (written === undefined) return undefined;
+      receiverGroups.set(place, (group = groupOf(written)));
+    }
     return group;
   };
 
@@ -2740,8 +2745,11 @@ export function assembleCsharpCandidates(
       }
       case 'ext': {
         // The receiver's written type, where the file gives one, is a condition on every reading of the group: an instance method of that name there takes the call.
-        const receivers = (r.on ?? []).map(receiverReadings).filter((g) => g.length > 0);
-        const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from: r.from === undefined ? [] : lists[r.from] };
+        const written = (r.on ?? []).map(receiverReadings);
+        const from = r.from === undefined ? [] : lists[r.from];
+        if (from === undefined || written.includes(undefined)) break;
+        const receivers = (written as TargetHint[][]).filter((g) => g.length > 0);
+        const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from };
         const unless: CsharpCondition[] = [];
         // A receiver the file does not declare is a value only as a member of a type around the call.
         if (r.member !== undefined) unless.push({ kind: 'no-member', types: lists[r.member.types], name: r.member.name, ...(r.member.direct ? { call } : {}) });

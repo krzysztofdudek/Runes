@@ -2517,13 +2517,18 @@ export function assembleCsharpCandidates(extract, options = {}) {
                 c.unless = unless;
         out.push({ candidates, kind: 'import', line });
     };
-    /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it. */
+    // The two parts the descriptors name by place. An extract a store kept without them (it copied `refs` and the fields it knew) names places that hold nothing: a descriptor that does gives no group, since the condition it carries cannot be read and the edge without it may be the false one.
     const lists = (extract.lists ?? []).map((list) => list.map(typeRef));
+    /** The readings of the receiver type at `place` of the extract's `receiverTypes`, built once for every call that names it; undefined where the extract holds nothing at that place. */
     const receiverGroups = new Map();
     const receiverReadings = (place) => {
         let group = receiverGroups.get(place);
-        if (group === undefined)
-            receiverGroups.set(place, (group = groupOf(extract.receiverTypes[place])));
+        if (group === undefined) {
+            const written = extract.receiverTypes?.[place];
+            if (written === undefined)
+                return undefined;
+            receiverGroups.set(place, (group = groupOf(written)));
+        }
         return group;
     };
     /** The ordered group of readings one reference gives, taken aside instead of pushed (empty when it gives none). */
@@ -2585,8 +2590,12 @@ export function assembleCsharpCandidates(extract, options = {}) {
             }
             case 'ext': {
                 // The receiver's written type, where the file gives one, is a condition on every reading of the group: an instance method of that name there takes the call.
-                const receivers = (r.on ?? []).map(receiverReadings).filter((g) => g.length > 0);
-                const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from: r.from === undefined ? [] : lists[r.from] };
+                const written = (r.on ?? []).map(receiverReadings);
+                const from = r.from === undefined ? [] : lists[r.from];
+                if (from === undefined || written.includes(undefined))
+                    break;
+                const receivers = written.filter((g) => g.length > 0);
+                const call = { method: r.name, args: r.args ?? 0, typeArgs: r.typeArgs ?? 0, from };
                 const unless = [];
                 // A receiver the file does not declare is a value only as a member of a type around the call.
                 if (r.member !== undefined)

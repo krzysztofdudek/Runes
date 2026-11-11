@@ -2,7 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { withParsedFiles } from '../../helpers/tree-sitter.mjs';
 import { csharpExtractor, SymbolTable, makeResolver, resolveDetectedEdges } from '@chrisdudek/runes/relations';
-import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, methodsKey, decodeMethods, membersKey, decodeMembers, shapeTakes } from '../../helpers/internal/relations.mjs';
+import { baseListKey, decodeWritten, decodeUsings, encodeUsings, writtenReadings, USINGS_KEY, interfaceKey, makeCsharpTypeLookup, attributeReading, csharpUses, extractCsharpRefs, assembleCsharpCandidates, methodsKey, decodeMethods, membersKey, decodeMembers, shapeTakes } from '../../helpers/internal/relations.mjs';
 
 /** The pipeline over C# sources given as `{ path: code }`: the symbol table of their declarations, a resolver in which a file's owner is its parent directory, and the cross-owner edges of one file. */
 async function project(sources, fn) {
@@ -756,6 +756,34 @@ describe('csharp: the lists an extract names by place', () => {
         // A type that is neither partial nor lists a base: a receiver as it always was, and no extension group.
         ['receiver', 6, undefined, undefined],
       ]);
+    });
+  });
+});
+
+describe('csharp: an extract stored without the lists its refs name by place', () => {
+  // A store written before the two lists existed copies the extract field by field and keeps the parts it knows. The refs then name places the copy does not hold.
+  const stored = (extract, keep = []) => ({ fileNs: extract.fileNs, scope: extract.scope, refs: JSON.parse(JSON.stringify(extract.refs)), fileLocalTypes: [...extract.fileLocalTypes], ...Object.fromEntries(keep.map((part) => [part, extract[part]])) });
+  const shared = {
+    'src/core/Order.cs': 'namespace App;\npublic class Order { }\npublic class Bag { }\npublic class Base { protected Bag Settings { get; } }\n',
+    'src/ext/Ext.cs': 'namespace App;\npublic static class Ext { public static void Validate(this Order o) { } public static int Read(this Bag b) => 0; }\n',
+    'src/legacy/Guard.cs': 'namespace App;\npublic static class Guard { public static void Check() { } }\n',
+  };
+  const edgesOf = (extract, resolver) => resolveDetectedEdges(assembleCsharpCandidates(extract), resolver, 'src/web/Use.cs', 'csharp').map((e) => `${e.line}->${e.owner}`);
+
+  it('gives no edge for an extension call whose receiver type or type list is lost, throws nothing, and reads every other reference as before', async () => {
+    await project({ ...shared, 'src/web/Use.cs': 'namespace App;\npublic class Use {\n  void A(Order order) { order.Validate(); }\n  void D() { Guard.Check(); }\n}\n' }, ({ files, resolver }) => {
+      const extract = extractCsharpRefs(files.find((f) => f.path === 'src/web/Use.cs'));
+      // Line 3: the parameter's type, and the extension call on it. Line 4: the static class.
+      expect(edgesOf(extract, resolver)).toEqual(['3->core', '3->ext', '4->legacy']);
+      // The one extension call names a receiver type and the types around it by place.
+      expect(extract.refs.filter((r) => r.kind === 'ext').map((r) => [r.line, r.on, r.from])).toEqual([[3, [0], 0]]);
+      expect([extract.receiverTypes.length, extract.lists]).toEqual([1, [['App.Use']]]);
+      // Both parts lost, then each alone: the call gives nothing, and the plain references stand.
+      expect(edgesOf(stored(extract), resolver)).toEqual(['3->core', '4->legacy']);
+      expect(edgesOf(stored(extract, ['lists']), resolver)).toEqual(['3->core', '4->legacy']);
+      expect(edgesOf(stored(extract, ['receiverTypes']), resolver)).toEqual(['3->core', '4->legacy']);
+      // A copy that keeps both parts reads as the extract in memory does.
+      expect(edgesOf(stored(extract, ['lists', 'receiverTypes']), resolver)).toEqual(['3->core', '3->ext', '4->legacy']);
     });
   });
 });

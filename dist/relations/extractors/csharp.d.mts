@@ -278,9 +278,9 @@ export interface CsharpExtract {
     refs: CsharpRefDescriptor[];
     /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
     fileLocalTypes: string[];
-    /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent when no descriptor names one. */
+    /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent only when no descriptor names one: whoever stores `refs` stores this with them, and a descriptor that names a place this does not hold gives no candidate group. */
     lists?: string[][];
-    /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent when no call has one. */
+    /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent only when no call has one, and stored with `refs` like `lists`. */
     receiverTypes?: CsharpRefDescriptor[];
 }
 /**
