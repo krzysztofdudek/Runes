@@ -116,6 +116,15 @@ describe('MATRIX — Cargo targets and packages (bin / test crate roots, in-repo
   it('rust-inline-package-table-crate-name-edge', () => runCase('rust-inline-package-table-crate-name-edge'));
   it('rust-reexported-extern-crate-edge', () => runCase('rust-reexported-extern-crate-edge'));
   it('rust-extern-crate-alias-edge', () => runCase('rust-extern-crate-alias-edge'));
+  it('rust-patch-workspace-dependency-edge', () => runCase('rust-patch-workspace-dependency-edge'));
+  it('rust-patch-crates-io-git-dependency-silence', () => runCase('rust-patch-crates-io-git-dependency-silence'));
+  it('rust-patch-git-source-edge', () => runCase('rust-patch-git-source-edge'));
+  it('rust-patch-without-path-silence', () => runCase('rust-patch-without-path-silence'));
+  it('rust-patch-own-path-dependency-kept-edge', () => runCase('rust-patch-own-path-dependency-kept-edge'));
+  it('rust-patch-member-manifest-ignored-silence', () => runCase('rust-patch-member-manifest-ignored-silence'));
+  it('rust-patch-renamed-package-relative-path-edge', () => runCase('rust-patch-renamed-package-relative-path-edge'));
+  it('rust-patch-workspace-root-edge', () => runCase('rust-patch-workspace-root-edge'));
+  it('rust-patch-crates-io-path-edge', () => runCase('rust-patch-crates-io-path-edge'));
   it('rust-edition-2018-src-bench-module-edge', () => runCase('rust-edition-2018-src-bench-module-edge'));
   it('rust-edition-2015-bench-file-exists-src-bench-module-edge', () => runCase('rust-edition-2015-bench-file-exists-src-bench-module-edge'));
   it('rust-edition-2015-legacy-bench-path-edge', () => runCase('rust-edition-2015-legacy-bench-path-edge'));
