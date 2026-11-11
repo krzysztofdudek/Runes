@@ -13,7 +13,12 @@ import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.
  *   - `<PackageReference Include="Id">` naming an in-repository project by its `<PackageId>` or assembly name: a repository that consumes its own packages;
  *   - `<Compile Include>` naming files outside the project's directory adds those files, and only those, to the project's compilation (a LINKED file, below); one whose path needs a property this reader does not know, or leaves the repository, could name anything, so the project is OPEN, as it is for an `<Import>` of a `.projitems` shared project and an `<Import>` of a path that cannot be resolved (other than the toolchain's own files and the `Directory.Build.*` lookups). An import of a file the view holds is read like the project file itself.
  *   - `<Compile Remove>`: a file of the project's directory that the item names is in no compilation of that project, so it declares nothing any caller can see. Only a removal that always applies is read: one under a condition (on the item, its `ItemGroup` or a `Choose` branch) or inside a `Target` may not, a file that a `<Compile Include>` of the same project names again is kept, whatever the order, and a project with a `<Compile Include>` this reader cannot place (a path with a property it does not know) keeps every file, because that include may put any of them back.
- * Conditions are read, never evaluated: every branch counts. References are transitive, as in SDK-style projects (`PrivateAssets` and `DisableTransitiveProjectReferences` are not read: only more reach). An OPEN project reaches everything, and so does every project that reaches an open one.
+ * Conditions are read, never evaluated: every branch counts. References are transitive, as in SDK-style projects, and what the compiler is handed decides how far:
+ *   - `ReferenceOutputAssembly="false"` on a `ProjectReference` (an attribute or a child element) is a build-order reference: the referenced assembly is not passed to the compiler, so the referencing project sees none of its types. The project's own references are still followed, since the restore graph is not told otherwise;
+ *   - `PrivateAssets="all"` on a `ProjectReference` keeps the reference from the projects that reference the referencing project: the referencing project sees the referenced one, its consumers do not;
+ *   - a `<Reference>` hands over that one assembly: its types, never the references of the project that builds it, and a consumer of the referencing project does not see it either;
+ *   - a metadata value under a `Condition`, or one that needs a property this reader does not know, is not read: the reference stays visible. `DisableTransitiveProjectReferences` is not read either: only more reach.
+ * An OPEN project reaches everything, and so does every project that reaches an open one.
  *
  * A file that another project compiles through a `Compile` item outside that project's directory (a linked file) is code of that project too: as a caller it sees what the linking project references, as a target it is seen by the linking project and by every project that reaches it. A linked file under no project file is code of the projects that link it alone. Two files that one compilation holds are `same` to each other.
  *
@@ -68,6 +73,17 @@ function globToRegExp(glob: string): RegExp {
 
 /** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
 const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
+
+/** The value of one piece of an item's metadata, written as an attribute or as a child element (`body` is the item's inner text, when it has one), lower-cased; a child element under its own `Condition`, and a value that needs a property this reader does not know, read as not written, so the answer keeps more reach. The last child element wins, as in MSBuild. */
+function metadata(attrText: string, body: string | undefined, name: string): string | undefined {
+  let value = attributes(attrText).get(name.toLowerCase());
+  if (body !== undefined) {
+    const child = new RegExp(`<${name}\\b${ATTRS}>([^<]*)</${name}>`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = child.exec(body)) !== null) if (!attributes(m[1]).has('condition')) value = m[2].trim();
+  }
+  return value === undefined || /[$%@]\(/.test(value) ? undefined : value.toLowerCase();
+}
 
 /** The names an item's `Include` attribute lists (`;`-separated), trimmed and not empty. */
 function includes(attrText: string): string[] {
@@ -225,12 +241,14 @@ export function buildCsharpReachability(
   };
 
   /** `removed`: the patterns of the project's own files that it takes out of its compilation; `kept`: the patterns its `Compile Include` items name inside its directory, which put a removed file back; `keepsAll`: a `Compile Include` this reader cannot place, which may put any removed file back; `friends`: the lower-cased assembly names the project grants its internals; `everyFriend`: a grant this reader cannot name. */
-  interface Facts { refs: Set<string>; open: boolean; links: RegExp[]; removed: RegExp[]; kept: RegExp[]; keepsAll: boolean; friends: Set<string>; everyFriend: boolean }
+  /** `types`: the compiler is handed the project's assembly; `follows`: the project's own references count too; `flows`: a project that references the holder sees it as well. */
+  interface Ref { types: boolean; follows: boolean; flows: boolean }
+  interface Facts { refs: Map<string, Ref>; open: boolean; links: RegExp[]; removed: RegExp[]; kept: RegExp[]; keepsAll: boolean; friends: Set<string>; everyFriend: boolean }
   const factsCache = new Map<string, Facts>();
   const factsOf = (projectDir: string): Facts => {
     const hit = factsCache.get(projectDir);
     if (hit !== undefined) return hit;
-    const facts: Facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
+    const facts: Facts = { refs: new Map(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
     /** A friend's name as written, its properties read as this project's names; an unknown property names every project. */
     const addFriend = (raw: string): void => {
       const own = projectFilesIn(projectDir);
@@ -243,6 +261,11 @@ export function buildCsharpReachability(
         if (/[$%@]\(/.test(w)) facts.everyFriend = true;
         else if (w !== '') facts.friends.add(w.toLowerCase());
       }
+    };
+    /** A reference to a project directory; two items naming it keep the wider of their readings. */
+    const addRef = (dir: string, ref: Ref): void => {
+      const seen = facts.refs.get(dir);
+      facts.refs.set(dir, seen === undefined ? ref : { types: seen.types || ref.types, follows: seen.follows || ref.follows, flows: seen.flows || ref.flows });
     };
     factsCache.set(projectDir, facts);
 
@@ -264,8 +287,14 @@ export function buildCsharpReachability(
       const text = readText(file);
       let m: RegExpExecArray | null;
 
-      const projectRefs = /<ProjectReference\b([^>]*?)\/?>/gi;
+      const projectRefs = new RegExp(`<ProjectReference\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/ProjectReference>)`, 'gi');
       while ((m = projectRefs.exec(text)) !== null) {
+        const applies = !conditional(text, m.index, m[1]);
+        const ref: Ref = {
+          types: !(applies && metadata(m[1], m[2], 'ReferenceOutputAssembly') === 'false'),
+          follows: true,
+          flows: !(applies && (metadata(m[1], m[2], 'PrivateAssets') ?? '').split(';').some((v) => v.trim() === 'all')),
+        };
         for (const item of includes(m[1])) {
           // A path that lies in the repository and names no file under any reading is a reference the graph cannot follow (a spelling this reader does not know): the project is open, never silently without it.
           let named = false;
@@ -275,13 +304,13 @@ export function buildCsharpReachability(
             else if (r.kind === 'path') {
               if (/[*?]/.test(r.path)) {
                 const re = globToRegExp(r.path);
-                for (const p of everyProjectFile()) if (re.test(p)) facts.refs.add(path.posix.dirname(p));
+                for (const p of everyProjectFile()) if (re.test(p)) addRef(path.posix.dirname(p), ref);
               } else {
                 named = true;
                 const file = findFile(r.path);
                 if (file !== undefined) {
                   found = true;
-                  if (PROJECT_FILE.test(file)) facts.refs.add(path.posix.dirname(file));
+                  if (PROJECT_FILE.test(file)) addRef(path.posix.dirname(file), ref);
                 }
               }
             }
@@ -296,12 +325,12 @@ export function buildCsharpReachability(
         // The name is the part before the first comma; an Include that is the assembly's file path (`..\bin\Acme.Api.dll`) names it by the file name.
         const names = includes(m[1]).map((s) => s.split(',')[0].trim()).map((s) => (/[\\/]|\.(?:dll|exe)$/i.test(s) ? stem(s) : s));
         if (hintPath !== undefined && hintPath !== '') names.push(stem(hintPath));
-        for (const name of names) for (const dir of projectDirsNamed(name)) facts.refs.add(dir);
+        for (const name of names) for (const dir of projectDirsNamed(name)) addRef(dir, { types: true, follows: false, flows: false });
       }
 
       const packageRefs = /<PackageReference\b([^>]*?)\/?>/gi;
       while ((m = packageRefs.exec(text)) !== null) {
-        for (const id of includes(m[1])) for (const dir of projectDirsNamed(id)) facts.refs.add(dir);
+        for (const id of includes(m[1])) for (const dir of projectDirsNamed(id)) addRef(dir, { types: true, follows: true, flows: true });
       }
 
       const compiles = new RegExp(`<Compile\\b${ATTRS}\\/?>`, 'gi');
@@ -366,14 +395,19 @@ export function buildCsharpReachability(
     const hit = closureCache.get(start);
     if (hit !== undefined) return hit;
     const reaches = new Set<string>([start]);
+    const followed = new Set<string>([start]);
     let open = false;
     const stack = [start];
     while (stack.length > 0) {
-      const facts = factsOf(stack.pop() as string);
+      const dirOf = stack.pop() as string;
+      const facts = factsOf(dirOf);
       if (facts.open) open = true;
-      for (const dir of facts.refs) {
-        if (!reaches.has(dir)) {
-          reaches.add(dir);
+      for (const [dir, ref] of facts.refs) {
+        // The start project compiles against all of its references; a project it reaches passes on only the ones that flow.
+        if (dirOf !== start && !ref.flows) continue;
+        if (ref.types) reaches.add(dir);
+        if (ref.follows && !followed.has(dir)) {
+          followed.add(dir);
           stack.push(dir);
         }
       }

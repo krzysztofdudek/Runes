@@ -39,6 +39,18 @@ function globToRegExp(glob) {
 }
 /** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
 const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
+/** The value of one piece of an item's metadata, written as an attribute or as a child element (`body` is the item's inner text, when it has one), lower-cased; a child element under its own `Condition`, and a value that needs a property this reader does not know, read as not written, so the answer keeps more reach. The last child element wins, as in MSBuild. */
+function metadata(attrText, body, name) {
+    let value = attributes(attrText).get(name.toLowerCase());
+    if (body !== undefined) {
+        const child = new RegExp(`<${name}\\b${ATTRS}>([^<]*)</${name}>`, 'gi');
+        let m;
+        while ((m = child.exec(body)) !== null)
+            if (!attributes(m[1]).has('condition'))
+                value = m[2].trim();
+    }
+    return value === undefined || /[$%@]\(/.test(value) ? undefined : value.toLowerCase();
+}
 /** The names an item's `Include` attribute lists (`;`-separated), trimmed and not empty. */
 function includes(attrText) {
     const value = attributes(attrText).get('include');
@@ -197,7 +209,7 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         const hit = factsCache.get(projectDir);
         if (hit !== undefined)
             return hit;
-        const facts = { refs: new Set(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
+        const facts = { refs: new Map(), open: false, links: [], removed: [], kept: [], keepsAll: false, friends: new Set(), everyFriend: false };
         /** A friend's name as written, its properties read as this project's names; an unknown property names every project. */
         const addFriend = (raw) => {
             const own = projectFilesIn(projectDir);
@@ -212,6 +224,11 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                 else if (w !== '')
                     facts.friends.add(w.toLowerCase());
             }
+        };
+        /** A reference to a project directory; two items naming it keep the wider of their readings. */
+        const addRef = (dir, ref) => {
+            const seen = facts.refs.get(dir);
+            facts.refs.set(dir, seen === undefined ? ref : { types: seen.types || ref.types, follows: seen.follows || ref.follows, flows: seen.flows || ref.flows });
         };
         factsCache.set(projectDir, facts);
         const queue = [];
@@ -232,8 +249,14 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
             const declDir = path.posix.dirname(file);
             const text = readText(file);
             let m;
-            const projectRefs = /<ProjectReference\b([^>]*?)\/?>/gi;
+            const projectRefs = new RegExp(`<ProjectReference\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/ProjectReference>)`, 'gi');
             while ((m = projectRefs.exec(text)) !== null) {
+                const applies = !conditional(text, m.index, m[1]);
+                const ref = {
+                    types: !(applies && metadata(m[1], m[2], 'ReferenceOutputAssembly') === 'false'),
+                    follows: true,
+                    flows: !(applies && (metadata(m[1], m[2], 'PrivateAssets') ?? '').split(';').some((v) => v.trim() === 'all')),
+                };
                 for (const item of includes(m[1])) {
                     // A path that lies in the repository and names no file under any reading is a reference the graph cannot follow (a spelling this reader does not know): the project is open, never silently without it.
                     let named = false;
@@ -246,7 +269,7 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                                 const re = globToRegExp(r.path);
                                 for (const p of everyProjectFile())
                                     if (re.test(p))
-                                        facts.refs.add(path.posix.dirname(p));
+                                        addRef(path.posix.dirname(p), ref);
                             }
                             else {
                                 named = true;
@@ -254,7 +277,7 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                                 if (file !== undefined) {
                                     found = true;
                                     if (PROJECT_FILE.test(file))
-                                        facts.refs.add(path.posix.dirname(file));
+                                        addRef(path.posix.dirname(file), ref);
                                 }
                             }
                         }
@@ -272,13 +295,13 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
                     names.push(stem(hintPath));
                 for (const name of names)
                     for (const dir of projectDirsNamed(name))
-                        facts.refs.add(dir);
+                        addRef(dir, { types: true, follows: false, flows: false });
             }
             const packageRefs = /<PackageReference\b([^>]*?)\/?>/gi;
             while ((m = packageRefs.exec(text)) !== null) {
                 for (const id of includes(m[1]))
                     for (const dir of projectDirsNamed(id))
-                        facts.refs.add(dir);
+                        addRef(dir, { types: true, follows: true, flows: true });
             }
             const compiles = new RegExp(`<Compile\\b${ATTRS}\\/?>`, 'gi');
             while ((m = compiles.exec(text)) !== null) {
@@ -358,15 +381,22 @@ export function buildCsharpReachability(projectRoot, csFiles, options) {
         if (hit !== undefined)
             return hit;
         const reaches = new Set([start]);
+        const followed = new Set([start]);
         let open = false;
         const stack = [start];
         while (stack.length > 0) {
-            const facts = factsOf(stack.pop());
+            const dirOf = stack.pop();
+            const facts = factsOf(dirOf);
             if (facts.open)
                 open = true;
-            for (const dir of facts.refs) {
-                if (!reaches.has(dir)) {
+            for (const [dir, ref] of facts.refs) {
+                // The start project compiles against all of its references; a project it reaches passes on only the ones that flow.
+                if (dirOf !== start && !ref.flows)
+                    continue;
+                if (ref.types)
                     reaches.add(dir);
+                if (ref.follows && !followed.has(dir)) {
+                    followed.add(dir);
                     stack.push(dir);
                 }
             }
