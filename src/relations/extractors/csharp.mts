@@ -1320,37 +1320,35 @@ function extractCsharp(file: ParsedFile, basesOnly: boolean): CsharpExtract & { 
       if (list === undefined) index.set(name, [entry]);
       else list.push(entry);
     };
-    const around = (node: Node): Node => {
-      let cur = node.parent!;
-      while (!SCOPE_NODES.has(cur.type)) cur = cur.parent!;
-      return cur;
-    };
-    walkCs(file.tree.rootNode, (node, own) => {
+    // The nearest scope and the nearest type declaration around each node, carried down the walk.
+    interface Around { scope: Node; type: Node | null }
+    walkScoped<Around>(file.tree.rootNode, { scope: file.tree.rootNode, type: null }, (node, { scope: around, type: holderType }) => {
       if (node.type === 'variable_declaration') {
         const holder = node.parent!;
-        const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && own.typeDecl !== null;
-        const within = member ? own.typeDecl!.node : around(node);
+        const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && holderType !== null;
         for (const d of node.namedChildren) {
           const name = d!.type === 'variable_declarator' ? d!.childForFieldName('name') : null;
-          if (name !== null && name.type === 'identifier') add(name.text, node.childForFieldName('type'), within, member);
+          if (name !== null && name.type === 'identifier') add(name.text, node.childForFieldName('type'), member ? holderType! : around, member);
         }
       } else if (node.type === 'parameter') {
         const name = node.childForFieldName('name');
         // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
-        if (name !== null) add(name.text, node.childForFieldName('type'), node.parent!.parent!);
-      } else if (node.type === 'property_declaration' && own.typeDecl !== null) {
-        add(node.childForFieldName('name')!.text, node.childForFieldName('type'), own.typeDecl.node, true);
+        const declaration = node.parent!.parent!;
+        if (name !== null) add(name.text, node.childForFieldName('type'), declaration);
+      } else if (node.type === 'property_declaration' && holderType !== null) {
+        add(node.childForFieldName('name')!.text, node.childForFieldName('type'), holderType, true);
       } else if (node.type === 'implicit_parameter' || node.type === 'single_variable_designation') {
-        add(node.text, null, around(node));
+        add(node.text, null, around);
       } else if (node.type === 'foreach_statement') {
         const left = node.childForFieldName('left')!;
         if (left.type === 'identifier') add(left.text, node.childForFieldName('type'), node);
       } else if (node.type === 'catch_declaration' || node.type === 'from_clause' || node.type === 'let_clause' || node.type === 'join_clause' || node.type === 'join_into_clause') {
         for (let i = 0; i < node.childCount; i++) {
-          if (node.fieldNameForChild(i) === 'name' && node.child(i)!.type === 'identifier') add(node.child(i)!.text, null, around(node));
+          if (node.fieldNameForChild(i) === 'name' && node.child(i)!.type === 'identifier') add(node.child(i)!.text, null, around);
         }
       }
-      return undefined;
+      if (!SCOPE_NODES.has(node.type)) return undefined;
+      return { scope: node, type: TYPE_DECLARATION_TYPES.has(node.type) ? node : holderType };
     });
     typedNames = index;
     return index;
