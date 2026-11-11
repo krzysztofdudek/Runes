@@ -1175,27 +1175,29 @@ function collectDeclaredNames(root, fileNs) {
             list.push(entry);
     };
     walkScoped(root, { cs: TOP_SCOPE, scope: root, type: null, listOf: null }, (node, inherited, parentOf) => {
+        // The node's type is read once: the visitor asks it many times, for every node of the file.
+        const type = node.type;
         const scope = csSeen(node, inherited.cs);
         const { scope: around, type: holderType } = inherited;
-        if (TYPE_DECLARATION_TYPES.has(node.type) && takesMembers(node)) {
+        if (TYPE_DECLARATION_TYPES.has(type) && takesMembers(node)) {
             const key = declaredTypeKey(node, scope, fileNs);
             if (key !== undefined)
                 openTypes.add(key);
         }
-        if (node.type === 'implicit_parameter' || node.type === 'single_variable_designation') {
+        if (type === 'implicit_parameter' || type === 'single_variable_designation') {
             declaredNames.add(node.text);
             typed(node.text, null, around);
         }
-        else if (node.type === 'foreach_statement') {
+        else if (type === 'foreach_statement') {
             const left = node.childForFieldName('left');
             if (left.type === 'identifier') {
                 declaredNames.add(left.text); // `foreach (var (a, b) in …)` is a pattern
                 typed(left.text, node.childForFieldName('type'), node);
             }
         }
-        else if (NAME_DECLARING_TYPES.has(node.type)) {
+        else if (NAME_DECLARING_TYPES.has(type)) {
             // An ordinary (non-extension) method or local function also names a callable member.
-            const ordinaryMethod = (node.type === 'method_declaration' || node.type === 'local_function_statement') && extensionMethodName(node, scope) === undefined;
+            const ordinaryMethod = (type === 'method_declaration' || type === 'local_function_statement') && extensionMethodName(node, scope) === undefined;
             const children = node.children;
             for (let i = 0; i < children.length; i++) {
                 const c = children[i];
@@ -1205,20 +1207,20 @@ function collectDeclaredNames(root, fileNs) {
                 declaredNames.add(name);
                 if (ordinaryMethod)
                     methodNames.add(name);
-                if (node.type === 'parameter') {
+                if (type === 'parameter') {
                     // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
                     typed(name, node.childForFieldName('type'), inherited.listOf ?? around);
                 }
-                else if (node.type === 'property_declaration') {
+                else if (type === 'property_declaration') {
                     if (holderType !== null)
                         typed(name, node.childForFieldName('type'), holderType, true);
                 }
-                else if (node.type === 'catch_declaration' || node.type === 'from_clause' || node.type === 'let_clause' || node.type === 'join_clause' || node.type === 'join_into_clause') {
+                else if (type === 'catch_declaration' || type === 'from_clause' || type === 'let_clause' || type === 'join_clause' || type === 'join_into_clause') {
                     typed(name, null, around);
                 }
             }
         }
-        if (node.type === 'variable_declaration') {
+        if (type === 'variable_declaration') {
             const holder = parentOf();
             const member = (holder.type === 'field_declaration' || holder.type === 'event_field_declaration') && holderType !== null;
             for (const d of node.namedChildren) {
@@ -1228,12 +1230,12 @@ function collectDeclaredNames(root, fileNs) {
             }
         }
         const below = csBelow(node, scope, parentOf) ?? scope;
-        const opens = SCOPE_NODES.has(node.type);
+        const opens = SCOPE_NODES.has(type);
         // The parameters of a list are in scope in the declaration the list belongs to.
-        const lists = node.type === 'parameter_list' || node.type === 'bracketed_parameter_list';
+        const lists = type === 'parameter_list' || type === 'bracketed_parameter_list';
         if (below === inherited.cs && !opens && !lists && inherited.listOf === null)
             return undefined;
-        return { cs: below, scope: opens ? node : around, type: TYPE_DECLARATION_TYPES.has(node.type) ? node : holderType, listOf: lists ? parentOf() : null };
+        return { cs: below, scope: opens ? node : around, type: TYPE_DECLARATION_TYPES.has(type) ? node : holderType, listOf: lists ? parentOf() : null };
     });
     return { declaredNames, methodNames, openTypes, typedNames };
 }
