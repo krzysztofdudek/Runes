@@ -419,6 +419,10 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-file-local-type-hides-using-imported-type-silence', () => runCase('csharp-file-local-type-hides-using-imported-type-silence'));
   it('csharp-file-local-type-nearer-nested-type-edge', () => runCase('csharp-file-local-type-nearer-nested-type-edge'));
   it('csharp-file-local-type-nearer-inner-namespace-type-edge', () => runCase('csharp-file-local-type-nearer-inner-namespace-type-edge'));
+  it('csharp-file-local-type-alias-target-silence', () => runCase('csharp-file-local-type-alias-target-silence'));
+  it('csharp-file-local-type-using-static-target-silence', () => runCase('csharp-file-local-type-using-static-target-silence'));
+  it('csharp-file-local-type-alias-qualified-silence', () => runCase('csharp-file-local-type-alias-qualified-silence'));
+  it('csharp-file-local-type-alias-qualified-attribute-silence', () => runCase('csharp-file-local-type-alias-qualified-attribute-silence'));
   it('csharp-file-local-type-other-file-hides-nothing-edge', () => runCase('csharp-file-local-type-other-file-hides-nothing-edge'));
   it('csharp-file-local-nested-type-in-own-file-silence', () => runCase('csharp-file-local-nested-type-in-own-file-silence'));
   it('csharp-alias-colon-colon-generic-middle-arity-edge', () => runCase('csharp-alias-colon-colon-generic-middle-arity-edge'));
