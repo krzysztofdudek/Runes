@@ -24,6 +24,7 @@ path = "checks/api.rs"
 
 ```rust path=checks/api.rs
 use self::parts::Part;
+mod parts;
 ```
 
 ```rust path=checks/parts/mod.rs
@@ -40,6 +41,7 @@ pub struct Tool;
 
 ## Expect
 
+- checks/api.rs:2 -> node:parts      # the `mod` that makes the file a module
 - checks/api.rs:1 -> node:parts          # the declared test is rooted at its path; tests/api.rs shares its name and is dropped
 
 ## Why

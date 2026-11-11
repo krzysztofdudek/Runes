@@ -24,6 +24,7 @@ path = "tools/cli.rs"
 
 ```rust path=tools/cli.rs
 use self::parts::Part;
+mod parts;
 ```
 
 ```rust path=tools/parts/mod.rs
@@ -40,6 +41,7 @@ pub struct Thing;
 
 ## Expect
 
+- tools/cli.rs:2 -> node:parts      # the `mod` that makes the file a module
 - tools/cli.rs:1 -> node:parts          # the declared path is the bin's root; src/bin/cli.rs shares its name and is dropped
 
 ## Why

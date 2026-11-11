@@ -22,6 +22,7 @@ name = "cli"
 
 ```rust path=src/cli.rs
 use self::tools::Helper;
+mod tools;
 ```
 
 ```rust path=src/tools/mod.rs
@@ -38,6 +39,7 @@ fn main() {}
 
 ## Expect
 
+- src/cli.rs:2 -> node:tools      # the `mod` that makes the file a module
 - src/cli.rs:1 -> node:tools          # two inferred bins named `cli`: the legacy path src/cli.rs is the root
 
 ## Why

@@ -30,6 +30,7 @@ pub struct Thing;
 
 ```rust path=src/bin/main.rs
 use self::tools::Helper;
+mod tools;
 ```
 
 ```rust path=src/bin/tools/mod.rs
@@ -38,6 +39,7 @@ pub struct Helper;
 
 ## Expect
 
+- src/bin/main.rs:2 -> node:tools      # the `mod` that makes the file a module
 - src/bin/main.rs:1 -> node:tools          # legacy bin path: src/bin/main.rs when there is a library and no src/main.rs
 
 ## Why
