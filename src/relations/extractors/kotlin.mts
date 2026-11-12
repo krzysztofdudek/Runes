@@ -539,7 +539,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
 
 export const kotlinExtractor: DependencyExtractor = {
   languages: new Set(['kotlin']),
-  rev: 7,
+  rev: 8,
   declarations,
   uses,
 };

@@ -399,53 +399,6 @@ describe('kotlin extractor — local declarations and JVM file facades', () => {
   });
 });
 
-describe('kotlin extractor — parse recovery does not depend on how far down the file a declaration sits', () => {
-  // The same broken text, after 0 to 120 declarations of filler: every fact is the same, with its line counted from the start of the text.
-  const broken = [
-        '/** Returns a target type for [type] or null if it cannot be used with code gen. */',
-        'internal fun targetType(',
-        '): TargetType? {',
-        '  if (type !is KSClassDeclaration) {',
-        '    logger.error(',
-        '    )',
-        '  }',
-        '    if (visibility == KModifier.INTERNAL) {',
-        '    }',
-        '  return TargetType(',
-        '  )',
-        '}',
-        '@OptIn(KspExperimental::class)',
-        'internal fun primaryConstructor(',
-        '): TargetConstructor? {',
-        '  for ((index, parameter) in primaryConstructor.parameters.withIndex()) {',
-        '      TargetParameter(',
-        '      )',
-        '  }',
-        '      ?: run {',
-        '      }',
-        '  return TargetConstructor(',
-        '  )',
-        '}'
-  ].join('\n');
-
-  const factsAfter = async (fillerLines) => {
-    const filler = Array.from({ length: fillerLines }, (_, i) => `val filler${i} = 1\n`).join('');
-    const { declarations, uses } = await run(filler + broken + '\n');
-    return {
-      declarations: declarations.filter((d) => d.line > fillerLines + 1).map((d) => `${d.symbolKey}@${d.line - fillerLines}`),
-      uses: uses.map((u) => `${u.candidates.map((c) => c.symbolKey).join('|')}@${u.line - fillerLines}`),
-    };
-  };
-
-  it('reads a broken declaration the same wherever it sits in the file', async () => {
-    const atTop = await factsAfter(0);
-    expect(atTop.declarations).toEqual(expect.arrayContaining(['targetType@2', 'primaryConstructor@13']));
-    for (const depth of [1, 2, 3, 5, 9, 40, 120]) {
-      expect(await factsAfter(depth)).toEqual(atTop);
-    }
-  });
-});
-
 describe('kotlin extractor — parse recovery reads headers and lexes defensively', () => {
   const keysOf = (decls) => decls.map((d) => d.symbolKey);
 

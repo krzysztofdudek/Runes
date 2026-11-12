@@ -675,22 +675,28 @@ function pointAt(starts, index) {
     return { row: lo, column: index - starts[lo] };
 }
 /**
- * Parse `[start, end)` of `text` as the text `'\n'.repeat(row) + ' '.repeat(column) + text.slice(start, end) + '\n'`, where `row` and `column` are those of `start`, so its rows and columns are the file's. The trailing newline ends the last statement: without it the grammar reports a missing member separator after a one-line class body at end of input.
+ * Parse `[start, end)` of `text` as a document of its own, then give its tree the rows and columns the declaration has in the file. The grammar weighs how much text an error would skip, the padding before the first token included, so a parse that began after `row` lines of padding repaired the same broken declaration into another tree than one that began after `row + 1`. The parse here has no padding, whatever the declaration's row, so what it makes of a declaration depends on the declaration alone.
  *
- * The padding is never read: the parse covers only the declaration and its newline, from where the padding would end, so a file's declarations cost their own length, not the length of what precedes them. Its extent still counts, because the grammar weighs how much text an error would skip, the padding before the first token included: the same broken declaration repairs into a clean tree forty lines into a file and stays an ERROR on line twenty. Starting the parse where the padding ends keeps that choice what it was.
+ * The tree is then edited as if the padding had been inserted before its first token (`Tree.edit`, no text is re-read): every node gets the index and the row and column it has in the file, and the tree reads its text through the same shift. The trailing newline ends the last statement: without it the grammar reports a missing member separator after a one-line class body at end of input.
  */
 export function parseAt(parser, text, starts, start, end) {
     const at = pointAt(starts, start);
     const pad = at.row + at.column;
     const length = end - start;
-    // The parse reads from the range's start on, never before it.
     const read = (i) => {
-        if (i < pad + length)
-            return text.slice(Math.max(start, start + i - pad), Math.min(end, start + i - pad + READ_SLICE));
-        return i === pad + length ? '\n' : '';
+        if (i < length)
+            return text.slice(start + i, Math.min(end, start + i + READ_SLICE));
+        return i === length ? '\n' : '';
     };
-    const range = { startIndex: pad, endIndex: pad + length + 1, startPosition: at, endPosition: { row: pointAt(starts, end).row + 1, column: 0 } };
-    return boundedParse(parser, read, length + 1, [range]);
+    const range = { startIndex: 0, endIndex: length + 1, startPosition: { row: 0, column: 0 }, endPosition: { row: pointAt(starts, end).row + 1 - at.row, column: 0 } };
+    const tree = boundedParse(parser, read, length + 1, [range]);
+    if (tree === null)
+        return null;
+    const origin = { row: 0, column: 0 };
+    tree.edit({ startIndex: 0, oldEndIndex: 0, newEndIndex: pad, startPosition: origin, oldEndPosition: origin, newEndPosition: at });
+    // A tree reads its text by the callback its parse was given, at the indexes its nodes have now.
+    tree.textCallback = (index) => (index < pad ? '' : read(index - pad));
+    return tree;
 }
 /**
  * The view of a file whose tree holds no ERROR: the tree as it stands, unless a nested class is cut from its next-line constructor (`cutClasses`). Then only the joins of step 2 are applied, never the blanking, and the joined text is re-parsed with `newParser`; a clean re-parse replaces the tree. Without a parser, or when the re-parse is damaged, the tree stays and `readMisread` marks the cut class's top-level type incomplete, so a clean file never needs a parser.
