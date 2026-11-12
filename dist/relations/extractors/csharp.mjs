@@ -624,6 +624,8 @@ function assemblyOnlyExtension(node, owner) {
     }
     return owner.seen === 'assembly';
 }
+/** The binary operators that bind looser than `is`: an `is` pattern ends before one of them (the operators that bind tighter, `+`, `*`, `<<`, belong to a constant pattern). */
+const TESTS_END_BEFORE = new Set(['||', '&&', '|', '&', '^', '==', '!=', '??']);
 /** True when an extension method is private to its static class: a method that says `private` (also `private protected`, which a static class cannot derive from) or says no access modifier at all. A method of the misread C# 14 block form is judged by its class alone, so it is never private here. */
 function privateExtension(node) {
     if (node.type !== 'method_declaration')
@@ -1992,12 +1994,17 @@ export function extractCsharpRefs(file) {
         if (node.type === 'constant_pattern') {
             // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
             // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
-            const expr = node.namedChild(0);
+            const whole = node.namedChild(0);
+            let expr = whole;
+            // The grammar takes all that follows `is` for the pattern's expression, so `x is A || x is B` is the pattern `A || (x is B)` and `x is A && x is B || x is C` the pattern `(A && …) || (x is C)`. An operator that binds looser than `is` ends the pattern in the language, so the name at the head of such a chain is the pattern: a type test, as a lone `x is A` is. The rest of the chain is read as it stands.
+            while (expr !== null && expr.type === 'binary_expression' && TESTS_END_BEFORE.has(expr.childForFieldName('operator').type)) {
+                expr = expr.childForFieldName('left');
+            }
             if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name'))
                 emitTypeNode(expr);
             // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
             // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace).
-            else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)) && emitMemberAccessType(expr, true))
+            else if (expr === whole && expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)) && emitMemberAccessType(expr, true))
                 return false;
             return undefined;
         }
@@ -2895,7 +2902,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 39,
+    rev: 40,
     declarations,
     uses,
 };
