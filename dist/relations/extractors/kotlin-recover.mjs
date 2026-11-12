@@ -679,7 +679,7 @@ function pointAt(starts, index) {
  *
  * The padding is never read: the parse covers only the declaration and its newline, from where the padding would end, so a file's declarations cost their own length, not the length of what precedes them. Its extent still counts, because the grammar weighs how much text an error would skip, the padding before the first token included: the same broken declaration repairs into a clean tree forty lines into a file and stays an ERROR on line twenty. Starting the parse where the padding ends keeps that choice what it was.
  */
-function parseAt(parser, text, starts, start, end) {
+export function parseAt(parser, text, starts, start, end) {
     const at = pointAt(starts, start);
     const pad = at.row + at.column;
     const length = end - start;
