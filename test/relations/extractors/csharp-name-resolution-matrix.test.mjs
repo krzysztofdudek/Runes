@@ -487,4 +487,8 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-published-and-file-type-each-own-base-edge', () => runCase('csharp-published-and-file-type-each-own-base-edge'));
   it('csharp-published-partial-type-beside-file-type-inherited-member-edge', () => runCase('csharp-published-partial-type-beside-file-type-inherited-member-edge'));
   it('csharp-file-type-beside-published-type-member-edge', () => runCase('csharp-file-type-beside-published-type-member-edge'));
+  it('csharp-csproj-using-item-condition-raw-greater-than-edge', () => runCase('csharp-csproj-using-item-condition-raw-greater-than-edge'));
+  it('csharp-assembly-name-condition-raw-greater-than-edge', () => runCase('csharp-assembly-name-condition-raw-greater-than-edge'));
+  it('csharp-hintpath-condition-raw-greater-than-edge', () => runCase('csharp-hintpath-condition-raw-greater-than-edge'));
+  it('csharp-internals-visible-to-parameter-condition-raw-greater-than-edge', () => runCase('csharp-internals-visible-to-parameter-condition-raw-greater-than-edge'));
 });

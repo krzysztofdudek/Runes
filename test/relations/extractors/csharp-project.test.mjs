@@ -152,6 +152,15 @@ describe('buildCsharpProjectScopes — MSBuild reading edge cases', () => {
     expect(scopes.get('lib/L.cs').usings).not.toContain('Microsoft.Extensions.Hosting');
   });
 
+  it('a raw > inside an attribute value of the ImplicitUsings property or of the Project tag ends no tag', () => {
+    const root = project({
+      'svc/Svc.csproj': '<Project Condition="\'$(V)\' > \'1\'" Sdk="Microsoft.NET.Sdk.Worker"><PropertyGroup><ImplicitUsings Condition="\'$(V)\' > \'1\'">enable</ImplicitUsings></PropertyGroup></Project>',
+    });
+    const usings = buildCsharpProjectScopes(root, [cs('svc/W.cs')]).get('svc/W.cs').usings;
+    expect(usings).toContain('System.Linq'); // the property under the condition is read
+    expect(usings).toContain('Microsoft.Extensions.Hosting'); // the Sdk after the condition is read
+  });
+
   it('an unreadable project directory or project file is treated as empty, never as an error', () => {
     const root = project({ 'p/P.csproj': '<Project />' });
     rmSync(path.join(root, 'p/P.csproj'));
