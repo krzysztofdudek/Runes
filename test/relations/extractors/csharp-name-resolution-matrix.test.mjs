@@ -487,4 +487,7 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-published-and-file-type-each-own-base-edge', () => runCase('csharp-published-and-file-type-each-own-base-edge'));
   it('csharp-published-partial-type-beside-file-type-inherited-member-edge', () => runCase('csharp-published-partial-type-beside-file-type-inherited-member-edge'));
   it('csharp-file-type-beside-published-type-member-edge', () => runCase('csharp-file-type-beside-published-type-member-edge'));
+  it('csharp-cyclic-base-attribute-edge', () => runCase('csharp-cyclic-base-attribute-edge'));
+  it('csharp-cyclic-base-extension-receiver-edge', () => runCase('csharp-cyclic-base-extension-receiver-edge'));
+  it('csharp-cyclic-base-inherited-nested-call-edge', () => runCase('csharp-cyclic-base-inherited-nested-call-edge'));
 });

@@ -1,4 +1,4 @@
-import type { SymbolTable } from './symbol-table.mjs';
+import { type SymbolTable } from './symbol-table.mjs';
 import type { DetectedDep, TargetHint } from './extractors/types.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
 /**
