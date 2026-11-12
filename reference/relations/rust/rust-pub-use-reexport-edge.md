@@ -29,9 +29,20 @@ pub struct Handler;
 pub use crate::api::Handler;
 ```
 
+```rust path=src/c/mod.rs
+pub mod app;
+```
+
+```rust path=src/lib.rs
+pub mod api;
+pub mod c;
+```
+
 ## Expect
 
 - src/c/app.rs:1 -> node:api      # `pub use` is identical to `use` for the edge; crate::api::Handler → src/api/mod.rs (node api)
+- src/lib.rs:1 -> node:api      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:c      # the module declaration of the completed crate
 
 ## Why
 

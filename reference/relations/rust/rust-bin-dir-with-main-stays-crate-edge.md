@@ -25,6 +25,7 @@ fn main() {}
 
 ```rust path=src/bin/config.rs owner=bin
 pub struct Cfg;
+fn main() {}
 ```
 
 ```rust path=src/bin/tool/main.rs

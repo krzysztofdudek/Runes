@@ -52,10 +52,24 @@ use util::text::slug;
 use serde::Serialize;
 ```
 
+```rust path=crates/util/src/lib.rs
+pub mod text;
+```
+
+```rust path=crates/app/src/cmd/mod.rs
+pub mod run;
+```
+
+```rust path=crates/app/src/lib.rs
+pub mod cmd;
+```
+
 ## Expect
 
 - crates/app/src/cmd/run.rs:1 -> node:src     # shop_core (`dependencies.shop-core.workspace = true` above the first header, inherited from `dependencies.shop-core.path` inside [workspace]) → crates/core/src/lib.rs
 - crates/app/src/cmd/run.rs:2 -> node:text    # util (`dependencies.util.path` above the first header) → crates/util/src/text/mod.rs
+- crates/util/src/lib.rs:1 -> node:text      # the module declaration of the completed crate
+- crates/app/src/lib.rs:1 -> node:cmd      # the module declaration of the completed crate
 
 ## Why
 

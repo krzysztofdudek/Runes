@@ -36,6 +36,7 @@ extern crate util;
 ```rust path=src/main.rs owner=root
 mod util;
 mod cli;
+fn main() {}
 ```
 
 ```rust path=src/util.rs owner=localutil

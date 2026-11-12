@@ -31,6 +31,7 @@ pub struct Thing;
 ```rust path=src/main.rs
 use self::tools::Helper;
 mod tools;
+fn main() {}
 ```
 
 ```rust path=src/tools/mod.rs

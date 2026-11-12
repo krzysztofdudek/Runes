@@ -30,9 +30,24 @@ pub struct D;
 use crate::a::b::*;
 ```
 
+```rust path=src/a/mod.rs
+pub mod b;
+```
+
+```rust path=src/c/mod.rs
+pub mod r#use;
+```
+
+```rust path=src/lib.rs
+pub mod a;
+pub mod c;
+```
+
 ## Expect
 
 - src/c/use.rs:1 -> node:a      # the glob prefix module crate::a::b → src/a/b.rs (node a); no per-item widening
+- src/lib.rs:1 -> node:a      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:c      # the module declaration of the completed crate
 
 ## Why
 

@@ -42,11 +42,18 @@ fn g() {
 mod widget;
 ```
 
+```rust path=src/lib.rs
+pub mod feature;
+pub mod shared;
+```
+
 ## Expect
 
 - src/feature/mod.rs:7 -> node:widget      # the `mod` that makes the file a module
 - src/feature/mod.rs:2 -> node:widget      # inline type-position self::widget::W → src/feature/widget/mod.rs (node widget)
 - src/feature/mod.rs:5 -> node:shared      # inline expression-position super::shared::run → src/shared/mod.rs (node shared)
+- src/lib.rs:1 -> node:feature      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:shared      # the module declaration of the completed crate
 
 ## Why
 

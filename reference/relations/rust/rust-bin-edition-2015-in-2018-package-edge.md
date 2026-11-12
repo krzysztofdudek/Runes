@@ -25,6 +25,7 @@ edition = "2015"
 
 ```rust path=src/main.rs
 mod shapes;
+fn main() {}
 ```
 
 ```rust path=src/shapes.rs

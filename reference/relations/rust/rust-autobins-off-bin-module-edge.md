@@ -26,6 +26,7 @@ path = "src/main.rs"
 ```rust path=src/main.rs
 mod util;
 mod bin;
+fn main() {}
 ```
 
 ```rust path=src/util.rs

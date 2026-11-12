@@ -28,6 +28,7 @@ pub struct Args;
 ```rust path=src/bin/tool.rs
 mod opts;
 use crate::opts::Args;
+fn main() {}
 ```
 
 ## Expect

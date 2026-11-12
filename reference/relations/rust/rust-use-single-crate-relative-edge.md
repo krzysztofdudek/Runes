@@ -31,9 +31,24 @@ pub struct C;
 use crate::a::b::C;
 ```
 
+```rust path=src/a/mod.rs
+pub mod b;
+```
+
+```rust path=src/c/mod.rs
+pub mod r#use;
+```
+
+```rust path=src/lib.rs
+pub mod a;
+pub mod c;
+```
+
 ## Expect
 
 - src/c/use.rs:1 -> node:a      # `use crate::a::b::C` resolves through the tree to src/a/b.rs (node a)
+- src/lib.rs:1 -> node:a      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:c      # the module declaration of the completed crate
 
 ## Why
 

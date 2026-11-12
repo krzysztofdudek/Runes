@@ -29,10 +29,19 @@ pub struct Order;
 use crate::{billing::Invoice, orders::Order};
 ```
 
+```rust path=src/lib.rs
+pub mod app;
+pub mod billing;
+pub mod orders;
+```
+
 ## Expect
 
 - src/app/mod.rs:1 -> node:billing      # the item crate::billing::Invoice → src/billing/mod.rs
 - src/app/mod.rs:1 -> node:orders       # the item crate::orders::Order → src/orders/mod.rs, same line, its own edge
+- src/lib.rs:1 -> node:app      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:billing      # the module declaration of the completed crate
+- src/lib.rs:3 -> node:orders      # the module declaration of the completed crate
 
 ## Why
 

@@ -32,9 +32,14 @@ pub struct X;
 mod foo;
 ```
 
+```rust path=src/lib.rs
+pub mod orders;
+```
+
 ## Expect
 
 - src/orders/mod.rs:1 -> node:foo      # `mod foo;` → self::foo → src/orders/foo/mod.rs (node foo), a structural intra-crate file dependency
+- src/lib.rs:1 -> node:orders      # the module declaration of the completed crate
 
 ## Why
 

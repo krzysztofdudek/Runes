@@ -31,9 +31,20 @@ mod foo {
 }
 ```
 
+```rust path=src/c/mod.rs
+pub mod app;
+```
+
+```rust path=src/lib.rs
+pub mod c;
+pub mod foo;
+```
+
 ## Expect
 
 - silence      # the inline `mod foo { … }` is same-file detail; no edge to the unrelated file-backed node:foo
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:foo      # the module declaration of the completed crate
 
 ## Why
 
