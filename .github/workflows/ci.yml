@@ -75,7 +75,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Windows: the family runs there too, in three shards for the runner's few cores (test/ci-workflow.test.mjs holds that together they run every test file). The vendor tool's end-to-end tests exercise git, file:// clones and line endings on a real Windows checkout; dist freshness also proves .gitattributes keeps the committed output LF. The grammars come from the grammars job (see there) and are read offline, so a missing one fails here rather than starting a source build.
+  # Windows: the family runs there too, in three shards for the runner's few cores (the test script hands the shard flag to node ahead of the file pattern, and test/ci-workflow.test.mjs holds that the shards together run every test file once). The vendor tool's end-to-end tests exercise git, file:// clones and line endings on a real Windows checkout; dist freshness also proves .gitattributes keeps the committed output LF. The grammars come from the grammars job (see there) and are read offline, so a missing one fails here rather than starting a source build.
   test-windows:
     needs: grammars
     runs-on: windows-latest

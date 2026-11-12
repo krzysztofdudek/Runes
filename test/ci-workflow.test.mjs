@@ -50,7 +50,7 @@ test('the shards of the Windows job, started as the workflow starts them, run ev
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     const runner = pkg.scripts.test.split(' && ').at(-1);
     assert.match(runner, /^node scripts\/test\.mjs$/, 'npm appends the options of `npm test --` to the last command, so it must be the one that hands them to node ahead of the pattern');
-    const flag = /npm test -- (--test-shard=\S+)$/m.exec(job('test-windows'))[1];
+    const flag = /npm test -- (--test-shard=.+)$/m.exec(job('test-windows'))[1];
     assert.equal(flag, '--test-shard=${{ matrix.shard }}/3');
     const names = Array.from({ length: 11 }, (_, i) => `file-${String(i).padStart(2, '0')}`);
     mkdirSync(path.join(dir, 'test', 'nested'), { recursive: true });
