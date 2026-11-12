@@ -503,4 +503,7 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-extension-ambiguous-names-receiver-type-takes-one-edge', () => runCase('csharp-extension-ambiguous-names-receiver-type-takes-one-edge'));
   it('csharp-extension-ambiguous-names-receiver-derived-type-edge', () => runCase('csharp-extension-ambiguous-names-receiver-derived-type-edge'));
   it('csharp-extension-ambiguous-names-receiver-type-takes-both-silence', () => runCase('csharp-extension-ambiguous-names-receiver-type-takes-both-silence'));
+  it('csharp-cyclic-base-attribute-edge', () => runCase('csharp-cyclic-base-attribute-edge'));
+  it('csharp-cyclic-base-extension-receiver-edge', () => runCase('csharp-cyclic-base-extension-receiver-edge'));
+  it('csharp-cyclic-base-inherited-nested-call-edge', () => runCase('csharp-cyclic-base-inherited-nested-call-edge'));
 });

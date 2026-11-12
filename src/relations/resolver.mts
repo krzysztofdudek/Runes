@@ -1,4 +1,4 @@
-import type { SymbolTable } from './symbol-table.mjs';
+import { declarationCount, type SymbolTable } from './symbol-table.mjs';
 import type { CsharpCondition, DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
@@ -268,15 +268,47 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return files;
   };
 
+  /** What the resolver has read from the table for C#, kept while the table has taken no declaration since: the same few names are read through every using directive of every file, and each answer is the same each time. */
+  const kept = { at: -1, declared: new Map<string, boolean>(), shadowSeen: new Map<string, boolean>(), files: new Map<string, string[]>(), plain: new Map<string, string[]>(), nestedOnly: new Map<string, string[]>(), within: new Map<string, string[]>() };
+  const keepFresh = (): void => {
+    const declarations = declarationCount(deps.symbolTable);
+    if (declarations === kept.at) return;
+    kept.at = declarations;
+    kept.declared.clear();
+    kept.shadowSeen.clear();
+    kept.files.clear();
+    kept.plain.clear();
+    kept.nestedOnly.clear();
+    kept.within.clear();
+  };
+
+  /** The files that declare a key, as `SymbolTable.filesFor` gives them; a C# key's are kept (see `kept`), the same list read again and again and never changed by a reader. */
+  const filesOf = (language: string, key: string): readonly string[] => {
+    if (language !== 'csharp') return deps.symbolTable.filesFor(language, key);
+    keepFresh();
+    let files = kept.files.get(key);
+    if (files === undefined) kept.files.set(key, (files = deps.symbolTable.filesFor(language, key)));
+    return files;
+  };
+
   /** True when the repository declares one of `shadow`'s names, as a type or as a namespace a key lies in: a nearer name C#'s lookup stops at, so a reading behind it binds nothing. */
   const shadowed = (language: string, shadow: readonly string[] | undefined, fromFile?: string): boolean => {
     if (shadow === undefined) return false;
-    // Where the reference graph says what `fromFile` sees, a name only a project out of its reach declares is no name there: the compiler never reads it.
-    const reach = fromFile === undefined ? undefined : deps.reach;
-    const seen = (file: string): boolean => reach!(fromFile!, file) !== 'unreachable';
+    if (language !== 'csharp') return shadow.some((name) => deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name));
+    keepFresh();
     return shadow.some((name) => {
-      if (reach === undefined) return deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name);
-      return deps.symbolTable.filesFor(language, name).some(seen) || (deps.symbolTable.hasNamespace(language, name) && deps.symbolTable.hasNamespace(language, name, seen));
+      let declared = kept.declared.get(name);
+      if (declared === undefined) kept.declared.set(name, (declared = deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name)));
+      if (!declared || fromFile === undefined || deps.reach === undefined) return declared;
+      // Where the reference graph says what `fromFile` sees, a name only a project out of its reach declares is no name there: the compiler never reads it. The answer depends on the calling file, so it is kept by name and file.
+      const asked = `${name}\0${fromFile}`;
+      let seen = kept.shadowSeen.get(asked);
+      if (seen === undefined) {
+        const reach = deps.reach;
+        const visible = (file: string): boolean => reach(fromFile, file) !== 'unreachable';
+        kept.shadowSeen.set(asked, (seen = deps.symbolTable.filesFor(language, name).some(visible) || (deps.symbolTable.hasNamespace(language, name) && deps.symbolTable.hasNamespace(language, name, visible))));
+      }
+      return seen;
     });
   };
 
@@ -294,31 +326,48 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return keys;
   };
 
+  /** How many answers are being worked out around the code that runs now. An answer worked out inside another may have read a base list that was still being bound (a type that names itself through its own bases, directly or through a type it nests), so it is not kept; the type lookup binds base lists on its own, outside any reading, and counts the same. */
+  let working = 0;
+  const whileWorking = <R,>(work: () => R): R => {
+    working++;
+    try {
+      return work();
+    } finally {
+      working--;
+    }
+  };
+
+  /** The C# keys of one reading (see `memberKeys`), kept (see `kept`) when no other answer is being worked out. `fromFile` takes part only for a reading inside a type, the one reading it changes. */
+  const csharpMemberKeys = (key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within: string | undefined, fromFile: string | undefined): string[] => {
+    keepFresh();
+    // A reading behind a nearer namespace or type the lookup stops at binds nothing.
+    if (shadowed('csharp', shadow, fromFile)) return [];
+    const keptKeys = within !== undefined ? kept.within : nestedOnly ? kept.nestedOnly : kept.plain;
+    const asked = within !== undefined ? `${key}\0${within}\0${fromFile ?? ''}` : key;
+    const known = keptKeys.get(asked);
+    if (known !== undefined) return known;
+    const outermost = working === 0;
+    const keys = whileWorking(() => csharpKeys(key, nestedOnly, within, fromFile));
+    if (outermost) keptKeys.set(asked, keys);
+    return keys;
+  };
+
   /** The declared keys one symbol-set member reads, honoring `nestedOnly` (R4): a
    *  `nestedOnly` member reads ONLY its guarded `+`-split keys, never the verbatim
    *  dotted reading. A plain member reads the verbatim key + all guarded splits. */
   const memberKeys = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within?: string, fromFile?: string): string[] => {
+    if (language === 'csharp') return csharpMemberKeys(key, nestedOnly, shadow, within, fromFile);
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
     if (shadowed(language, shadow, fromFile)) return [];
-    if (language === 'csharp') return csharpKeys(key, nestedOnly, within, fromFile);
     return nestedOnly ? nestedOnlySplitKeys(deps.symbolTable, language, key) : nestedSplitKeys(deps.symbolTable, language, key);
-  };
-
-  /** The distinct defining files of one symbol-set member: the files of every key it reads. */
-  const memberFiles = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within?: string, fromFile?: string): Set<string> => {
-    const files = new Set<string>();
-    for (const k of memberKeys(language, key, nestedOnly, shadow, within, fromFile)) {
-      for (const f of deps.symbolTable.filesFor(language, k)) files.add(f);
-    }
-    return files;
   };
 
   /** True when the declaration `file` gives of `key` is internal to its assembly: the file marks it so (the extractor's `internal:<key>` marker beside it), or, for a type, a file of the same compilation marks the type or a type around it. The parts of a partial type are one type with one accessibility (C# spec §15.2.7), so a part without an access modifier, which its own file cannot mark, takes what another part of its compilation says. An extension method's key names every method of that name in its namespace, each with its own modifier, so only its own file speaks for it. */
   const internalIn = (language: string, key: string, file: string): boolean => {
-    if (deps.symbolTable.filesFor(language, internalKey(key)).includes(file)) return true;
+    if (filesOf(language, internalKey(key)).includes(file)) return true;
     if (key.endsWith('()')) return false;
     for (let end = key.length; end !== -1; end = key.lastIndexOf('+', end - 1)) {
-      if (deps.symbolTable.filesFor(language, internalKey(key.slice(0, end))).some((part) => part !== file && deps.reach?.(file, part) === 'same')) return true;
+      if (filesOf(language, internalKey(key.slice(0, end))).some((part) => part !== file && deps.reach?.(file, part) === 'same')) return true;
     }
     return false;
   };
@@ -334,7 +383,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   const assemblyOnlyIn = (language: string, keys: readonly string[], file: string): boolean => {
     const shapes = language === 'csharp' ? extensionShapesIn(keys, file) : [];
     if (shapes.length > 0) return shapes.every((shape) => shape.startsWith('-') || shape.startsWith('~'));
-    return keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || internalIn(language, k, file));
+    return keys.every((k) => !filesOf(language, k).includes(file) || internalIn(language, k, file));
   };
 
   /** True when every extension method `file` declares under `keys` is private to its static class: only that file's own calls see it. */
@@ -360,24 +409,19 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     if (hint.attribute !== undefined) return attributeBinding(hint.attribute, fromFile)?.files ?? new Set();
     // A reading one of whose conditions holds binds nothing.
     if (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile))) return new Set();
-    let files: Set<string>;
-    if (hint.set !== undefined) {
-      files = new Set<string>();
-      for (const m of hint.set) {
-        for (const f of memberFiles(language, m.symbolKey, m.nestedOnly === true, m.shadow, undefined, fromFile)) files.add(f);
-      }
-    } else {
-      files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
+    const keys = hintKeys(hint, language, fromFile);
+    const files = new Set<string>();
+    for (const k of keys) {
+      for (const f of filesOf(language, k)) files.add(f);
     }
     const extension = hint.symbolKey.endsWith('()');
     if (language !== 'csharp' || (deps.reach === undefined && !extension)) return files;
-    const keys = hintKeys(hint, language, fromFile);
     // A private extension method is no definer for a call outside the file that declares it, whatever the assembly says.
     if (extension) for (const f of [...files]) if (f !== fromFile && privateOnlyIn(keys, f)) files.delete(f);
     if (deps.reach === undefined) return byReceiver(hint, files, keys, fromFile);
     if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow, fromFile) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
       // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
-      const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
+      const both = new Set<string>([...filesOf(language, 'Program'), ...filesOf(language, IMPLICIT_PROGRAM_KEY)]);
       if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach, true, (f) => assemblyOnlyIn(language, ['Program', IMPLICIT_PROGRAM_KEY], f));
     }
     // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
@@ -446,16 +490,16 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       if (hint.kind !== 'symbol') continue;
       const files = hintFiles(hint, 'csharp', fromFile);
       if (files.size === 0) continue;
-      const keys = [...new Set(hintKeys(hint, 'csharp', fromFile))].filter((k) => deps.symbolTable.filesFor('csharp', k).some((f) => files.has(f)));
-      return keys.length === 1 ? { key: keys[0], files: new Set(deps.symbolTable.filesFor('csharp', keys[0]).filter((f) => files.has(f))) } : undefined;
+      const keys = [...new Set(hintKeys(hint, 'csharp', fromFile))].filter((k) => filesOf('csharp', k).some((f) => files.has(f)));
+      return keys.length === 1 ? { key: keys[0], files: new Set(filesOf('csharp', keys[0]).filter((f) => files.has(f))) } : undefined;
     }
     return undefined;
   };
   let csharpLookup: CsharpTypeLookup | undefined;
   const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(
     deps.symbolTable,
-    (readings, fromFile) => bindCsharpType(readings, fromFile)?.key,
-    (readings, fromFile) => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0),
+    (readings, fromFile) => whileWorking(() => bindCsharpType(readings, fromFile)?.key),
+    (readings, fromFile) => whileWorking(() => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0)),
   ));
 
   /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
