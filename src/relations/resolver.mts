@@ -316,8 +316,18 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return keys;
   };
 
-  /** The C# keys of one reading (see `memberKeys`), kept (see `kept`). `fromFile` takes part only for a reading inside a type, the one reading it changes. */
-  let csharpKeysDepth = 0;
+  /** How many answers are being worked out around the code that runs now. An answer worked out inside another may have read a base list that was still being bound (a type that names itself through its own bases, directly or through a type it nests), so it is not kept; the type lookup binds base lists on its own, outside any reading, and counts the same. */
+  let working = 0;
+  const whileWorking = <R,>(work: () => R): R => {
+    working++;
+    try {
+      return work();
+    } finally {
+      working--;
+    }
+  };
+
+  /** The C# keys of one reading (see `memberKeys`), kept (see `kept`) when no other answer is being worked out. `fromFile` takes part only for a reading inside a type, the one reading it changes. */
   const csharpMemberKeys = (key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within: string | undefined, fromFile: string | undefined): string[] => {
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
     if (shadowed('csharp', shadow)) return [];
@@ -325,15 +335,10 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     const asked = within !== undefined ? `${key}\0${within}\0${fromFile ?? ''}` : key;
     const known = keptKeys.get(asked);
     if (known !== undefined) return known;
-    // An answer worked out while another is being worked out may have read a base list that was still being bound (a type that names itself through its own bases), so only the outermost answer is kept.
-    csharpKeysDepth++;
-    try {
-      const keys = csharpKeys(key, nestedOnly, within, fromFile);
-      if (csharpKeysDepth === 1) keptKeys.set(asked, keys);
-      return keys;
-    } finally {
-      csharpKeysDepth--;
-    }
+    const outermost = working === 0;
+    const keys = whileWorking(() => csharpKeys(key, nestedOnly, within, fromFile));
+    if (outermost) keptKeys.set(asked, keys);
+    return keys;
   };
 
   /** The declared keys one symbol-set member reads, honoring `nestedOnly` (R4): a
@@ -432,8 +437,8 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   let csharpLookup: CsharpTypeLookup | undefined;
   const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(
     deps.symbolTable,
-    (readings, fromFile) => bindCsharpType(readings, fromFile)?.key,
-    (readings, fromFile) => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0),
+    (readings, fromFile) => whileWorking(() => bindCsharpType(readings, fromFile)?.key),
+    (readings, fromFile) => whileWorking(() => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0)),
   ));
 
   /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
