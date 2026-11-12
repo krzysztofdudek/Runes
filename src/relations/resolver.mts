@@ -315,9 +315,25 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return false;
   };
 
-  /** True when every declaration `file` gives of `keys` is internal to its assembly (`internalIn`). */
-  const assemblyOnlyIn = (language: string, keys: readonly string[], file: string): boolean =>
-    keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || internalIn(language, k, file));
+  /** The shapes `file` records for the extension keys among `keys` (`shapes:<key>`), led by `-` for a method only its assembly sees and by `~` for a private one; empty when it records none. */
+  const extensionShapesIn = (keys: readonly string[], file: string): string[] => {
+    const out: string[] = [];
+    for (const k of keys) if (k.endsWith('()')) out.push(...(csharp().extensionShapes(k).get(file) ?? []));
+    return out;
+  };
+
+  /** True when every declaration `file` gives of `keys` is internal to its assembly (`internalIn`). A file that declares extension methods of the name is judged by the shape of each (a shape led by `-` or `~`), as one file may hold a public and an internal method of one name. */
+  const assemblyOnlyIn = (language: string, keys: readonly string[], file: string): boolean => {
+    const shapes = language === 'csharp' ? extensionShapesIn(keys, file) : [];
+    if (shapes.length > 0) return shapes.every((shape) => shape.startsWith('-') || shape.startsWith('~'));
+    return keys.every((k) => !deps.symbolTable.filesFor(language, k).includes(file) || internalIn(language, k, file));
+  };
+
+  /** True when every extension method `file` declares under `keys` is private to its static class: only that file's own calls see it. */
+  const privateOnlyIn = (keys: readonly string[], file: string): boolean => {
+    const shapes = extensionShapesIn(keys, file);
+    return shapes.length > 0 && shapes.every((shape) => shape.startsWith('~'));
+  };
 
   /** Every key a symbol hint reads: those of each member of its set, or its own. */
   const hintKeys = (hint: Extract<TargetHint, { kind: 'symbol' }>, language: string, fromFile: string): string[] =>
@@ -345,19 +361,23 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     } else {
       files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
     }
-    if (language !== 'csharp' || deps.reach === undefined) return files;
+    const extension = hint.symbolKey.endsWith('()');
+    if (language !== 'csharp' || (deps.reach === undefined && !extension)) return files;
     const keys = hintKeys(hint, language, fromFile);
+    // A private extension method is no definer for a call outside the file that declares it, whatever the assembly says.
+    if (extension) for (const f of [...files]) if (f !== fromFile && privateOnlyIn(keys, f)) files.delete(f);
+    if (deps.reach === undefined) return files;
     if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
       // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
       const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
       if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach, true, (f) => assemblyOnlyIn(language, ['Program', IMPLICIT_PROGRAM_KEY], f));
     }
     // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
-    return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
+    return withinReach(files, fromFile, deps.reach, !extension, (f) => assemblyOnlyIn(language, keys, f));
   };
 
   /**
-   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. Such a file counts only as far as the calling file sees it, as the reach filter reads a definer: a file of a project out of reach has no say, and neither has a method only its own assembly sees (a shape led by `-`) for a caller of another compilation that is no friend. True when one of the shapes left takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
+   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. Such a file counts only as far as the calling file sees it, as the reach filter reads a definer: a file of a project out of reach has no say, and neither has a method only its own assembly sees (a shape led by `-`) for a caller of another compilation that is no friend, and a private one (a shape led by `~`) for a caller in any other file. True when one of the shapes left takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
    */
   const takesCall = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: ReadonlySet<string>, language: string, fromFile: string): boolean => {
     const takes = hint.takes;
@@ -375,7 +395,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
         const seen = deps.reach?.(fromFile, file);
         if (seen === 'unreachable') continue;
         const friend = seen !== 'reachable' || deps.reach?.internalsVisible === undefined || deps.reach.internalsVisible(fromFile, file);
-        if (shapes.some((shape) => (shape.startsWith('-') ? friend && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shapeTakes(shape, takes.typeArgs, takes.args)))) return true;
+        if (shapes.some((shape) => (shape.startsWith('~') ? file === fromFile && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shape.startsWith('-') ? friend && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shapeTakes(shape, takes.typeArgs, takes.args)))) return true;
         recorded.add(file);
       }
     }

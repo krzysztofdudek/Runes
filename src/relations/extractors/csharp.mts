@@ -341,7 +341,7 @@ function classExtensionKey(classKey: string, name: string): string {
 }
 
 /**
- * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`). A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
+ * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`) and led by `~` for a private one, which only the file that declares it sees (`privateExtension`). A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
  */
 export function extensionShapesKey(key: string): string {
   return `shapes:${key}`;
@@ -715,6 +715,13 @@ function assemblyOnlyExtension(node: Node, owner: NonNullable<CsScope['typeDecl'
   return owner.seen === 'assembly';
 }
 
+/** True when an extension method is private to its static class: a method that says `private` (also `private protected`, which a static class cannot derive from) or says no access modifier at all. A method of the misread C# 14 block form is judged by its class alone, so it is never private here. */
+function privateExtension(node: Node): boolean {
+  if (node.type !== 'method_declaration') return false;
+  const mods = accessModifiers(node);
+  return mods.has('private') || !(mods.has('public') || mods.has('protected') || mods.has('internal'));
+}
+
 /** The first top-level statement of a C# file (a `global_statement` child of the compilation unit), or undefined when the file has none. */
 function firstTopLevelStatement(root: Node): Node | undefined {
   return root.namedChildren.find((c): c is Node => c?.type === 'global_statement');
@@ -901,6 +908,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
       const line = node.startPosition.row + 1;
       const assemblyOnly = assemblyOnlyExtension(node, scope.typeDecl!);
+      const hidden = privateExtension(node);
       // The key of the method in its namespace (`extensionKey`), and the key it has in its class: `using static T;` imports the extension methods of T alone.
       const className = declaredTypeName(scope.typeDecl!.node);
       const shape = extensionShape(node, node.type === 'local_function_statement' || scope.extBelow);
@@ -909,8 +917,8 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
         if (assemblyOnly) out.push({ symbolKey: internalKey(symbolKey), line });
         let listed = extensionShapes.get(symbolKey);
         if (listed === undefined) extensionShapes.set(symbolKey, (listed = { line, shapes: new Set() }));
-        // A method only its own assembly sees says so in its shape: the mark of the key (`internalKey`) speaks for a file, and one file may hold a public and an internal method of one name.
-        listed.shapes.add(assemblyOnly ? `-${shape}` : shape);
+        // A method only its own assembly sees says so in its shape (`-`), and a private one (`~`) says it is seen by its own class: the mark of the key (`internalKey`) speaks for a file, and one file may hold a public, an internal and a private method of one name.
+        listed.shapes.add(hidden ? `~${shape}` : assemblyOnly ? `-${shape}` : shape);
       }
       return undefined;
     }
@@ -3013,7 +3021,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 38,
+  rev: 39,
   declarations,
   uses,
 };
