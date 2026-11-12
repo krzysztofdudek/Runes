@@ -243,7 +243,7 @@ export function makeCsharpTypeLookup(table, bind, declared = () => true) {
         return known;
     };
     /** True when a parameter written `param` in the record of a method of `holder` (read in `file`) cannot take an argument of the type `arg`, for certain: every answer that needs something this reader does not know is no. */
-    const cannotTake = (param, arg, holder, file) => {
+    const cannotTake = (param, arg, holder, file, inBody = true) => {
         if (!param.includes(':')) {
             // A predefined parameter type: `object` takes everything, the others what the language's own conversions give.
             if (!CLOSED_PREDEFINED.has(param) || param === 'object')
@@ -254,7 +254,7 @@ export function makeCsharpTypeLookup(table, bind, declared = () => true) {
         }
         const written = decodeWritten(param);
         const usings = usingsOf(file);
-        const readings = writtenReadings(written, holder, true, usings);
+        const readings = writtenReadings(written, holder, inBody, usings);
         const key = bind(readings, file);
         if (key !== undefined) {
             // A type of the repository: it takes what derives from it or implements it, and what an implicit conversion operator of either side turns into it.
@@ -327,8 +327,11 @@ export function makeCsharpTypeLookup(table, bind, declared = () => true) {
         }
         return byFile;
     };
+    /** True when the receiver an extension method writes as `entry` (a record entry, read in `file`, under the extension key `key`) cannot take a value of the type `typeKey`, for certain (see `cannotTake`). */
+    const cannotTakeReceiver = (entry, typeKey, key, file) => cannotTake(entry, { key: typeKey }, key, file, false);
     return {
         extensionShapes,
+        cannotTakeReceiver,
         bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
         nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
         simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),

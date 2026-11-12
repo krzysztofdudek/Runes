@@ -40,6 +40,7 @@ pub struct Fixture;
 mod state;
 mod cmd;
 pub struct Config;
+fn main() {}
 ```
 
 ```rust path=tools/tool/state.rs

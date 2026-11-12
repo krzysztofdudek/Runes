@@ -69,6 +69,21 @@ describe('SymbolTable.hasNamespace', () => {
   });
 });
 
+describe('SymbolTable.hasNamespace with a file filter', () => {
+  it('counts only the files the filter accepts, and follows a declaration made after the first question', () => {
+    const st = new SymbolTable();
+    st.declare('csharp', 'A.Core.Other', 'near/Other.cs');
+    st.declare('csharp', 'A.Core.Sub.Deep+Inner', 'near/Deep.cs');
+    expect(st.hasNamespace('csharp', 'A.Core', (f) => f.startsWith('near/'))).toBe(true);
+    expect(st.hasNamespace('csharp', 'A.Core', (f) => f.startsWith('far/'))).toBe(false);
+    expect(st.hasNamespace('csharp', 'A.Core.Sub', (f) => f === 'near/Deep.cs')).toBe(true);
+    expect(st.hasNamespace('csharp', 'Nowhere', () => true)).toBe(false);
+    st.declare('csharp', 'A.Core.More', 'far/More.cs');
+    expect(st.hasNamespace('csharp', 'A.Core', (f) => f.startsWith('far/'))).toBe(true);
+    expect(st.hasNamespace('csharp', 'A.Core')).toBe(true);
+  });
+});
+
 describe('SymbolTable.valuesOf', () => {
   it('lists the values declared about a head with their files, and keeps such a key out of the names', () => {
     const st = new SymbolTable();

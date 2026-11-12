@@ -55,10 +55,24 @@ use util::text::slug;
 use serde::Serialize;
 ```
 
+```rust path=crates/server/src/cmd/mod.rs
+pub mod run;
+```
+
+```rust path=crates/server/src/lib.rs
+pub mod cmd;
+```
+
+```rust path=crates/util/src/lib.rs
+pub mod text;
+```
+
 ## Expect
 
 - crates/server/src/cmd/run.rs:1 -> node:src      # core_lib (workspace-inherited path dep) → crates/core-lib/src/lib.rs, which declares Engine
 - crates/server/src/cmd/run.rs:2 -> node:text     # util (direct path dep) → crates/util/src/text/mod.rs
+- crates/server/src/lib.rs:1 -> node:cmd      # the module declaration of the completed crate
+- crates/util/src/lib.rs:1 -> node:text      # the module declaration of the completed crate
 
 ## Why
 

@@ -63,6 +63,12 @@ export interface KotlinView {
     dispose(): void;
 }
 /**
+ * Parse `[start, end)` of `text` as a document of its own, then give its tree the rows and columns the declaration has in the file. The grammar weighs how much text an error would skip, the padding before the first token included, so a parse that began after `row` lines of padding repaired the same broken declaration into another tree than one that began after `row + 1`. The parse here has no padding, whatever the declaration's row, so what it makes of a declaration depends on the declaration alone.
+ *
+ * The tree is then edited as if the padding had been inserted before its first token (`Tree.edit`, no text is re-read): every node gets the index and the row and column it has in the file, and the tree reads its text through the same shift. The trailing newline ends the last statement: without it the grammar reports a missing member separator after a one-line class body at end of input.
+ */
+export declare function parseAt(parser: Parser, text: string, starts: number[], start: number, end: number): Tree | null;
+/**
  * The trustworthy view of a Kotlin file for relation extraction. See the file doc comment. The
  * caller MUST call `dispose()` when done (the recovery may create WASM trees).
  *

@@ -3194,9 +3194,6 @@ packages/react-client/src/ReactFlightClient.js:108	packages/shared/ReactFlightPr
 packages/react-client/src/ReactFlightClient.js:110	packages/shared/ReactVersion.js
 packages/react-client/src/ReactFlightClient.js:112	packages/shared/isArray.js
 packages/react-client/src/ReactFlightClient.js:114	packages/react/index.js
-packages/react-client/src/ReactFlightClient.js:116	packages/react/src/ReactSharedInternalsServer.js
-packages/react-client/src/ReactFlightClient.js:117	packages/react/src/ReactSharedInternalsClient.js
-packages/react-client/src/ReactFlightClient.js:22	packages/react/src/ReactLazy.js
 packages/react-client/src/ReactFlightClient.js:24	packages/react-client/src/ReactFlightClientConfig.js
 packages/react-client/src/ReactFlightClient.js:33	packages/react-server/src/ReactFlightServerConfig.js
 packages/react-client/src/ReactFlightClient.js:38	packages/react-client/src/ReactFlightReplyClient.js
@@ -3213,7 +3210,6 @@ packages/react-client/src/ReactFlightPerformanceTrack.js:18	packages/shared/Reac
 packages/react-client/src/ReactFlightPerformanceTrack.js:20	packages/shared/ReactPerformanceTrackProperties.js
 packages/react-client/src/ReactFlightPerformanceTrack.js:25	packages/shared/ReactIODescription.js
 packages/react-client/src/ReactFlightReplyClient.js:10	packages/shared/ReactTypes.js
-packages/react-client/src/ReactFlightReplyClient.js:18	packages/react/src/ReactLazy.js
 packages/react-client/src/ReactFlightReplyClient.js:19	packages/react-client/src/ReactFlightTemporaryReferences.js
 packages/react-client/src/ReactFlightReplyClient.js:21	packages/shared/ReactSymbols.js
 packages/react-client/src/ReactFlightReplyClient.js:29	packages/shared/ReactSerializationErrors.js
@@ -3508,7 +3504,6 @@ packages/react-devtools-extensions/src/main/index.js:30	packages/react-devtools-
 packages/react-devtools-extensions/src/main/index.js:35	packages/react-devtools-shared/src/devtools/views/Editor/utils.js
 packages/react-devtools-extensions/src/main/index.js:36	packages/react-devtools-shared/src/hooks/parseHookNames/index.js
 packages/react-devtools-extensions/src/main/index.js:38	packages/react-devtools-extensions/src/main/elementSelection.js
-packages/react-devtools-extensions/src/main/index.js:4	packages/react-dom/src/client/ReactDOMRoot.js
 packages/react-devtools-extensions/src/main/index.js:42	packages/react-devtools-extensions/src/main/sourceSelection.js
 packages/react-devtools-extensions/src/main/index.js:44	packages/react-devtools-extensions/src/main/evalInInspectedWindow.js
 packages/react-devtools-extensions/src/main/index.js:45	packages/react-devtools-extensions/src/main/reactPolling.js
@@ -5861,8 +5856,6 @@ packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:156	packages/react
 packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:17	packages/shared/ReactTypes.js
 packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:18	packages/react-dom-bindings/src/client/validateDOMNesting.js
 packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:19	packages/react-dom-bindings/src/shared/ReactDOMFormActions.js
-packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:20	packages/react-dom/src/shared/ReactDOMTypes.js
-packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:28	packages/react/src/ReactTransitionType.js
 packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:30	packages/react-dom-bindings/src/shared/ReactDOMFormActions.js
 packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:304	packages/react-reconciler/src/ReactFiberConfigWithNoPersistence.js
 packages/react-dom-bindings/src/client/ReactFiberConfigDOM.js:32	packages/react-dom-bindings/src/client/ReactDOMSrcObject.js
@@ -6084,13 +6077,11 @@ packages/react-dom-bindings/src/events/plugins/SimpleEventPlugin.js:45	packages/
 packages/react-dom-bindings/src/events/plugins/SimpleEventPlugin.js:49	packages/react-dom-bindings/src/events/EventSystemFlags.js
 packages/react-dom-bindings/src/events/plugins/SimpleEventPlugin.js:54	packages/react-dom-bindings/src/events/getEventCharCode.js
 packages/react-dom-bindings/src/events/plugins/SimpleEventPlugin.js:56	packages/shared/ReactFeatureFlags.js
-packages/react-dom-bindings/src/server/ReactDOMFlightServerHostDispatcher.js:10	packages/react-dom/src/shared/ReactDOMTypes.js
 packages/react-dom-bindings/src/server/ReactDOMFlightServerHostDispatcher.js:19	packages/react-server/src/ReactFlightServer.js
 packages/react-dom-bindings/src/server/ReactDOMFlightServerHostDispatcher.js:25	packages/shared/ReactDOMSharedInternals.js
 packages/react-dom-bindings/src/server/ReactDOMLegacyServerStreamConfig.js:82	packages/react-server/src/createFastHashJS.js
 packages/react-dom-bindings/src/server/ReactDOMServerExternalRuntime.js:10	packages/react-dom-bindings/src/server/fizz-instruction-set/ReactDOMFizzInstructionSetExternalRuntime.js
 packages/react-dom-bindings/src/server/ReactFizzConfigDOM.js:10	packages/shared/ReactTypes.js
-packages/react-dom-bindings/src/server/ReactFizzConfigDOM.js:15	packages/react-dom/src/shared/ReactDOMTypes.js
 packages/react-dom-bindings/src/server/ReactFizzConfigDOM.js:25	packages/shared/CheckStringCoercion.js
 packages/react-dom-bindings/src/server/ReactFizzConfigDOM.js:32	packages/react/index.js
 packages/react-dom-bindings/src/server/ReactFizzConfigDOM.js:34	packages/shared/ReactFeatureFlags.js
@@ -6126,7 +6117,6 @@ packages/react-dom-bindings/src/server/ReactFizzConfigDOMLegacy.js:21	packages/r
 packages/react-dom-bindings/src/server/ReactFizzConfigDOMLegacy.js:34	packages/react-server/src/ReactServerStreamConfig.js
 packages/react-dom-bindings/src/server/ReactFizzConfigDOMLegacy.js:40	packages/react-dom-bindings/src/shared/ReactDOMFormActions.js
 packages/react-dom-bindings/src/server/ReactFizzConfigDOMLegacy.js:42	packages/react-dom-bindings/src/shared/ReactDOMFormActions.js
-packages/react-dom-bindings/src/server/ReactFlightServerConfigDOM.js:10	packages/react-dom/src/shared/ReactDOMTypes.js
 packages/react-dom-bindings/src/server/ReactFlightServerConfigDOM.js:21	packages/react-dom-bindings/src/server/ReactDOMFlightServerHostDispatcher.js
 packages/react-dom-bindings/src/server/ReactFlightServerConfigDOM.js:23	packages/react-dom-bindings/src/shared/crossOriginStrings.js
 packages/react-dom-bindings/src/server/escapeTextForBrowser.js:41	packages/shared/CheckStringCoercion.js
@@ -7164,7 +7154,6 @@ packages/react-markup/src/ReactMarkupClient.js:13	packages/shared/ReactVersion.j
 packages/react-markup/src/ReactMarkupClient.js:15	packages/react-server/src/ReactFizzServer.js
 packages/react-markup/src/ReactMarkupClient.js:22	packages/react-markup/src/ReactFizzConfigMarkup.js
 packages/react-markup/src/ReactMarkupServer.js:10	packages/shared/ReactTypes.js
-packages/react-markup/src/ReactMarkupServer.js:11	packages/react/src/ReactLazy.js
 packages/react-markup/src/ReactMarkupServer.js:12	packages/react-server/src/ReactFizzServer.js
 packages/react-markup/src/ReactMarkupServer.js:14	packages/shared/ReactVersion.js
 packages/react-markup/src/ReactMarkupServer.js:16	packages/react-server/src/ReactSharedInternalsServer.js
@@ -7234,7 +7223,6 @@ packages/react-native-renderer/src/ReactFiberConfigFabric.js:75	packages/shared/
 packages/react-native-renderer/src/ReactFiberConfigFabric.js:76	packages/shared/ReactSymbols.js
 packages/react-native-renderer/src/ReactFiberConfigFabric.js:77	packages/shared/ReactTypes.js
 packages/react-native-renderer/src/ReactFiberConfigFabric.js:79	packages/shared/ReactVersion.js
-packages/react-native-renderer/src/ReactFiberConfigFabricWithViewTransition.js:10	packages/react/src/ReactTransitionType.js
 packages/react-native-renderer/src/ReactFiberConfigFabricWithViewTransition.js:11	packages/react-native-renderer/src/ReactFiberConfigFabric.js
 packages/react-native-renderer/src/ReactFiberConfigFabricWithViewTransition.js:19	packages/react-native-renderer/src/ReactFiberConfigFabric.js
 packages/react-native-renderer/src/ReactNativeBridgeEventPlugin.js:10	packages/react-native-renderer/src/legacy-events/PluginModuleType.js
@@ -7359,7 +7347,6 @@ packages/react-noop-renderer/src/createReactNoop.js:21	packages/react-reconciler
 packages/react-noop-renderer/src/createReactNoop.js:22	packages/shared/ReactTypes.js
 packages/react-noop-renderer/src/createReactNoop.js:23	packages/react-reconciler/src/ReactRootTags.js
 packages/react-noop-renderer/src/createReactNoop.js:24	packages/react-reconciler/src/ReactEventPriorities.js
-packages/react-noop-renderer/src/createReactNoop.js:25	packages/react/src/ReactTransitionType.js
 packages/react-noop-renderer/src/createReactNoop.js:26	packages/react-reconciler/src/ReactFiberConfig.js
 packages/react-noop-renderer/src/createReactNoop.js:27	packages/react-reconciler/src/ReactFiberConfigWithNoMutation.js
 packages/react-noop-renderer/src/createReactNoop.js:28	packages/react-reconciler/src/ReactFiberConfigWithNoViewTransition.js
@@ -7459,7 +7446,6 @@ packages/react-reconciler/src/ReactFiberApplyGesture.js:94	packages/shared/React
 packages/react-reconciler/src/ReactFiberApplyGesture.js:99	packages/react-reconciler/src/ReactProfilerTimer.js
 packages/react-reconciler/src/ReactFiberAsyncAction.js:10	packages/shared/ReactTypes.js
 packages/react-reconciler/src/ReactFiberAsyncAction.js:15	packages/react-reconciler/src/ReactFiberLane.js
-packages/react-reconciler/src/ReactFiberAsyncAction.js:16	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberAsyncAction.js:18	packages/react-reconciler/src/ReactFiberRootScheduler.js
 packages/react-reconciler/src/ReactFiberAsyncAction.js:22	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberAsyncAction.js:23	packages/react-reconciler/src/ReactProfilerTimer.js
@@ -7498,7 +7484,6 @@ packages/react-reconciler/src/ReactFiberBeginWork.js:220	packages/react-reconcil
 packages/react-reconciler/src/ReactFiberBeginWork.js:227	packages/react-reconciler/src/ReactProfilerTimer.js
 packages/react-reconciler/src/ReactFiberBeginWork.js:228	packages/react-reconciler/src/ReactFiberLegacyContext.js
 packages/react-reconciler/src/ReactFiberBeginWork.js:237	packages/react-reconciler/src/ReactFiberHydrationContext.js
-packages/react-reconciler/src/ReactFiberBeginWork.js:24	packages/react/src/ReactLazy.js
 packages/react-reconciler/src/ReactFiberBeginWork.js:25	packages/react-reconciler/src/ReactInternalTypes.js
 packages/react-reconciler/src/ReactFiberBeginWork.js:251	packages/react-reconciler/src/ReactFiberClassComponent.js
 packages/react-reconciler/src/ReactFiberBeginWork.js:258	packages/react-reconciler/src/ReactFiber.js
@@ -7533,7 +7518,6 @@ packages/react-reconciler/src/ReactFiberCacheComponent.js:13	packages/shared/Rea
 packages/react-reconciler/src/ReactFiberCacheComponent.js:15	packages/react-reconciler/src/ReactFiberNewContext.js
 packages/react-reconciler/src/ReactFiberCacheComponent.js:16	packages/scheduler/index.js
 packages/react-reconciler/src/ReactFiberCallUserSpace.js:10	packages/react-reconciler/src/ReactInternalTypes.js
-packages/react-reconciler/src/ReactFiberCallUserSpace.js:11	packages/react/src/ReactLazy.js
 packages/react-reconciler/src/ReactFiberCallUserSpace.js:12	packages/react-reconciler/src/ReactFiberHooks.js
 packages/react-reconciler/src/ReactFiberCallUserSpace.js:13	packages/react-reconciler/src/ReactCapturedValue.js
 packages/react-reconciler/src/ReactFiberCallUserSpace.js:15	packages/react-reconciler/src/ReactCurrentFiber.js
@@ -7648,7 +7632,6 @@ packages/react-reconciler/src/ReactFiberCommitWork.js:32	packages/shared/ReactTy
 packages/react-reconciler/src/ReactFiberCommitWork.js:33	packages/react-reconciler/src/ReactFiberOffscreenComponent.js
 packages/react-reconciler/src/ReactFiberCommitWork.js:38	packages/react-reconciler/src/ReactFiberCacheComponent.js
 packages/react-reconciler/src/ReactFiberCommitWork.js:39	packages/react-reconciler/src/ReactFiberRoot.js
-packages/react-reconciler/src/ReactFiberCommitWork.js:40	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberCommitWork.js:41	packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js
 packages/react-reconciler/src/ReactFiberCommitWork.js:45	packages/react-reconciler/src/ReactFiberViewTransitionComponent.js
 packages/react-reconciler/src/ReactFiberCommitWork.js:47	packages/shared/ReactFeatureFlags.js
@@ -7731,7 +7714,6 @@ packages/react-reconciler/src/ReactFiberFragmentInstance.js:25	packages/shared/R
 packages/react-reconciler/src/ReactFiberGestureScheduler.js:10	packages/react-reconciler/src/ReactInternalTypes.js
 packages/react-reconciler/src/ReactFiberGestureScheduler.js:11	packages/shared/ReactTypes.js
 packages/react-reconciler/src/ReactFiberGestureScheduler.js:12	packages/react-reconciler/src/ReactFiberConfig.js
-packages/react-reconciler/src/ReactFiberGestureScheduler.js:13	packages/react/src/ReactTransitionType.js
 packages/react-reconciler/src/ReactFiberGestureScheduler.js:14	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberGestureScheduler.js:16	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberGestureScheduler.js:23	packages/react-reconciler/src/ReactFiberRootScheduler.js
@@ -7759,7 +7741,6 @@ packages/react-reconciler/src/ReactFiberHooks.js:142	packages/react-reconciler/s
 packages/react-reconciler/src/ReactFiberHooks.js:143	packages/react-reconciler/src/Scheduler.js
 packages/react-reconciler/src/ReactFiberHooks.js:144	packages/react-reconciler/src/ReactFiberThenable.js
 packages/react-reconciler/src/ReactFiberHooks.js:152	packages/react-reconciler/src/ReactFiberThenable.js
-packages/react-reconciler/src/ReactFiberHooks.js:153	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberHooks.js:154	packages/react-reconciler/src/ReactFiberAsyncAction.js
 packages/react-reconciler/src/ReactFiberHooks.js:159	packages/react-reconciler/src/ReactFiberRootScheduler.js
 packages/react-reconciler/src/ReactFiberHooks.js:160	packages/react-reconciler/src/ReactFiberHiddenContext.js
@@ -7824,7 +7805,6 @@ packages/react-reconciler/src/ReactFiberHydrationDiffs.js:30	packages/shared/ass
 packages/react-reconciler/src/ReactFiberHydrationDiffs.js:31	packages/shared/getComponentNameFromType.js
 packages/react-reconciler/src/ReactFiberHydrationDiffs.js:33	packages/shared/isArray.js
 packages/react-reconciler/src/ReactFiberLane.js:10	packages/react-reconciler/src/ReactInternalTypes.js
-packages/react-reconciler/src/ReactFiberLane.js:11	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberLane.js:12	packages/react-reconciler/src/ReactFiberConcurrentUpdates.js
 packages/react-reconciler/src/ReactFiberLane.js:21	packages/shared/ReactFeatureFlags.js
 packages/react-reconciler/src/ReactFiberLane.js:34	packages/react-reconciler/src/ReactFiberDevToolsHook.js
@@ -7853,7 +7833,6 @@ packages/react-reconciler/src/ReactFiberNewContext.js:36	packages/react-reconcil
 packages/react-reconciler/src/ReactFiberOffscreenComponent.js:10	packages/shared/ReactTypes.js
 packages/react-reconciler/src/ReactFiberOffscreenComponent.js:11	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberOffscreenComponent.js:12	packages/react-reconciler/src/ReactFiberCacheComponent.js
-packages/react-reconciler/src/ReactFiberOffscreenComponent.js:13	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberOffscreenComponent.js:14	packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js
 packages/react-reconciler/src/ReactFiberOffscreenComponent.js:15	packages/react-reconciler/src/ReactFiberSuspenseComponent.js
 packages/react-reconciler/src/ReactFiberPerformanceTrack.js:12	packages/react-reconciler/src/ReactInternalTypes.js
@@ -7914,7 +7893,6 @@ packages/react-reconciler/src/ReactFiberRoot.js:42	packages/react-reconciler/src
 packages/react-reconciler/src/ReactFiberRootScheduler.js:10	packages/react-reconciler/src/ReactInternalTypes.js
 packages/react-reconciler/src/ReactFiberRootScheduler.js:11	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberRootScheduler.js:12	packages/scheduler/src/SchedulerPriorities.js
-packages/react-reconciler/src/ReactFiberRootScheduler.js:13	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberRootScheduler.js:15	packages/shared/ReactFeatureFlags.js
 packages/react-reconciler/src/ReactFiberRootScheduler.js:25	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberRootScheduler.js:39	packages/react-reconciler/src/ReactFiberWorkLoop.js
@@ -7955,7 +7933,6 @@ packages/react-reconciler/src/ReactFiberSuspenseContext.js:16	packages/react-rec
 packages/react-reconciler/src/ReactFiberSuspenseContext.js:17	packages/react-reconciler/src/ReactFiberHiddenContext.js
 packages/react-reconciler/src/ReactFiberSuspenseContext.js:18	packages/react-reconciler/src/ReactWorkTags.js
 packages/react-reconciler/src/ReactFiberThenable.js:10	packages/shared/ReactTypes.js
-packages/react-reconciler/src/ReactFiberThenable.js:18	packages/react/src/ReactLazy.js
 packages/react-reconciler/src/ReactFiberThenable.js:19	packages/react-reconciler/src/ReactInternalTypes.js
 packages/react-reconciler/src/ReactFiberThenable.js:21	packages/react-reconciler/src/ReactFiberCallUserSpace.js
 packages/react-reconciler/src/ReactFiberThenable.js:23	packages/react-reconciler/src/ReactFiberWorkLoop.js
@@ -7990,7 +7967,6 @@ packages/react-reconciler/src/ReactFiberThrow.js:89	packages/react-reconciler/sr
 packages/react-reconciler/src/ReactFiberThrow.js:90	packages/react-reconciler/src/ReactCurrentFiber.js
 packages/react-reconciler/src/ReactFiberThrow.js:91	packages/react-reconciler/src/ReactFiberCallUserSpace.js
 packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js:10	packages/react-reconciler/src/ReactInternalTypes.js
-packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js:15	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js:16	packages/react-reconciler/src/ReactFiberOffscreenComponent.js
 packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js:17	packages/react-reconciler/src/ReactFiberStack.js
 packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js:19	packages/shared/ReactFeatureFlags.js
@@ -8000,7 +7976,6 @@ packages/react-reconciler/src/ReactFiberTransition.js:10	packages/shared/ReactTy
 packages/react-reconciler/src/ReactFiberTransition.js:15	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberTransition.js:16	packages/react-reconciler/src/ReactFiberStack.js
 packages/react-reconciler/src/ReactFiberTransition.js:17	packages/react-reconciler/src/ReactFiberCacheComponent.js
-packages/react-reconciler/src/ReactFiberTransition.js:18	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberTransition.js:19	packages/react-reconciler/src/ReactFiberGestureScheduler.js
 packages/react-reconciler/src/ReactFiberTransition.js:21	packages/shared/ReactFeatureFlags.js
 packages/react-reconciler/src/ReactFiberTransition.js:26	packages/react-reconciler/src/ReactFiberConfig.js
@@ -8015,7 +7990,6 @@ packages/react-reconciler/src/ReactFiberTransition.js:50	packages/react-reconcil
 packages/react-reconciler/src/ReactFiberTransition.js:51	packages/react-reconciler/src/ReactFiberGestureScheduler.js
 packages/react-reconciler/src/ReactFiberTransition.js:9	packages/react-reconciler/src/ReactInternalTypes.js
 packages/react-reconciler/src/ReactFiberTransitionTypes.js:10	packages/react-reconciler/src/ReactInternalTypes.js
-packages/react-reconciler/src/ReactFiberTransitionTypes.js:11	packages/react/src/ReactTransitionType.js
 packages/react-reconciler/src/ReactFiberTransitionTypes.js:13	packages/shared/ReactFeatureFlags.js
 packages/react-reconciler/src/ReactFiberTransitionTypes.js:14	packages/react-reconciler/src/ReactFiberLane.js
 packages/react-reconciler/src/ReactFiberTreeContext.js:63	packages/react-reconciler/src/ReactInternalTypes.js
@@ -8072,7 +8046,6 @@ packages/react-reconciler/src/ReactFiberWorkLoop.js:180	packages/react-reconcile
 packages/react-reconciler/src/ReactFiberWorkLoop.js:19	packages/react-reconciler/src/ReactFiberActivityComponent.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:20	packages/react-reconciler/src/ReactFiberSuspenseComponent.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:21	packages/react-reconciler/src/ReactFiberHooks.js
-packages/react-reconciler/src/ReactFiberWorkLoop.js:22	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:223	packages/react-reconciler/src/ReactEventPriorities.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:23	packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:230	packages/react-reconciler/src/ReactFiberTransition.js
@@ -8108,7 +8081,6 @@ packages/react-reconciler/src/ReactFiberWorkLoop.js:398	packages/react-reconcile
 packages/react-reconciler/src/ReactFiberWorkLoop.js:399	packages/react-reconciler/src/ReactFiberSuspenseContext.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:403	packages/react-reconciler/src/ReactChildFiber.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:404	packages/react-reconciler/src/ReactFiberRootScheduler.js
-packages/react-reconciler/src/ReactFiberWorkLoop.js:41	packages/react/src/ReactTransitionType.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:410	packages/react-reconciler/src/ReactFiberLegacyContext.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:411	packages/react-reconciler/src/ReactFiberErrorLogger.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:412	packages/react-reconciler/src/ReactFiberGestureScheduler.js
@@ -8121,7 +8093,6 @@ packages/react-reconciler/src/ReactFiberWorkLoop.js:68	packages/shared/reportGlo
 packages/react-reconciler/src/ReactFiberWorkLoop.js:70	packages/react-reconciler/src/Scheduler.js
 packages/react-reconciler/src/ReactFiberWorkLoop.js:79	packages/react-reconciler/src/ReactFiberPerformanceTrack.js
 packages/react-reconciler/src/ReactInternalTypes.js:10	packages/shared/ReactTypes.js
-packages/react-reconciler/src/ReactInternalTypes.js:22	packages/react/src/ReactTransitionType.js
 packages/react-reconciler/src/ReactInternalTypes.js:23	packages/react-reconciler/src/ReactWorkTags.js
 packages/react-reconciler/src/ReactInternalTypes.js:24	packages/react-reconciler/src/ReactTypeOfMode.js
 packages/react-reconciler/src/ReactInternalTypes.js:25	packages/react-reconciler/src/ReactFiberFlags.js
@@ -8129,7 +8100,6 @@ packages/react-reconciler/src/ReactInternalTypes.js:26	packages/react-reconciler
 packages/react-reconciler/src/ReactInternalTypes.js:27	packages/react-reconciler/src/ReactRootTags.js
 packages/react-reconciler/src/ReactInternalTypes.js:28	packages/react-reconciler/src/ReactFiberConfig.js
 packages/react-reconciler/src/ReactInternalTypes.js:37	packages/react-reconciler/src/ReactFiberCacheComponent.js
-packages/react-reconciler/src/ReactInternalTypes.js:38	packages/react/src/ReactStartTransition.js
 packages/react-reconciler/src/ReactInternalTypes.js:39	packages/react-reconciler/src/ReactFiberTracingMarkerComponent.js
 packages/react-reconciler/src/ReactInternalTypes.js:40	packages/react-reconciler/src/ReactFiberConcurrentUpdates.js
 packages/react-reconciler/src/ReactInternalTypes.js:41	packages/react-server/src/ReactFizzComponentStack.js
@@ -9029,7 +8999,6 @@ packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMEdge-test.js:89	pa
 packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMEdge-test.js:90	packages/react-dom/server.edge.js
 packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMEdge-test.js:91	packages/react-dom/static.edge.js
 packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMEdge-test.js:92	packages/react-server-dom-webpack/client.node.js
-packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMForm-test.js:12	packages/react-dom/src/test-utils/FizzTestUtils.js
 packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMForm-test.js:61	packages/react-server-dom-webpack/server.edge.js
 packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMForm-test.js:63	packages/react-server-dom-webpack/server.edge.js
 packages/react-server-dom-webpack/src/__tests__/ReactFlightDOMForm-test.js:64	packages/react-server-dom-webpack/src/__tests__/utils/WebpackMock.js
@@ -9170,7 +9139,6 @@ packages/react-server/index.js:13	packages/react-server/src/ReactFizzServer.js
 packages/react-server/src/ReactFizzAsyncDispatcher.js:10	packages/react-reconciler/src/ReactInternalTypes.js
 packages/react-server/src/ReactFizzAsyncDispatcher.js:11	packages/react-server/src/ReactFizzComponentStack.js
 packages/react-server/src/ReactFizzAsyncDispatcher.js:13	packages/react-server/src/ReactFizzCurrentTask.js
-packages/react-server/src/ReactFizzCallUserSpace.js:10	packages/react/src/ReactLazy.js
 packages/react-server/src/ReactFizzClassComponent.js:10	packages/react-server/src/ReactFizzLegacyContext.js
 packages/react-server/src/ReactFizzClassComponent.js:11	packages/react-server/src/ReactFizzNewContext.js
 packages/react-server/src/ReactFizzClassComponent.js:13	packages/shared/ReactFeatureFlags.js
@@ -9180,7 +9148,6 @@ packages/react-server/src/ReactFizzClassComponent.js:16	packages/shared/ReactSym
 packages/react-server/src/ReactFizzClassComponent.js:17	packages/shared/assign.js
 packages/react-server/src/ReactFizzClassComponent.js:18	packages/shared/isArray.js
 packages/react-server/src/ReactFizzComponentStack.js:10	packages/shared/ReactTypes.js
-packages/react-server/src/ReactFizzComponentStack.js:11	packages/react/src/ReactLazy.js
 packages/react-server/src/ReactFizzComponentStack.js:13	packages/shared/ReactComponentStackFrame.js
 packages/react-server/src/ReactFizzComponentStack.js:20	packages/shared/ReactSymbols.js
 packages/react-server/src/ReactFizzComponentStack.js:29	packages/shared/ReactFeatureFlags.js
@@ -9229,7 +9196,6 @@ packages/react-server/src/ReactFizzServer.js:196	packages/shared/getComponentNam
 packages/react-server/src/ReactFizzServer.js:197	packages/shared/isArray.js
 packages/react-server/src/ReactFizzServer.js:198	packages/shared/ReactRecoverable.js
 packages/react-server/src/ReactFizzServer.js:199	packages/react-server/src/ReactFizzThenable.js
-packages/react-server/src/ReactFizzServer.js:32	packages/react/src/ReactLazy.js
 packages/react-server/src/ReactFizzServer.js:33	packages/react-server/src/ReactFizzConfig.js
 packages/react-server/src/ReactFizzServer.js:40	packages/react-server/src/ReactFizzNewContext.js
 packages/react-server/src/ReactFizzServer.js:41	packages/react-server/src/ReactFizzComponentStack.js
@@ -9252,7 +9218,6 @@ packages/react-server/src/ReactFlightActionServer.js:12	packages/react-client/sr
 packages/react-server/src/ReactFlightActionServer.js:17	packages/react-client/src/ReactFlightClientConfig.js
 packages/react-server/src/ReactFlightActionServer.js:23	packages/react-server/src/ReactFlightReplyServer.js
 packages/react-server/src/ReactFlightAsyncSequence.js:10	packages/shared/ReactTypes.js
-packages/react-server/src/ReactFlightCallUserSpace.js:10	packages/react/src/ReactLazy.js
 packages/react-server/src/ReactFlightCallUserSpace.js:12	packages/shared/ReactTypes.js
 packages/react-server/src/ReactFlightCallUserSpace.js:14	packages/react-server/src/ReactFlightServer.js
 packages/react-server/src/ReactFlightCallUserSpace.js:16	packages/react-server/src/flight/ReactFlightCurrentOwner.js
@@ -9301,7 +9266,6 @@ packages/react-server/src/ReactFlightServer.js:41	packages/react-server/src/Reac
 packages/react-server/src/ReactFlightServer.js:53	packages/react-server/src/ReactFlightThenable.js
 packages/react-server/src/ReactFlightServer.js:54	packages/shared/ReactTypes.js
 packages/react-server/src/ReactFlightServer.js:72	packages/shared/ReactElementType.js
-packages/react-server/src/ReactFlightServer.js:73	packages/react/src/ReactLazy.js
 packages/react-server/src/ReactFlightServer.js:74	packages/react-server/src/ReactFlightAsyncSequence.js
 packages/react-server/src/ReactFlightServer.js:81	packages/react-server/src/ReactFlightServerConfig.js
 packages/react-server/src/ReactFlightServerConfigDebugNode.js:10	packages/shared/ReactTypes.js
@@ -9319,7 +9283,6 @@ packages/react-server/src/ReactFlightThenable.js:25	packages/shared/noop.js
 packages/react-server/src/ReactServerStreamConfigBrowser.js:195	packages/react-server/src/createFastHashJS.js
 packages/react-server/src/ReactServerStreamConfigEdge.js:182	packages/react-server/src/createFastHashJS.js
 packages/react-server/src/ReactServerStreamConfigFB.js:89	packages/react-server/src/createFastHashJS.js
-packages/react-server/src/ReactSharedInternalsServer.js:10	packages/react/src/ReactSharedInternalsServer.js
 packages/react-server/src/ReactSharedInternalsServer.js:12	packages/react/index.js
 packages/react-server/src/__tests__/ReactFlightAsyncDebugInfo-test.js:47	packages/react/index.js
 packages/react-server/src/__tests__/ReactFlightAsyncDebugInfo-test.js:48	packages/react-server-dom-webpack/server.js
@@ -9507,7 +9470,6 @@ packages/react-test-renderer/__tests__/shallow-test.js:14	packages/react-test-re
 packages/react-test-renderer/index.js:10	packages/react-test-renderer/src/ReactTestRenderer.js
 packages/react-test-renderer/shallow.js:10	packages/react-test-renderer/npm/shallow.js
 packages/react-test-renderer/src/ReactFiberConfigTestHost.js:10	packages/shared/ReactTypes.js
-packages/react-test-renderer/src/ReactFiberConfigTestHost.js:11	packages/react/src/ReactTransitionType.js
 packages/react-test-renderer/src/ReactFiberConfigTestHost.js:13	packages/shared/isArray.js
 packages/react-test-renderer/src/ReactFiberConfigTestHost.js:14	packages/shared/ReactSymbols.js
 packages/react-test-renderer/src/ReactFiberConfigTestHost.js:15	packages/react-reconciler/src/ReactEventPriorities.js
@@ -9886,7 +9848,6 @@ packages/shared/ReactPerformanceTrackProperties.js:13	packages/shared/isArray.js
 packages/shared/ReactPerformanceTrackProperties.js:14	packages/shared/ReactSymbols.js
 packages/shared/ReactPerformanceTrackProperties.js:15	packages/shared/getComponentNameFromType.js
 packages/shared/ReactSerializationErrors.js:10	packages/shared/ReactSymbols.js
-packages/shared/ReactSerializationErrors.js:20	packages/react/src/ReactLazy.js
 packages/shared/ReactSerializationErrors.js:22	packages/shared/isArray.js
 packages/shared/ReactSerializationErrors.js:23	packages/shared/getPrototypeOf.js
 packages/shared/ReactSerializationErrors.js:25	packages/shared/ReactFeatureFlags.js
@@ -9912,7 +9873,6 @@ packages/shared/forks/ReactFeatureFlags.test-renderer.native-fb.js:11	packages/s
 packages/shared/forks/ReactFeatureFlags.test-renderer.www.js:10	packages/shared/ReactFeatureFlags.js
 packages/shared/forks/ReactFeatureFlags.www.js:10	packages/shared/ReactFeatureFlags.js
 packages/shared/forks/ReactFeatureFlags.www.js:12	packages/shared/forks/ReactFeatureFlags.www-dynamic.js
-packages/shared/getComponentNameFromType.js:10	packages/react/src/ReactLazy.js
 packages/shared/getComponentNameFromType.js:11	packages/shared/ReactTypes.js
 packages/shared/getComponentNameFromType.js:13	packages/shared/ReactSymbols.js
 packages/shared/getComponentNameFromType.js:30	packages/shared/ReactFeatureFlags.js

@@ -32,9 +32,20 @@ struct S {
 }
 ```
 
+```rust path=src/c/mod.rs
+pub mod types;
+```
+
+```rust path=src/lib.rs
+pub mod c;
+pub mod orders;
+```
+
 ## Expect
 
 - src/c/types.rs:2 -> node:orders      # inline type-position crate::orders::Order → src/orders/mod.rs (node orders)
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:orders      # the module declaration of the completed crate
 
 ## Why
 

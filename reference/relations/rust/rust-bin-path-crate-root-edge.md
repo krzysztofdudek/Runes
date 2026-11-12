@@ -33,6 +33,7 @@ pub struct HiArgs;
 ```rust path=crates/core/main.rs
 mod flags;
 use crate::flags::HiArgs;
+fn main() {}
 ```
 
 ```rust path=crates/core/search.rs

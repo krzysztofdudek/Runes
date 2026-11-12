@@ -26,9 +26,24 @@ pub struct D;
 use crate::a::b::{C, D};
 ```
 
+```rust path=src/a/mod.rs
+pub mod b;
+```
+
+```rust path=src/c/mod.rs
+pub mod r#use;
+```
+
+```rust path=src/lib.rs
+pub mod a;
+pub mod c;
+```
+
 ## Expect
 
 - src/c/use.rs:1 -> node:a      # each leaf crate::a::b::C / crate::a::b::D falls back to the module file src/a/b.rs (node a)
+- src/lib.rs:1 -> node:a      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:c      # the module declaration of the completed crate
 
 ## Why
 

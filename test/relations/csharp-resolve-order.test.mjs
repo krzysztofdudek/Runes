@@ -7,7 +7,7 @@ const ORDERS_PER_CASE = 12;
 const edgeKeys = (edges) => edges.map((e) => `${e.fromFile}:${e.line}->${e.owner}`).sort();
 
 describe('csharp: the edges do not depend on the order of the files', () => {
-  for (const { id, mdPath } of listCases().filter((c) => c.language === 'csharp' && c.id.startsWith('csharp-cyclic-base-'))) {
+  for (const { id, mdPath } of listCases().filter((c) => c.language === 'csharp' && (c.id.startsWith('csharp-cyclic-base-') || c.id.startsWith('csharp-using-namespace-hidden-')))) {
     it(`${id}: the edges of ${ORDERS_PER_CASE} random orders are those the case lists`, async () => {
       const doc = loadCaseDoc(id, mdPath);
       const draw = random(SEED);

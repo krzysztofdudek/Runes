@@ -32,6 +32,7 @@ pub struct Thing;
 
 ```rust path=src/main.rs
 use app::util::Thing;
+fn main() {}
 ```
 
 ## Expect

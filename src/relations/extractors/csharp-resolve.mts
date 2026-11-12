@@ -25,6 +25,8 @@ export interface CsharpTypeLookup {
   memberTypes(typeKey: string, name: string, fromFile?: string): string[];
   /** The shapes of the extension methods each file declares under the extension key `key`, by file: what the `shapes:<key>` records hold. They are read from the records themselves, never through the files the table lists under `key`: a consumer may keep one file per owner for a name and still keeps every record whole. */
   extensionShapes(key: string): ReadonlyMap<string, readonly string[]>;
+  /** True when the receiver an extension method writes as `entry` (read in `file`, under the extension key `key`) cannot take a value of the type `typeKey`, as far as the written types say for certain. */
+  cannotTakeReceiver(entry: string, typeKey: string, key: string, file: string): boolean;
 }
 
 /** The names a base list writes `System.Attribute` by when the repository declares no type of that name in scope. */
@@ -267,7 +269,7 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
   };
 
   /** True when a parameter written `param` in the record of a method of `holder` (read in `file`) cannot take an argument of the type `arg`, for certain: every answer that needs something this reader does not know is no. */
-  const cannotTake = (param: string, arg: NonNullable<Arg>, holder: string, file: string): boolean => {
+  const cannotTake = (param: string, arg: NonNullable<Arg>, holder: string, file: string, inBody = true): boolean => {
     if (!param.includes(':')) {
       // A predefined parameter type: `object` takes everything, the others what the language's own conversions give.
       if (!CLOSED_PREDEFINED.has(param) || param === 'object') return false;
@@ -276,7 +278,7 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     }
     const written = decodeWritten(param);
     const usings = usingsOf(file);
-    const readings = writtenReadings(written, holder, true, usings);
+    const readings = writtenReadings(written, holder, inBody, usings);
     const key = bind(readings, file);
     if (key !== undefined) {
       // A type of the repository: it takes what derives from it or implements it, and what an implicit conversion operator of either side turns into it.
@@ -345,8 +347,12 @@ export function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: Symbol
     return byFile;
   };
 
+  /** True when the receiver an extension method writes as `entry` (a record entry, read in `file`, under the extension key `key`) cannot take a value of the type `typeKey`, for certain (see `cannotTake`). */
+  const cannotTakeReceiver = (entry: string, typeKey: string, key: string, file: string): boolean => cannotTake(entry, { key: typeKey }, key, file, false);
+
   return {
     extensionShapes,
+    cannotTakeReceiver,
     bases: (typeKey, fromFile) => bases(idOf(typeKey, fromFile)),
     nested: (typeKey, name, fromFile) => nested(idOf(typeKey, fromFile), name),
     simpleName: (typeKey, name, fromFile) => simpleName(idOf(typeKey, fromFile), name),

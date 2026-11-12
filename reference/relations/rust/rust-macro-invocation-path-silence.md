@@ -33,9 +33,20 @@ fn f() {
 }
 ```
 
+```rust path=src/c/mod.rs
+pub mod run;
+```
+
+```rust path=src/lib.rs
+pub mod c;
+pub mod config;
+```
+
 ## Expect
 
 - silence      # the crate::config::NAME path lives inside macro tokens → no edge to node:config
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:config      # the module declaration of the completed crate
 
 ## Why
 

@@ -61,9 +61,32 @@ export class SymbolTable {
   hasNestedTail(language: string, name: string): boolean {
     return this.nestedTails.has(this.key(language, name));
   }
-  /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. */
-  hasNamespace(language: string, name: string): boolean {
-    return this.namespaces.has(this.key(language, name));
+  /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. With `accept`, only the files it accepts count: a namespace only a project out of reach declares is no namespace to the compilation that cannot see it. */
+  hasNamespace(language: string, name: string, accept?: (file: string) => boolean): boolean {
+    const key = this.key(language, name);
+    if (accept === undefined) return this.namespaces.has(key);
+    if (!this.namespaces.has(key)) return false;
+    for (const file of this.filesOfNamespaces().get(key) ?? []) if (accept(file)) return true;
+    return false;
+  }
+  private namespaceFiles?: { at: number; byNamespace: Map<string, Set<string>> };
+  /** `${namespace}\0${dotted namespace}` → the files declaring a key inside it, built when first asked and again after a later `declare`. */
+  private filesOfNamespaces(): Map<string, Set<string>> {
+    if (this.namespaceFiles?.at === this.declarations) return this.namespaceFiles.byNamespace;
+    const byNamespace = new Map<string, Set<string>>();
+    for (const [k, files] of this.defs) {
+      const head = k.indexOf('\0') + 1;
+      const plus = k.indexOf('+', head);
+      const typePart = plus === -1 ? k : k.slice(0, plus);
+      for (let i = typePart.indexOf('.', head); i !== -1; i = typePart.indexOf('.', i + 1)) {
+        const ns = typePart.slice(0, i);
+        let set = byNamespace.get(ns);
+        if (set === undefined) byNamespace.set(ns, (set = new Set()));
+        for (const f of files) set.add(f);
+      }
+    }
+    this.namespaceFiles = { at: this.declarations, byNamespace };
+    return byNamespace;
   }
   /** Every value declared about `head` in `language` (each key `<head>\t<value>` some file declared), with the files that declared it, in the order first declared; empty when none. */
   valuesOf(language: string, head: string): Array<{ value: string; files: string[] }> {

@@ -35,6 +35,7 @@ pub struct Helper;
 ```rust path=src/main.rs
 use self::store::Db;
 mod store;
+fn main() {}
 ```
 
 ```rust path=src/store/mod.rs

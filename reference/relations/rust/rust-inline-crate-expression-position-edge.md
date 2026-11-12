@@ -32,9 +32,20 @@ fn g() {
 }
 ```
 
+```rust path=src/c/mod.rs
+pub mod run;
+```
+
+```rust path=src/lib.rs
+pub mod c;
+pub mod logging;
+```
+
 ## Expect
 
 - src/c/run.rs:2 -> node:logging      # inline expression-position crate::logging::init → src/logging/mod.rs (node logging)
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:logging      # the module declaration of the completed crate
 
 ## Why
 

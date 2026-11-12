@@ -32,9 +32,20 @@ fn g() {
 }
 ```
 
+```rust path=src/c/mod.rs
+pub mod run;
+```
+
+```rust path=src/lib.rs
+pub mod c;
+pub mod external;
+```
+
 ## Expect
 
 - silence      # bare-identifier-rooted inline path; no edge to node:external even though src/external/mod.rs exists
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:external      # the module declaration of the completed crate
 
 ## Why
 

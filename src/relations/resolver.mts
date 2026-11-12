@@ -269,12 +269,13 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   /** What the resolver has read from the table for C#, kept while the table has taken no declaration since: the same few names are read through every using directive of every file, and each answer is the same each time. */
-  const kept = { at: -1, declared: new Map<string, boolean>(), files: new Map<string, string[]>(), plain: new Map<string, string[]>(), nestedOnly: new Map<string, string[]>(), within: new Map<string, string[]>() };
+  const kept = { at: -1, declared: new Map<string, boolean>(), shadowSeen: new Map<string, boolean>(), files: new Map<string, string[]>(), plain: new Map<string, string[]>(), nestedOnly: new Map<string, string[]>(), within: new Map<string, string[]>() };
   const keepFresh = (): void => {
     const declarations = declarationCount(deps.symbolTable);
     if (declarations === kept.at) return;
     kept.at = declarations;
     kept.declared.clear();
+    kept.shadowSeen.clear();
     kept.files.clear();
     kept.plain.clear();
     kept.nestedOnly.clear();
@@ -291,14 +292,23 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   /** True when the repository declares one of `shadow`'s names, as a type or as a namespace a key lies in: a nearer name C#'s lookup stops at, so a reading behind it binds nothing. */
-  const shadowed = (language: string, shadow: readonly string[] | undefined): boolean => {
+  const shadowed = (language: string, shadow: readonly string[] | undefined, fromFile?: string): boolean => {
     if (shadow === undefined) return false;
     if (language !== 'csharp') return shadow.some((name) => deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name));
     keepFresh();
     return shadow.some((name) => {
       let declared = kept.declared.get(name);
       if (declared === undefined) kept.declared.set(name, (declared = deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name)));
-      return declared;
+      if (!declared || fromFile === undefined || deps.reach === undefined) return declared;
+      // Where the reference graph says what `fromFile` sees, a name only a project out of its reach declares is no name there: the compiler never reads it. The answer depends on the calling file, so it is kept by name and file.
+      const asked = `${name}\0${fromFile}`;
+      let seen = kept.shadowSeen.get(asked);
+      if (seen === undefined) {
+        const reach = deps.reach;
+        const visible = (file: string): boolean => reach(fromFile, file) !== 'unreachable';
+        kept.shadowSeen.set(asked, (seen = deps.symbolTable.filesFor(language, name).some(visible) || (deps.symbolTable.hasNamespace(language, name) && deps.symbolTable.hasNamespace(language, name, visible))));
+      }
+      return seen;
     });
   };
 
@@ -331,7 +341,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   const csharpMemberKeys = (key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within: string | undefined, fromFile: string | undefined): string[] => {
     keepFresh();
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
-    if (shadowed('csharp', shadow)) return [];
+    if (shadowed('csharp', shadow, fromFile)) return [];
     const keptKeys = within !== undefined ? kept.within : nestedOnly ? kept.nestedOnly : kept.plain;
     const asked = within !== undefined ? `${key}\0${within}\0${fromFile ?? ''}` : key;
     const known = keptKeys.get(asked);
@@ -348,7 +358,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   const memberKeys = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within?: string, fromFile?: string): string[] => {
     if (language === 'csharp') return csharpMemberKeys(key, nestedOnly, shadow, within, fromFile);
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
-    if (shadowed(language, shadow)) return [];
+    if (shadowed(language, shadow, fromFile)) return [];
     return nestedOnly ? nestedOnlySplitKeys(deps.symbolTable, language, key) : nestedSplitKeys(deps.symbolTable, language, key);
   };
 
@@ -362,14 +372,30 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return false;
   };
 
-  /** True when every declaration `file` gives of `keys` is internal to its assembly (`internalIn`). */
-  const assemblyOnlyIn = (language: string, keys: readonly string[], file: string): boolean =>
-    keys.every((k) => !filesOf(language, k).includes(file) || internalIn(language, k, file));
+  /** The shapes `file` records for the extension keys among `keys` (`shapes:<key>`), led by `-` for a method only its assembly sees and by `~` for a private one; empty when it records none. */
+  const extensionShapesIn = (keys: readonly string[], file: string): string[] => {
+    const out: string[] = [];
+    for (const k of keys) if (k.endsWith('()')) out.push(...(csharp().extensionShapes(k).get(file) ?? []));
+    return out;
+  };
+
+  /** True when every declaration `file` gives of `keys` is internal to its assembly (`internalIn`). A file that declares extension methods of the name is judged by the shape of each (a shape led by `-` or `~`), as one file may hold a public and an internal method of one name. */
+  const assemblyOnlyIn = (language: string, keys: readonly string[], file: string): boolean => {
+    const shapes = language === 'csharp' ? extensionShapesIn(keys, file) : [];
+    if (shapes.length > 0) return shapes.every((shape) => shape.startsWith('-') || shape.startsWith('~'));
+    return keys.every((k) => !filesOf(language, k).includes(file) || internalIn(language, k, file));
+  };
+
+  /** True when every extension method `file` declares under `keys` is private to its static class: only that file's own calls see it. */
+  const privateOnlyIn = (keys: readonly string[], file: string): boolean => {
+    const shapes = extensionShapesIn(keys, file);
+    return shapes.length > 0 && shapes.every((shape) => shape.startsWith('~'));
+  };
 
   /** Every key a symbol hint reads: those of each member of its set, or its own. */
   const hintKeys = (hint: Extract<TargetHint, { kind: 'symbol' }>, language: string, fromFile: string): string[] =>
     hint.set !== undefined
-      ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
+      ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow, undefined, fromFile))
       : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
 
   /** The distinct files a symbol HINT maps to: the union across its `set` members (each honoring
@@ -388,18 +414,52 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     for (const k of keys) {
       for (const f of filesOf(language, k)) files.add(f);
     }
-    if (language !== 'csharp' || deps.reach === undefined) return files;
-    if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
+    const extension = hint.symbolKey.endsWith('()');
+    if (language !== 'csharp' || (deps.reach === undefined && !extension)) return files;
+    // A private extension method is no definer for a call outside the file that declares it, whatever the assembly says.
+    if (extension) for (const f of [...files]) if (f !== fromFile && privateOnlyIn(keys, f)) files.delete(f);
+    if (deps.reach === undefined) return byReceiver(hint, files, keys, fromFile);
+    if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow, fromFile) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
       // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
       const both = new Set<string>([...filesOf(language, 'Program'), ...filesOf(language, IMPLICIT_PROGRAM_KEY)]);
       if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach, true, (f) => assemblyOnlyIn(language, ['Program', IMPLICIT_PROGRAM_KEY], f));
     }
     // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
-    return withinReach(files, fromFile, deps.reach, !hint.symbolKey.endsWith('()'), (f) => assemblyOnlyIn(language, keys, f));
+    return byReceiver(hint, withinReach(files, fromFile, deps.reach, !extension, (f) => assemblyOnlyIn(language, keys, f)), keys, fromFile);
   };
 
   /**
-   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. Such a file counts only as far as the calling file sees it, as the reach filter reads a definer: a file of a project out of reach has no say, and neither has a method only its own assembly sees (a shape led by `-`) for a caller of another compilation that is no friend. True when one of the shapes left takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners stays ambiguous whatever their shapes: the receiver's type is not read, so the counts choose no one among several.
+   * The definers of an extension-method reading that can take the call when its receiver's type is written (`TargetHint.takes.receiver`) and the reading names more than one file: those with a method, as far as the calling file sees it, that takes the call's counts and whose `this` parameter does not refuse a value of the receiver's type for certain (the type itself, one it derives from or implements, or a type the records say nothing about). A definer that records no shape takes any call. The files are left as they are when the receiver's type binds no one type of the repository.
+   */
+  const byReceiver = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: Set<string>, keys: readonly string[], fromFile: string): Set<string> => {
+    const takes = hint.takes;
+    if (takes?.receiver === undefined || files.size < 2) return files;
+    const receiver = bindCsharpType(takes.receiver, fromFile)?.key;
+    if (receiver === undefined) return files;
+    const kept = new Set<string>();
+    for (const file of files) {
+      let recorded = false;
+      let takesIt = false;
+      for (const key of new Set(keys)) {
+        const shapes = csharp().extensionShapes(key).get(file);
+        if (shapes === undefined) continue;
+        recorded = true;
+        const seen = deps.reach?.(fromFile, file);
+        const friend = seen !== 'reachable' || deps.reach?.internalsVisible === undefined || deps.reach.internalsVisible(fromFile, file);
+        for (const shape of shapes) {
+          const seesIt = shape.startsWith('~') ? file === fromFile : shape.startsWith('-') ? friend : true;
+          if (!seesIt) continue;
+          const [counts, written] = (shape.startsWith('~') || shape.startsWith('-') ? shape.slice(1) : shape).split('|');
+          if (shapeTakes(counts, takes.typeArgs, takes.args) && (written === undefined || !csharp().cannotTakeReceiver(written, receiver, key, file))) takesIt = true;
+        }
+      }
+      if (!recorded || takesIt) kept.add(file);
+    }
+    return kept;
+  };
+
+  /**
+   * Whether the owner a C# extension-method reading binds can take its call (`TargetHint.takes`). The shapes are read from the `shapes:<key>` records themselves: every record of a key of the reading whose file is one of `files` or belongs to the owner of one of them. A consumer may hand the table one file per owner for a name key and still hands it every record, so the method that takes the call may sit in a file the name key does not list. Such a file counts only as far as the calling file sees it, as the reach filter reads a definer: a file of a project out of reach has no say, and neither has a method only its own assembly sees (a shape led by `-`) for a caller of another compilation that is no friend, and a private one (a shape led by `~`) for a caller in any other file. True when one of the shapes left takes the call's counts, or when one of `files` has no record at all (a definer without one takes any call). It is asked only of a reading that would bind: a reading whose owner cannot take the call binds nothing, as a name the repository does not declare, and the walk goes on to the next reading, as C# goes on to the next namespace. A reading that names two owners and carries no written receiver type stays ambiguous whatever their shapes, for the counts choose no one among several; with one, `byReceiver` has already narrowed the owners by the receiver's type before this is asked.
    */
   const takesCall = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: ReadonlySet<string>, language: string, fromFile: string): boolean => {
     const takes = hint.takes;
@@ -417,7 +477,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
         const seen = deps.reach?.(fromFile, file);
         if (seen === 'unreachable') continue;
         const friend = seen !== 'reachable' || deps.reach?.internalsVisible === undefined || deps.reach.internalsVisible(fromFile, file);
-        if (shapes.some((shape) => (shape.startsWith('-') ? friend && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shapeTakes(shape, takes.typeArgs, takes.args)))) return true;
+        if (shapes.some((shape) => (shape.startsWith('~') ? file === fromFile && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shape.startsWith('-') ? friend && shapeTakes(shape.slice(1), takes.typeArgs, takes.args) : shapeTakes(shape, takes.typeArgs, takes.args)))) return true;
         recorded.add(file);
       }
     }

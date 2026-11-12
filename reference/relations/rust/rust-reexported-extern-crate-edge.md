@@ -65,10 +65,19 @@ use grep::matcher::Matcher;
 use grep::searcher::Searcher;
 ```
 
+```rust path=crates/app/src/cmd/mod.rs
+pub mod run;
+```
+
+```rust path=crates/app/src/lib.rs
+pub mod cmd;
+```
+
 ## Expect
 
 - crates/app/src/cmd/run.rs:1 -> node:src     # grep::printer → `pub extern crate grep_printer as printer;` in crates/grep/src/lib.rs
 - crates/app/src/cmd/run.rs:2 -> node:src     # grep::matcher → `pub extern crate grep_matcher as matcher;` in crates/grep/src/lib.rs
+- crates/app/src/lib.rs:1 -> node:cmd      # the module declaration of the completed crate
 
 ## Why
 

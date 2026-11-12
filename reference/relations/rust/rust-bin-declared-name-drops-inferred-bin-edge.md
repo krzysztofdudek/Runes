@@ -25,6 +25,7 @@ path = "tools/cli.rs"
 ```rust path=tools/cli.rs
 use self::parts::Part;
 mod parts;
+fn main() {}
 ```
 
 ```rust path=tools/parts/mod.rs

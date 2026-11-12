@@ -605,7 +605,8 @@ async function typescriptOracle(repoDir, result, findings) {
     const containing = path.join(repoDir, r.from);
     let mode;
     try {
-      mode = covering === null ? (callModes[r.candidates[0].callForm] ?? ts.getImpliedNodeFormatForFile(containing, config.cache.getPackageJsonInfoCache(), host, nodeFormatOptions)) : ts.getImpliedNodeFormatForFile(containing, config.cache?.getPackageJsonInfoCache?.(), host, options);
+      // A `require()` call and a dynamic `import()` enter the branch of their own form in any file, covered or not; the format of the file decides the others.
+      mode = callModes[r.candidates[0].callForm] ?? (covering === null ? ts.getImpliedNodeFormatForFile(containing, config.cache.getPackageJsonInfoCache(), host, nodeFormatOptions) : ts.getImpliedNodeFormatForFile(containing, config.cache?.getPackageJsonInfoCache?.(), host, options));
     } catch {
       mode = undefined;
     }

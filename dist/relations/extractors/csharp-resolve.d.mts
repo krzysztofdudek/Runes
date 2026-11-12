@@ -31,6 +31,8 @@ export interface CsharpTypeLookup {
     memberTypes(typeKey: string, name: string, fromFile?: string): string[];
     /** The shapes of the extension methods each file declares under the extension key `key`, by file: what the `shapes:<key>` records hold. They are read from the records themselves, never through the files the table lists under `key`: a consumer may keep one file per owner for a name and still keeps every record whole. */
     extensionShapes(key: string): ReadonlyMap<string, readonly string[]>;
+    /** True when the receiver an extension method writes as `entry` (read in `file`, under the extension key `key`) cannot take a value of the type `typeKey`, as far as the written types say for certain. */
+    cannotTakeReceiver(entry: string, typeKey: string, key: string, file: string): boolean;
 }
 /**
  * Which of an attribute's two readings C# takes (spec §23.3), from what each binds: `written` and `suffixed` are the attribute-class answers of the types the written name and the `Attribute`-suffixed name bind (undefined where the reading binds no type of the repository), and `hasSuffixed` says whether the attribute has a suffixed reading at all (a written name that already ends in `Attribute` has none). A reading that binds an attribute class is the result, and both doing so is the compiler's error CS1614, which gives nothing. A type that only may be one is taken as the suffixed reading, the name the convention gives an attribute class, and as the written reading only where no suffixed reading exists; a written name without the suffix that only may be one, beside nothing suffixed in the repository, gives nothing: the attribute is then most likely the framework's.

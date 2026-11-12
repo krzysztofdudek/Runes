@@ -40,9 +40,18 @@ use cl::Engine;
 extern crate std as s;
 ```
 
+```rust path=crates/server/src/cmd/mod.rs
+pub mod run;
+```
+
+```rust path=crates/server/src/lib.rs
+pub mod cmd;
+```
+
 ## Expect
 
 - crates/server/src/cmd/run.rs:1 -> node:src      # extern crate core_lib → the path dependency's crate root file
+- crates/server/src/lib.rs:1 -> node:cmd      # the module declaration of the completed crate
 
 ## Why
 

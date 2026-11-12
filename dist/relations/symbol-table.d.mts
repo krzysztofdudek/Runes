@@ -15,8 +15,11 @@ export declare class SymbolTable {
     /** True when some `::`-qualified key ends in the segment `name` (e.g. `Admin::Order` for
      *  `Order`): a constant of that name is nested in some namespace. Ruby's lexical guard. */
     hasNestedTail(language: string, name: string): boolean;
-    /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. */
-    hasNamespace(language: string, name: string): boolean;
+    /** True when some declared key of `language` lies inside the dotted namespace `name` (a key `<name>.<...>` before any `+`): the repository declares that namespace. C#'s lookup stops at a nearer namespace of a name, which no key names by itself. With `accept`, only the files it accepts count: a namespace only a project out of reach declares is no namespace to the compilation that cannot see it. */
+    hasNamespace(language: string, name: string, accept?: (file: string) => boolean): boolean;
+    private namespaceFiles?;
+    /** `${namespace}\0${dotted namespace}` → the files declaring a key inside it, built when first asked and again after a later `declare`. */
+    private filesOfNamespaces;
     /** Every value declared about `head` in `language` (each key `<head>\t<value>` some file declared), with the files that declared it, in the order first declared; empty when none. */
     valuesOf(language: string, head: string): Array<{
         value: string;

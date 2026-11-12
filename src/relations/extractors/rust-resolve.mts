@@ -53,6 +53,10 @@ import path from 'node:path';
  * path as `use::<n>::<the n segments the name stands for>::<the path as written>`
  * (`use::2::self::shapes::shapes::Circle` for `mod shapes; use shapes::Circle;`). `use` is a
  * keyword, so no path of the source starts with it. In edition 2015 the path is read as written.
+ * A name that is an item of a block around the `use` (a `mod` in a function body) is the segment
+ * `<block>`, which no source can write: from edition 2018 on the path names that item, in the
+ * file, and binds nothing; in edition 2015 a `use` path starts at the crate root, so it is read as
+ * written.
  *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
@@ -188,6 +192,8 @@ export function resolveRustPath(
     const lead = Number(segments[1]);
     const written = segments.slice(2 + lead);
     if (!Number.isInteger(lead) || lead < 1 || written.length === 0) return undefined;
+    // The name is an item of a block around the `use` (`<block>`, which no source can write): from edition 2018 on it names that item, in this file.
+    if (segments[2] === '<block>' && crate.crateRelativeUses !== true) return undefined;
     if (crate.crateRelativeUses === true) return resolveBare(written, fromFile, exists, deps, crate);
     return resolveRustPath([...segments.slice(2, 2 + lead), ...written.slice(1)].join('::'), fromFile, exists, deps);
   }
@@ -289,6 +295,11 @@ export const RUST_MODULES_KNOWN_KEY = 'mods:all';
 /** The symbol key under which the Rust extractor declares, for a file, a file its top level loads through a `path` attribute on a `mod` outside inline modules: `path` is the attribute's path, normalized, relative to the declaring file's directory (`platform/linux.rs`, `../shared/util.rs`). The `pathmod:` prefix can never be a Rust identifier. */
 export function rustPathModuleKey(path: string): string {
   return `pathmod:${path}`;
+}
+
+/** The symbol key under which the Rust extractor declares, for a file, a file one of its inline modules loads through a `path` attribute on a `mod`: `path` is the attribute's path, normalized, with the names of the inline modules around the `mod` in front (`outer/loaded.rs`). It is relative to the directory the file's modules lie in, which only the reader of the table knows: the file's own directory where the file is a module root (a `lib.rs`, a `main.rs`, any root a manifest or Cargo names, a `mod.rs`) or was loaded through a `path` attribute itself, else a directory named after the file beside it. */
+export function rustInlinePathModuleKey(path: string): string {
+  return `pathmod-inline:${path}`;
 }
 
 /** The symbol key the Rust extractor declares beside each `rustPathModuleKey`, with the file name the path ends in (`linux.rs`): a table answers only whether a key is declared, so this is how the files that may load a given file through a `path` attribute are found. */

@@ -60,6 +60,7 @@ use crate::TestServer;
 ```rust path=demos/viewer/app.rs
 mod state;
 mod panels;
+fn main() {}
 ```
 
 ```rust path=demos/viewer/state.rs

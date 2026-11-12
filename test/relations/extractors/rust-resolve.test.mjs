@@ -1978,14 +1978,22 @@ describe('declaredModules', () => {
 });
 
 describe('pathModules', () => {
-  const read = (code) => withParsedFile('src/lib.rs', code, (tree) => pathModules(tree.rootNode).map((m) => `${m.path}@${m.line}`));
+  const read = (code) => withParsedFile('src/lib.rs', code, (tree) => pathModules(tree.rootNode).map((m) => `${m.path}@${m.line}${m.inline ? ' inline' : ''}`));
 
   it('lists the normalized path of each path attribute on a top-level mod without a body', async () => {
     expect(await read('#[path = "platform/linux.rs"]\nmod sys;\n#[path = "./imp/../a//b.rs"]\n/// doc\n#[cfg(unix)]\npub mod b;\n#[path = "../shared/util.rs"]\nmod util;\n#[path = "x/../../up.rs"]\nmod up;')).toEqual(['platform/linux.rs@2', 'a/b.rs@6', '../shared/util.rs@8', '../up.rs@10']);
   });
 
-  it('leaves out an inline module, a mod inside one, a cfg_attr, and a path it cannot place', async () => {
-    expect(await read('#[path = "dir"]\nmod inline { }\nmod wrap {\n    #[path = "w.rs"]\n    mod w;\n}\n#[cfg_attr(unix, path = "u.rs")]\nmod u;\n#[path = "/abs/a.rs"]\nmod a;\n#[path = ""]\nmod e;\n#[path = "a\\\\b.rs"]\nmod w2;\n#[path = ".."]\nmod dots;\n#[path]\nmod bare;\n#[path = r"raw.rs"]\nmod raw;\n#[doc = "x"]\nmod plain;')).toEqual([]);
+  it('reads a mod inside an inline module, and leaves out an inline module that moves its directory, a cfg_attr, and a path it cannot place', async () => {
+    expect(await read('#[path = "dir"]\nmod inline { }\nmod wrap {\n    #[path = "w.rs"]\n    mod w;\n}\n#[cfg_attr(unix, path = "u.rs")]\nmod u;\n#[path = "/abs/a.rs"]\nmod a;\n#[path = ""]\nmod e;\n#[path = "a\\\\b.rs"]\nmod w2;\n#[path = ".."]\nmod dots;\n#[path]\nmod bare;\n#[path = r"raw.rs"]\nmod raw;\n#[doc = "x"]\nmod plain;')).toEqual(['wrap/w.rs@5 inline']);
+  });
+});
+
+describe('pathModules inside inline modules', () => {
+  const read = (code) => withParsedFile('src/lib.rs', code, (tree) => pathModules(tree.rootNode).map((m) => `${m.path}@${m.line}${m.inline ? ' inline' : ''}`));
+
+  it('puts the names of the inline modules in front of the path, and marks the path as one the reader places', async () => {
+    expect(await read('mod outer {\n    mod inner {\n        #[path = "../x.rs"]\n        mod x;\n    }\n    #[path = "y.rs"]\n    mod y;\n}\n#[path = "z.rs"]\nmod z;')).toEqual(['outer/x.rs@4 inline', 'outer/y.rs@7 inline', 'z.rs@10']);
   });
 });
 

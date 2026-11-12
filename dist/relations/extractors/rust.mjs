@@ -1,6 +1,6 @@
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
+import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './rust-resolve.mjs';
 /**
  * Rust dependency extractor.
  *
@@ -309,12 +309,30 @@ function uses(file) {
         }
         return undefined;
     };
+    /** True when a block around `from`, before the module that holds it, declares an item of the type namespace named `name` (a `mod` in a function body): a `use` path that starts with it names that item, which sits in this file, and no crate, module file or other file. */
+    const blockItemNamed = (name, from) => {
+        for (let scope = from; scope !== null && !scope.module; scope = scope.outer) {
+            if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name))
+                return true;
+        }
+        return false;
+    };
     const emit = (raw, node) => {
         if (raw === undefined || raw === '')
             return;
         const written = unrawPath(raw);
         let specifier = written;
         const root = specifier.split('::', 1)[0];
+        // A `use` path that starts with an item its own block declares names that item from edition 2018 on, and in edition 2015 starts at the crate root whatever a block declares: the path is emitted as `use::1::<block>::<the path as written>`, which the resolver reads as written in 2015 and as no file from 2018 on.
+        if (useDecl !== null && !useFromRoot && blockItemNamed(root, lexical)) {
+            const line = node.startPosition.row + 1;
+            const dedupKey = `${written} block ${line}`;
+            if (seen.has(dedupKey))
+                return;
+            seen.add(dedupKey);
+            out.push(single({ kind: 'path', specifier: `use::1::<block>::${written}` }, 'import', line));
+            return;
+        }
         const crate = useDecl === null ? undefined : externCrateFor(root, useDecl, lexical);
         // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
         const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
@@ -641,8 +659,9 @@ function declarations(file) {
         out.push({ symbolKey: rustModuleKey(path), line });
     if (modules.known)
         out.push({ symbolKey: RUST_MODULES_KNOWN_KEY, line: 1 });
-    for (const { path, line } of pathModules(root)) {
-        out.push({ symbolKey: rustPathModuleKey(path), line });
+    // A `mod` inside an inline module lies in a directory only the reader of the table can place (see `rustInlinePathModuleKey`).
+    for (const { path, line, inline } of pathModules(root)) {
+        out.push({ symbolKey: inline ? rustInlinePathModuleKey(path) : rustPathModuleKey(path), line });
         out.push({ symbolKey: rustPathModuleNameKey(path.slice(path.lastIndexOf('/') + 1)), line });
     }
     return out;
@@ -764,13 +783,21 @@ function cfgIfInvokesMacro(body) {
     return branches(body);
 }
 /**
- * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
+ * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module, and the same for a `mod` inside an inline module that carries no `path` attribute of its own, with the names of the inline modules in front of the path (`inline` is true for those, whose directory the reader of the table places): the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
  */
-export function pathModules(root) {
+export function pathModules(root, directory = []) {
     const out = [];
     for (const node of root.namedChildren) {
-        if (node === null || node.type !== 'mod_item' || node.childForFieldName('body') !== null)
+        if (node === null || node.type !== 'mod_item')
             continue;
+        // An inline module: the path attribute of a `mod` inside it is relative to the directory of the file with the names of the modules around it added (`outer/loaded.rs`); one that itself carries a `path` attribute moves that directory somewhere this does not follow.
+        const body = node.childForFieldName('body');
+        if (body !== null) {
+            const name = unraw(node.childForFieldName('name')?.text ?? '');
+            if (name !== '' && !modHasPathOverride(node))
+                out.push(...pathModules(body, [...directory, name]));
+            continue;
+        }
         for (const item of attributesBefore(node)) {
             const attr = item.namedChild(0);
             const id = attr?.namedChild(0) ?? null;
@@ -780,7 +807,7 @@ export function pathModules(root) {
             const text = value.text.slice(1, -1);
             if (text === '' || text.startsWith('/') || text.includes('\\'))
                 continue;
-            const parts = [];
+            const parts = [...directory];
             for (const part of text.split('/')) {
                 if (part === '' || part === '.')
                     continue;
@@ -790,7 +817,7 @@ export function pathModules(root) {
                     parts.push(part);
             }
             if (parts.length > 0 && parts[parts.length - 1] !== '..')
-                out.push({ path: parts.join('/'), line: node.startPosition.row + 1 });
+                out.push({ path: parts.join('/'), line: node.startPosition.row + 1, inline: directory.length > 0 });
         }
     }
     return out;
@@ -1184,7 +1211,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 22,
+    rev: 26,
     declarations,
     uses,
 };

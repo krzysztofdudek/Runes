@@ -134,7 +134,7 @@ const RECOVERY_PATTERNS: RegExp[] = [
   // import x from '…' · import { a, type B } from '…' · import * as ns from '…' · import type … · import defer * as …
   // export { a } from '…' · export * from '…' · export * as ns from '…' · export type { … } from '…'
   // A type-only one may carry `with { 'resolution-mode': 'import' }`, which groups 4 and 5 read.
-  /^[ \t]*(?:import|export)\b([\w$\s{},*]*?)\bfrom[ \t]*(['"])([^'"\r\n]+)\2(?:\s*(?:with|assert)\s*\{\s*(['"])resolution-mode\4\s*:\s*(['"])(import|require)\5)?/gm,
+  /^[ \t]*(?:import|export)\b([\w$\s{},*]*?)\bfrom[ \t]*(['"])([^'"\r\n]+)\2(?:\s*(?:with|assert)\s*\{\s*(['"])resolution-mode\4\s*:\s*(['"])(import|require)\5\s*,?\s*\})?/gm,
   // import './side-effect'
   /^[ \t]*import()[ \t]*(['"])([^'"\r\n]+)\2/gm,
   // import x = require('…') · export import x = require('…') · import type x = require('…')
@@ -149,6 +149,8 @@ function modeOf(value: string | undefined): 'require' | 'esm' | undefined {
 /** The mode a `{ 'resolution-mode': '…' }` object names, or undefined. */
 function modeOfAttributes(object: Node | null | undefined): 'require' | 'esm' | undefined {
   if (object === null || object === undefined || object.type !== 'object') return undefined;
+  // A list of more than the one entry is reported by the compiler, which resolves by the format of the file.
+  if (object.namedChildren.filter((c) => c !== null && c.type !== 'comment').length !== 1) return undefined;
   for (const pair of object.namedChildren) {
     if (pair === null || pair.type !== 'pair') continue;
     if (specifierFromStringNode(pair.childForFieldName('key')) === 'resolution-mode') return modeOf(specifierFromStringNode(pair.childForFieldName('value')));
@@ -406,7 +408,14 @@ function uses(file: ParsedFile): DetectedDep[] {
     return inType || TYPE_POSITION_ANCESTORS.has(node.type) ? true : undefined;
   });
 
-  for (const { specifier, line, mode } of recoverFromErrors(file)) emitAt(specifier, line, mode);
+  for (const { specifier, line, mode } of recoverFromErrors(file)) {
+    // The grammar reads a `with` clause that starts on the next line as a statement of its own, so the walk has read the declaration without its mode; the recovery reads it with the mode, and replaces that reading.
+    if (mode !== undefined) {
+      const bare = out.findIndex((d) => d.line === line && d.candidates.length === 1 && d.candidates[0].kind === 'path' && d.candidates[0].specifier === specifier && d.candidates[0].callForm === undefined);
+      if (bare !== -1) out.splice(bare, 1);
+    }
+    emitAt(specifier, line, mode);
+  }
 
   return out;
 }
@@ -446,7 +455,7 @@ export const typescriptExtractor: DependencyExtractor = {
   // import(), `import type = require`) and a module augmentation names its module.
   // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
   // `new URL(…, import.meta.url)`; ERROR-region recovery.
-  rev: 5,
+  rev: 6,
   declarations,
   uses,
 };

@@ -32,6 +32,7 @@ pub struct Thing;
 ```rust path=src/cli.rs
 use self::tools::Helper;
 mod tools;
+fn main() {}
 ```
 
 ```rust path=src/tools/mod.rs

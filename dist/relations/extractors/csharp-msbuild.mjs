@@ -4,6 +4,8 @@ import path from 'node:path';
  *
  * The XML reading is deliberately narrow (start tags, a few properties) and never evaluates a condition or a property.
  */
+/** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
+export const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
 /** The attributes of one XML start tag's attribute text, keys lower-cased. */
 export function attributes(attrText) {
     const out = new Map();
@@ -19,11 +21,11 @@ export function stripComments(xml) {
 }
 /** The last value of `<Name>value</Name>` in the text, or undefined. */
 export function lastProperty(xml, name) {
-    const re = new RegExp(`<${name}\\b[^>]*>([^<]*)</${name}>`, 'gi');
+    const re = new RegExp(`<${name}\\b${ATTRS}>([^<]*)</${name}>`, 'gi');
     let value;
     let m;
     while ((m = re.exec(xml)) !== null)
-        value = m[1].trim();
+        value = m[2].trim();
     return value;
 }
 /** True for the name of a C# project file. */

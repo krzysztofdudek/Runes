@@ -29,9 +29,20 @@ pub struct Repository;
 use crate::db::Repository as Repo;
 ```
 
+```rust path=src/c/mod.rs
+pub mod r#use;
+```
+
+```rust path=src/lib.rs
+pub mod c;
+pub mod db;
+```
+
 ## Expect
 
 - src/c/use.rs:1 -> node:db      # the alias `Repo` is dropped; target is the real path crate::db::Repository → src/db/mod.rs (node db)
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
+- src/lib.rs:2 -> node:db      # the module declaration of the completed crate
 
 ## Why
 

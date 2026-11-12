@@ -1,5 +1,5 @@
 import { diskFileView } from '../file-view.mjs';
-import { attributes, stripComments, lastProperty, isCsproj, makeProjectLocator } from './csharp-msbuild.mjs';
+import { ATTRS, attributes, stripComments, lastProperty, isCsproj, makeProjectLocator } from './csharp-msbuild.mjs';
 /** The implicit global usings the .NET SDKs generate (MS Learn — "Implicit using directives"). */
 const IMPLICIT_USINGS_BASE = [
     'System',
@@ -38,7 +38,7 @@ const IMPLICIT_USINGS_BY_SDK = new Map([
 ]);
 /** Apply the `<Using Include|Remove …>` items of one MSBuild file, in document order. */
 function applyUsingItems(xml, items) {
-    const re = /<Using\b([^>]*?)\/?>/g;
+    const re = new RegExp(`<Using\\b${ATTRS}\\/?>`, 'g');
     let m;
     while ((m = re.exec(xml)) !== null) {
         const attrs = attributes(m[1]);
@@ -114,7 +114,7 @@ export function buildCsharpProjectScopes(projectRoot, files, options) {
             if (implicit !== undefined && /^(enable|true)$/i.test(implicit)) {
                 let sdk = '';
                 for (const xml of ordered) {
-                    const m = /<Project\b([^>]*)>/i.exec(xml);
+                    const m = new RegExp(`<Project\\b${ATTRS}>`, 'i').exec(xml);
                     const s = m ? attributes(m[1]).get('sdk') : undefined;
                     if (s !== undefined && s !== '') {
                         sdk = s.toLowerCase();
