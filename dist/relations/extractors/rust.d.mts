@@ -25,9 +25,9 @@ export declare function declaredModules(root: Node): {
     known: boolean;
 };
 /**
- * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
+ * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module, and the same for a `mod` inside an inline module that carries no `path` attribute of its own, with the names of the inline modules (after the file's own name when it is no module root) in front of the path: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
  */
-export declare function pathModules(root: Node): Array<{
+export declare function pathModules(root: Node, inlineBase?: readonly string[], directory?: readonly string[]): Array<{
     path: string;
     line: number;
 }>;

@@ -662,7 +662,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   const modules = declaredModules(root);
   for (const { path, line } of modules.declared) out.push({ symbolKey: rustModuleKey(path), line });
   if (modules.known) out.push({ symbolKey: RUST_MODULES_KNOWN_KEY, line: 1 });
-  for (const { path, line } of pathModules(root)) {
+  // The modules inside an inline module of a file that is not a module root (`lib.rs`, `main.rs`, `mod.rs`) lie in a directory of the file's own name.
+  const fileName = file.path.slice(file.path.lastIndexOf('/') + 1);
+  const modulesOfRoot = fileName === 'mod.rs' || fileName === 'lib.rs' || fileName === 'main.rs';
+  for (const { path, line } of pathModules(root, modulesOfRoot || !fileName.endsWith('.rs') ? [] : [fileName.slice(0, -'.rs'.length)])) {
     out.push({ symbolKey: rustPathModuleKey(path), line });
     out.push({ symbolKey: rustPathModuleNameKey(path.slice(path.lastIndexOf('/') + 1)), line });
   }
@@ -766,12 +769,19 @@ function cfgIfInvokesMacro(body: Node): boolean {
 }
 
 /**
- * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
+ * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module, and the same for a `mod` inside an inline module that carries no `path` attribute of its own, with the names of the inline modules (after the file's own name when it is no module root) in front of the path: the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
  */
-export function pathModules(root: Node): Array<{ path: string; line: number }> {
+export function pathModules(root: Node, inlineBase: readonly string[] = [], directory: readonly string[] = []): Array<{ path: string; line: number }> {
   const out: Array<{ path: string; line: number }> = [];
   for (const node of root.namedChildren) {
-    if (node === null || node.type !== 'mod_item' || node.childForFieldName('body') !== null) continue;
+    if (node === null || node.type !== 'mod_item') continue;
+    // An inline module: the path attribute of a `mod` inside it is relative to the directory of the file with the names of the modules around it added (`outer/loaded.rs`); one that itself carries a `path` attribute moves that directory somewhere this does not follow.
+    const body = node.childForFieldName('body');
+    if (body !== null) {
+      const name = unraw(node.childForFieldName('name')?.text ?? '');
+      if (name !== '' && !modHasPathOverride(node)) out.push(...pathModules(body, inlineBase, [...(directory.length === 0 ? inlineBase : directory), name]));
+      continue;
+    }
     for (const item of attributesBefore(node)) {
       const attr = item.namedChild(0);
       const id = attr?.namedChild(0) ?? null;
@@ -779,7 +789,7 @@ export function pathModules(root: Node): Array<{ path: string; line: number }> {
       if (id === null || id.type !== 'identifier' || id.text !== 'path' || value === null || value.type !== 'string_literal') continue;
       const text = value.text.slice(1, -1);
       if (text === '' || text.startsWith('/') || text.includes('\\')) continue;
-      const parts: string[] = [];
+      const parts: string[] = [...directory];
       for (const part of text.split('/')) {
         if (part === '' || part === '.') continue;
         if (part === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
@@ -1127,7 +1137,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 23,
+  rev: 24,
   declarations,
   uses,
 };
