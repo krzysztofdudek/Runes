@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
@@ -43,20 +44,29 @@ test('the Windows job runs the suite in three shards, and every job that is not 
   }
 });
 
-test('the shards of the Windows job together run every test file once', () => {
+test('the shards of the Windows job, started as the workflow starts them, run every test file once and no file twice', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'runes-shards-'));
   try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    const runner = pkg.scripts.test.split(' && ').at(-1);
+    assert.match(runner, /^node scripts\/test\.mjs$/, 'npm appends the options of `npm test --` to the last command, so it must be the one that hands them to node ahead of the pattern');
+    const flag = /npm test -- (--test-shard=\S+)$/m.exec(job('test-windows'))[1];
+    assert.equal(flag, '--test-shard=${{ matrix.shard }}/3');
     const names = Array.from({ length: 11 }, (_, i) => `file-${String(i).padStart(2, '0')}`);
-    for (const name of names) writeFileSync(path.join(dir, `${name}.test.mjs`), `import test from 'node:test'; test('ran ${name}', () => {});`);
+    mkdirSync(path.join(dir, 'test', 'nested'), { recursive: true });
+    names.forEach((name, i) => writeFileSync(path.join(dir, 'test', i % 2 === 0 ? '' : 'nested', `${name}.test.mjs`), `import test from 'node:test'; test('ran ${name}', () => {});`));
     const env = { ...process.env };
     delete env.NODE_TEST_CONTEXT;
-    const ran = [1, 2, 3].map((shard) => {
-      const r = spawnSync(process.execPath, ['--test', '--test-reporter=spec', `--test-shard=${shard}/3`, '**/*.test.mjs'], { cwd: dir, encoding: 'utf8', timeout: 60000, env });
+    const run = (...options) => {
+      const r = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/test.mjs', import.meta.url)), '--test-reporter=spec', ...options], { cwd: dir, encoding: 'utf8', timeout: 60000, env });
       assert.equal(r.status, 0, r.stdout + r.stderr);
       return [...r.stdout.matchAll(/ran (file-\d+)/g)].map((m) => m[1]);
-    });
-    assert.deepEqual(ran.flat().sort(), names, 'every file once');
-    assert.ok(ran.every((files) => files.length >= 3), JSON.stringify(ran));
+    };
+    const full = run();
+    assert.deepEqual([...full].sort(), names, 'the unsharded run has every file');
+    const shards = [1, 2, 3].map((k) => run(flag.replace('${{ matrix.shard }}', String(k))));
+    assert.ok(shards.every((files) => files.length >= 3 && files.length < names.length), JSON.stringify(shards));
+    assert.deepEqual(shards.flat().sort(), [...full].sort(), 'together the shards run the full run\'s files, each once');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
