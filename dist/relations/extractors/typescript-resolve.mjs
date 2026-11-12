@@ -126,17 +126,17 @@ function resolveWorkspacePackage(spec, from, exists, deps, callForm) {
     if (manifest.exports !== undefined && manifest.exports !== null) {
         // `exports` is the package's whole public surface: a subpath it does not list is not
         // importable, so no fallback to the directory layout.
-        return reported(pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) => target.startsWith('./') ? entryFile(pkg, joinUnder(dir, target), exists, deps, missing) : undefined));
+        return reported(pickTarget(matchSubpathKey(normalizeExports(manifest.exports), subpath), exportConditions(from, deps, callForm), (target) => target.startsWith('./') ? entryFile(pkg, joinUnder(dir, target), exists, deps, missing, true) : undefined));
     }
     if (subpath !== '.')
         return probe(joinUnder(dir, subpath), exists, deps);
     return reported(entryOf(pkg, exists, deps, missing) ?? probe(joinUnder(dir, 'index'), exists));
 }
 /** The file a package entry names: the file itself (probed as any path is), else the source it is compiled from ({@link TsResolveDeps.sourceOfOutput}). A target that gives neither is added to `missing`. */
-function entryFile(pkg, target, exists, deps, missing) {
+function entryFile(pkg, target, exists, deps, missing, exact = false) {
     if (target === undefined)
         return undefined;
-    const hit = probe(target, exists) ?? deps?.sourceOfOutput?.(pkg.dir, target, exists);
+    const hit = (exact ? probeExact(target, exists) : probe(target, exists)) ?? deps?.sourceOfOutput?.(pkg.dir, target, exists);
     if (typeof hit === 'string')
         return hit;
     missing?.push({ target, sourcesDisagree: hit === SOURCES_DISAGREE });
@@ -424,6 +424,14 @@ function probe(joined, exists, deps) {
             return cand;
     }
     return undefined;
+}
+/**
+ * The file an `exports` target names. Node and TypeScript take the target as it is written: the file itself, or for a JavaScript extension the source it is compiled from (`./a.js` for `./a.ts`); a target without an extension names that file and no `.ts` or `.js` beside it, and a directory names no index.
+ */
+function probeExact(joined, exists) {
+    const ext = path.posix.extname(joined);
+    const candidates = ext in JS_REWRITES || TS_EXTENSIONS.has(ext) ? fileCandidates(joined) : [joined];
+    return candidates.find((candidate) => exists(candidate));
 }
 /** A package directory's own entry file from its `types`/`typings`/`module`/`main` fields. */
 function entryOf(pkg, exists, deps, missing) {
