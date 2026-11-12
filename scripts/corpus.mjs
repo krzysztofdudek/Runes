@@ -481,9 +481,9 @@ const TS_OWN_EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|json)$/i;
 async function typescriptOracle(repoDir, result, findings) {
   let ts;
   try {
-    ts = (await import('typescript')).default;
+    ts = (await import('typescript6')).default;
   } catch (err) {
-    return { skipped: `the typescript package is not installed (${err.message})` };
+    return { skipped: `the typescript6 package is not installed (${err.message})` };
   }
   const deps = result.references.filter((r) => TS_LANGUAGES.has(r.language) || /\.(vue|svelte)$/i.test(r.from)).filter((r) => r.candidates.length > 0 && r.candidates.every((c) => c.kind === 'path'));
   if (deps.length === 0) return { checked: 0 };

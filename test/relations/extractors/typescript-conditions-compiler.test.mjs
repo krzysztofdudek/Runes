@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from '../../helpers/expect.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import ts from 'typescript';
+import ts from 'typescript6';
 import { resolveTsPath, makeTsResolveDeps, typescriptExtractor } from '../../helpers/internal/relations.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
 
