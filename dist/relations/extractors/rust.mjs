@@ -323,8 +323,16 @@ function uses(file) {
         const written = unrawPath(raw);
         let specifier = written;
         const root = specifier.split('::', 1)[0];
-        if (useDecl !== null && !useFromRoot && blockItemNamed(root, lexical))
+        // A `use` path that starts with an item its own block declares names that item from edition 2018 on, and in edition 2015 starts at the crate root whatever a block declares: the path is emitted as `use::1::<block>::<the path as written>`, which the resolver reads as written in 2015 and as no file from 2018 on.
+        if (useDecl !== null && !useFromRoot && blockItemNamed(root, lexical)) {
+            const line = node.startPosition.row + 1;
+            const dedupKey = `${written} block ${line}`;
+            if (seen.has(dedupKey))
+                return;
+            seen.add(dedupKey);
+            out.push(single({ kind: 'path', specifier: `use::1::<block>::${written}` }, 'import', line));
             return;
+        }
         const crate = useDecl === null ? undefined : externCrateFor(root, useDecl, lexical);
         // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
         const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
@@ -1205,7 +1213,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 24,
+    rev: 25,
     declarations,
     uses,
 };

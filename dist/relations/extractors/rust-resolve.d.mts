@@ -51,6 +51,10 @@
  * path as `use::<n>::<the n segments the name stands for>::<the path as written>`
  * (`use::2::self::shapes::shapes::Circle` for `mod shapes; use shapes::Circle;`). `use` is a
  * keyword, so no path of the source starts with it. In edition 2015 the path is read as written.
+ * A name that is an item of a block around the `use` (a `mod` in a function body) is the segment
+ * `<block>`, which no source can write: from edition 2018 on the path names that item, in the
+ * file, and binds nothing; in edition 2015 a `use` path starts at the crate root, so it is read as
+ * written.
  *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited

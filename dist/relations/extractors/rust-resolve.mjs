@@ -34,6 +34,9 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
         const written = segments.slice(2 + lead);
         if (!Number.isInteger(lead) || lead < 1 || written.length === 0)
             return undefined;
+        // The name is an item of a block around the `use` (`<block>`, which no source can write): from edition 2018 on it names that item, in this file.
+        if (segments[2] === '<block>' && crate.crateRelativeUses !== true)
+            return undefined;
         if (crate.crateRelativeUses === true)
             return resolveBare(written, fromFile, exists, deps, crate);
         return resolveRustPath([...segments.slice(2, 2 + lead), ...written.slice(1)].join('::'), fromFile, exists, deps);
