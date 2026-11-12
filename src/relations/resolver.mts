@@ -329,6 +329,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
 
   /** The C# keys of one reading (see `memberKeys`), kept (see `kept`) when no other answer is being worked out. `fromFile` takes part only for a reading inside a type, the one reading it changes. */
   const csharpMemberKeys = (key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within: string | undefined, fromFile: string | undefined): string[] => {
+    keepFresh();
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
     if (shadowed('csharp', shadow)) return [];
     const keptKeys = within !== undefined ? kept.within : nestedOnly ? kept.nestedOnly : kept.plain;
