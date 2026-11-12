@@ -12,7 +12,8 @@ export function compilerProblems(root) {
   const pin = pkg.devDependencies?.typescript;
   if (typeof pin !== 'string' || !/^\d+\.\d+\.\d+$/.test(pin)) problems.push(`devDependencies.typescript must pin an exact version, not ${JSON.stringify(pin)}`);
   for (const [name, command] of Object.entries(pkg.scripts ?? {})) {
-    if (command.split(COMPILER_PATH).join('').split(/[^A-Za-z0-9_-]/).includes('tsc')) problems.push(`script "${name}" runs a bare tsc; call it as node ${COMPILER_PATH}`);
+    const bare = command.split(COMPILER_PATH).join('').split(/[^A-Za-z0-9_-]/).find((word) => /^tsc\d*$/.test(word));
+    if (bare !== undefined) problems.push(`script "${name}" runs a bare ${bare}; call it as node ${COMPILER_PATH}`);
   }
   let reported;
   try {

@@ -30,12 +30,13 @@ test('a compiler that reports another version than the pin fails the check', () 
 });
 
 test('a script that runs a bare tsc fails the check, whatever else it runs', () => {
-  const dir = fakeRepository({ scripts: { build: 'node scripts/clean-dist.mjs && tsc -p tsconfig.json', typecheck: 'tsc --noEmit', check: 'node scripts/x.mjs', direct: `./node_modules/.bin/tsc -p a`, ok: `node ${COMPILER_PATH} -p tsconfig.relations.json` } });
+  const dir = fakeRepository({ scripts: { build: 'node scripts/clean-dist.mjs && tsc -p tsconfig.json', typecheck: 'tsc --noEmit', check: 'node scripts/x.mjs', direct: `./node_modules/.bin/tsc -p a`, older: 'tsc6 -p tsconfig.json', ok: `node ${COMPILER_PATH} -p tsconfig.relations.json` } });
   try {
     assert.deepEqual(compilerProblems(dir), [
       `script "build" runs a bare tsc; call it as node ${COMPILER_PATH}`,
       `script "typecheck" runs a bare tsc; call it as node ${COMPILER_PATH}`,
       `script "direct" runs a bare tsc; call it as node ${COMPILER_PATH}`,
+      `script "older" runs a bare tsc6; call it as node ${COMPILER_PATH}`,
     ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });

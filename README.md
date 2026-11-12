@@ -270,7 +270,7 @@ At a family release every pin points at the same Runes version.
 
 ```
 npm ci
-npm run check      # build, grammars, tests (with the guard, the catalogue and the vendor tool's end-to-end tests), dist freshness
+npm run check      # the compiler check, build, grammars, tests (with the guard, the catalogue and the vendor tool's end-to-end tests), dist freshness
 npm run coverage   # the same suite under Node's coverage, failing below 98% lines, 92% branches, 97% functions of dist/
 ```
 
