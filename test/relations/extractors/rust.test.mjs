@@ -213,7 +213,7 @@ describe('rust extractor — uses()', () => {
 
 describe('rust extractor — inline modules rebase self/super to the file module', () => {
 
-  it('emits a use that starts with a name an extern crate of its own scope, or of a block or the module around it, binds as the crate and the path as written, and leaves another module and a nearer name alone', async () => {
+  it('emits a use that starts with a name an extern crate of its own scope, or of a block or the module around it, binds as the crate and the path as written, leaves another module alone, and gives no path where a mod or an enum of a block is the nearer name', async () => {
     const code = [
       'extern crate core_lib as cl;',
       'extern crate r#plain;',
@@ -250,7 +250,7 @@ describe('rust extractor — inline modules rebase self/super to the file module
       'extern::core_lib', 'extern::plain',
       'extern::core_lib::as::cl::Engine', 'extern::plain::as::plain::A', 'extern::plain::as::plain::deep::B', 'me::Own', 'other::X',
       'cl::Hidden', 'extern::tools', 'extern::tools::as::t::Wrench',
-      'extern::local', 'extern::local::as::l::Thing', 'extern::core_lib::as::cl::InBody', 'extern::local::as::l::Nested', 'cl::Shadowed', 'somewhere::l', 'use::2::somewhere::l::l::Rebound', 'cl::V',
+      'extern::local', 'extern::local::as::l::Thing', 'extern::core_lib::as::cl::InBody', 'extern::local::as::l::Nested', 'somewhere::l', 'use::2::somewhere::l::l::Rebound',
       't::Outside',
     ]);
   });
@@ -348,11 +348,11 @@ describe('rust extractor — a use path that starts with a name in scope', () =>
     expect(specs(uses)).toEqual(['b::x', 'a::y']);
   });
 
-  it('reads the names of the blocks and the module around a use, and none of an outer module', async () => {
+  it('reads the names of the blocks and the module around a use, and none of an outer module, and a mod in a block names an item of this file', async () => {
     const { uses } = await run('use crate::shapes as sh;\nmod top;\nfn f() {\n    use crate::other as o;\n    {\n        use o::A;\n        use sh::B;\n        use top::C;\n    }\n}\nimpl T { fn g() { use sh::D; } }\nmod inner {\n    use sh::E;\n    mod deep;\n    fn h() { use deep::F; mod blocked; use blocked::G; }\n}');
     expect(specs(uses)).toEqual([
       'crate::shapes', 'self::top', 'crate::other', 'use::2::crate::other::o::A', 'use::2::crate::shapes::sh::B', 'use::2::self::top::top::C', 'use::2::crate::shapes::sh::D',
-      'sh::E', 'self::inner::deep', 'use::3::self::inner::deep::deep::F', 'self::inner::blocked', 'blocked::G',
+      'sh::E', 'self::inner::deep', 'use::3::self::inner::deep::deep::F', 'self::inner::blocked',
     ]);
   });
 

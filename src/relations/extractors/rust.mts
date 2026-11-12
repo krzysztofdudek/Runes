@@ -322,11 +322,20 @@ function uses(file: ParsedFile): DetectedDep[] {
     return undefined;
   };
 
+  /** True when a block around `from`, before the module that holds it, declares an item of the type namespace named `name` (a `mod` in a function body): a `use` path that starts with it names that item, which sits in this file, and no crate, module file or other file. */
+  const blockItemNamed = (name: string, from: LexicalScope | null): boolean => {
+    for (let scope = from; scope !== null && !scope.module; scope = scope.outer) {
+      if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name)) return true;
+    }
+    return false;
+  };
+
   const emit = (raw: string | undefined, node: Node): void => {
     if (raw === undefined || raw === '') return;
     const written = unrawPath(raw);
     let specifier = written;
     const root = specifier.split('::', 1)[0]!;
+    if (useDecl !== null && !useFromRoot && blockItemNamed(root, lexical)) return;
     const crate = useDecl === null ? undefined : externCrateFor(root, useDecl, lexical);
     // From edition 2018 a `use` path may start with a name in scope; what the path means then is emitted in front of the path as written, which is what an edition 2015 crate reads.
     const meant = crate === undefined && useDecl !== null && !useFromRoot ? inScopePath(written, useDecl, lexical) : written;
@@ -1118,7 +1127,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 22,
+  rev: 23,
   declarations,
   uses,
 };
