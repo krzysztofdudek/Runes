@@ -506,4 +506,5 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-cyclic-base-attribute-edge', () => runCase('csharp-cyclic-base-attribute-edge'));
   it('csharp-cyclic-base-extension-receiver-edge', () => runCase('csharp-cyclic-base-extension-receiver-edge'));
   it('csharp-cyclic-base-inherited-nested-call-edge', () => runCase('csharp-cyclic-base-inherited-nested-call-edge'));
+  it('csharp-using-namespace-hidden-for-one-project-only-edge', () => runCase('csharp-using-namespace-hidden-for-one-project-only-edge'));
 });
