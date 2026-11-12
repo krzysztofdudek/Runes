@@ -1,6 +1,6 @@
-// The range check behind a `types@<range>` exports key: the modelled TypeScript version satisfies it as the compiler's own VersionRange (the pinned devDependency) answers, which also holds the modelled version to the one the repository pins.
+// The range check behind a `types@<range>` exports key: the modelled TypeScript version satisfies it as the TypeScript 6 compiler's own VersionRange answers (that compiler comes from the typescript6 bridge package, the only copy that still exports the compiler API), which also holds the modelled version to that compiler's version. The repository builds with the TypeScript 7 it pins; which version the model follows is a separate matter.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import ts from 'typescript';
+import ts from 'typescript6';
 import { typeScriptSatisfies, MODELLED_TYPESCRIPT_VERSION } from '../../helpers/internal/relations.mjs';
 
 const operators = ['', '<', '<=', '>', '>=', '=', '~', '^', '>= ', '~ '];
@@ -26,7 +26,7 @@ const compiler = (range) => {
 };
 
 describe('typeScriptSatisfies', () => {
-  it('models the TypeScript version the repository pins', () => {
+  it('models the version of the TypeScript 6 compiler the range table is compared against', () => {
     expect(MODELLED_TYPESCRIPT_VERSION).toBe(ts.version);
   });
   it('answers as the compiler does for every range of a table that covers each operator, wildcard, hyphen, prerelease and alternative', () => {
