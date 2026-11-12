@@ -1193,6 +1193,7 @@ Emby.Server.Implementations/Dto/DtoService.cs:365	MediaBrowser.Controller/Entiti
 Emby.Server.Implementations/Dto/DtoService.cs:376	MediaBrowser.Model/Querying/ItemFields.cs
 Emby.Server.Implementations/Dto/DtoService.cs:389	MediaBrowser.Model/Querying/ItemFields.cs
 Emby.Server.Implementations/Dto/DtoService.cs:40	MediaBrowser.Controller/Dto/IDtoService.cs
+Emby.Server.Implementations/Dto/DtoService.cs:407	MediaBrowser.Controller/Entities/IHasMediaSources.cs
 Emby.Server.Implementations/Dto/DtoService.cs:408	MediaBrowser.Model/Querying/ItemFields.cs
 Emby.Server.Implementations/Dto/DtoService.cs:415	MediaBrowser.Model/Querying/ItemFields.cs
 Emby.Server.Implementations/Dto/DtoService.cs:42	Jellyfin.Data/Enums/BaseItemKind.cs
@@ -1274,6 +1275,7 @@ Emby.Server.Implementations/Dto/DtoService.cs:61	Jellyfin.Data/Enums/BaseItemKin
 Emby.Server.Implementations/Dto/DtoService.cs:612	MediaBrowser.Controller/Library/VersionResumeData.cs
 Emby.Server.Implementations/Dto/DtoService.cs:616	MediaBrowser.Controller/Entities/Folder.cs
 Emby.Server.Implementations/Dto/DtoService.cs:635	MediaBrowser.Controller/Entities/SourceType.cs
+Emby.Server.Implementations/Dto/DtoService.cs:638	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 Emby.Server.Implementations/Dto/DtoService.cs:638	MediaBrowser.Controller/Entities/TV/Season.cs
 Emby.Server.Implementations/Dto/DtoService.cs:638	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Dto/DtoService.cs:65	Jellyfin.Data/Enums/BaseItemKind.cs
@@ -1405,6 +1407,7 @@ Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:35	MediaBrowse
 Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:355	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:36	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:362	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
+Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:362	MediaBrowser.Controller/Entities/IItemByName.cs
 Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:367	MediaBrowser.Controller/Entities/SourceType.cs
 Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:37	MediaBrowser.Controller/Providers/IProviderManager.cs
 Emby.Server.Implementations/EntryPoints/LibraryChangedNotifier.cs:370	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -1551,6 +1554,7 @@ Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:125	MediaBrowser.
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:128	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:130	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:135	MediaBrowser.Controller/Entities/BaseItem.cs
+Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:137	MediaBrowser.Controller/Entities/CollectionFolder.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:137	MediaBrowser.Controller/Entities/UserView.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:144	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:151	MediaBrowser.Model/Entities/ImageType.cs
@@ -1565,9 +1569,11 @@ Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:211	MediaBrowser.
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:213	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:223	MediaBrowser.Model/Entities/ImageType.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:228	MediaBrowser.Model/Entities/ImageType.cs
+Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:230	MediaBrowser.Controller/Entities/UserView.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:231	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:232	MediaBrowser.Controller/Entities/Audio/MusicGenre.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:233	MediaBrowser.Controller/Entities/Genre.cs
+Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:234	MediaBrowser.Controller/Entities/PhotoAlbum.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:235	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:246	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs:246	MediaBrowser.Controller/Providers/IDirectoryService.cs
@@ -1710,6 +1716,8 @@ Emby.Server.Implementations/Images/FolderImageProvider.cs:15	MediaBrowser.Contro
 Emby.Server.Implementations/Images/FolderImageProvider.cs:15	MediaBrowser.Model/IO/IFileSystem.cs
 Emby.Server.Implementations/Images/FolderImageProvider.cs:20	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Images/FolderImageProvider.cs:22	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
+Emby.Server.Implementations/Images/FolderImageProvider.cs:22	MediaBrowser.Controller/Entities/PhotoAlbum.cs
+Emby.Server.Implementations/Images/FolderImageProvider.cs:27	MediaBrowser.Controller/Entities/Folder.cs
 Emby.Server.Implementations/Images/GenreImageProvider.cs:21	Emby.Server.Implementations/Images/BaseDynamicImageProvider.cs
 Emby.Server.Implementations/Images/GenreImageProvider.cs:21	MediaBrowser.Controller/Entities/Genre.cs
 Emby.Server.Implementations/Images/GenreImageProvider.cs:26	MediaBrowser.Controller/Library/ILibraryManager.cs
@@ -1782,6 +1790,7 @@ Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:25	MediaBrowser.
 Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:32	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:32	MediaBrowser.Model/IO/FileSystemMetadata.cs
 Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:40	Emby.Server.Implementations/Library/IgnorePatterns.cs
+Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:47	MediaBrowser.Controller/Entities/AggregateFolder.cs
 Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:61	MediaBrowser.Controller/Entities/UserRootFolder.cs
 Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:65	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/CoreResolutionIgnoreRule.cs:66	Emby.Naming/Audio/AudioFileParser.cs
@@ -2025,9 +2034,11 @@ Emby.Server.Implementations/Library/LibraryManager.cs:2037	MediaBrowser.Controll
 Emby.Server.Implementations/Library/LibraryManager.cs:2037	MediaBrowser.Model/Querying/QueryResult.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2043	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2043	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:2045	MediaBrowser.Controller/Entities/ICollectionFolder.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2045	MediaBrowser.Controller/Entities/UserView.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2059	MediaBrowser.Controller/Entities/Folder.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2060	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:2060	MediaBrowser.Controller/Playlists/Playlist.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:207	MediaBrowser.Controller/Library/ItemChangeEventArgs.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2078	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:2078	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
@@ -2227,6 +2238,7 @@ Emby.Server.Implementations/Library/LibraryManager.cs:3302	MediaBrowser.Model/En
 Emby.Server.Implementations/Library/LibraryManager.cs:3304	Emby.Naming/TV/EpisodeInfo.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:331	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3310	MediaBrowser.Controller/Entities/Folder.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:338	MediaBrowser.Controller/Entities/Video.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:338	MediaBrowser.Controller/LiveTv/LiveTvChannel.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3415	MediaBrowser.Controller/Providers/ItemLookupInfo.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3418	Emby.Naming/Video/VideoResolver.cs
@@ -2316,6 +2328,7 @@ Emby.Server.Implementations/Library/LibraryManager.cs:4102	MediaBrowser.Controll
 Emby.Server.Implementations/Library/LibraryManager.cs:4109	MediaBrowser.Controller/Entities/CollectionFolder.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:4112	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:4112	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:4124	MediaBrowser.Controller/Entities/UserRootFolder.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:4127	MediaBrowser.Model/Configuration/MediaPathInfo.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:4155	MediaBrowser.Controller/Entities/Folder.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:4165	MediaBrowser.Controller/Library/ItemUpdateType.cs
@@ -2984,6 +2997,7 @@ Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:361	MediaB
 Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:361	MediaBrowser.Controller/Library/ItemResolveArgs.cs
 Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:37	Jellyfin.Data/Enums/CollectionType.cs
 Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:372	MediaBrowser.Controller/Entities/Video.cs
+Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:374	MediaBrowser.Controller/Entities/Movies/Movie.cs
 Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:374	MediaBrowser.Controller/Entities/MusicVideo.cs
 Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:38	Jellyfin.Data/Enums/CollectionType.cs
 Emby.Server.Implementations/Library/Resolvers/Movies/MovieResolver.cs:382	MediaBrowser.Model/Entities/MetadataProvider.cs
@@ -3983,6 +3997,7 @@ Emby.Server.Implementations/Playlists/PlaylistManager.cs:80	MediaBrowser.Model/P
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:90	Jellyfin.Data/Enums/MediaType.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:95	Jellyfin.Data/Enums/MediaType.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:99	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
+Emby.Server.Implementations/Playlists/PlaylistManager.cs:99	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 Emby.Server.Implementations/Playlists/PlaylistManager.cs:99	MediaBrowser.Controller/Entities/Audio/MusicGenre.cs
 Emby.Server.Implementations/Playlists/PlaylistsFolder.cs:15	MediaBrowser.Common/RequiresSourceSerialisationAttribute.cs
 Emby.Server.Implementations/Playlists/PlaylistsFolder.cs:16	MediaBrowser.Controller/Entities/BasePluginFolder.cs
@@ -5672,6 +5687,7 @@ Jellyfin.Api/Controllers/FilterController.cs:181	MediaBrowser.Controller/Entitie
 Jellyfin.Api/Controllers/FilterController.cs:184	MediaBrowser.Controller/Dto/DtoOptions.cs
 Jellyfin.Api/Controllers/FilterController.cs:186	MediaBrowser.Model/Querying/ItemFields.cs
 Jellyfin.Api/Controllers/FilterController.cs:198	MediaBrowser.Controller/Entities/ICollectionFolder.cs
+Jellyfin.Api/Controllers/FilterController.cs:198	MediaBrowser.Controller/Entities/UserView.cs
 Jellyfin.Api/Controllers/FilterController.cs:212	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/FilterController.cs:213	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/FilterController.cs:216	Jellyfin.Data/Enums/BaseItemKind.cs
@@ -6289,13 +6305,17 @@ Jellyfin.Api/Controllers/ItemsController.cs:297	MediaBrowser.Controller/Entities
 Jellyfin.Api/Controllers/ItemsController.cs:298	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/ItemsController.cs:299	Jellyfin.Data/Enums/CollectionType.cs
 Jellyfin.Api/Controllers/ItemsController.cs:300	Jellyfin.Data/Enums/CollectionType.cs
+Jellyfin.Api/Controllers/ItemsController.cs:301	MediaBrowser.Controller/Entities/UserRootFolder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:310	MediaBrowser.Controller/Entities/Folder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:315	Jellyfin.Data/Enums/CollectionType.cs
 Jellyfin.Api/Controllers/ItemsController.cs:316	MediaBrowser.Controller/Entities/ICollectionFolder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:321	Jellyfin.Data/Enums/CollectionType.cs
 Jellyfin.Api/Controllers/ItemsController.cs:324	Jellyfin.Data/Enums/BaseItemKind.cs
+Jellyfin.Api/Controllers/ItemsController.cs:326	MediaBrowser.Controller/Entities/ICollectionFolder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:330	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/ItemsController.cs:330	Jellyfin.Data/Enums/CollectionType.cs
+Jellyfin.Api/Controllers/ItemsController.cs:337	MediaBrowser.Controller/Entities/ICollectionFolder.cs
+Jellyfin.Api/Controllers/ItemsController.cs:342	MediaBrowser.Controller/Entities/UserRootFolder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:360	MediaBrowser.Controller/Library/SearchProviderQuery.cs
 Jellyfin.Api/Controllers/ItemsController.cs:37	Jellyfin.Api/BaseJellyfinApiController.cs
 Jellyfin.Api/Controllers/ItemsController.cs:381	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
@@ -6318,6 +6338,7 @@ Jellyfin.Api/Controllers/ItemsController.cs:559	MediaBrowser.Controller/Entities
 Jellyfin.Api/Controllers/ItemsController.cs:583	Jellyfin.Data/Enums/BaseItemKind.cs
 Jellyfin.Api/Controllers/ItemsController.cs:585	Jellyfin.Data/Enums/ItemSortBy.cs
 Jellyfin.Api/Controllers/ItemsController.cs:585	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/SortOrder.cs
+Jellyfin.Api/Controllers/ItemsController.cs:592	MediaBrowser.Controller/Entities/UserRootFolder.cs
 Jellyfin.Api/Controllers/ItemsController.cs:60	MediaBrowser.Controller/Library/IUserManager.cs
 Jellyfin.Api/Controllers/ItemsController.cs:61	MediaBrowser.Controller/Library/ILibraryManager.cs
 Jellyfin.Api/Controllers/ItemsController.cs:614	MediaBrowser.Model/Dto/BaseItemDto.cs
@@ -6551,6 +6572,8 @@ Jellyfin.Api/Controllers/LibraryController.cs:820	src/Jellyfin.Extensions/GuidEx
 Jellyfin.Api/Controllers/LibraryController.cs:824	MediaBrowser.Controller/Entities/BaseItem.cs
 Jellyfin.Api/Controllers/LibraryController.cs:83	MediaBrowser.Model/Activity/IActivityManager.cs
 Jellyfin.Api/Controllers/LibraryController.cs:830	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
+Jellyfin.Api/Controllers/LibraryController.cs:830	MediaBrowser.Controller/Entities/IItemByName.cs
+Jellyfin.Api/Controllers/LibraryController.cs:830	MediaBrowser.Controller/Entities/TV/Episode.cs
 Jellyfin.Api/Controllers/LibraryController.cs:832	MediaBrowser.Model/Dto/BaseItemDto.cs
 Jellyfin.Api/Controllers/LibraryController.cs:832	MediaBrowser.Model/Querying/QueryResult.cs
 Jellyfin.Api/Controllers/LibraryController.cs:835	MediaBrowser.Controller/Dto/DtoOptions.cs
@@ -8442,6 +8465,7 @@ Jellyfin.Api/Middleware/ExceptionMiddleware.cs:133	MediaBrowser.Common/Extension
 Jellyfin.Api/Middleware/ExceptionMiddleware.cs:24	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Jellyfin.Api/Middleware/ExceptionMiddleware.cs:37	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 Jellyfin.Api/Middleware/ExceptionMiddleware.cs:71	MediaBrowser.Controller/Net/SecurityException.cs
+Jellyfin.Api/Middleware/ExceptionMiddleware.cs:72	MediaBrowser.Controller/Authentication/AuthenticationException.cs
 Jellyfin.Api/Middleware/IpBasedAccessValidationMiddleware.cs:36	MediaBrowser.Common/Net/INetworkManager.cs
 Jellyfin.Api/Middleware/IpBasedAccessValidationMiddleware.cs:38	MediaBrowser.Common/Extensions/HttpContextExtensions.cs
 Jellyfin.Api/Middleware/IpBasedAccessValidationMiddleware.cs:45	MediaBrowser.Common/Extensions/HttpContextExtensions.cs
@@ -9904,6 +9928,7 @@ Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:439	MediaBrowser.
 Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:443	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/LinkedChildEntity.cs
 Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:460	MediaBrowser.Controller/Entities/Folder.cs
 Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:465	MediaBrowser.Controller/Entities/Folder.cs
+Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:465	MediaBrowser.Controller/Entities/Video.cs
 Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:471	MediaBrowser.Controller/Entities/Folder.cs
 Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:474	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/LinkedChildType.cs
 Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs:489	MediaBrowser.Controller/Entities/Folder.cs
@@ -12493,6 +12518,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:518	MediaBrowser.Controller/MediaSe
 MediaBrowser.Controller/Entities/BaseItem.cs:572	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:737	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:750	MediaBrowser.Controller/Channels/Channel.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:750	MediaBrowser.Controller/Entities/BasePluginFolder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:755	MediaBrowser.Controller/Entities/ICollectionFolder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:757	Jellyfin.Data/Enums/CollectionType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:763	MediaBrowser.Controller/Entities/AggregateFolder.cs
@@ -12759,6 +12785,7 @@ MediaBrowser.Controller/Entities/Folder.cs:230	MediaBrowser.Controller/Entities/
 MediaBrowser.Controller/Entities/Folder.cs:234	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Controller/Entities/Folder.cs:252	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/Folder.cs:254	MediaBrowser.Controller/Entities/BasePluginFolder.cs
+MediaBrowser.Controller/Entities/Folder.cs:254	MediaBrowser.Controller/Entities/ICollectionFolder.cs
 MediaBrowser.Controller/Entities/Folder.cs:256	Jellyfin.Data/UserEntityExtensions.cs
 MediaBrowser.Controller/Entities/Folder.cs:256	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/PreferenceKind.cs
 MediaBrowser.Controller/Entities/Folder.cs:266	Jellyfin.Data/UserEntityExtensions.cs
@@ -12779,6 +12806,7 @@ MediaBrowser.Controller/Entities/Folder.cs:372	MediaBrowser.Controller/Providers
 MediaBrowser.Controller/Entities/Folder.cs:372	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 MediaBrowser.Controller/Entities/Folder.cs:400	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Controller/Entities/Folder.cs:400	MediaBrowser.Controller/Providers/IDirectoryService.cs
+MediaBrowser.Controller/Entities/Folder.cs:402	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 MediaBrowser.Controller/Entities/Folder.cs:417	MediaBrowser.Controller/Providers/IDirectoryService.cs
 MediaBrowser.Controller/Entities/Folder.cs:417	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 MediaBrowser.Controller/Entities/Folder.cs:426	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -16298,6 +16326,7 @@ MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:11	Media
 MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:13	MediaBrowser.Model/IO/IFileSystem.cs
 MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:19	MediaBrowser.Model/IO/IFileSystem.cs
 MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:32	MediaBrowser.Controller/Entities/BaseItem.cs
+MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:34	MediaBrowser.Controller/Entities/CollectionFolder.cs
 MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:38	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:38	MediaBrowser.Controller/Providers/IDirectoryService.cs
 MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:38	MediaBrowser.Controller/Providers/LocalImageInfo.cs
@@ -16306,6 +16335,7 @@ MediaBrowser.LocalMetadata/Images/CollectionFolderLocalImageProvider.cs:42	Media
 MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:17	MediaBrowser.Controller/Providers/IHasOrder.cs
 MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:17	MediaBrowser.Controller/Providers/ILocalImageProvider.cs
 MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:26	MediaBrowser.Controller/Entities/BaseItem.cs
+MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:28	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:32	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:32	MediaBrowser.Controller/Providers/IDirectoryService.cs
 MediaBrowser.LocalMetadata/Images/EpisodeLocalImageProvider.cs:32	MediaBrowser.Controller/Providers/LocalImageInfo.cs
@@ -16369,6 +16399,7 @@ MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:212	MediaBrowser.Control
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:214	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:218	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:221	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
+MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:221	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:223	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:227	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:232	MediaBrowser.Model/Entities/ImageType.cs
@@ -16378,11 +16409,13 @@ MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:248	MediaBrowser.Model/E
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:258	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:258	MediaBrowser.Controller/Providers/LocalImageInfo.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:258	MediaBrowser.Model/IO/FileSystemMetadata.cs
+MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:262	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:262	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:262	MediaBrowser.Controller/Entities/PhotoAlbum.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:267	MediaBrowser.Controller/Entities/Person.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:272	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:276	MediaBrowser.Controller/Entities/TV/Episode.cs
+MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:276	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:288	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:296	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:306	MediaBrowser.Model/Entities/ImageType.cs
@@ -16420,8 +16453,10 @@ MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:472	MediaBrowser.Model/I
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:64	MediaBrowser.Model/IO/IFileSystem.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:70	MediaBrowser.Model/IO/IFileSystem.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:82	MediaBrowser.Controller/Entities/BaseItem.cs
+MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:87	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:87	MediaBrowser.Controller/Entities/AudioBook.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:87	MediaBrowser.Controller/Entities/Photo.cs
+MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:87	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:95	MediaBrowser.Model/Entities/LocationType.cs
 MediaBrowser.LocalMetadata/Images/LocalImageProvider.cs:97	MediaBrowser.Controller/Entities/TV/Season.cs
 MediaBrowser.LocalMetadata/Parsers/BaseItemXmlParser.cs:126	MediaBrowser.Controller/Providers/MetadataResult.cs
@@ -16590,6 +16625,7 @@ MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:25	MediaBrowser.Controller/L
 MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:25	MediaBrowser.Model/IO/IFileSystem.cs
 MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:31	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:31	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:38	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:38	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:42	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Savers/BoxSetXmlSaver.cs:46	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -16600,6 +16636,7 @@ MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:31	MediaBrowser.Model/IO/I
 MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:37	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:37	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:44	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:44	MediaBrowser.Controller/Playlists/Playlist.cs
 MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:48	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:50	MediaBrowser.Controller/Playlists/Playlist.cs
 MediaBrowser.LocalMetadata/Savers/PlaylistXmlSaver.cs:52	Jellyfin.Data/Enums/MediaType.cs
@@ -18830,6 +18867,7 @@ MediaBrowser.Providers/Lyric/TxtLyricParser.cs:43	MediaBrowser.Model/Lyrics/Lyri
 MediaBrowser.Providers/Manager/ImageSaver.cs:105	MediaBrowser.Controller/Entities/TV/Season.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:179	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:180	src/Jellyfin.Extensions/EnumerableExtensions.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:194	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:24	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:25	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:26	MediaBrowser.Controller/Entities/Person.cs
@@ -18886,6 +18924,7 @@ MediaBrowser.Providers/Manager/ImageSaver.cs:67	MediaBrowser.Common/Configuratio
 MediaBrowser.Providers/Manager/ImageSaver.cs:67	MediaBrowser.Model/Configuration/XbmcMetadataOptions.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:672	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:681	MediaBrowser.Controller/Entities/MusicVideo.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:686	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:686	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:706	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:706	MediaBrowser.Model/Entities/ImageType.cs
@@ -18895,6 +18934,7 @@ MediaBrowser.Providers/Manager/ImageSaver.cs:84	MediaBrowser.Model/Entities/Imag
 MediaBrowser.Providers/Manager/ImageSaver.cs:89	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:89	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:93	MediaBrowser.Controller/Entities/Audio/Audio.cs
+MediaBrowser.Providers/Manager/ImageSaver.cs:93	MediaBrowser.Controller/Entities/AudioBook.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:95	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Manager/ImageSaver.cs:95	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:112	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -18950,6 +18990,7 @@ MediaBrowser.Providers/Manager/ItemImageProvider.cs:368	MediaBrowser.Model/Entit
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:37	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:376	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:376	MediaBrowser.Controller/Entities/ItemImageInfo.cs
+MediaBrowser.Providers/Manager/ItemImageProvider.cs:404	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:419	MediaBrowser.Controller/Providers/ImageRefreshOptions.cs
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:419	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Providers/Manager/ItemImageProvider.cs:42	MediaBrowser.Model/Entities/ImageType.cs
@@ -19029,6 +19070,7 @@ MediaBrowser.Providers/Manager/MetadataService.cs:1204	MediaBrowser.Model/Entiti
 MediaBrowser.Providers/Manager/MetadataService.cs:1222	MediaBrowser.Model/Entities/MetadataField.cs
 MediaBrowser.Providers/Manager/MetadataService.cs:1235	MediaBrowser.Model/Entities/MetadataField.cs
 MediaBrowser.Providers/Manager/MetadataService.cs:1260	MediaBrowser.Model/Entities/MetadataField.cs
+MediaBrowser.Providers/Manager/MetadataService.cs:1264	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.Providers/Manager/MetadataService.cs:1264	MediaBrowser.Controller/Entities/Book.cs
 MediaBrowser.Providers/Manager/MetadataService.cs:1264	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.Providers/Manager/MetadataService.cs:1271	MediaBrowser.Model/Entities/MetadataField.cs
@@ -19366,6 +19408,7 @@ MediaBrowser.Providers/Manager/ProviderManager.cs:589	MediaBrowser.Controller/Pr
 MediaBrowser.Providers/Manager/ProviderManager.cs:59	MediaBrowser.Controller/IServerApplicationPaths.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:594	MediaBrowser.Controller/Providers/IRemoteMetadataProvider.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:60	MediaBrowser.Controller/Library/ILibraryManager.cs
+MediaBrowser.Providers/Manager/ProviderManager.cs:609	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:61	MediaBrowser.Controller/Subtitles/ISubtitleManager.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:62	MediaBrowser.Controller/Lyrics/ILyricManager.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:63	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
@@ -19422,6 +19465,7 @@ MediaBrowser.Providers/Manager/ProviderManager.cs:767	MediaBrowser.Model/Configu
 MediaBrowser.Providers/Manager/ProviderManager.cs:770	MediaBrowser.Controller/Providers/ILocalImageProvider.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:770	MediaBrowser.Model/Configuration/MetadataPlugin.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:773	MediaBrowser.Model/Configuration/MetadataPluginType.cs
+MediaBrowser.Providers/Manager/ProviderManager.cs:777	MediaBrowser.Controller/Providers/IDynamicImageProvider.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:777	MediaBrowser.Controller/Providers/IRemoteImageProvider.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:777	MediaBrowser.Model/Configuration/MetadataPlugin.cs
 MediaBrowser.Providers/Manager/ProviderManager.cs:780	MediaBrowser.Model/Configuration/MetadataPluginType.cs
@@ -19482,6 +19526,7 @@ MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:135	MediaBrowser.Controller/
 MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:144	MediaBrowser.Model/Entities/MediaStream.cs
 MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:146	MediaBrowser.Model/Entities/MediaStreamType.cs
 MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:157	MediaBrowser.Model/Entities/MediaStreamType.cs
+MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:161	MediaBrowser.Controller/Entities/AudioBook.cs
 MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:174	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:174	MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs
 MediaBrowser.Providers/MediaInfo/AudioFileProber.cs:174	MediaBrowser.Model/MediaInfo/MediaInfo.cs
@@ -20008,6 +20053,7 @@ MediaBrowser.Providers/Movies/ImdbExternalId.cs:19	MediaBrowser.Model/Entities/M
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:22	MediaBrowser.Model/Providers/ExternalIdMediaType.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:25	MediaBrowser.Model/Entities/IHasProviderIds.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:28	MediaBrowser.Controller/LiveTv/LiveTvProgram.cs
+MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/Movies/Movie.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/MusicVideo.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Movies/ImdbExternalId.cs:33	MediaBrowser.Controller/Entities/TV/Series.cs
@@ -20158,6 +20204,7 @@ MediaBrowser.Providers/Music/ArtistMetadataService.cs:37	MediaBrowser.Controller
 MediaBrowser.Providers/Music/ArtistMetadataService.cs:46	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.Providers/Music/ArtistMetadataService.cs:46	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Music/ArtistMetadataService.cs:49	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
+MediaBrowser.Providers/Music/ArtistMetadataService.cs:54	MediaBrowser.Controller/Entities/Audio/IHasAlbumArtist.cs
 MediaBrowser.Providers/Music/AudioMetadataService.cs:19	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.Providers/Music/AudioMetadataService.cs:19	MediaBrowser.Controller/Providers/SongInfo.cs
 MediaBrowser.Providers/Music/AudioMetadataService.cs:19	MediaBrowser.Providers/Manager/MetadataService.cs
@@ -20453,6 +20500,7 @@ MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherAlbumExternalId.cs:22	MediaBr
 MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherArtistExternalId.cs:10	MediaBrowser.Controller/Providers/IExternalId.cs
 MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherArtistExternalId.cs:16	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherArtistExternalId.cs:19	MediaBrowser.Model/Providers/ExternalIdMediaType.cs
+MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherArtistExternalId.cs:22	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherArtistExternalId.cs:22	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.Providers/Plugins/AudioDb/AudioDbOtherArtistExternalId.cs:22	MediaBrowser.Model/Entities/IHasProviderIds.cs
 MediaBrowser.Providers/Plugins/AudioDb/Configuration/PluginConfiguration.cs:7	MediaBrowser.Model/Plugins/BasePluginConfiguration.cs
@@ -20518,6 +20566,7 @@ MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumArtistExternalUrlProv
 MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalId.cs:11	MediaBrowser.Controller/Providers/IExternalId.cs
 MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalId.cs:17	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalId.cs:20	MediaBrowser.Model/Providers/ExternalIdMediaType.cs
+MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalId.cs:23	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalId.cs:23	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalId.cs:23	MediaBrowser.Model/Entities/IHasProviderIds.cs
 MediaBrowser.Providers/Plugins/MusicBrainz/MusicBrainzAlbumExternalUrlProvider.cs:12	MediaBrowser.Controller/Providers/IExternalUrlProvider.cs
@@ -20719,6 +20768,7 @@ MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:56	MediaBrowser.Model/P
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:62	MediaBrowser.Model/Providers/RemoteImageInfo.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:72	MediaBrowser.Common/Net/NamedClient.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:75	MediaBrowser.Controller/Entities/BaseItem.cs
+MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:77	MediaBrowser.Controller/Entities/Movies/Movie.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:77	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbImageProvider.cs:77	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Plugins/Omdb/OmdbItemProvider.cs:135	MediaBrowser.Providers/Plugins/Omdb/OmdbProvider.cs
@@ -20870,6 +20920,7 @@ MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:15	MediaBrow
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:18	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:21	MediaBrowser.Model/Providers/ExternalIdMediaType.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:24	MediaBrowser.Model/Entities/IHasProviderIds.cs
+MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:26	MediaBrowser.Controller/Entities/Movies/Movie.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:26	MediaBrowser.Controller/Entities/MusicVideo.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetExternalId.cs:26	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Plugins/Tmdb/BoxSets/TmdbBoxSetImageProvider.cs:18	MediaBrowser.Controller/Providers/IHasOrder.cs
@@ -20938,6 +20989,7 @@ MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:22	MediaBro
 MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:29	MediaBrowser.Providers/Plugins/Tmdb/TmdbClientManager.cs
 MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:39	MediaBrowser.Providers/Plugins/Tmdb/TmdbUtils.cs
 MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:42	MediaBrowser.Controller/Entities/BaseItem.cs
+MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:44	MediaBrowser.Controller/Entities/Movies/Movie.cs
 MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:44	MediaBrowser.Controller/Entities/Trailer.cs
 MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:48	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.Providers/Plugins/Tmdb/Movies/TmdbMovieImageProvider.cs:48	MediaBrowser.Model/Entities/ImageType.cs
@@ -21678,6 +21730,7 @@ MediaBrowser.Providers/TV/SeasonMetadataService.cs:93	MediaBrowser.Controller/Li
 MediaBrowser.Providers/TV/SeasonMetadataService.cs:97	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:107	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:112	MediaBrowser.Controller/Entities/TV/Episode.cs
+MediaBrowser.Providers/TV/SeriesMetadataService.cs:112	MediaBrowser.Controller/Entities/TV/Season.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:113	MediaBrowser.Controller/Entities/TV/Season.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:117	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:119	MediaBrowser.Controller/Entities/IHasSeries.cs
@@ -21712,6 +21765,7 @@ MediaBrowser.Providers/TV/SeriesMetadataService.cs:311	MediaBrowser.Controller/L
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:319	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:329	src/Jellyfin.Extensions/GuidExtensions.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:349	MediaBrowser.Controller/Entities/TV/Series.cs
+MediaBrowser.Providers/TV/SeriesMetadataService.cs:351	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:351	MediaBrowser.Controller/Entities/TV/Season.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:357	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.Providers/TV/SeriesMetadataService.cs:374	MediaBrowser.Controller/Entities/TV/Season.cs
@@ -22243,6 +22297,7 @@ MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:43	MediaBrowser.Controller/Ent
 MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:47	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:51	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:51	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:52	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:55	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:57	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.XbmcMetadata/Savers/AlbumNfoSaver.cs:59	src/Jellyfin.Extensions/StringExtensions.cs
@@ -22258,6 +22313,7 @@ MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:42	MediaBrowser.Controller/En
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:46	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:50	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:50	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:51	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:54	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:56	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.XbmcMetadata/Savers/ArtistNfoSaver.cs:60	MediaBrowser.XbmcMetadata/Configuration/NfoConfigurationExtension.cs
@@ -22337,6 +22393,7 @@ MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:680	src/Jellyfin.Extensions/Str
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:685	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:690	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:695	src/Jellyfin.Extensions/StringExtensions.cs
+MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:697	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:697	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:707	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:707	MediaBrowser.Model/Entities/ProviderIdsExtensions.cs
@@ -22362,6 +22419,7 @@ MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:746	MediaBrowser.Model/Entities
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:749	MediaBrowser.Model/Entities/MetadataProvider.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:749	MediaBrowser.Model/Entities/ProviderIdsExtensions.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:752	MediaBrowser.Model/Entities/MetadataProvider.cs
+MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:790	MediaBrowser.Controller/Entities/Audio/MusicAlbum.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:790	MediaBrowser.Controller/Entities/Audio/MusicArtist.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:795	MediaBrowser.Controller/Entities/Movies/BoxSet.cs
 MediaBrowser.XbmcMetadata/Savers/BaseNfoSaver.cs:801	MediaBrowser.Controller/Entities/Folder.cs
@@ -22392,6 +22450,7 @@ MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:41	MediaBrowser.Controller/E
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:45	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:49	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:49	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:50	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:53	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:55	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.XbmcMetadata/Savers/EpisodeNfoSaver.cs:76	MediaBrowser.XbmcMetadata/Configuration/NfoConfigurationExtension.cs
@@ -22416,6 +22475,7 @@ MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:72	MediaBrowser.Controller/Ent
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:73	MediaBrowser.Controller/Entities/MusicVideo.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:76	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:76	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:84	MediaBrowser.Controller/Entities/TV/Episode.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:84	MediaBrowser.Controller/Entities/Video.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:93	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/MovieNfoSaver.cs:95	MediaBrowser.Model/Entities/MetadataProvider.cs
@@ -22445,6 +22505,7 @@ MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:41	MediaBrowser.Controller/En
 MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:45	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:49	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:49	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:50	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:53	MediaBrowser.Controller/Entities/BaseItem.cs
 MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:55	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.XbmcMetadata/Savers/SeriesNfoSaver.cs:57	MediaBrowser.Model/Entities/MetadataProvider.cs
@@ -23183,6 +23244,8 @@ src/Jellyfin.LiveTv/Channels/ChannelManager.cs:152	MediaBrowser.Model/Querying/Q
 src/Jellyfin.LiveTv/Channels/ChannelManager.cs:154	src/Jellyfin.Extensions/GuidExtensions.cs
 src/Jellyfin.LiveTv/Channels/ChannelManager.cs:170	MediaBrowser.Controller/Channels/IHasFolderAttributes.cs
 src/Jellyfin.LiveTv/Channels/ChannelManager.cs:171	src/Jellyfin.Extensions/EnumerableExtensions.cs
+src/Jellyfin.LiveTv/Channels/ChannelManager.cs:187	MediaBrowser.Controller/Channels/ISupportsLatestMedia.cs
+src/Jellyfin.LiveTv/Channels/ChannelManager.cs:203	MediaBrowser.Controller/Channels/ISupportsDelete.cs
 src/Jellyfin.LiveTv/Channels/ChannelManager.cs:255	MediaBrowser.Controller/Channels/Channel.cs
 src/Jellyfin.LiveTv/Channels/ChannelManager.cs:255	MediaBrowser.Model/Querying/QueryResult.cs
 src/Jellyfin.LiveTv/Channels/ChannelManager.cs:262	MediaBrowser.Model/Channels/ChannelQuery.cs
