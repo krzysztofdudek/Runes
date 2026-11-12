@@ -1,5 +1,5 @@
 // Every Rust case of the catalogue is a crate (or a workspace) that rustc reads, so a case cannot pass for a reason no compiler agrees with. This builds each one with `cargo check --offline` under the pinned toolchain, in a throwaway directory, with stub crates in place of every registry and git dependency (test/helpers/rust-fixtures.mjs). Where that toolchain is not installed the test is skipped, with the reason.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -16,8 +16,9 @@ const toolchain = (tool) => {
 };
 const rustc = toolchain('rustc');
 const cargo = toolchain('cargo');
+// CI has no Rust toolchain, so this test runs where a developer has installed the pinned one and is skipped on CI.
 const skip = rustc === undefined || cargo === undefined
-  ? `rustc and cargo ${PINNED} are not installed`
+  ? `rustc and cargo ${PINNED} are not installed (CI has no Rust toolchain; the test runs where the pinned one is)`
   : !rustc.startsWith(`rustc ${PINNED} `) || !cargo.startsWith(`cargo ${PINNED} `) ? `the Rust catalogue builds under ${PINNED}; found ${rustc} and ${cargo}` : false;
 
 /** The cases that do not build yet: skeletons that hold the files a resolver reads and no crate root or module declaration around them, a `[patch]` or a proc-macro crate the stubs do not stand in for, a bench or a test target without its file, manifests written for the reader (a dotted key before `[package]`), macros from crates the stubs do not define (`cfg_if!`), and one file that is unparsable on purpose. Each is a fixture to complete, and the test below says when one has been, so this list only shrinks. */
@@ -70,12 +71,18 @@ const DO_NOT_BUILD_YET = new Set([
   'rust-use-grouped-nested-subpath-edge',
 ]);
 
+// One folder holds everything the builds write: the cases, the build output and a cargo home of its own, so the developer's cargo folder is never touched; it is removed when the tests end.
+const work = skip === false ? mkdtempSync(path.join(tmpdir(), 'runes-rust-cases-')) : undefined;
+after(() => {
+  if (work !== undefined) rmSync(work, { recursive: true, force: true });
+});
+
 function build(id) {
   const doc = loadCaseDoc(id, listCases().find((c) => c.id === id).mdPath);
-  const root = mkdtempSync(path.join(tmpdir(), 'runes-rust-case-'));
+  const root = mkdtempSync(path.join(work, 'case-'));
   try {
     const manifest = writeRustFixture(root, [...doc.files, ...doc.configFiles]);
-    const run = spawnSync('cargo', ['check', '--offline', '--all-targets', '--workspace', '--manifest-path', path.join(root, manifest)], { cwd: root, encoding: 'utf8', env: { ...process.env, CARGO_TARGET_DIR: path.join(tmpdir(), 'runes-rust-case-target') } });
+    const run = spawnSync('cargo', ['check', '--offline', '--all-targets', '--workspace', '--manifest-path', path.join(root, manifest)], { cwd: root, encoding: 'utf8', env: { ...process.env, CARGO_TARGET_DIR: path.join(work, 'target'), CARGO_HOME: path.join(work, 'cargo-home') } });
     return { ok: run.status === 0, output: `${run.stderr}${run.stdout}` };
   } finally {
     rmSync(root, { recursive: true, force: true });
