@@ -381,4 +381,5 @@ describe('RESOLVER — no-crate-root / malformed (no Cargo.toml ancestor or unre
   it('an empty specifier → SILENCE (no path segments to resolve)', () => {
     expect(R('', 'src/lib.rs')).toBeUndefined();
   });
+  it('rust-path-attribute-in-inline-module-loaded-file-owns-directory-edge', () => runCase('rust-path-attribute-in-inline-module-loaded-file-owns-directory-edge'));
 });
