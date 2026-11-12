@@ -176,19 +176,28 @@ describe('csharp extractor — a using static imports nested types and extension
 
   it('declares each extension method under its namespace and under its class, and the global namespace\'s class as the bare class name', async () => {
     const { declarations } = await run('namespace N { public static class E { public static void M(this int x) { } } }\npublic static class G { public static void K(this int x) { } }\n');
-    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()', 'shapes:N.M()\t0:0:0', 'shapes:N.E#M()\t0:0:0', 'shapes:K()\t0:0:0', 'shapes:G#K()\t0:0:0']);
+    expect(declarations.map((d) => d.symbolKey)).toEqual(['N.E', 'N.M()', 'N.E#M()', 'G', 'K()', 'G#K()', 'shapes:N.M()\t0:0:0|int', 'shapes:N.E#M()\t0:0:0|int', 'shapes:K()\t0:0:0|int', 'shapes:G#K()\t0:0:0|int']);
   });
 
   it('records the shape of each extension method of a key without its receiver: defaults, a params list, type parameters, and a member of an extension block with its type parameters left open', async () => {
     const shapesOf = (declarations) => Object.fromEntries(declarations.filter((d) => d.symbolKey.startsWith('shapes:')).map((d) => d.symbolKey.slice('shapes:'.length).split('\t')));
     const classic = await run('public static class E {\n  public static void M(this int x, string a, int b = 1) { }\n  public static void M<T>(this int x) { }\n  public static void M(this int x, params string[] rest) { }\n  public static void M(this long x) { }\n}\n');
-    expect(shapesOf(classic.declarations)).toEqual({ 'M()': '0:1:2 1:0:0 0:0:* 0:0:0', 'E#M()': '0:1:2 1:0:0 0:0:* 0:0:0' });
+    expect(shapesOf(classic.declarations)).toEqual({ 'M()': '0:1:2|int 1:0:0|int 0:0:*|int 0:0:0|long', 'E#M()': '0:1:2|int 1:0:0|int 0:0:*|int 0:0:0|long' });
     const hidden = await run('public static class E {\n  public static void M(this int x) { }\n  internal static void M(this int x, int a) { }\n}\ninternal static class F { public static void K(this int x) { } }\n');
-    expect(shapesOf(hidden.declarations)).toEqual({ 'M()': '0:0:0 -0:1:1', 'E#M()': '0:0:0 -0:1:1', 'K()': '-0:0:0', 'F#K()': '-0:0:0' });
+    expect(shapesOf(hidden.declarations)).toEqual({ 'M()': '0:0:0|int -0:1:1|int', 'E#M()': '0:0:0|int -0:1:1|int', 'K()': '-0:0:0|int', 'F#K()': '-0:0:0|int' });
     const privateOnes = await run('public static class E {\n  public static void M(this int x) { }\n  static void M(this int x, int a) { }\n  private static void M(this int x, int a, int b) { }\n  private protected static void M(this int x, int a, int b, int c) { }\n  internal static void M(this int x, string s) { }\n}\n');
-    expect(shapesOf(privateOnes.declarations)).toEqual({ 'M()': '0:0:0 ~0:1:1 ~0:2:2 ~0:3:3 -0:1:1', 'E#M()': '0:0:0 ~0:1:1 ~0:2:2 ~0:3:3 -0:1:1' });
+    expect(shapesOf(privateOnes.declarations)).toEqual({ 'M()': '0:0:0|int ~0:1:1|int ~0:2:2|int ~0:3:3|int -0:1:1|int', 'E#M()': '0:0:0|int ~0:1:1|int ~0:2:2|int ~0:3:3|int -0:1:1|int' });
     const block = await run('public static class E {\n  extension(Order o) {\n    public void Ship(int a, int b = 2) { }\n  }\n}\n');
     expect(shapesOf(block.declarations)).toEqual({ 'Ship()': '*:1:2', 'E#Ship()': '*:1:2' });
+  });
+
+  it('records the written type of the receiver after the shape: a named type as the record writes one, nothing for a type parameter, an array or a tuple, and nothing for the receiver of an extension block', async () => {
+    const shapesOf = (declarations) => Object.fromEntries(declarations.filter((d) => d.symbolKey.startsWith('shapes:')).map((d) => d.symbolKey.slice('shapes:'.length).split('\t')));
+    const named = await run('using App;\npublic static class E {\n  public static void M(this Order o) { }\n  public static void M<T>(this T t, int a) { }\n  public static void M(this int[] xs, string s) { }\n  public static void M(this Order? o, string s, string t) { }\n}\n');
+    expect(shapesOf(named.declarations)).toEqual({ 'M()': '0:0:0|63:Order 1:1:1 0:1:1 0:2:2|203:Order', 'E#M()': '0:0:0|63:Order 1:1:1 0:1:1 0:2:2|203:Order' });
+    expect(named.declarations.some((d) => d.symbolKey.startsWith('usings\t'))).toBe(true);
+    const block = await run('public static class E {\n  extension(Order o) {\n    public void Ship() { }\n  }\n}\n');
+    expect(shapesOf(block.declarations)).toEqual({ 'Ship()': '*:0:0', 'E#Ship()': '*:0:0' });
   });
 
   it('an extension call carries its counts on every reading', async () => {

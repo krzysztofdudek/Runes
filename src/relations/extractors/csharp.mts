@@ -341,7 +341,7 @@ function classExtensionKey(classKey: string, name: string): string {
 }
 
 /**
- * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`) and led by `~` for a private one, which only the file that declares it sees (`privateExtension`). A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
+ * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`) and led by `~` for a private one, which only the file that declares it sees (`privateExtension`). A shape ends with `|` and the written type of the method's receiver (`receiverEntry`) where the method declares one a record can hold, so a call whose receiver's type is written can tell the methods of one name apart by the receiver they take. A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
  */
 export function extensionShapesKey(key: string): string {
   return `shapes:${key}`;
@@ -476,6 +476,13 @@ function methodShape(method: Node): string {
   return `${typeParameterNames(method).size}:${required}:${open ? '*' : all}`;
 }
 
+/** The written type of the receiver of a classic extension method, its first parameter, as a record holds it (`writtenTypeEntry`); the empty string when the parameter writes none the record can hold (a type parameter of the method, an array, a tuple). */
+function receiverEntry(method: Node, scope: CsScope): string {
+  const first = method.childForFieldName('parameters')?.namedChildren[0];
+  const type = first?.type === 'parameter' ? first.childForFieldName('type') : null;
+  return type === null || type === undefined ? '' : writtenTypeEntry(type, scope, typeParameterNames(method));
+}
+
 /** The shape (`methodShape`) of an extension method as a call through its receiver sees it. The classic form declares the receiver as its first parameter, which the call does not pass. A member of a C# 14 extension block declares no receiver of its own, and the block may hold type parameters the member's own list does not show, so its count of type parameters is left open (`*`). */
 function extensionShape(method: Node, blockMember: boolean): string {
   const [typeParameters, required, all] = methodShape(method).split(':');
@@ -485,7 +492,7 @@ function extensionShape(method: Node, blockMember: boolean): string {
 
 /** True when a call with `typeArguments` written type arguments and `args` arguments can be a call of a method of the shape `shape` (`methodShape`): the counts fit. A call without type arguments fits a generic method too, whose type arguments the compiler infers, and a shape that leaves its type parameters open (`*`) takes any. */
 export function shapeTakes(shape: string, typeArguments: number, args: number): boolean {
-  const [typeParameters, required, all] = shape.split(':');
+  const [typeParameters, required, all] = shape.split('|')[0].split(':');
   if (typeArguments > 0 && typeParameters !== '*' && Number(typeParameters) !== typeArguments) return false;
   return args >= Number(required) && (all === '*' || args <= Number(all));
 }
@@ -914,7 +921,10 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
       const hidden = privateExtension(node);
       // The key of the method in its namespace (`extensionKey`), and the key it has in its class: `using static T;` imports the extension methods of T alone.
       const className = declaredTypeName(scope.typeDecl!.node);
-      const shape = extensionShape(node, node.type === 'local_function_statement' || scope.extBelow);
+      const blockMember = node.type === 'local_function_statement' || scope.extBelow;
+      const receiver = blockMember ? '' : receiverEntry(node, scope);
+      if (receiver.includes(':')) written = true;
+      const shape = extensionShape(node, blockMember) + (receiver === '' ? '' : `|${receiver}`);
       for (const symbolKey of [extensionKey(ns, extName), classExtensionKey(ns === '' ? className : `${ns}.${className}`, extName)]) {
         out.push({ symbolKey, line });
         if (assemblyOnly) out.push({ symbolKey: internalKey(symbolKey), line });
@@ -1467,9 +1477,12 @@ const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed
  * declares: a call `x.Name()` whose name the file itself declares as a method is most likely that
  * instance method, which C# prefers over any extension method.
  */
-function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<string>; methodNames: Set<string>; openTypes: Set<string>; typedNames: TypedNames } {
+function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<string>; typeOnlyNames: Set<string>; methodNames: Set<string>; openTypes: Set<string>; typedNames: TypedNames } {
   const declaredNames = new Set<string>();
+  // The names a type declaration gives, and the names anything else gives: a name of the first and not of the second is a type, whatever the file does with values.
+  const typeNames = new Set<string>();
   const methodNames = new Set<string>();
+  const valueNames = new Set<string>();
   // The keys of the types of the file that can hold a member the file does not show (`takesMembers`).
   const openTypes = new Set<string>();
   const typedNames: TypedNames = new Map();
@@ -1511,6 +1524,8 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
         if (c === null || c.type !== 'identifier' || node.fieldNameForChild(i) !== 'name') continue;
         const name = c.text;
         declaredNames.add(name);
+        if (!TYPE_DECLARATION_TYPES.has(type)) valueNames.add(name);
+        else typeNames.add(name);
         if (ordinaryMethod) methodNames.add(name);
         if (type === 'parameter') {
           // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
@@ -1537,7 +1552,8 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
     if (below === inherited.cs && !opens && !lists && inherited.listOf === null) return undefined;
     return { cs: below, scope: opens ? node : around, type: TYPE_DECLARATION_TYPES.has(type) ? node : holderType, listOf: lists ? parentOf() : null };
   });
-  return { declaredNames, methodNames, openTypes, typedNames };
+  const typeOnlyNames = new Set([...typeNames].filter((n) => !valueNames.has(n)));
+  return { declaredNames, typeOnlyNames, methodNames, openTypes, typedNames };
 }
 
 /**
@@ -1588,7 +1604,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
 
   // Every value/member name this file declares (M16 shadow guard) and the names of the ordinary
   // (non-extension) methods it declares (m27 guard). See `collectDeclaredNames`.
-  const { declaredNames, methodNames, openTypes, typedNames } = collectDeclaredNames(file.tree.rootNode, fileNs);
+  const { declaredNames, typeOnlyNames, methodNames, openTypes, typedNames } = collectDeclaredNames(file.tree.rootNode, fileNs);
 
   // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
   const lists: string[][] = [];
@@ -2272,7 +2288,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       const rootedName = expr !== null && expr.type === 'alias_qualified_name' && expr.childForFieldName('alias')!.text === 'global' ? expr.childForFieldName('name') : null;
       if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
         emitTypeNode(expr);
-      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && !declaredNames.has(expr.text) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
+      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && (!declaredNames.has(expr.text) || typeOnlyNames.has(expr.text)) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
         const rooted = rootedName !== null;
         const chain = [(rootedName ?? expr).text];
         let cur = node;
@@ -2856,7 +2872,7 @@ export function assembleCsharpCandidates(
    *  import (one set), then the global namespace, then the namespaces of the compilation unit's and the project's usings as ONE set (2+ owners declaring an
    *  in-scope `Name` → ambiguous → silence). Aliases import no
    *  extension methods. A `using static T;` imports those of the class T, read as the key `T#Name()` the class declares beside the namespace's key, at the level of its directive. */
-  const pushExtension = (name: string, enclosingNs: string[], line: number, at: number, unless: CsharpCondition[], takes: { args: number; typeArgs: number }): void => {
+  const pushExtension = (name: string, enclosingNs: string[], line: number, at: number, unless: CsharpCondition[], takes: { args: number; typeArgs: number; receiver?: TargetHint[] }): void => {
     const candidates: TargetHint[] = [];
     const pushed = new Set<string>();
     const addSet = (set: SymbolSetMember[]): void => {
@@ -3003,7 +3019,9 @@ export function assembleCsharpCandidates(
         // A receiver the file does not declare is a value only as a member of a type around the call.
         if (r.member !== undefined) unless.push({ kind: 'no-member', types: holders, name: r.member.name, ...(r.member.direct ? { call } : {}), ...(r.member.own === true ? { own: true } : {}) });
         if (receivers.length > 0 || fileReceivers.length > 0 || r.self !== undefined) unless.push({ kind: 'instance-method', ...call, receivers, ...(fileReceivers.length === 0 ? {} : { fileReceivers }), ...(r.self === undefined ? {} : { self: typeRef(r.self) }) });
-        pushExtension(r.name, r.enclosingNs, r.line, r.at, unless, { args: call.args, typeArgs: call.typeArgs });
+        // The one written type of the receiver, where there is exactly one and no type of the file stands in for it, tells the extension methods of the name apart by the receiver they take.
+        const receiver = written.length === 1 && receivers.length === 1 && fileReceivers.length === 0 && r.self === undefined ? receivers[0] : undefined;
+        pushExtension(r.name, r.enclosingNs, r.line, r.at, unless, { args: call.args, typeArgs: call.typeArgs, ...(receiver === undefined ? {} : { receiver }) });
         break;
       }
     }
@@ -3029,7 +3047,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 40,
+  rev: 41,
   declarations,
   uses,
 };

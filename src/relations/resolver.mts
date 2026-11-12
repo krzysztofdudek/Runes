@@ -269,8 +269,16 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   };
 
   /** True when the repository declares one of `shadow`'s names, as a type or as a namespace a key lies in: a nearer name C#'s lookup stops at, so a reading behind it binds nothing. */
-  const shadowed = (language: string, shadow: readonly string[] | undefined): boolean =>
-    shadow !== undefined && shadow.some((name) => deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name));
+  const shadowed = (language: string, shadow: readonly string[] | undefined, fromFile?: string): boolean => {
+    if (shadow === undefined) return false;
+    // Where the reference graph says what `fromFile` sees, a name only a project out of its reach declares is no name there: the compiler never reads it.
+    const reach = fromFile === undefined ? undefined : deps.reach;
+    const seen = (file: string): boolean => reach!(fromFile!, file) !== 'unreachable';
+    return shadow.some((name) => {
+      if (reach === undefined) return deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name);
+      return deps.symbolTable.filesFor(language, name).some(seen) || (deps.symbolTable.hasNamespace(language, name) && deps.symbolTable.hasNamespace(language, name, seen));
+    });
+  };
 
   /**
    * The keys one C# reading may bind. A reading inside a type (`within`) is the nested type of that type or of its base classes, each name of a dotted reading read in what the name before it gave; `fromFile` says whose a `file` type is. Any other reading is the key as written, unless `nestedOnly`, and for each dot that follows a declared type the nested type the rest names there, inherited ones included (`Derived.Options` is the `Options` its base class declares).
@@ -291,7 +299,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
    *  dotted reading. A plain member reads the verbatim key + all guarded splits. */
   const memberKeys = (language: string, key: string, nestedOnly: boolean, shadow: readonly string[] | undefined, within?: string, fromFile?: string): string[] => {
     // A reading behind a nearer namespace or type the lookup stops at binds nothing.
-    if (shadowed(language, shadow)) return [];
+    if (shadowed(language, shadow, fromFile)) return [];
     if (language === 'csharp') return csharpKeys(key, nestedOnly, within, fromFile);
     return nestedOnly ? nestedOnlySplitKeys(deps.symbolTable, language, key) : nestedSplitKeys(deps.symbolTable, language, key);
   };
@@ -338,7 +346,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
   /** Every key a symbol hint reads: those of each member of its set, or its own. */
   const hintKeys = (hint: Extract<TargetHint, { kind: 'symbol' }>, language: string, fromFile: string): string[] =>
     hint.set !== undefined
-      ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow))
+      ? hint.set.flatMap((m) => memberKeys(language, m.symbolKey, m.nestedOnly === true, m.shadow, undefined, fromFile))
       : memberKeys(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
 
   /** The distinct files a symbol HINT maps to: the union across its `set` members (each honoring
@@ -356,7 +364,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     if (hint.set !== undefined) {
       files = new Set<string>();
       for (const m of hint.set) {
-        for (const f of memberFiles(language, m.symbolKey, m.nestedOnly === true, m.shadow)) files.add(f);
+        for (const f of memberFiles(language, m.symbolKey, m.nestedOnly === true, m.shadow, undefined, fromFile)) files.add(f);
       }
     } else {
       files = memberFiles(language, hint.symbolKey, hint.nestedOnly === true, hint.shadow, hint.within, fromFile);
@@ -366,14 +374,44 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     const keys = hintKeys(hint, language, fromFile);
     // A private extension method is no definer for a call outside the file that declares it, whatever the assembly says.
     if (extension) for (const f of [...files]) if (f !== fromFile && privateOnlyIn(keys, f)) files.delete(f);
-    if (deps.reach === undefined) return files;
-    if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
+    if (deps.reach === undefined) return byReceiver(hint, files, keys, fromFile);
+    if (hint.set === undefined && hint.nestedOnly !== true && !shadowed(language, hint.shadow, fromFile) && (hint.symbolKey === 'Program' || hint.symbolKey === IMPLICIT_PROGRAM_KEY)) {
       // The global `Program` of C#: a declared `public partial class Program { }` and the class the compiler makes of top-level statements are one name to it. Where the reference graph says what the caller sees, the two are chosen among together (an explicit class in a project out of reach must not outrank the implicit one in reach, and two referenced projects with a `Program` each are the compiler's CS0433, not a binding for the declared one). Where it can say nothing for some definer, the order stays what it was without a graph: the declared class first, the implicit one only as the fallback.
       const both = new Set<string>([...deps.symbolTable.filesFor(language, 'Program'), ...deps.symbolTable.filesFor(language, IMPLICIT_PROGRAM_KEY)]);
       if (![...both].some((f) => deps.reach?.(fromFile, f) === 'unknown')) return withinReach(both, fromFile, deps.reach, true, (f) => assemblyOnlyIn(language, ['Program', IMPLICIT_PROGRAM_KEY], f));
     }
     // An extension-method key (`<ns>.<Name>()`) is chosen among by overload resolution, not by the compilation's own-type preference: a definer in another project may be the better overload, so every definer in reach stays.
-    return withinReach(files, fromFile, deps.reach, !extension, (f) => assemblyOnlyIn(language, keys, f));
+    return byReceiver(hint, withinReach(files, fromFile, deps.reach, !extension, (f) => assemblyOnlyIn(language, keys, f)), keys, fromFile);
+  };
+
+  /**
+   * The definers of an extension-method reading that can take the call when its receiver's type is written (`TargetHint.takes.receiver`) and the reading names more than one file: those with a method, as far as the calling file sees it, that takes the call's counts and whose `this` parameter does not refuse a value of the receiver's type for certain (the type itself, one it derives from or implements, or a type the records say nothing about). A definer that records no shape takes any call. The files are left as they are when the receiver's type binds no one type of the repository.
+   */
+  const byReceiver = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: Set<string>, keys: readonly string[], fromFile: string): Set<string> => {
+    const takes = hint.takes;
+    if (takes?.receiver === undefined || files.size < 2) return files;
+    const receiver = bindCsharpType(takes.receiver, fromFile)?.key;
+    if (receiver === undefined) return files;
+    const kept = new Set<string>();
+    for (const file of files) {
+      let recorded = false;
+      let takesIt = false;
+      for (const key of new Set(keys)) {
+        const shapes = csharp().extensionShapes(key).get(file);
+        if (shapes === undefined) continue;
+        recorded = true;
+        const seen = deps.reach?.(fromFile, file);
+        const friend = seen !== 'reachable' || deps.reach?.internalsVisible === undefined || deps.reach.internalsVisible(fromFile, file);
+        for (const shape of shapes) {
+          const seesIt = shape.startsWith('~') ? file === fromFile : shape.startsWith('-') ? friend : true;
+          if (!seesIt) continue;
+          const [counts, written] = (shape.startsWith('~') || shape.startsWith('-') ? shape.slice(1) : shape).split('|');
+          if (shapeTakes(counts, takes.typeArgs, takes.args) && (written === undefined || !csharp().cannotTakeReceiver(written, receiver, key, file))) takesIt = true;
+        }
+      }
+      if (!recorded || takesIt) kept.add(file);
+    }
+    return kept;
   };
 
   /**
