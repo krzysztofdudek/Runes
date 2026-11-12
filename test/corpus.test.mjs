@@ -191,6 +191,33 @@ describe('the corpus gate', () => {
     manifest([fixture()]);
   });
 
+  // A file a tsconfig covers. Its module format comes from the config and the package, and a `require()` call or a dynamic `import()` in it enters the branch of its own form whatever that format is, as in a file no tsconfig covers.
+  test('the TypeScript oracle reads the call form of a require() and an import() in a file a tsconfig covers', () => {
+    const repo = join(tmp, 'covered-forms');
+    mkdirSync(repo);
+    git(repo, 'init', '-q');
+    put(repo, 'package.json', JSON.stringify({ name: 'root', private: true, workspaces: ['packages/*'] }));
+    put(repo, 'tsconfig.json', JSON.stringify({ compilerOptions: { module: 'nodenext', moduleResolution: 'nodenext', allowJs: true, noEmit: true }, include: ['app.js'] }));
+    put(repo, 'packages/dual/package.json', JSON.stringify({ name: 'dual', exports: { '.': { import: './esm.mjs', require: './cjs.cjs' } } }));
+    put(repo, 'packages/dual/esm.mjs', 'export default 1;\n');
+    put(repo, 'packages/dual/cjs.cjs', 'module.exports = 1;\n');
+    put(repo, 'app.js', "const dual = require('dual');\nconst lazy = import('dual');\nmodule.exports = [dual, lazy];\n");
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'covered forms');
+    manifest([{ id: 'covered-forms', url: pathToFileURL(repo).href, commit: git(repo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+    writeFileSync(join(work, 'explained.md'), '');
+    const made = corpus('update');
+    assert.equal(made.code, 0, made.out);
+    assert.deepEqual(readFileSync(join(work, 'goldens', 'covered-forms.edges'), 'utf8').split('\n').filter((l) => l !== '' && !l.startsWith('#')), [
+      'app.js:1\tpackages/dual/cjs.cjs',
+      'app.js:2\tpackages/dual/esm.mjs',
+    ]);
+    const r = corpus('oracles');
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /ok {3}covered-forms .*checked: typescript 2; 0 disagreements/);
+    manifest([fixture()]);
+  });
+
   test('an explanation that matches no disagreement is named, and fails the run under --strict', () => {
     const entry = plugFixture();
     const stale = '- `plug` `typescript:false-edge` `app.js:7` `plug` `tools/plug/index.js` `unresolved in the repository`';
