@@ -497,4 +497,5 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-private-extension-method-called-in-its-own-class-silence', () => runCase('csharp-private-extension-method-called-in-its-own-class-silence'));
   it('csharp-public-and-internal-extension-method-one-file-public-call-edge', () => runCase('csharp-public-and-internal-extension-method-one-file-public-call-edge'));
   it('csharp-public-and-internal-extension-method-one-file-internal-call-binds-other-edge', () => runCase('csharp-public-and-internal-extension-method-one-file-internal-call-binds-other-edge'));
+  it('csharp-is-type-test-chain-or-edge', () => runCase('csharp-is-type-test-chain-or-edge'));
 });
