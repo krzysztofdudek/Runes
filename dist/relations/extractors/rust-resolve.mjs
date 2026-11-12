@@ -131,6 +131,10 @@ export const RUST_MODULES_KNOWN_KEY = 'mods:all';
 export function rustPathModuleKey(path) {
     return `pathmod:${path}`;
 }
+/** The symbol key under which the Rust extractor declares, for a file, a file one of its inline modules loads through a `path` attribute on a `mod`: `path` is the attribute's path, normalized, with the names of the inline modules around the `mod` in front (`outer/loaded.rs`). It is relative to the directory the file's modules lie in, which only the reader of the table knows: the file's own directory where the file is a module root (a `lib.rs`, a `main.rs`, any root a manifest or Cargo names, a `mod.rs`) or was loaded through a `path` attribute itself, else a directory named after the file beside it. */
+export function rustInlinePathModuleKey(path) {
+    return `pathmod-inline:${path}`;
+}
 /** The symbol key the Rust extractor declares beside each `rustPathModuleKey`, with the file name the path ends in (`linux.rs`): a table answers only whether a key is declared, so this is how the files that may load a given file through a `path` attribute are found. */
 export function rustPathModuleNameKey(fileName) {
     return `pathmod-name:${fileName}`;
