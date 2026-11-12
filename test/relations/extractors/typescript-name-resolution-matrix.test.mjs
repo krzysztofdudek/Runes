@@ -198,4 +198,6 @@ describe('MATRIX — external declarations and usage sites (not a specifier → 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — JavaScript (no type syntax): the same path forms resolve, no crash', () => {
   it('typescript-javascript-import-require-edge', () => runCase('typescript-javascript-import-require-edge'));
+  it('typescript-exports-pattern-target-without-extension-silence', () => runCase('typescript-exports-pattern-target-without-extension-silence'));
+  it('typescript-exports-pattern-target-with-extension-edge', () => runCase('typescript-exports-pattern-target-with-extension-edge'));
 });
