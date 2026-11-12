@@ -1,5 +1,5 @@
 import { diskFileView, type FileSource, type FileView } from '../file-view.mjs';
-import { attributes, stripComments, lastProperty, isCsproj, makeProjectLocator } from './csharp-msbuild.mjs';
+import { ATTRS, attributes, stripComments, lastProperty, isCsproj, makeProjectLocator } from './csharp-msbuild.mjs';
 
 /**
  * C# PROJECT SCOPING of global usings (M6/M7).
@@ -99,7 +99,7 @@ interface UsingItem { include: string; alias?: string; isStatic: boolean }
 
 /** Apply the `<Using Include|Remove …>` items of one MSBuild file, in document order. */
 function applyUsingItems(xml: string, items: UsingItem[]): void {
-  const re = /<Using\b([^>]*?)\/?>/g;
+  const re = new RegExp(`<Using\\b${ATTRS}\\/?>`, 'g');
   let m: RegExpExecArray | null;
   while ((m = re.exec(xml)) !== null) {
     const attrs = attributes(m[1]);
@@ -178,7 +178,7 @@ export function buildCsharpProjectScopes(
       if (implicit !== undefined && /^(enable|true)$/i.test(implicit)) {
         let sdk = '';
         for (const xml of ordered) {
-          const m = /<Project\b([^>]*)>/i.exec(xml);
+          const m = new RegExp(`<Project\\b${ATTRS}>`, 'i').exec(xml);
           const s = m ? attributes(m[1]).get('sdk') : undefined;
           if (s !== undefined && s !== '') { sdk = s.toLowerCase(); break; }
         }

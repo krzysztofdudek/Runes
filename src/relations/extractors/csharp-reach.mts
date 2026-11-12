@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { diskFileView, type FileSource, type FileView } from '../file-view.mjs';
-import { attributes, stripComments, makeProjectLocator } from './csharp-msbuild.mjs';
+import { ATTRS, attributes, stripComments, makeProjectLocator } from './csharp-msbuild.mjs';
 
 /**
  * C# REACHABILITY: which projects the code of one project can see.
@@ -70,9 +70,6 @@ function globToRegExp(glob: string): RegExp {
   }
   return new RegExp(`^${re}$`, 'i');
 }
-
-/** The attribute text of an XML start tag up to its end: a quoted value may hold a raw `>` (`Condition="'$(V)' > '10'"`), which ends no tag. */
-const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*?)`;
 
 /** The value of one piece of an item's metadata, written as an attribute or as a child element (`body` is the item's inner text, when it has one), lower-cased; a child element under its own `Condition`, and a value that needs a property this reader does not know, read as not written, so the answer keeps more reach. The last child element wins, as in MSBuild. */
 function metadata(attrText: string, body: string | undefined, name: string): string | undefined {
@@ -178,10 +175,10 @@ export function buildCsharpReachability(
     for (const file of [projectFile, ...directoryBuildFilesOf(path.posix.dirname(projectFile))]) {
       const text = readText(file);
       for (const prop of ['AssemblyName', 'PackageId']) {
-        const re = new RegExp(`<${prop}\\b[^>]*>([^<]*)</${prop}>`, 'gi');
+        const re = new RegExp(`<${prop}\\b${ATTRS}>([^<]*)</${prop}>`, 'gi');
         let m: RegExpExecArray | null;
         while ((m = re.exec(text)) !== null) {
-          const value = m[1].trim().replace(/\$\(MSBuildProjectName\)/gi, stem(projectFile));
+          const value = m[2].trim().replace(/\$\(MSBuildProjectName\)/gi, stem(projectFile));
           if (value !== '' && !/[$%@]\(/.test(value)) names.push(value.toLowerCase());
         }
       }
@@ -324,7 +321,7 @@ export function buildCsharpReachability(
       const references = new RegExp(`<Reference\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/Reference>)`, 'gi');
       while ((m = references.exec(text)) !== null) {
         // `HintPath` is item metadata: a child element, or an attribute of the item. Both are read, since each names an assembly the reference may stand for.
-        const hintPaths = [m[2] === undefined ? undefined : /<HintPath\b[^>]*>([^<]*)<\/HintPath>/i.exec(m[2])?.[1].trim(), attributes(m[1]).get('hintpath')];
+        const hintPaths = [m[2] === undefined ? undefined : new RegExp(`<HintPath\\b${ATTRS}>([^<]*)<\\/HintPath>`, 'i').exec(m[2])?.[2].trim(), attributes(m[1]).get('hintpath')];
         // The name is the part before the first comma; an Include that is the assembly's file path (`..\bin\Acme.Api.dll`) names it by the file name.
         const names = includes(m[1]).map((s) => s.split(',')[0].trim()).map((s) => (/[\\/]|\.(?:dll|exe)$/i.test(s) ? stem(s) : s));
         for (const hintPath of hintPaths) if (hintPath !== undefined && hintPath !== '') names.push(stem(hintPath));
@@ -361,7 +358,7 @@ export function buildCsharpReachability(
       const assemblyAttributes = new RegExp(`<AssemblyAttribute\\b${ATTRS}(?:\\/>|>([\\s\\S]*?)<\\/AssemblyAttribute>)`, 'gi');
       while ((m = assemblyAttributes.exec(text)) !== null) {
         if (!includes(m[1]).some((n) => /(?:^|\.)InternalsVisibleTo(?:Attribute)?$/i.test(n))) continue;
-        const parameter = m[2] === undefined ? undefined : /<_Parameter1\b[^>]*>([^<]*)<\/_Parameter1>/i.exec(m[2])?.[1];
+        const parameter = m[2] === undefined ? undefined : new RegExp(`<_Parameter1\\b${ATTRS}>([^<]*)<\\/_Parameter1>`, 'i').exec(m[2])?.[2];
         if (parameter === undefined) facts.everyFriend = true;
         else addFriend(parameter);
       }
