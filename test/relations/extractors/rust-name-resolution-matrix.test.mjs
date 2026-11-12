@@ -221,6 +221,7 @@ describe('MATRIX — what a crate root binds', () => {
   it('rust-module-extern-crate-alias-own-module-only-edge', () => runCase('rust-module-extern-crate-alias-own-module-only-edge'));
   it('rust-module-extern-crate-alias-use-in-function-body-edge', () => runCase('rust-module-extern-crate-alias-use-in-function-body-edge'));
   it('rust-inline-module-local-mod-over-root-extern-crate-alias-edge', () => runCase('rust-inline-module-local-mod-over-root-extern-crate-alias-edge'));
+  it('rust-function-body-local-mod-over-root-extern-crate-alias-edge', () => runCase('rust-function-body-local-mod-over-root-extern-crate-alias-edge'));
   it('rust-edition-2015-self-super-through-module-extern-crate-alias-edge', () => runCase('rust-edition-2015-self-super-through-module-extern-crate-alias-edge'));
   it('rust-cfg-if-extern-crate-binds-name-edge', () => runCase('rust-cfg-if-extern-crate-binds-name-edge'));
   it('rust-cfg-attr-proc-macro-derive-root-item-edge', () => runCase('rust-cfg-attr-proc-macro-derive-root-item-edge'));
