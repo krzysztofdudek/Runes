@@ -1,6 +1,6 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/reference-case-runner.ts. The one relation reference-case harness: `runCase('<id>')` is the body of every `it('<id>')` in the matrix suites, and the catalogue (reference/relations/<language>/<id>.md) is its only input.
 //
-// The runner does not reimplement name resolution. It loads the case, builds an in-memory project from its `## Files`, and drives the real pipeline over the real extractor, symbol table and resolver: the universe symbol table from extractor.declarations(), the C# global-using pre-pass, then the per-reference ordered-candidate walk (resolved: edge and stop; a nearer ambiguous: silence the group; absent: continue). It then asserts every `## Expect` line and that no unexpected cross-owner edge appears, so a case cannot pass while emitting a spurious edge.
+// The runner does not reimplement name resolution. It loads the case, builds an in-memory project from its `## Files`, and drives the real pipeline over the real extractor, symbol table and resolver: the universe symbol table from extractor.declarations(), the C# global-using pre-pass, then the per-reference ordered-candidate walk (resolved: edge and stop; a nearer ambiguous: silence the group; absent: continue). It then asserts every `## Expect` line and that no unexpected cross-owner edge appears, so a case cannot pass while emitting a spurious edge. A line `<file>:<line> answers <answer>` holds what the resolver's `classifyUse` answers for the uses written on that line: the answers listed for one line are exactly the distinct answers of its uses, each written as `resolved <file>`, `ambiguous <file>, <file>, ...`, or `absent`, followed by its reason (`outside`, `unfollowed`, or `unowned <file>`) when it has one.
 //
 // Ownership follows the catalogue's `node:<id>` convention: a file at `<root>/<id>/<...>` belongs to `<id>`, the basename of its parent directory, unless its fence names one: ```java path=src/test/java/com/a/OwnerTest.java owner=tests. The attribute is what lets two source roots of one package (`src/main/java/com/a`, `src/test/java/com/a`) be two owners. Only the case's source files are owned; any other file (a support file, or a file the resolver finds on disk) is unowned, exactly as an owner index built from one exact mapping per source file answers.
 import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -92,6 +92,7 @@ export function loadCaseDoc(id, mdPath) {
   }
 
   const expectEdges = [];
+  const expectAnswers = new Map();
   let expectSilence = false;
   for (const raw of sectionBody(body, 'Expect').split('\n')) {
     let line = raw.trim();
@@ -100,12 +101,19 @@ export function loadCaseDoc(id, mdPath) {
     const stripped = line.replace(/#.*$/, '').trim();
     if (stripped === '') continue;
     if (stripped === 'silence') { expectSilence = true; continue; }
+    const answer = /^(\S+):(\d+)\s+answers\s+(\S.*)$/.exec(stripped);
+    if (answer) {
+      const at = `${answer[1]}:${Number(answer[2])}`;
+      if (!expectAnswers.has(at)) expectAnswers.set(at, new Set());
+      expectAnswers.get(at).add(answer[3].replace(/\s+/g, ' '));
+      continue;
+    }
     const edge = /^(\S+):(\d+)\s*->\s*node:(\S+)$/.exec(stripped);
     if (!edge) throw new Error(`reference-case ${id}: unparseable ## Expect line: '${raw.trim()}'`);
     expectEdges.push({ fromFile: edge[1], line: Number(edge[2]), owner: edge[3] });
   }
   if (!expectSilence && expectEdges.length === 0) throw new Error(`reference-case ${id}: ## Expect has neither an edge line nor a 'silence' line`);
-  return { id, language, expectation, files, configFiles, expectEdges, expectSilence };
+  return { id, language, expectation, files, configFiles, expectEdges, expectSilence, expectAnswers };
 }
 
 /** Every case `.md` of the catalogue: `{ id, language, mdPath }`. */
@@ -140,8 +148,8 @@ function materializeProject(files, configFiles = []) {
   return root;
 }
 
-/** The cross-owner edges the real pipeline emits for one case: `{ fromFile, line, owner }`. By default the resolvers read a throwaway directory holding the case's files; with `through: 'view'` they read a `listedFileView` of the same files and the project root names a directory that does not exist, so any read that bypasses the view finds nothing and the case fails. */
-export async function caseEdges(doc, through = 'disk') {
+/** The cross-owner edges the real pipeline emits for one case: `{ fromFile, line, owner }`. By default the resolvers read a throwaway directory holding the case's files; with `through: 'view'` they read a `listedFileView` of the same files and the project root names a directory that does not exist, so any read that bypasses the view finds nothing and the case fails. With `answers`, it returns instead the answers of the uses on each line the case's `answers` lines name, as a map from `<file>:<line>` to the set of answers written as those lines write them. */
+export async function caseEdges(doc, through = 'disk', { answers: wantAnswers = false } = {}) {
   return withParsedFiles(
     doc.files.map((f) => {
       // A component is parsed as its script view, under the view's grammar extension.
@@ -182,6 +190,7 @@ export async function caseEdges(doc, through = 'disk') {
         const reach = buildCsharpReachability(projectRoot, doc.files.filter((f) => f.language === 'csharp').map((f) => f.path), { files });
         const resolver = makeResolver({ ownerIndex, symbolTable, resolvePathToFile: makeResolvePathToFile(projectRoot, ownerIndex.ownerOf, undefined, { files }), reach });
         const edges = [];
+        const answers = new Map();
         for (const f of doc.files) {
           const extractor = extractorForLanguage(f.language);
           if (!extractor) continue;
@@ -193,13 +202,26 @@ export async function caseEdges(doc, through = 'disk') {
           for (const { line, owner } of resolveDetectedEdges(detected, resolver, f.path, f.language)) {
             if (owner !== fromOwner) edges.push({ fromFile: f.path, line, owner });
           }
+          for (const dep of detected) {
+            const at = `${f.path}:${dep.line}`;
+            if (!doc.expectAnswers?.has(at)) continue;
+            if (!answers.has(at)) answers.set(at, new Set());
+            answers.get(at).add(typeof resolver.classifyUse === 'function' ? describeAnswer(resolver.classifyUse(dep.candidates, f.path, f.language)) : 'no answer: the resolver has no classifyUse');
+          }
         }
-        return edges;
+        return wantAnswers ? answers : edges;
       } finally {
         if (through !== 'view') rmSync(projectRoot, { recursive: true, force: true });
       }
     },
   );
+}
+
+/** One answer of `classifyUse` as an `## Expect` line writes it. */
+function describeAnswer(answer) {
+  if (answer.kind === 'resolved') return `resolved ${answer.resolvedFile}`;
+  if (answer.kind === 'ambiguous') return `ambiguous ${(answer.candidates ?? []).join(', ')}`;
+  return ['absent', answer.reason, answer.resolvedFile].filter((part) => part !== undefined).join(' ');
 }
 
 /** Runs one reference case end to end and fails when the documented `## Expect` is not met or an unexpected edge appears. */
@@ -218,4 +240,11 @@ export async function runCase(id) {
   for (const e of doc.expectEdges) expect(actual, `case ${id}: expected edge ${edgeKey(e)} not emitted (got ${[...actual].join(', ') || 'none'})`).toContain(edgeKey(e));
   for (const a of actual) expect(expected, `case ${id}: unexpected cross-owner edge ${a}`).toContain(a);
   if (doc.expectSilence && doc.expectEdges.length === 0) expect(edges, `case ${id}: expected silence but emitted ${edges.map(edgeKey).join(', ')}`).toHaveLength(0);
+  if (doc.expectAnswers.size === 0) return;
+  for (const through of ['disk', 'view']) {
+    const answers = await caseEdges(doc, through, { answers: true });
+    for (const [at, want] of doc.expectAnswers) {
+      expect([...(answers.get(at) ?? [])].sort(), `case ${id}: the answers of the uses on ${at} (${through})`).toEqual([...want].sort());
+    }
+  }
 }

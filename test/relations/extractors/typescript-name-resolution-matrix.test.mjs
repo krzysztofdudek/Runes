@@ -135,6 +135,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-unread-preset-own-preserve-edge', () => runCase('typescript-exports-unread-preset-own-preserve-edge'));
   it('typescript-package-entry-outdir-main-edge', () => runCase('typescript-package-entry-outdir-main-edge'));
   it('typescript-package-entry-outdir-exports-edge', () => runCase('typescript-package-entry-outdir-exports-edge'));
+  it('typescript-package-entry-outdir-trailing-slash-edge', () => runCase('typescript-package-entry-outdir-trailing-slash-edge'));
   it('typescript-package-entry-outdir-bundler-dual-edge', () => runCase('typescript-package-entry-outdir-bundler-dual-edge'));
   it('typescript-package-entry-outdir-include-root-edge', () => runCase('typescript-package-entry-outdir-include-root-edge'));
   it('typescript-package-entry-outdir-configs-disagree-silence', () => runCase('typescript-package-entry-outdir-configs-disagree-silence'));
@@ -147,6 +148,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-exports-node16-require-call-in-esm-package-edge', () => runCase('typescript-exports-node16-require-call-in-esm-package-edge'));
   it('typescript-exports-versioned-types-key-out-of-range-edge', () => runCase('typescript-exports-versioned-types-key-out-of-range-edge'));
   it('typescript-exports-versioned-types-key-in-range-edge', () => runCase('typescript-exports-versioned-types-key-in-range-edge'));
+  it('typescript-exports-versioned-types-key-typescript-7-edge', () => runCase('typescript-exports-versioned-types-key-typescript-7-edge'));
   it('typescript-exports-bundler-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-bundler-dynamic-import-in-cts-file-edge'));
   it('typescript-exports-commonjs-module-dynamic-import-edge', () => runCase('typescript-exports-commonjs-module-dynamic-import-edge'));
   it('typescript-exports-preserve-dynamic-import-in-cts-file-edge', () => runCase('typescript-exports-preserve-dynamic-import-in-cts-file-edge'));
@@ -173,6 +175,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-package-imports-edge', () => runCase('typescript-package-imports-edge'));
   it('typescript-package-subpath-imports-silence', () => runCase('typescript-package-subpath-imports-silence'));
   it('typescript-bare-specifier-silence', () => runCase('typescript-bare-specifier-silence'));
+  it('typescript-unresolved-outside-or-unfollowed-silence', () => runCase('typescript-unresolved-outside-or-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,6 +203,8 @@ describe('MATRIX — JavaScript (no type syntax): the same path forms resolve, n
   it('typescript-javascript-import-require-edge', () => runCase('typescript-javascript-import-require-edge'));
   it('typescript-exports-pattern-target-without-extension-silence', () => runCase('typescript-exports-pattern-target-without-extension-silence'));
   it('typescript-exports-pattern-target-with-extension-edge', () => runCase('typescript-exports-pattern-target-with-extension-edge'));
+  it('typescript-imports-pattern-target-without-extension-silence', () => runCase('typescript-imports-pattern-target-without-extension-silence'));
+  it('typescript-imports-pattern-target-with-extension-edge', () => runCase('typescript-imports-pattern-target-with-extension-edge'));
   it('typescript-resolution-mode-clause-on-next-line-edge', () => runCase('typescript-resolution-mode-clause-on-next-line-edge'));
   it('typescript-resolution-mode-two-attributes-file-format-edge', () => runCase('typescript-resolution-mode-two-attributes-file-format-edge'));
 });

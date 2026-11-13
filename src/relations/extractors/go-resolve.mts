@@ -105,10 +105,34 @@ export function resolveGoImport(
   fromFile: string,
   deps: GoResolveDeps,
 ): string | undefined {
+  const found = goImport(importPath, fromFile, deps);
+  return 'file' in found ? found.file : undefined;
+}
+
+/**
+ * Why a Go import bound no file (see `resolveGoImport`): `outside` when no module of the repository the importing file reaches holds the import path (the standard library, a module from elsewhere); `unfollowed` when one does and the package is not there or binds no file; `{ split }` when the package's files, after `isExcluded`, belong to more than one owner, with those files sorted; undefined when the importing file belongs to no module, or when the import binds a file.
+ */
+export function explainGoImport(
+  importPath: string,
+  fromFile: string,
+  deps: GoResolveDeps,
+): 'outside' | 'unfollowed' | { split: string[] } | undefined {
+  const found = goImport(importPath, fromFile, deps);
+  return 'file' in found ? undefined : 'split' in found ? { split: found.split } : found.miss;
+}
+
+type GoImport = { file: string } | { split: string[] } | { miss: 'outside' | 'unfollowed' | undefined };
+
+function goImport(importPath: string, fromFile: string, deps: GoResolveDeps): GoImport {
   const resolved = pickModule(importPath, fromFile, deps);
-  if (resolved === undefined) return undefined;
+  if (resolved === undefined) {
+    const reachable = deps.modulesFor?.(fromFile) ?? [deps.modulePathFor(fromFile)].filter((m) => m !== undefined);
+    if (reachable.length === 0) return { miss: undefined };
+    // A module whose path holds the import path, but two of them in different directories claim it: the import is the repository's, and contradictory.
+    return { miss: reachable.some((m) => m.modulePath !== '' && (importPath === m.modulePath || importPath.startsWith(m.modulePath + '/'))) ? 'unfollowed' : 'outside' };
+  }
   const { modulePath, moduleDir } = resolved;
-  if (modulePath === '') return undefined;
+  if (modulePath === '') return { miss: undefined };
 
   // The import path must be the module path itself (module root package) or a
   // descendant of it (`<modulePath>/<dir>`). Anything else is stdlib/external → silence.
@@ -119,7 +143,7 @@ export function resolveGoImport(
   } else if (importPath.startsWith(modulePath + '/')) {
     remainder = importPath.slice(modulePath.length + 1);
   } else {
-    return undefined;
+    return { miss: 'outside' };
   }
 
   // Root the module-relative remainder under the go.mod DIRECTORY. For a root
@@ -139,15 +163,15 @@ export function resolveGoImport(
   const repoRelDir = path.posix.normalize(rel === '' ? '.' : rel);
   const cleanDir = repoRelDir === '.' ? '' : repoRelDir;
 
-  if (!deps.dirExists(cleanDir)) return undefined;
-  if (claimedByOtherModule(importPath, moduleDir, cleanDir, deps)) return undefined;
+  if (!deps.dirExists(cleanDir)) return { miss: 'unfollowed' };
+  if (claimedByOtherModule(importPath, moduleDir, cleanDir, deps)) return { miss: 'unfollowed' };
 
   // Representative `.go` file in the package directory. Test files (`*_test.go`)
   // are excluded so the representative is a production source file; a directory
   // with ONLY test files falls back to one of those rather than missing a real
   // package.
   const goFiles = deps.goFilesIn(cleanDir);
-  if (goFiles.length === 0) return undefined;
+  if (goFiles.length === 0) return { miss: 'unfollowed' };
   const production = goFiles.filter((f) => !f.endsWith('_test.go'));
   const candidates = (production.length > 0 ? production : goFiles).sort();
 
@@ -184,17 +208,17 @@ export function resolveGoImport(
       if (sole === undefined) {
         sole = o;
       } else if (o !== sole) {
-        return undefined; // 2+ distinct owners among what remains → split package → silence
+        return { split: remaining }; // 2+ distinct owners among what remains → split package → silence
       }
     }
     if (sole !== undefined) {
       const soleOwned = remaining.filter((f) => ownerOf(f) === sole);
-      if (soleOwned.length > 0) return soleOwned[0];
+      if (soleOwned.length > 0) return { file: soleOwned[0] };
     }
-    return remaining[0] ?? candidates[0];
+    return { file: remaining[0] ?? candidates[0] };
   }
 
-  return candidates[0];
+  return { file: candidates[0] };
 }
 
 /** The module an import binds through: without `modulesFor`, the nearest module; with it,

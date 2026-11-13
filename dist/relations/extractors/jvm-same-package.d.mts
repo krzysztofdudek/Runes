@@ -22,3 +22,5 @@ export interface SamePackageScope {
 export declare function samePackageGroup(scope: SamePackageScope, name: string, supertypeLists: readonly (readonly string[])[]): TargetHint[] | undefined;
 /** True for a name written with a capital first letter, the form of a type name in an expression. */
 export declare function isCapitalised(name: string): boolean;
+/** The key a simple type name written without an import reads through the default imports of `language`, after the file's own package, or undefined when none holds it: Java's `java.lang` (JLS §7.3); Kotlin's default packages, then `java.lang`. */
+export declare function defaultImport(language: 'java' | 'kotlin', name: string): string | undefined;

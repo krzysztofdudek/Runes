@@ -104,3 +104,9 @@ export interface GoResolveDeps {
     isExcluded?(repoRelPosix: string): boolean;
 }
 export declare function resolveGoImport(importPath: string, fromFile: string, deps: GoResolveDeps): string | undefined;
+/**
+ * Why a Go import bound no file (see `resolveGoImport`): `outside` when no module of the repository the importing file reaches holds the import path (the standard library, a module from elsewhere); `unfollowed` when one does and the package is not there or binds no file; `{ split }` when the package's files, after `isExcluded`, belong to more than one owner, with those files sorted; undefined when the importing file belongs to no module, or when the import binds a file.
+ */
+export declare function explainGoImport(importPath: string, fromFile: string, deps: GoResolveDeps): 'outside' | 'unfollowed' | {
+    split: string[];
+} | undefined;

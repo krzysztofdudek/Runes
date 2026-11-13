@@ -72,6 +72,8 @@ export type TargetHint =
       rubyInheritGuard?: string;
       /** Java and Kotlin: the key names a type of the referencing file's own package (or a member type of one), written without an import. The resolver then sees only the definers that file's source set can see (`src/test` sees `src/main`, `src/main` never sees `src/test`). Absent = every definer counts. */
       samePackage?: boolean;
+      /** Java and Kotlin, on the reading of a simple name as a type of the file's own package: the packages (or types) of the file's on-demand imports, which the language reads after the package and, in Kotlin, before the default imports. No outcome of `classify`, `resolve` or `resolveFile` reads it; `classifyUse` does, to tell where the use points when it binds nothing. Absent = the file has none. */
+      onDemand?: string[];
     };
 
 /**

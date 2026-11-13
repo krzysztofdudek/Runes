@@ -1,10 +1,10 @@
 import path from 'node:path';
-import { resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
+import { explainTsMiss, resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
 import { makePythonResolver } from './extractors/python-resolve.mjs';
-import { resolveGoImport } from './extractors/go-resolve.mjs';
+import { explainGoImport, resolveGoImport } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resolve.mjs';
-import { resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
-import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
+import { explainPhpMiss, resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
+import { explainRustMiss, resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { declarationCount } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -140,7 +140,7 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
     // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
     const isFile = (repoRelPosix) => probe.isFile(repoRelPosix);
     const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
-    return (specifier, fromFile, language, isPackage = false, symbolTable = undefined, callForm = undefined) => {
+    const resolvePathToFile = (specifier, fromFile, language, isPackage = false, symbolTable = undefined, callForm = undefined) => {
         if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
             return resolveTsPath(specifier, fromFile, isFile, tsDeps, callForm);
         }
@@ -211,6 +211,21 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
         }
         return undefined;
     };
+    // Why a path bound no file, for the resolver's `classifyUse`: asked only after the function above answered undefined for the same arguments.
+    const explainMiss = (specifier, fromFile, language, _isPackage, symbolTable) => {
+        if (language === 'typescript' || language === 'tsx' || language === 'javascript')
+            return explainTsMiss(specifier, fromFile, tsDeps);
+        if (language === 'python')
+            return python.explain(specifier, fromFile);
+        if (language === 'go')
+            return explainGoImport(specifier, fromFile, goDeps);
+        if (language === 'php')
+            return explainPhpMiss(specifier, fromFile, phpDeps);
+        if (language === 'rust')
+            return explainRustMiss(specifier, fromFile, exists, rustDepsFor(symbolTable));
+        return undefined;
+    };
+    return Object.assign(resolvePathToFile, { explainMiss });
 }
 /**
  * Build the disk-backed Rust resolution capabilities for a project root. A Rust path

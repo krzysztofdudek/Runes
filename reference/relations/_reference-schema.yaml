@@ -47,6 +47,10 @@ frontmatter:
 #   Files  — one or more ```<lang> path=<repo-rel>``` fenced blocks: the embedded
 #            fixture code the test loads verbatim (single source, no drift).
 #   Expect — the asserted outcome: `file:line -> node:<id>` edge lines, and/or a
-#            bare `silence` line meaning no cross-node edge may be emitted.
+#            bare `silence` line meaning no cross-node edge may be emitted; and
+#            optionally `file:line answers <answer>` lines, which hold exactly the
+#            distinct answers the resolver's `classifyUse` gives the uses on that
+#            line (`resolved <file>`, `ambiguous <file>, <file>, ...`, or `absent`
+#            with its reason, `outside`, `unfollowed` or `unowned <file>`).
 sections:
   required: [Rule, Files, Expect]

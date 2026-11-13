@@ -109,4 +109,5 @@ describe('MATRIX — source roots (ancestor packages are not roots; discovered p
 describe('MATRIX — newer import syntax and report shape', () => {
   it('python-lazy-import-edge', () => runCase('python-lazy-import-edge'));
   it('python-from-import-single-report', () => runCase('python-from-import-single-report'));
+  it('python-unresolved-outside-or-unfollowed-silence', () => runCase('python-unresolved-outside-or-unfollowed-silence'));
 });

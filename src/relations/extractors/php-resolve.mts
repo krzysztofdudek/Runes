@@ -201,6 +201,18 @@ export function resolvePhpFqn(
   return r.kind === 'hit' ? r.file : undefined;
 }
 
+/**
+ * Why a name `resolvePhpFqn` bound no file came to nothing: `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
+ */
+export function explainPhpMiss(specifier: string, fromFile: string, deps: PhpResolveDeps): 'outside' | 'unfollowed' | undefined {
+  if (specifier.includes('/')) return 'unfollowed';
+  const fqn = specifier.startsWith('\\') ? specifier.slice(1) : specifier;
+  const maps: ComposerAutoload[] = [{ psr4: deps.psr4For(fromFile), psr0: deps.psr0For?.(fromFile) ?? new Map() }, ...(deps.allMaps?.() ?? [])];
+  const prefixes = maps.flatMap((m) => [...m.psr4.keys(), ...m.psr0.keys()]);
+  if (prefixes.length === 0) return undefined;
+  return prefixes.some((prefix) => prefix !== '' && fqn.startsWith(prefix)) ? 'unfollowed' : 'outside';
+}
+
 /** Join a repo-relative directory with a sub-path, normalizing. '' → the sub-path itself. */
 function joinUnder(dir: string, sub: string): string {
   return path.posix.normalize(dir === '' ? sub : path.posix.join(dir, sub));

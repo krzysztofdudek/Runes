@@ -2,7 +2,7 @@ import { walk } from '../../ast/walk.mjs';
 import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
 import { kotlinView } from './kotlin-recover.mjs';
-import { isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
+import { defaultImport, isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
 /**
  * Kotlin dependency extractor — the FIRST language that resolves through the shared
  * SymbolTable rather than a path mapping.
@@ -259,7 +259,12 @@ function samePackageCandidates(scope, name, around) {
             return undefined;
     for (let s = around.supertypes; s !== null; s = s.outer)
         supertypeLists.push(s.names);
-    return samePackageGroup(scope, name, supertypeLists);
+    const group = samePackageGroup(scope, name, supertypeLists);
+    // Kotlin's default imports come after the package: their reading binds only a repository that declares that package, and otherwise says the name is the standard library's.
+    const implicit = defaultImport('kotlin', name);
+    if (group !== undefined && implicit !== undefined)
+        group.push({ kind: 'symbol', symbolKey: implicit });
+    return group;
 }
 const OUTSIDE = { typeParameters: null, supertypes: null, entering: null };
 /** The scope around every node the view's walkers visit, by node id. */
@@ -518,7 +523,7 @@ function declarationsOf(file, view) {
 }
 export const kotlinExtractor = {
     languages: new Set(['kotlin']),
-    rev: 8,
+    rev: 10,
     declarations,
     uses,
 };

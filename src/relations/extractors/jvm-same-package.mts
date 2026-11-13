@@ -47,10 +47,55 @@ export function samePackageGroup(scope: SamePackageScope, name: string, supertyp
     }
   }
   add(`${scope.pkg}.${name}`, true);
+  if (scope.onDemand.length > 0) {
+    const own = out[out.length - 1];
+    if (own.kind === 'symbol' && own.symbolKey === `${scope.pkg}.${name}`) own.onDemand = [...scope.onDemand];
+  }
   return out;
 }
 
 /** True for a name written with a capital first letter, the form of a type name in an expression. */
 export function isCapitalised(name: string): boolean {
   return /^\p{Lu}/u.test(name);
+}
+
+/** The public top-level types of `java.lang` in any JDK from 8 to 25, so a name of an older or newer one is read too. */
+const JAVA_LANG_TYPES: ReadonlySet<string> = new Set(
+  (
+    'AbstractMethodError Appendable ArithmeticException ArrayIndexOutOfBoundsException ArrayStoreException AssertionError AutoCloseable ' +
+    'Boolean BootstrapMethodError Byte Character CharSequence Class ClassCastException ClassCircularityError ClassFormatError ClassLoader ' +
+    'ClassNotFoundException ClassValue CloneNotSupportedException Cloneable Comparable Compiler Deprecated Double Enum ' +
+    'EnumConstantNotPresentException Error Exception ExceptionInInitializerError Float FunctionalInterface IO IllegalAccessError ' +
+    'IllegalAccessException IllegalArgumentException IllegalCallerException IllegalMonitorStateException IllegalStateException ' +
+    'IllegalThreadStateException IncompatibleClassChangeError IndexOutOfBoundsException InheritableThreadLocal InstantiationError ' +
+    'InstantiationException Integer InternalError InterruptedException Iterable LayerInstantiationException LinkageError Long ' +
+    'MatchException Math Module ModuleLayer NegativeArraySizeException NoClassDefFoundError NoSuchFieldError NoSuchFieldException ' +
+    'NoSuchMethodError NoSuchMethodException NullPointerException Number NumberFormatException Object OutOfMemoryError Override ' +
+    'Package Process ProcessBuilder ProcessHandle Readable Record ReflectiveOperationException Runnable Runtime RuntimeException ' +
+    'RuntimePermission SafeVarargs ScopedValue SecurityException SecurityManager Short StackOverflowError StackTraceElement ' +
+    'StackWalker StrictMath String StringBuffer StringBuilder StringIndexOutOfBoundsException StringTemplate SuppressWarnings System ' +
+    'Thread ThreadDeath ThreadGroup ThreadLocal Throwable TypeNotPresentException UnknownError UnsatisfiedLinkError ' +
+    'UnsupportedClassVersionError UnsupportedOperationException VerifyError VirtualMachineError Void WrongThreadException'
+  ).split(' '),
+);
+
+/** The type names Kotlin's default imports bring into every file besides `java.lang` (the Kotlin specification's default imports: kotlin.*, kotlin.annotation.*, kotlin.collections.*, kotlin.comparisons.*, kotlin.io.*, kotlin.ranges.*, kotlin.sequences.*, kotlin.text.*, and on the JVM kotlin.jvm.*), each with its package. A name the Kotlin packages and `java.lang` both hold is Kotlin's (`kotlin.String`), as Kotlin reads `java.lang` last. */
+const KOTLIN_DEFAULT_TYPES: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    kotlin: 'Annotation Any Array ArithmeticException AssertionError AutoCloseable Boolean BooleanArray BuilderInference Byte ByteArray Char CharArray CharSequence ClassCastException Cloneable Comparable Comparator ConcurrentModificationException ConsistentCopyVisibility ContextFunctionTypeParams DeepRecursiveFunction DeepRecursiveScope Deprecated DeprecatedSinceKotlin DeprecationLevel Double DoubleArray DslMarker Enum Error Exception ExposedCopyVisibility ExperimentalMultiplatform ExperimentalStdlibApi ExperimentalSubclassOptIn ExperimentalUnsignedTypes ExtensionFunctionType Float FloatArray Function IllegalArgumentException IllegalStateException IndexOutOfBoundsException Int IntArray KotlinNullPointerException KotlinVersion Lazy LazyThreadSafetyMode Long LongArray Metadata NoSuchElementException NoWhenBranchMatchedException NotImplementedError Nothing NullPointerException Number NumberFormatException OptIn OptionalExpectation OverloadResolutionByLambdaReturnType Pair ParameterName PublishedApi ReplaceWith RequiresOptIn Result RuntimeException Short ShortArray SinceKotlin String SubclassOptInRequired Suppress Throwable Triple TypeCastException UByte UByteArray UInt UIntArray ULong ULongArray UShort UShortArray UninitializedPropertyAccessException Unit UnsafeVariance UnsupportedOperationException',
+    'kotlin.annotation': 'AnnotationRetention AnnotationTarget MustBeDocumented Repeatable Retention Target',
+    'kotlin.collections': 'AbstractCollection AbstractIterator AbstractList AbstractMap AbstractMutableCollection AbstractMutableList AbstractMutableMap AbstractMutableSet AbstractSet ArrayDeque ArrayList BooleanIterator ByteIterator CharIterator Collection DoubleIterator FloatIterator Grouping HashMap HashSet IndexedValue IntIterator Iterable Iterator LinkedHashMap LinkedHashSet List ListIterator LongIterator Map MutableCollection MutableIterable MutableIterator MutableList MutableListIterator MutableMap MutableSet RandomAccess Set ShortIterator',
+    'kotlin.io': 'AccessDeniedException FileAlreadyExistsException FileSystemException FileTreeWalk FileWalkDirection NoSuchFileException OnErrorAction Serializable',
+    'kotlin.ranges': 'CharProgression CharRange ClosedFloatingPointRange ClosedRange IntProgression IntRange LongProgression LongRange OpenEndRange UIntProgression UIntRange ULongProgression ULongRange',
+    'kotlin.sequences': 'Sequence SequenceScope',
+    'kotlin.text': 'Appendable CharCategory CharDirectionality CharacterCodingException Charsets HexFormat MatchGroup MatchGroupCollection MatchNamedGroupCollection MatchResult Regex RegexOption StringBuilder Typography',
+    'kotlin.jvm': 'JvmDefault JvmDefaultWithCompatibility JvmDefaultWithoutCompatibility JvmField JvmInline JvmMultifileClass JvmName JvmOverloads JvmRecord JvmSerializableLambda JvmStatic JvmSuppressWildcards JvmSynthetic JvmWildcard PurelyImplements Strictfp Synchronized Throws Transient Volatile',
+  }).flatMap(([pkg, names]) => names.split(' ').map((name): [string, string] => [name, pkg])),
+);
+
+/** The key a simple type name written without an import reads through the default imports of `language`, after the file's own package, or undefined when none holds it: Java's `java.lang` (JLS §7.3); Kotlin's default packages, then `java.lang`. */
+export function defaultImport(language: 'java' | 'kotlin', name: string): string | undefined {
+  const pkg = language === 'kotlin' ? KOTLIN_DEFAULT_TYPES.get(name) : undefined;
+  if (pkg !== undefined) return `${pkg}.${name}`;
+  return JAVA_LANG_TYPES.has(name) ? `java.lang.${name}` : undefined;
 }

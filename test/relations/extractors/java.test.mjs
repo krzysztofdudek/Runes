@@ -2,6 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
 import { javaExtractor } from '../../helpers/internal/relations.mjs';
+import { SymbolTable, makeResolver } from '@chrisdudek/runes/relations';
 
 const run = (code) => runExtractor(javaExtractor, 'java', '.java', code);
 
@@ -253,6 +254,44 @@ describe('java extractor — same-package references (uses())', () => {
     }
   });
 
+  it('ends the group of a simple name java.lang holds with its java.lang reading, after the package, and adds none to another name', async () => {
+    const g = await groups('class T extends Exception { @Override public String toString() { return ""; } Owner o; Thread.State s; }');
+    expect(g.find((x) => x.keys.includes('com.a.String'))).toEqual({ line: 2, keys: ['com.a.Exception+String', 'com.a.String', 'java.lang.String'], flags: [true, true, false] });
+    expect(g.find((x) => x.keys.includes('com.a.Override'))?.keys).toEqual(['com.a.Exception+Override', 'com.a.Override', 'java.lang.Override']);
+    expect(g.find((x) => x.keys.includes('com.a.Exception'))?.keys).toEqual(['com.a.Exception', 'java.lang.Exception']);
+    expect(g.find((x) => x.keys.includes('com.a.Owner'))?.keys).toEqual(['com.a.Exception+Owner', 'com.a.Owner']);
+    expect(g.find((x) => x.keys.includes('com.a.Thread'))?.keys).toEqual(['com.a.Exception+Thread', 'com.a.Thread', 'java.lang.Thread']);
+  });
+
+  it('reads a qualified type led by a simple name of the package as a member type of each reading of that name, then as written', async () => {
+    const g = await groups('class T extends Base { Outer.Inner a; Outer.Mid.Leaf b; Thread.State c; }');
+    expect(g.find((x) => x.keys.includes('Outer.Inner'))).toEqual({ line: 2, keys: ['com.a.Base+Outer+Inner', 'com.a.Outer+Inner', 'Outer.Inner'], flags: [true, true, false] });
+    expect(g.find((x) => x.keys.includes('Outer.Mid.Leaf'))?.keys).toEqual(['com.a.Base+Outer+Mid+Leaf', 'com.a.Outer+Mid+Leaf', 'Outer.Mid.Leaf']);
+    expect(g.find((x) => x.keys.includes('Thread.State'))?.keys).toEqual(['com.a.Base+Thread+State', 'com.a.Thread+State', 'java.lang.Thread+State', 'Thread.State']);
+    // The leading name still gives its own group, and a name the file imports or declares, a package-led name and a generic outer are read as written.
+    expect(g.find((x) => x.keys.length === 2 && x.keys[1] === 'com.a.Outer')?.keys).toEqual(['com.a.Base+Outer', 'com.a.Outer']);
+    for (const [body, key] of [['import x.Map;\nclass T { Map.Entry e; }', 'Map.Entry'], ['class T { class Own { class In {} } Own.In i; }', 'Own.In'], ['class T { java.util.Map.Entry e; }', 'java.util.Map.Entry'], ['class T { Outer<String>.Inner i; }', 'Outer<String>.Inner']]) {
+      expect((await groups(body)).filter((x) => x.keys.includes(key)).map((x) => x.keys), body).toEqual([[key]]);
+    }
+  });
+
+  it('a use written Outer.Inner resolves to the file that declares the member type in another file of the package', async () => {
+    const files = [
+      ['src/a/Outer.java', 'package com.a;\npublic class Outer { public static class Inner {} }\n'],
+      ['src/b/Use.java', 'package com.a;\nclass Use { Outer.Inner i; }\n'],
+    ];
+    const st = new SymbolTable();
+    const used = [];
+    for (const [file, code] of files) {
+      const { declarations, uses } = await run(code);
+      for (const d of declarations) st.declare('java', d.symbolKey, file);
+      if (file === 'src/b/Use.java') used.push(...uses);
+    }
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const answers = used.filter((u) => u.line === 2).map((u) => r.classifyUse(u.candidates, 'src/b/Use.java', 'java'));
+    expect(answers).toEqual([{ kind: 'resolved', owner: 'a', resolvedFile: 'src/a/Outer.java' }, { kind: 'resolved', owner: 'a', resolvedFile: 'src/a/Outer.java' }]);
+  });
+
   it('gives nothing in the unnamed package', async () => {
     expect(await keysOf('class T { Owner a; }', '')).toEqual([]);
   });
@@ -348,5 +387,28 @@ describe('java extractor — declarations()', () => {
     const { declarations } = await run('\nclass OnLineTwo {}\n');
     const foo = declarations.find((d) => d.symbolKey === 'OnLineTwo');
     expect(foo?.line).toBe(2);
+  });
+});
+
+// What classifyUse says of a simple or qualified name of a Java file that binds no file: a name an on-demand import of a library can give leaves the repository; a member of a type of the repository that its file does not declare (inherited, or generated) is the repository's.
+describe('java extractor — the answers of names an on-demand import gives and of members of the package\'s types', () => {
+  const answersOf = async (decls, code) => {
+    const st = new SymbolTable();
+    for (const [key, file] of decls) st.declare('java', key, file);
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run(code);
+    return (key) => r.classifyUse(uses.find((u) => u.candidates.some((c) => c.symbolKey === key)).candidates, 'src/app/Use.java', 'java');
+  };
+  it('a name an on-demand import of a library can give answers outside; one only the repository\'s on-demand packages could give stays unfollowed', async () => {
+    const answer = await answersOf([['com.acme.app.Order', 'src/app/Order.java'], ['com.acme.model.Item', 'src/model/Item.java']], 'package com.acme.app;\nimport java.util.*;\nclass Use { List<Order> xs; Missing m; }\n');
+    expect(answer('com.acme.app.List')).toEqual({ kind: 'absent', reason: 'outside' });
+    const own = await answersOf([['com.acme.app.Order', 'src/app/Order.java'], ['com.acme.model.Item', 'src/model/Item.java']], 'package com.acme.app;\nimport com.acme.model.*;\nclass Use { Missing m; }\n');
+    expect(own('com.acme.app.Missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('a member of a type of the package that the type\'s file does not declare answers unfollowed', async () => {
+    const decls = [['com.acme.app.Base', 'src/base/Base.java'], ['com.acme.app.Base+Inner', 'src/base/Base.java'], ['com.acme.app.Sub', 'src/sub/Sub.java'], ['com.acme.app.Person', 'src/person/Person.java']];
+    const answer = await answersOf(decls, 'package com.acme.app;\nclass Use { Sub.Inner i; Person.PersonBuilder b; }\n');
+    expect(answer('Sub.Inner')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(answer('Person.PersonBuilder')).toEqual({ kind: 'absent', reason: 'unfollowed' });
   });
 });
