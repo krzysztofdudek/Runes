@@ -18,9 +18,10 @@ public enum Status { Active, Done }
 ```
 
 ```csharp path=src/web/Order.cs
+using App.Model;
 namespace App.Web;
 public class Order {
-  public App.Model.Status Status { get; set; }
+  public Status Status { get; set; }
   public bool Open(object x) => x is Status.Active;
   public bool Seen(object x) => x is Status.Active || x is Status.Done;
 }
@@ -28,9 +29,9 @@ public class Order {
 
 ## Expect
 
-- src/web/Order.cs:3 -> node:model      # the property's type
-- src/web/Order.cs:4 -> node:model      # the constant of the type the property is named after
-- src/web/Order.cs:5 -> node:model      # the same in a chain of tests
+- src/web/Order.cs:4 -> node:model      # the property's type
+- src/web/Order.cs:5 -> node:model      # the constant of the type the property is named after
+- src/web/Order.cs:6 -> node:model      # the same in a chain of tests
 
 ## Why
 

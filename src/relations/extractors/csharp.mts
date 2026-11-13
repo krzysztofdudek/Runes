@@ -2175,11 +2175,10 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
       // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
       const whole = node.namedChild(0);
-      // In a chain of tests the grammar may read `x is App.Models.Order || x is App.Models.Line` as `(x is App).Models.Order || (x is App).Models.Line`: member accesses on a test, which no C# expression is, since a member access binds tighter than `is`. Each test is of the whole dotted name, read as a lone `x is App.Models.Order` is, and a name led by a value this file declares is no type.
+      // In a chain of tests the grammar may read `x is App.Models.Order || x is App.Models.Line` as `(x is App).Models.Order || (x is App).Models.Line`: member accesses on a test, which no C# expression is, since a member access binds tighter than `is`. Each test is of the whole dotted name, read as a lone `x is App.Models.Order` is.
       const test = parentOf();
       const accessed = test !== null && test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
       if (accessed !== null && whole !== null) {
-        if (declaredNames.has(leftmostName(whole))) return false;
         const tail: Node[] = [];
         for (let a: CsScope['access'] = accessed; a !== null; a = a.outer) tail.push(a.node.childForFieldName('name')!);
         if (emitMemberAccessType(whole, true, tail)) return false;
@@ -2192,7 +2191,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name')) emitTypeNode(expr);
       // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
       // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace). At the head of a chain (`x is Models.Order || b`) it is read the same way, and the rest of the chain as it stands.
-      else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)) && emitMemberAccessType(expr, true)) readAsType.add(expr.id);
+      // A constant pattern names a constant, so a first name the file also declares as a value (`var Status = Make(); x is Status.Active`) is the type there: C# reads it so when the value has the type of that name (spec §12.8.7.2), and in no other case does the pattern compile.
+      else if (expr !== null && expr.type === 'member_access_expression' && emitMemberAccessType(expr, true)) readAsType.add(expr.id);
       return undefined;
     }
     // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
@@ -3057,7 +3057,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 42,
+  rev: 43,
   declarations,
   uses,
 };
