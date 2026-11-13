@@ -201,6 +201,18 @@ describe('resolveTsPath — packages', () => {
     });
     expect(r('#dep', 'src/a.ts')).toBe('packages/b/index.ts');
   });
+  it('takes a package.json imports target as written: a target without an extension names that file and nothing beside it', () => {
+    const r = project({
+      'packages/app/package.json': '{ "name": "app", "imports": { "#u/*": "./src/u/*", "#w/*": "./src/u/*.js", "#d": "./src/u", "#t": "./src/t.js" } }',
+      'packages/app/src/u/thing.js': '',
+      'packages/app/src/u/index.js': '',
+      'packages/app/src/t.ts': '',
+    });
+    expect(r('#u/thing', 'packages/app/use.js')).toBeUndefined();
+    expect(r('#w/thing', 'packages/app/use.js')).toBe('packages/app/src/u/thing.js');
+    expect(r('#d', 'packages/app/use.js')).toBeUndefined();
+    expect(r('#t', 'packages/app/use.js')).toBe('packages/app/src/t.ts');
+  });
   it('root-absolute resolves from the package root and is silent without one', () => {
     const r = project({ 'web/package.json': '{}', 'web/src/x.ts': '', 'src/x.ts': '' });
     expect(r('/src/x', 'web/src/pages/a.ts')).toBe('web/src/x.ts');

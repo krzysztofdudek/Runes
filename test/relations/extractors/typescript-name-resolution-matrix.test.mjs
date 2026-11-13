@@ -200,6 +200,8 @@ describe('MATRIX — JavaScript (no type syntax): the same path forms resolve, n
   it('typescript-javascript-import-require-edge', () => runCase('typescript-javascript-import-require-edge'));
   it('typescript-exports-pattern-target-without-extension-silence', () => runCase('typescript-exports-pattern-target-without-extension-silence'));
   it('typescript-exports-pattern-target-with-extension-edge', () => runCase('typescript-exports-pattern-target-with-extension-edge'));
+  it('typescript-imports-pattern-target-without-extension-silence', () => runCase('typescript-imports-pattern-target-without-extension-silence'));
+  it('typescript-imports-pattern-target-with-extension-edge', () => runCase('typescript-imports-pattern-target-with-extension-edge'));
   it('typescript-resolution-mode-clause-on-next-line-edge', () => runCase('typescript-resolution-mode-clause-on-next-line-edge'));
   it('typescript-resolution-mode-two-attributes-file-format-edge', () => runCase('typescript-resolution-mode-two-attributes-file-format-edge'));
 });
