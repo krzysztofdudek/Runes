@@ -1604,6 +1604,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   // While `capturing`, a type node is read without being recorded: the reference it gives is taken aside (`describeType`) and the walk still emits the node in its own place.
   let capturing = false;
   const emitted = { has: (id: number): boolean => !capturing && emittedIds.has(id), add: (id: number): void => void (capturing || emittedIds.add(id)) };
+  // The member accesses a pattern has read whole as the dotted type they spell: the walk reads nothing more in them.
+  const readAsType = new Set<number>();
 
   // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
   const lists: string[][] = [];
@@ -1951,9 +1953,9 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   }
 
   /**
-   * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain led by a using alias (`S::Core.Customer`, which the grammar reads as a member access over `S::Core`) is the alias-qualified type it spells: its tail is rewritten on assembly onto the namespace the alias names, as a qualified name's is, and an alias the map does not bind (an extern alias) gives nothing. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does any other shape.
+   * Emit the type a member-access EXPRESSION spells where only a type can stand (`Shop.Core.Customer`, `global::Shop.Customer`, `Shop.Core.Repo<int>`, `Outer<int>.Inner`: the grammar's reading of an unnamed tuple element beside a named one). The reference is the plain dotted name with every type-argument list stripped, rooted when it starts with `global::`, and each type-argument list is descended as references of its own. A chain led by a using alias (`S::Core.Customer`, which the grammar reads as a member access over `S::Core`) is the alias-qualified type it spells: its tail is rewritten on assembly onto the namespace the alias names, as a qualified name's is, and an alias the map does not bind (an extern alias) gives nothing. A chain that starts with a type parameter in scope (invalid C#, CS0704) emits nothing, and so does any other shape. `tail` are names the dotted name goes on with past `access`, where the grammar has torn it apart (see the constant pattern).
    */
-  function emitMemberAccessType(access: Node, asReceiver = false): boolean {
+  function emitMemberAccessType(access: Node, asReceiver = false, tail: readonly Node[] = []): boolean {
     const segs: string[] = [];
     const generics: Node[] = [];
     let rooted = false;
@@ -1980,7 +1982,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           return false;
       }
     };
-    if (!collect(access) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], scopeOf(access)))) return false;
+    if (!collect(access) || !tail.every(collect) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], scopeOf(access)))) return false;
     const line = access.startPosition.row + 1;
     if (alias !== undefined) refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: nsChain(access), at: access.startIndex });
     else if (asReceiver) {
@@ -2173,6 +2175,15 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
       // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
       const whole = node.namedChild(0);
+      // In a chain of tests the grammar may read `x is App.Models.Order || x is App.Models.Line` as `(x is App).Models.Order || (x is App).Models.Line`: member accesses on a test, which no C# expression is, since a member access binds tighter than `is`. Each test is of the whole dotted name, read as a lone `x is App.Models.Order` is, and a name led by a value this file declares is no type.
+      const test = parentOf();
+      const accessed = test !== null && test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
+      if (accessed !== null && whole !== null) {
+        if (declaredNames.has(leftmostName(whole))) return false;
+        const tail: Node[] = [];
+        for (let a: CsScope['access'] = accessed; a !== null; a = a.outer) tail.push(a.node.childForFieldName('name')!);
+        if (emitMemberAccessType(whole, true, tail)) return false;
+      }
       let expr = whole;
       // The grammar takes all that follows `is` for the pattern's expression, so `x is A || x is B` is the pattern `A || (x is B)` and `x is A && x is B || x is C` the pattern `(A && …) || (x is C)`. An operator that binds looser than `is` ends the pattern in the language, so the name at the head of such a chain is the pattern: a type test, as a lone `x is A` is. The rest of the chain is read as it stands.
       while (expr !== null && expr.type === 'binary_expression' && TESTS_END_BEFORE.has(expr.childForFieldName('operator')!.type)) {
@@ -2180,8 +2191,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       }
       if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name')) emitTypeNode(expr);
       // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
-      // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace).
-      else if (expr === whole && expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)) && emitMemberAccessType(expr, true)) return false;
+      // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace). At the head of a chain (`x is Models.Order || b`) it is read the same way, and the rest of the chain as it stands.
+      else if (expr !== null && expr.type === 'member_access_expression' && !declaredNames.has(leftmostName(expr)) && emitMemberAccessType(expr, true)) readAsType.add(expr.id);
       return undefined;
     }
     // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
@@ -2281,6 +2292,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     // `Shop.Core.Guard.NotNull(o)`. Handled once, at the innermost access (the one whose receiver
     // is the leftmost identifier). A generic receiver `Result<int>.Ok()` is a type position.
     if (type === 'member_access_expression') {
+      if (readAsType.has(node.id)) return false;
       const expr = node.childForFieldName('expression');
       // A receiver written after `global::` (`global::Guard.NotNull(o)`, `global::Shop.Core.Guard.NotNull(o)`) is read from the global namespace only (R12): its name, not the alias-qualified node, leads the chain, and no name this file declares shadows it.
       const rootedName = expr !== null && expr.type === 'alias_qualified_name' && expr.childForFieldName('alias')!.text === 'global' ? expr.childForFieldName('name') : null;
@@ -3045,7 +3057,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 41,
+  rev: 42,
   declarations,
   uses,
 };
