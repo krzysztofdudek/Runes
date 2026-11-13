@@ -110,6 +110,7 @@ A minor release of the relation readers, for someone upgrading from 1.0.0. They 
 - C#: a member inherited from a base class outside the repository (ASP.NET Core's `ControllerBase.User`) keeps the reading of 1.0.0, so a type of the repository with that name still gets the edge.
 - Rust `[patch]`: the version of the patched crate is not compared with the dependency's requirement, a `[workspace]`'s `exclude` list and `package.workspace` are not read (the nearest manifest with a `[workspace]` table above the package is its root), and a GitHub URL is matched as written, where Cargo lowercases it.
 - Rust: a library rooted at the package root (`[lib] path = "lib.rs"`) whose `lib.rs` holds only an inline module with a `#[path]` module gives no edge for the `mod` lines of the loaded file.
+- `classifyUse` answers `outside` for a type an annotation processor generates into the file's own package (`AutoValue_Use`, `DaggerAppComponent`) where a star import of a library could give its simple name, since the repository holds no file for it; without such a star import it answers `unfollowed`.
 - `classifyUse` in Python and PHP answers `absent` without a reason where several roots or projects could hold the use, where the other languages name the candidates.
 
 ### Other
