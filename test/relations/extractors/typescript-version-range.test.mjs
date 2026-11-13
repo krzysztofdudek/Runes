@@ -1,15 +1,18 @@
-// The range check behind a `types@<range>` exports key: the modelled TypeScript version satisfies it as the TypeScript 6 compiler's own VersionRange answers (that compiler comes from the typescript6 bridge package, the only copy that still exports the compiler API), which also holds the modelled version to that compiler's version. The repository builds with the TypeScript 7 it pins; which version the model follows is a separate matter.
+// The range check behind a `types@<range>` exports key: the modelled TypeScript version satisfies it as the compiler's own VersionRange answers. TypeScript 7 exports no compiler API, so the range is read by the TypeScript 6 compiler of the typescript6 bridge package, the only copy that still exports it, and tested against the version Runes models: the TypeScript 7 the repository pins and builds with, which TypeScript 7 itself tests against its own version (tsc --traceResolution on 7.0.2 enters `types@>=7` and passes over `types@<7`).
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import ts from 'typescript6';
+import { readFileSync } from 'node:fs';
 import { typeScriptSatisfies, MODELLED_TYPESCRIPT_VERSION } from '../../helpers/internal/relations.mjs';
 
 const operators = ['', '<', '<=', '>', '>=', '=', '~', '^', '>= ', '~ '];
 const versions = [
   '*', 'x', 'X', '6', '6.0', '6.0.3', '6.0.2', '6.0.4', '6.1', '5', '5.9', '7', '6.x', '6.0.x', '6.*.*', '0', '0.1', '0.0.1', '5.9.9',
   '6.0.3-beta', '6.0.4-0', '6.0.0-0', '1.2.3.4', 'a', 'v6', '06', '6.00', '6.0.3+build', '6.0.3-01', '6.0.3-a..b', '6.0.3-rc.1', '6.0.3-a_b', '6.0.3+a..b',
+  '7.0', '7.0.2', '7.0.1', '7.0.3', '7.1', '8', '7.x', '7.0.x', '7.*.*', '7.0.2-beta', '7.0.3-0', '7.0.0-0', '7.0.2+build', '7.0.2-rc.1',
 ];
 const ranges = new Set([
   '', '||', ' ', '|| ||', '5 - 6', '5.1 - 6.0', '6 - *', '* - 6', '* - *', '6.0.3 - 6.0.3', '6.0.4 - 7', '4 - 5.x', ' 5 -6', '5 - 6 - 7', 'x - 6', '6 - x.y',
+  '>=4.7 <7', '<6 || >=7', '>=7 <8', '>=7.0.2-0 <7.0.2', '>7.0.2-rc.1', '<7.0.2-rc.1', '<=7.0.2', '6.0.3 - 7.0.2', '7.0.3 - 8',
   '>=4.7 <6', '<5 || >=6', '<5||>=6', '>=4.7 || 6.0.x', '>5.9 <6.1', '>=6 <6', '>=6.0.3-0 <6.0.3', '>6.0.3-rc.1', '<6.0.3-rc.1', '>=6.0.3-0', '<=6.0.3', '6.0.3-a.1', '>6.0.3-a.1', '<6.0.3-1',
 ]);
 for (const o of operators) for (const v of versions) ranges.add(o + v);
@@ -26,8 +29,15 @@ const compiler = (range) => {
 };
 
 describe('typeScriptSatisfies', () => {
-  it('models the version of the TypeScript 6 compiler the range table is compared against', () => {
-    expect(MODELLED_TYPESCRIPT_VERSION).toBe(ts.version);
+  it('models the TypeScript 7 the repository pins, whatever TypeScript a project uses', () => {
+    const pinned = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).devDependencies.typescript;
+    expect(pinned).toMatch(/^7\./);
+    expect(MODELLED_TYPESCRIPT_VERSION).toBe(pinned);
+  });
+  it('enters types@>=7 and types@7.0.2 and passes over types@<7, as TypeScript 7.0.2 does', () => {
+    expect(typeScriptSatisfies('>=7')).toBe(true);
+    expect(typeScriptSatisfies('7.0.2')).toBe(true);
+    expect(typeScriptSatisfies('<7')).toBe(false);
   });
   it('answers as the compiler does for every range of a table that covers each operator, wildcard, hyphen, prerelease and alternative', () => {
     for (const range of ranges) expect(typeScriptSatisfies(range), JSON.stringify(range)).toBe(compiler(range));

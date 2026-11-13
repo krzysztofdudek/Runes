@@ -556,12 +556,12 @@ describe('resolveTsPath — a versioned types key is entered when the compiler\'
     'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }',
   })('lib', 'app/a.ts');
   it('enters a key the version satisfies', () => {
-    for (const range of ['>=5', '>=6.0', '>5.9', '<=6', '<7', '=6.0', '6.0', '6', '6.x', '6.*', '5 - 6', '5.1 - 6.0', '>=4.7 <7', '<5 || >=6', '~6.0', '^6.0', '>=6.0.0-0', 'x', '*', '']) {
+    for (const range of ['>=5', '>=7', '>=7.0', '>6.9', '<=7', '<8', '=7.0', '7.0', '7', '7.0.2', '>=7.0.2', '7.x', '7.*', '6 - 7', '6.1 - 7.0', '>=4.7 <8', '<5 || >=7', '~7.0', '^7.0', '>=7.0.0-0', 'x', '*', '']) {
       expect(resolveKey(`types@${range}`), range).toBe('lib/ranged.d.ts');
     }
   });
   it('skips a key the version fails, or whose range does not parse', () => {
-    for (const range of ['>=99', '>6.0', '<6.0', '<=5.9', '=5', '5.x', '7 - 8', '>=7 <8', '<5 || >=7', '~5.9', '^7.0', 'nonsense', '>=', '>=1.2.3.4', '>=a.b']) {
+    for (const range of ['>=99', '<7', '>7.0', '<7.0', '<=6.9', '=6', '6.x', '6.0.3', '7.0.3', '>=7.0.3', '8 - 9', '>=8 <9', '<5 || >=8', '~6.0', '^8.0', 'nonsense', '>=', '>=1.2.3.4', '>=a.b']) {
       expect(resolveKey(`types@${range}`), range).toBe('lib/plain.d.ts');
     }
   });
