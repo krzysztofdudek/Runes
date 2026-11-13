@@ -709,3 +709,28 @@ describe('kotlin extractor — same-package references (uses())', () => {
     expect(await keysOf('class T {\n  fun m(o: Other) {\n    lower()\n    o.Member()\n    this@T.go()\n  }\n}')).toEqual(['com.a.Other']);
   });
 });
+
+// Kotlin imports the names of kotlin.*, kotlin.annotation.*, kotlin.collections.*, kotlin.comparisons.*, kotlin.io.*, kotlin.ranges.*, kotlin.sequences.*, kotlin.text.* and, on the JVM, java.lang.* and kotlin.jvm.* into every file, after the file's own package: a simple name of one of them ends its group with that reading, so a use of it reads as outside the repository.
+describe('kotlin extractor — a simple name Kotlin imports by default', () => {
+  const groupsOf = async (code) => (await run(code)).uses.map((u) => ({ line: u.line, keys: u.candidates.map((c) => c.symbolKey), flags: u.candidates.map((c) => c.samePackage === true) }));
+  it('ends the group of a default-imported name with its default reading, after the package, and adds none to another name', async () => {
+    const g = await groupsOf('package com.a\n\nclass T(val s: String, val l: List<Int>, val r: Regex, val t: Thread, val o: Owner)\n');
+    const of = (name) => g.find((x) => x.keys.includes(`com.a.${name}`))?.keys;
+    expect(g.find((x) => x.keys.includes('com.a.String'))).toEqual({ line: 3, keys: ['com.a.String', 'kotlin.String'], flags: [true, false] });
+    expect(of('List')).toEqual(['com.a.List', 'kotlin.collections.List']);
+    expect(of('Int')).toEqual(['com.a.Int', 'kotlin.Int']);
+    expect(of('Regex')).toEqual(['com.a.Regex', 'kotlin.text.Regex']);
+    expect(of('Thread')).toEqual(['com.a.Thread', 'java.lang.Thread']);
+    expect(of('Owner')).toEqual(['com.a.Owner']);
+  });
+  it('answers outside for a default-imported name and unfollowed for a name of the package that binds nothing; classify answers as before', async () => {
+    const st = new SymbolTable();
+    st.declare('kotlin', 'com.a.Order', 'k/a/Order.kt');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run('package com.a\n\nclass T(val s: String, val m: Missing)\n');
+    const answer = (name) => r.classifyUse(uses.find((u) => u.candidates[0].symbolKey === `com.a.${name}`).candidates, 'k/b/T.kt', 'kotlin');
+    expect(answer('String')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(answer('Missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(r.classify({ kind: 'symbol', symbolKey: 'kotlin.String' }, 'k/b/T.kt', 'kotlin')).toEqual({ kind: 'absent' });
+  });
+});
