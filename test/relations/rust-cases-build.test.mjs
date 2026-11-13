@@ -6,9 +6,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { listCases, loadCaseDoc } from './reference-case-runner.mjs';
-import { cargoConfig, rustToolchainVerdict, writeRustFixture } from '../helpers/rust-fixtures.mjs';
+import { PINNED_RUST, cargoConfig, rustToolchainVerdict, writeRustFixture } from '../helpers/rust-fixtures.mjs';
 
-const PINNED = '1.99.1';
+const PINNED = PINNED_RUST;
 
 const toolchain = (tool) => {
   const r = spawnSync(tool, ['--version'], { encoding: 'utf8' });

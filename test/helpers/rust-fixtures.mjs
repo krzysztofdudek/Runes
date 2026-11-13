@@ -130,10 +130,14 @@ export function writeRustFixture(root, files) {
   return manifests.includes('Cargo.toml') ? 'Cargo.toml' : manifests[0];
 }
 
-/** Whether the build tests of the Rust catalogue run: `rustc` and `cargo` are the `--version` lines found (undefined where the tool is missing), `pinned` the version the catalogue builds under, `ci` whether the run is CI. Returns `{ skip }`, false or the reason to skip, and `fail`, the reason the tests fail instead, or undefined. */
+/** The Rust toolchain the catalogue's cases build under; CI's test jobs install this version. */
+export const PINNED_RUST = '1.99.1';
+
+/** Whether the build tests of the Rust catalogue run: `rustc` and `cargo` are the `--version` lines found (undefined where the tool is missing), `pinned` the version the catalogue builds under, `ci` whether the run is CI. Returns `{ skip }`, false or the reason to skip, and `fail`, the reason the tests fail instead, or undefined. On CI the workflow installs the pinned toolchain, so a missing or different one there is a fault to see, never a reason to skip. */
 export function rustToolchainVerdict({ rustc, cargo, pinned, ci }) {
   const reason = rustc === undefined || cargo === undefined
     ? `rustc and cargo ${pinned} are not installed (the test runs where the pinned toolchain is on the PATH)`
     : !rustc.startsWith(`rustc ${pinned} `) || !cargo.startsWith(`cargo ${pinned} `) ? `the Rust catalogue builds under ${pinned}; found ${rustc} and ${cargo}` : undefined;
-  return { skip: reason ?? false, fail: undefined };
+  if (reason === undefined) return { skip: false, fail: undefined };
+  return ci ? { skip: false, fail: `${reason}; on CI the workflow installs the pinned toolchain, so the build tests do not skip there` } : { skip: reason, fail: undefined };
 }

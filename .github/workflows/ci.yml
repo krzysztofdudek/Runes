@@ -39,6 +39,10 @@ jobs:
           key: grammars-${{ hashFiles('grammars/manifest.json', 'grammars/patches/**') }}
       - name: Grammars
         run: npm run grammars
+      # The Rust case build test (test/relations/rust-cases-build.test.mjs) builds every Rust case of the catalogue under the pinned toolchain and fails on CI without it, so each test job installs that version whatever the runner image carries; rustup is on every GitHub runner.
+      - name: Rust toolchain for the Rust case build test
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal --no-self-update && echo "RUSTUP_TOOLCHAIN=1.99.1" >> "$GITHUB_ENV"
       # The guard over Runes' own src/, tools/ and scripts/ runs inside the suite (test/guard.test.mjs), next to the vendor tool's end-to-end tests.
       - name: Test, including the guard
         if: matrix.node != 24
@@ -102,6 +106,10 @@ jobs:
           path: ${{ github.workspace }}/../runes-grammar-cache
       - name: Grammars
         run: npm run grammars
+      # The Rust case build test (test/relations/rust-cases-build.test.mjs) builds every Rust case of the catalogue under the pinned toolchain and fails on CI without it, so each test job installs that version whatever the runner image carries; rustup is on every GitHub runner.
+      - name: Rust toolchain for the Rust case build test
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal --no-self-update && echo "RUSTUP_TOOLCHAIN=1.99.1" >> "$GITHUB_ENV"
       - name: Test, including the guard
         run: npm test -- --test-shard=${{ matrix.shard }}/3
       - name: dist freshness
@@ -133,6 +141,10 @@ jobs:
           path: ${{ github.workspace }}/../runes-grammar-cache
       - name: Grammars
         run: npm run grammars
+      # The Rust case build test (test/relations/rust-cases-build.test.mjs) builds every Rust case of the catalogue under the pinned toolchain and fails on CI without it, so each test job installs that version whatever the runner image carries; rustup is on every GitHub runner.
+      - name: Rust toolchain for the Rust case build test
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal --no-self-update && echo "RUSTUP_TOOLCHAIN=1.99.1" >> "$GITHUB_ENV"
       - name: Test, including the guard
         run: npm test
       - name: dist freshness
