@@ -20,7 +20,8 @@ export type TsCallForm = 'require' | 'import' | 'esm';
  *      directory, which names a file the import does not mean.
  *   3. Package-internal ('#x') → the nearest package.json `imports` map (exact key, then
  *      the longest `*` pattern; the target chosen by the conditions, as for `exports`); a
- *      relative target resolves inside that package, a bare target resolves as step 4 would.
+ *      relative target names the file inside that package as written (as an `exports` target
+ *      does: no extension added, no directory index), a bare target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.

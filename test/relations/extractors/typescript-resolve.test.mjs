@@ -212,6 +212,8 @@ describe('resolveTsPath — packages', () => {
     expect(r('#w/thing', 'packages/app/use.js')).toBe('packages/app/src/u/thing.js');
     expect(r('#d', 'packages/app/use.js')).toBeUndefined();
     expect(r('#t', 'packages/app/use.js')).toBe('packages/app/src/t.ts');
+    const up = project({ 'app/package.json': '{ "name": "app", "imports": { "#out": "./../../out.js" } }', 'out.js': '' });
+    expect(up('#out', 'app/use.js')).toBeUndefined();
   });
   it('root-absolute resolves from the package root and is silent without one', () => {
     const r = project({ 'web/package.json': '{}', 'web/src/x.ts': '', 'src/x.ts': '' });

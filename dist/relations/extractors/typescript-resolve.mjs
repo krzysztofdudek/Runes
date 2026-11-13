@@ -21,7 +21,8 @@ import { typeScriptSatisfies } from './typescript-version-range.mjs';
  *      directory, which names a file the import does not mean.
  *   3. Package-internal ('#x') → the nearest package.json `imports` map (exact key, then
  *      the longest `*` pattern; the target chosen by the conditions, as for `exports`); a
- *      relative target resolves inside that package, a bare target resolves as step 4 would.
+ *      relative target names the file inside that package as written (as an `exports` target
+ *      does: no extension added, no directory index), a bare target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
@@ -58,7 +59,7 @@ export function resolveTsPath(specifier, fromFile, existsAny, deps, callForm) {
         if (pkg === undefined)
             return undefined;
         return pickTarget(matchSubpathKey(pkg.manifest.imports, spec), exportConditions(from, deps, callForm), (target) => target.startsWith('./')
-            ? probe(joinUnder(pkg.dir, target), exists, deps)
+            ? probeTarget(joinUnder(pkg.dir, target), exists)
             : target.startsWith('#') || target.startsWith('/') || target.startsWith('.')
                 ? undefined
                 : resolveBare(target, from, exists, deps, callForm));
@@ -426,12 +427,15 @@ function probe(joined, exists, deps) {
     return undefined;
 }
 /**
- * The file an `exports` target names. Node and TypeScript take the target as it is written: the file itself, or for a JavaScript extension the source it is compiled from (`./a.js` for `./a.ts`); a target without an extension names that file and no `.ts` or `.js` beside it, and a directory names no index.
+ * The file an `exports` or `imports` target names. Node and TypeScript take the target as it is written: the file itself, or for a JavaScript extension the source it is compiled from (`./a.js` for `./a.ts`); a target without an extension names that file and no `.ts` or `.js` beside it, and a directory names no index.
  */
 function probeExact(joined, exists) {
     const ext = path.posix.extname(joined);
     const candidates = ext in JS_REWRITES || TS_EXTENSIONS.has(ext) ? fileCandidates(joined) : [joined];
     return candidates.find((candidate) => exists(candidate));
+}
+function probeTarget(joined, exists) {
+    return joined === undefined ? undefined : probeExact(joined, exists);
 }
 /** A package directory's own entry file from its `types`/`typings`/`module`/`main` fields. */
 function entryOf(pkg, exists, deps, missing) {
