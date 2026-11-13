@@ -967,7 +967,7 @@ function compilerMessage(message) {
   return `${m[1]}${text}`;
 }
 
-/** The C preprocessor's own include closure (`cc -MM -MG` with the manifest's include directories and defines) of every C and C++ source file, against the include edges Runes gives that file: an include target outside the closure is a false edge. Headers are not compiled on their own, and a target the preprocessor reaches through another header is in the closure too, so only what Runes adds is caught, not what it misses. */
+/** The C preprocessor's own include closure (`cc -MM -MG` with the manifest's include directories and defines) of every C and C++ source file, against the include edges Runes gives that file: an include target outside the closure is a false edge. Headers are not compiled on their own, and a target the preprocessor reaches through another header is in the closure too, so only what Runes adds is caught, not what it misses. The preprocessor reads no header the machine has installed (`-nostdinc`, and no include path from the environment): `-MG` takes every system header for a missing one, so a file that tests a system header's macro (hiredis's ssl.c stops at an #error without OpenSSL 1.0.2 headers) gets the same answer on every machine, and one explanation holds everywhere. */
 function cOracle(repoDir, repo, result, findings) {
   const deps = result.references.filter((r) => (r.language === 'c' || r.language === 'cpp') && r.resolved !== undefined && r.candidates.every((c) => c.kind === 'path') && /\.(c|cc|cpp|cxx|c\+\+)$/i.test(r.from));
   if (deps.length === 0) return { checked: 0 };
@@ -980,10 +980,11 @@ function cOracle(repoDir, repo, result, findings) {
     if (!byFile.has(r.from)) byFile.set(r.from, []);
     byFile.get(r.from).push(r);
   }
+  const preprocessorEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !['CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'OBJC_INCLUDE_PATH', 'OBJCPLUS_INCLUDE_PATH'].includes(name)));
   let checked = 0;
   for (const [file, refs] of byFile) {
     const lang = /\.c$/.test(file) ? 'c' : 'c++';
-    const run = spawnSync('cc', ['-MM', '-MG', '-x', lang, ...(lang === 'c++' ? ['-std=c++17'] : []), ...flags, path.join(repoDir, file)], { encoding: 'utf8', cwd: path.join(repoDir, dirOf(file)), maxBuffer: 1 << 26 });
+    const run = spawnSync('cc', ['-MM', '-MG', '-nostdinc', '-x', lang, ...(lang === 'c++' ? ['-std=c++17'] : []), ...flags, path.join(repoDir, file)], { encoding: 'utf8', cwd: path.join(repoDir, dirOf(file)), env: preprocessorEnv, maxBuffer: 1 << 26 });
     if (run.error || run.status !== 0) {
       // The preprocessor's first message, with the clone's own directory taken out so that it reads the same on every machine.
       const message = compilerMessage((run.error?.message ?? run.stderr).trim().split('\n')[0].split(`${repoDir}${path.sep}`).join(''));
