@@ -606,6 +606,12 @@ function joinConfigPath(baseDir: string, value: string): string | undefined {
   return value.startsWith('/') ? joinUnder('', value.slice(1)) : joinUnder(baseDir, value);
 }
 
+/** A tsconfig directory option (`rootDir`, `outDir`, `declarationDir`) joined onto its base: a trailing slash names the same directory, and normalising keeps it, so it is dropped. */
+function joinConfigDir(baseDir: string, value: string): string | undefined {
+  const joined = joinConfigPath(baseDir, value);
+  return joined?.endsWith('/') === true ? joined.slice(0, -1) : joined;
+}
+
 function stripQuery(specifier: string): string {
   const q = specifier.indexOf('?');
   return q === -1 ? specifier : specifier.slice(0, q);
@@ -1083,12 +1089,12 @@ export function makeTsResolveDeps(
       for (const field of ['outDir', 'declarationDir'] as const) {
         const value = options?.[field];
         if (typeof value !== 'string') continue;
-        const at = joinConfigPath(dir, withConfigDir(value, leafDir));
+        const at = joinConfigDir(dir, withConfigDir(value, leafDir));
         if (at === undefined) delete merged[field];
         else merged[field] = at;
       }
       // `rootDir` resolves like them; one outside the repository is kept as null: no source in the repository is under it.
-      if (typeof options?.rootDir === 'string') merged.rootDir = joinConfigPath(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
+      if (typeof options?.rootDir === 'string') merged.rootDir = joinConfigDir(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
       for (const field of ['allowJs', 'checkJs', 'noEmit'] as const) {
         const value = options?.[field];
         if (typeof value === 'boolean') merged[field] = value;
