@@ -53,7 +53,7 @@
   "scripts": {
     "build": "node scripts/check-compiler.mjs && node scripts/clean-dist.mjs && node node_modules/typescript/bin/tsc -p tsconfig.json && node node_modules/typescript/bin/tsc -p tsconfig.relations.json",
     "typecheck": "node scripts/check-compiler.mjs && node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit && node node_modules/typescript/bin/tsc -p tsconfig.relations.json --noEmit",
-    "test": "npm run build && npm run grammars && node --test \"test/**/*.test.mjs\"",
+    "test": "npm run build && npm run grammars && node scripts/test.mjs",
     "coverage": "npm run build && npm run grammars && node --test --experimental-test-coverage --test-coverage-include=\"dist/**\" --test-coverage-lines=98 --test-coverage-branches=92 --test-coverage-functions=97 \"test/**/*.test.mjs\"",
     "check:dist": "node scripts/check-dist.mjs",
     "check:compiler": "node scripts/check-compiler.mjs",

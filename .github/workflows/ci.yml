@@ -43,7 +43,7 @@ jobs:
       - name: Test, including the guard
         if: matrix.node != 24
         run: npm test
-      # On Node 24 the same suite runs under Node's own coverage, which fails the job when dist/ (what consumers install and vendor) falls below 98% of lines, 92% of branches or 97% of functions. Measured at 1.0.0: 98.7% lines, 93.5% branches, 98.5% functions. The vendor tool runs as copies inside throwaway consumers, where Node's coverage cannot attribute it to tools/vendor.mjs; its end-to-end and property tests cover it instead.
+      # On Node 24 the same suite runs under Node's own coverage, on Linux only: the thresholds are measured on the Linux run, the Windows run sees only a shard of the suite at a time, and tests skipped on one platform would change the figures there. The suite itself runs on all three platforms. The coverage run fails the job when dist/ (what consumers install and vendor) falls below 98% of lines, 92% of branches or 97% of functions. Measured at 1.0.0: 98.7% lines, 93.5% branches, 98.5% functions. The vendor tool runs as copies inside throwaway consumers, where Node's coverage cannot attribute it to tools/vendor.mjs; its end-to-end and property tests cover it instead.
       - name: Test with coverage thresholds, including the guard
         if: matrix.node == 24
         run: npm run coverage
@@ -75,10 +75,42 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Windows: the family runs there too. The vendor tool's end-to-end tests exercise git, file:// clones and line endings on a real Windows checkout; dist freshness also proves .gitattributes keeps the committed output LF. The grammars come from the grammars job (see there) and are read offline, so a missing one fails here rather than starting a source build.
+  # Windows: the family runs there too, in three shards for the runner's few cores (the test script hands the shard flag to node ahead of the file pattern, and test/ci-workflow.test.mjs holds that the shards together run every test file once). The vendor tool's end-to-end tests exercise git, file:// clones and line endings on a real Windows checkout; dist freshness also proves .gitattributes keeps the committed output LF. The grammars come from the grammars job (see there) and are read offline, so a missing one fails here rather than starting a source build.
   test-windows:
     needs: grammars
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        shard: [1, 2, 3]
+    env:
+      RUNES_GRAMMAR_CACHE: ${{ github.workspace }}/../runes-grammar-cache
+      RUNES_GRAMMAR_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Typecheck and build
+        run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: grammar-cache
+          path: ${{ github.workspace }}/../runes-grammar-cache
+      - name: Grammars
+        run: npm run grammars
+      - name: Test, including the guard
+        run: npm test -- --test-shard=${{ matrix.shard }}/3
+      - name: dist freshness
+        run: npm run check:dist
+
+  # macOS: a case-insensitive disk, a temporary directory behind a symlink (/var/folders is /private/var/folders), BSD tools and zsh. The grammars come from the grammars job, as on Windows: a source build on macOS gives the same bytes as on Linux, but a cold one fetches its own wasi-sdk on every runner, and reading one verified cache keeps the three platforms on the same grammar files. The suite is not sharded.
+  test-macos:
+    needs: grammars
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -106,7 +138,7 @@ jobs:
       - name: dist freshness
         run: npm run check:dist
 
-  # The corpus gate (corpus/manifest.json, scripts/corpus.mjs): public repositories pinned at full commits, every relation edge Runes finds in them held to the committed goldens (corpus/goldens), every change explained in corpus/explained.md, and the references compared with each language's own resolver. It runs on a release branch, on a release tag (release.yml calls this workflow as verify, so a red corpus stops the publish) and by hand with a tier; other pushes and pull requests do not run it. Each repository is fetched by its commit alone, and a fetch that fails fails the job. One command runs it, as it runs on a machine (npm run corpus): the edges and the oracles over one resolution of each repository. It runs with --strict: an oracle whose toolchain is missing fails the job instead of passing as a skip.
+  # The corpus gate (corpus/manifest.json, scripts/corpus.mjs) stays on Linux alone: it is not a test of Runes on a platform but a gate over public repositories, with the toolchains of their oracles (Python, Go, .NET) set up for it. It holds the repositories pinned at full commits, every relation edge Runes finds in them held to the committed goldens (corpus/goldens), every change explained in corpus/explained.md, and the references compared with each language's own resolver. It runs on a release branch, on a release tag (release.yml calls this workflow as verify, so a red corpus stops the publish) and by hand with a tier; other pushes and pull requests do not run it. Each repository is fetched by its commit alone, and a fetch that fails fails the job. One command runs it, as it runs on a machine (npm run corpus): the edges and the oracles over one resolution of each repository. It runs with --strict: an oracle whose toolchain is missing fails the job instead of passing as a skip.
   corpus:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
