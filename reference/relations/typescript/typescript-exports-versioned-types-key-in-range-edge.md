@@ -3,12 +3,12 @@ id: typescript-exports-versioned-types-key-in-range-edge
 language: typescript
 category: import
 expectation: edge
-cites: "TypeScript 6.0.3 isApplicableVersionedTypesKey: a `types@<range>` key whose range the compiler's version satisfies is entered like `types`"
+cites: "TypeScript 7.0.2 isApplicableVersionedTypesKey: a `types@<range>` key whose range the compiler's version satisfies is entered like `types`"
 ---
 
 ## Rule
 
-A `types@<range>` key whose range the TypeScript version satisfies is entered, so its target binds before a later plain `types` key. Here `types@>=5.0` holds for TypeScript 6.0.
+A `types@<range>` key whose range the TypeScript version satisfies is entered, so its target binds before a later plain `types` key. Here `types@>=5.0` holds for TypeScript 7.0.
 
 ## Files
 
