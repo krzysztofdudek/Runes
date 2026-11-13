@@ -342,6 +342,46 @@ describe('the corpus gate', () => {
     });
   }
 
+  // The preprocessor's answer for a file that tests a system header's macro (hiredis's ssl.c stops at an #error without OpenSSL 1.0.2 headers) must not depend on which headers the machine has installed: in the compiler's standard directories (a sysroot stands in for them here), or on the include paths of the environment. One explanation then matches on every machine, and --strict gives one verdict.
+  const realCc = process.platform === 'win32' ? undefined : spawnSync('sh', ['-c', 'command -v cc'], { encoding: 'utf8' }).stdout?.trim() || undefined;
+  const headerConditions = [
+    ['without the header', () => ({})],
+    ['with the header in the compiler\'s standard directories', (sys) => {
+      const bin = join(tmp, 'cc-sysroot-bin');
+      mkdirSync(bin, { recursive: true });
+      put(sys, 'root/usr/include/marker.h', '#define MARKER_VERSION 3\n');
+      writeFileSync(join(bin, 'cc'), `#!/bin/sh\nexec '${realCc}' '--sysroot=${join(sys, 'root')}' "$@"\n`, { mode: 0o755 });
+      return { PATH: `${bin}:${process.env.PATH}` };
+    }],
+    ['with the header on C_INCLUDE_PATH', (sys) => ({ C_INCLUDE_PATH: join(sys, 'env') })],
+    ['with the header on CPATH', (sys) => ({ CPATH: join(sys, 'env') })],
+  ];
+  for (const [condition, envOf] of headerConditions) {
+    test(`a file that stops at an #error unless a system header says otherwise gets one answer from the C oracle, and one verdict under --strict (${condition})`, { skip: realCc === undefined && 'no cc on PATH (the sysroot wrapper is a shell script)' }, () => {
+      const cRepo = join(tmp, 'c-sys');
+      const sys = join(tmp, 'c-sys-headers');
+      if (!existsSync(cRepo)) {
+        mkdirSync(cRepo);
+        git(cRepo, 'init', '-q');
+        put(cRepo, 'a.c', '#include "a.h"\n#include <marker.h>\n#if MARKER_VERSION < 2\n#error "needs marker 2"\n#endif\n');
+        put(cRepo, 'a.h', '#define A 1\n');
+        git(cRepo, 'add', '.');
+        git(cRepo, 'commit', '-q', '-m', 'c');
+        put(sys, 'env/marker.h', '#define MARKER_VERSION 3\n');
+      }
+      manifest([{ id: 'csys', url: pathToFileURL(cRepo).href, commit: git(cRepo, 'rev-parse', 'HEAD'), tier: 'routine', c: { include: [''] } }]);
+      writeFileSync(join(work, 'explained.md'), '- `csys` `c:unreadable` `a.c:0` `a.c` `not compared` `cc -MM failed: a.c:4:2: error: needs marker 2`: the preprocessor stops at an #error without the marker header\n');
+      const extra = envOf(sys);
+      const env = { ...ENV, ...extra };
+      for (const name of ['CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'OBJC_INCLUDE_PATH']) if (!(name in extra)) delete env[name];
+      const r = spawnSync(process.execPath, [SCRIPT, 'oracles', '--strict', '--manifest', join(work, 'manifest.json'), '--explained', join(work, 'explained.md'), '--cache', join(work, 'cache')], { env, encoding: 'utf8' });
+      writeFileSync(join(work, 'explained.md'), '');
+      manifest([fixture()]);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /ok {3}csys .*; 1 disagreements, 1 explained/);
+    });
+  }
+
   test('two runs at once over one cache each write their report to a place of their own, and each report names the Runes tree it ran on', async () => {
     // Two Runes trees, each a git checkout whose dist is this one's: one clean, one with a change it has not committed.
     const tree = (name, dirty) => {
