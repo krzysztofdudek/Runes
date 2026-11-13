@@ -129,3 +129,11 @@ export function writeRustFixture(root, files) {
   const manifests = files.filter((f) => f.path.endsWith('Cargo.toml')).map((f) => f.path);
   return manifests.includes('Cargo.toml') ? 'Cargo.toml' : manifests[0];
 }
+
+/** Whether the build tests of the Rust catalogue run: `rustc` and `cargo` are the `--version` lines found (undefined where the tool is missing), `pinned` the version the catalogue builds under, `ci` whether the run is CI. Returns `{ skip }`, false or the reason to skip, and `fail`, the reason the tests fail instead, or undefined. */
+export function rustToolchainVerdict({ rustc, cargo, pinned, ci }) {
+  const reason = rustc === undefined || cargo === undefined
+    ? `rustc and cargo ${pinned} are not installed (the test runs where the pinned toolchain is on the PATH)`
+    : !rustc.startsWith(`rustc ${pinned} `) || !cargo.startsWith(`cargo ${pinned} `) ? `the Rust catalogue builds under ${pinned}; found ${rustc} and ${cargo}` : undefined;
+  return { skip: reason ?? false, fail: undefined };
+}
