@@ -32,7 +32,7 @@ const FRAMEWORK_STRUCTS = new Set(['Guid', 'DateTime', 'DateTimeOffset', 'TimeSp
 /** The framework types an enum value converts to: its base classes, the interfaces `System.Enum` implements, and its own nullable form. */
 const ENUM_TAKERS = new Set(['Object', 'ValueType', 'Enum', 'IComparable', 'IFormattable', 'IConvertible', 'ISpanFormattable', 'IUtf8SpanFormattable', 'Nullable']);
 /**
- * The lookup over one symbol table. `bind` gives the key of the one type an ordered group of readings binds for the file that wrote it, or undefined when it binds none or more than one; the resolver passes its own reading of a hint, so a base is found exactly as a reference to it is. `declared` says whether some reading of such a group names a declaration that file can see at all: where `bind` gives nothing and `declared` answers no, the name is a type from outside the repository. Without it every unbound name may be a type of the repository.
+ * The lookup over one symbol table, as it stands: every answer is worked out once and kept, so a table that takes a declaration needs a new lookup (the resolver makes one). `bind` gives the key of the one type an ordered group of readings binds for the file that wrote it, or undefined when it binds none or more than one; the resolver passes its own reading of a hint, so a base is found exactly as a reference to it is. `declared` says whether some reading of such a group names a declaration that file can see at all: where `bind` gives nothing and `declared` answers no, the name is a type from outside the repository. Without it every unbound name may be a type of the repository.
  */
 export function makeCsharpTypeLookup(table, bind, declared = () => true) {
     const memo = new Map();
