@@ -94,6 +94,7 @@ describe('MATRIX — java.lang / stdlib / external / vendored: fail-to-find sile
   it('java-explicit-stdlib-import-silence', () => runCase('java-explicit-stdlib-import-silence'));
   it('java-bare-autoimport-usage-silence', () => runCase('java-bare-autoimport-usage-silence'));
   it('java-standard-library-name-outside-silence', () => runCase('java-standard-library-name-outside-silence'));
+  it('java-on-demand-library-name-outside-silence', () => runCase('java-on-demand-library-name-outside-silence'));
   it('java-meta-annotation-usage-silence', () => runCase('java-meta-annotation-usage-silence'));
   it('java-external-library-import-silence', () => runCase('java-external-library-import-silence'));
   it('java-vendored-jdk-mapped-edge', () => runCase('java-vendored-jdk-mapped-edge'));
@@ -166,6 +167,7 @@ describe('MATRIX — same-package references without an import', () => {
   it('java-same-package-unnamed-package-silence', () => runCase('java-same-package-unnamed-package-silence'));
   it('java-same-package-qualified-and-annotation-edge', () => runCase('java-same-package-qualified-and-annotation-edge'));
   it('java-same-package-qualified-nested-type-edge', () => runCase('java-same-package-qualified-nested-type-edge'));
+  it('java-qualified-member-not-in-outer-file-unfollowed-edge', () => runCase('java-qualified-member-not-in-outer-file-unfollowed-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

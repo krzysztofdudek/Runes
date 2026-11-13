@@ -752,3 +752,13 @@ describe('kotlin extractor — a star import of the repository comes before the 
     for (const name of ['Result', 'Pair']) expect(r.classify(uses.find((u) => u.candidates[0].symbolKey === `com.acme.app.${name}`).candidates[0], 'k/app/T.kt', 'kotlin')).toEqual({ kind: 'absent' });
   });
 });
+
+describe('kotlin extractor — a name a star import of a library can give', () => {
+  it('answers outside, where a name no starred package can give stays unfollowed', async () => {
+    const st = new SymbolTable();
+    st.declare('kotlin', 'com.acme.app.Order', 'k/app/Order.kt');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run('package com.acme.app\n\nimport kotlinx.coroutines.*\n\nclass T(val j: Job)\n');
+    expect(r.classifyUse(uses.find((u) => u.candidates[0].symbolKey === 'com.acme.app.Job').candidates, 'k/app/T.kt', 'kotlin')).toEqual({ kind: 'absent', reason: 'outside' });
+  });
+});

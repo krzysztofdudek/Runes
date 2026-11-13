@@ -389,3 +389,26 @@ describe('java extractor — declarations()', () => {
     expect(foo?.line).toBe(2);
   });
 });
+
+// What classifyUse says of a simple or qualified name of a Java file that binds no file: a name an on-demand import of a library can give leaves the repository; a member of a type of the repository that its file does not declare (inherited, or generated) is the repository's.
+describe('java extractor — the answers of names an on-demand import gives and of members of the package\'s types', () => {
+  const answersOf = async (decls, code) => {
+    const st = new SymbolTable();
+    for (const [key, file] of decls) st.declare('java', key, file);
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run(code);
+    return (key) => r.classifyUse(uses.find((u) => u.candidates.some((c) => c.symbolKey === key)).candidates, 'src/app/Use.java', 'java');
+  };
+  it('a name an on-demand import of a library can give answers outside; one only the repository\'s on-demand packages could give stays unfollowed', async () => {
+    const answer = await answersOf([['com.acme.app.Order', 'src/app/Order.java'], ['com.acme.model.Item', 'src/model/Item.java']], 'package com.acme.app;\nimport java.util.*;\nclass Use { List<Order> xs; Missing m; }\n');
+    expect(answer('com.acme.app.List')).toEqual({ kind: 'absent', reason: 'outside' });
+    const own = await answersOf([['com.acme.app.Order', 'src/app/Order.java'], ['com.acme.model.Item', 'src/model/Item.java']], 'package com.acme.app;\nimport com.acme.model.*;\nclass Use { Missing m; }\n');
+    expect(own('com.acme.app.Missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('a member of a type of the package that the type\'s file does not declare answers unfollowed', async () => {
+    const decls = [['com.acme.app.Base', 'src/base/Base.java'], ['com.acme.app.Base+Inner', 'src/base/Base.java'], ['com.acme.app.Sub', 'src/sub/Sub.java'], ['com.acme.app.Person', 'src/person/Person.java']];
+    const answer = await answersOf(decls, 'package com.acme.app;\nclass Use { Sub.Inner i; Person.PersonBuilder b; }\n');
+    expect(answer('Sub.Inner')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(answer('Person.PersonBuilder')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+});
