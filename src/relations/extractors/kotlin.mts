@@ -4,7 +4,7 @@ import { indexScopes, walkScoped, walkWithParent, type ParentOf } from './scope-
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
 import { kotlinView, type KotlinView } from './kotlin-recover.mjs';
-import { isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
+import { defaultImport, isCapitalised, samePackageGroup, type SamePackageScope } from './jvm-same-package.mjs';
 
 /**
  * Kotlin dependency extractor — the FIRST language that resolves through the shared
@@ -267,7 +267,11 @@ function samePackageCandidates(scope: KotlinScope, name: string, around: AroundS
   const supertypeLists: string[][] = [];
   for (let t = around.typeParameters; t !== null; t = t.outer) if (t.names.has(name)) return undefined;
   for (let s = around.supertypes; s !== null; s = s.outer) supertypeLists.push(s.names);
-  return samePackageGroup(scope, name, supertypeLists);
+  const group = samePackageGroup(scope, name, supertypeLists);
+  // Kotlin's default imports come after the package: their reading binds only a repository that declares that package, and otherwise says the name is the standard library's.
+  const implicit = defaultImport('kotlin', name);
+  if (group !== undefined && implicit !== undefined) group.push({ kind: 'symbol', symbolKey: implicit });
+  return group;
 }
 
 /**
@@ -539,7 +543,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
 
 export const kotlinExtractor: DependencyExtractor = {
   languages: new Set(['kotlin']),
-  rev: 8,
+  rev: 9,
   declarations,
   uses,
 };
