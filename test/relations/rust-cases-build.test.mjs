@@ -16,9 +16,9 @@ const toolchain = (tool) => {
 };
 const rustc = toolchain('rustc');
 const cargo = toolchain('cargo');
-// CI has no Rust toolchain, so this test runs where a developer has installed the pinned one and is skipped on CI.
+// CI installs no Rust toolchain: the test runs wherever rustc and cargo of the pinned version are on the PATH, which on CI are the ones the GitHub runner image carries, and is skipped with the reason where they are missing or of another version, so a runner image that moves to a newer Rust skips it.
 const skip = rustc === undefined || cargo === undefined
-  ? `rustc and cargo ${PINNED} are not installed (CI has no Rust toolchain; the test runs where the pinned one is)`
+  ? `rustc and cargo ${PINNED} are not installed (the test runs where the pinned toolchain is on the PATH)`
   : !rustc.startsWith(`rustc ${PINNED} `) || !cargo.startsWith(`cargo ${PINNED} `) ? `the Rust catalogue builds under ${PINNED}; found ${rustc} and ${cargo}` : false;
 
 /** The cases that do not build yet: skeletons that hold the files a resolver reads and no crate root or module declaration around them, a `[patch]` or a proc-macro crate the stubs do not stand in for, a bench or a test target without its file, manifests written for the reader (a dotted key before `[package]`), macros from crates the stubs do not define (`cfg_if!`), and one file that is unparsable on purpose. Each is a fixture to complete, and the test below says when one has been, so this list only shrinks. */
