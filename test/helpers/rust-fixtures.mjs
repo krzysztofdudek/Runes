@@ -93,12 +93,15 @@ function render(node, depth = 0) {
   return out;
 }
 
+/** `text` as a TOML basic string: a backslash in a Windows path would otherwise start an escape. */
+const tomlString = (text) => `"${text.replace(/[\\"\u0000-\u001f\u007f]/g, (c) => (c === '\\' || c === '"' ? `\\${c}` : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`))}"`;
+
 /** The Cargo configuration (`.cargo/config.toml`) that puts the stub crates in `stubs` in place of crates.io and of every git and alternate-registry source of `externals`. */
 export function cargoConfig(stubs, externals) {
   const gits = [...new Set(externals.flatMap((d) => [...d.gits]))];
   const registries = [...new Set(externals.flatMap((d) => [...d.registries]))];
-  let config = `[source.crates-io]\nreplace-with = "stubs"\n\n[source.stubs]\ndirectory = "${stubs}"\n`;
-  gits.forEach((url, i) => { config += `\n[source.git${i}]\ngit = "${url}"\nreplace-with = "stubs"\n`; });
+  let config = `[source.crates-io]\nreplace-with = "stubs"\n\n[source.stubs]\ndirectory = ${tomlString(stubs)}\n`;
+  gits.forEach((url, i) => { config += `\n[source.git${i}]\ngit = ${tomlString(url)}\nreplace-with = "stubs"\n`; });
   registries.forEach((name) => { config += `\n[registries.${name}]\nindex = "sparse+https://${name}.example/index/"\n\n[source.${name}-src]\nregistry = "sparse+https://${name}.example/index/"\nreplace-with = "stubs"\n`; });
   return config;
 }
