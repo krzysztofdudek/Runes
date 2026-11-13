@@ -43,6 +43,56 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     }
     return resolveBare(segments, fromFile, exists, deps, crate);
 }
+/**
+ * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
+ */
+export function explainRustMiss(specifier, fromFile, exists, deps) {
+    const segments = specifier.split('::').filter((s) => s.length > 0);
+    const root = segments[0];
+    if (root === undefined)
+        return undefined;
+    if (root === 'super' || root === 'self')
+        return 'unfollowed';
+    const crate = deps.crateRootFor(fromFile);
+    if (crate === undefined)
+        return undefined;
+    if (root === 'crate')
+        return 'unfollowed';
+    if (root === 'extern') {
+        const name = segments[1];
+        if (name === undefined)
+            return undefined;
+        if (segments[2] === 'as' && crate.crateRelativeUses === true)
+            return bareMiss(segments.slice(3), fromFile, exists, deps, crate);
+        return crateNamed(name, fromFile, deps, crate) === undefined ? 'outside' : 'unfollowed';
+    }
+    if (root === 'use') {
+        const lead = Number(segments[1]);
+        const written = segments.slice(2 + lead);
+        if (!Number.isInteger(lead) || lead < 1 || written.length === 0)
+            return undefined;
+        if (crate.crateRelativeUses === true)
+            return bareMiss(written, fromFile, exists, deps, crate);
+        if (segments[2] === '<block>')
+            return 'unfollowed';
+        return explainRustMiss([...segments.slice(2, 2 + lead), ...written.slice(1)].join('::'), fromFile, exists, deps);
+    }
+    return bareMiss(segments, fromFile, exists, deps, crate);
+}
+/** {@link explainRustMiss} for a path that starts with a bare name, as `resolveBare` reads it. */
+function bareMiss(segments, fromFile, exists, deps, crate) {
+    const root = segments[0];
+    if (root === undefined)
+        return undefined;
+    const roots = crate.crateRelativeUses === true ? (crate.crateRelativeRoots ?? crate.rootFiles ?? []) : (crate.rootFiles ?? []);
+    if (deps.externCrateFor !== undefined && roots.some((file) => exists(file) && deps.externCrateFor(fromFile, file, root) !== undefined))
+        return 'unfollowed';
+    if (crateNamed(root, fromFile, deps, crate) !== undefined)
+        return 'unfollowed';
+    if (crate.crateRelativeUses === true && !EDITION_2015_EXTERNAL_ROOTS.has(root) && roots.some((file) => exists(file) && (deps.rootDeclares?.(file, root, true) ?? true)))
+        return 'unfollowed';
+    return 'outside';
+}
 /** The library tree the crate name `name` stands for in the package of `fromFile`: the package's own library (2018+ path clarity addresses it from any of its targets), else an in-repo path dependency. */
 function crateNamed(name, fromFile, deps, crate) {
     if (crate.crateName !== undefined && name === crate.crateName && crate.lib !== null)

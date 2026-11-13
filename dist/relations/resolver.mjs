@@ -137,6 +137,23 @@ function rubyGate(hint, files, symbolTable) {
     }
     return undefined;
 }
+/** The separators of a key's names: a namespace or package (`.`), a nested type (`+`), a C# extension method's class (`#`). */
+const SEPARATORS = new Set(['.', '+', '#']);
+/** A key's names, each with the separator before it (none before the first). */
+function splitName(key) {
+    const out = [];
+    let start = 0;
+    let separator = '';
+    for (let i = 0; i < key.length; i++) {
+        if (!SEPARATORS.has(key[i]))
+            continue;
+        out.push({ separator, text: key.slice(start, i) });
+        separator = key[i];
+        start = i + 1;
+    }
+    out.push({ separator, text: key.slice(start) });
+    return out;
+}
 /** Marks an outcome of `examine` that the edge walk passes by, though `classifyUse` reports it (a path split between owners). */
 const PASSED = Symbol('passed by the edge walk');
 /** The languages that share the one JVM namespace (see symbol-table.ts). */
@@ -600,7 +617,7 @@ export function makeResolver(deps) {
         if (outcome.kind === 'none')
             return { kind: 'absent' };
         const owner = deps.ownerIndex.ownerOf(outcome.file);
-        return owner ? { kind: 'resolved', owner, resolvedFile: outcome.file } : { kind: 'absent' };
+        return owner ? { kind: 'resolved', owner, resolvedFile: outcome.file } : told ? { kind: 'absent', reason: 'unowned', resolvedFile: outcome.file } : { kind: 'absent' };
     };
     /**
      * The symbol-axis outcome for a hint's distinct defining files, counted by OWNER:
@@ -618,7 +635,7 @@ export function makeResolver(deps) {
         if (sorted.length === 1) {
             const owner = deps.ownerIndex.ownerOf(sorted[0]);
             // Resolved-but-UNMAPPED is the non-event of an unowned target → absent (continue), never ambiguous.
-            return owner ? { kind: 'resolved', owner, resolvedFile: sorted[0] } : { kind: 'absent' };
+            return owner ? { kind: 'resolved', owner, resolvedFile: sorted[0] } : told ? { kind: 'absent', reason: 'unowned', resolvedFile: sorted[0] } : { kind: 'absent' };
         }
         const owners = new Set(sorted.map((f) => deps.ownerIndex.ownerOf(f)));
         if (owners.size !== 1 || owners.has(undefined))
@@ -710,21 +727,106 @@ export function makeResolver(deps) {
             return typeof miss === 'object' ? { kind: 'ambiguous', candidates: [...miss.split], [PASSED]: true } : { kind: 'absent' };
         }
         const owner = deps.ownerIndex.ownerOf(file);
-        return owner ? { kind: 'resolved', owner, resolvedFile: file } : { kind: 'absent' };
+        return owner ? { kind: 'resolved', owner, resolvedFile: file } : told ? { kind: 'absent', reason: 'unowned', resolvedFile: file } : { kind: 'absent' };
     };
     const classify = (hint, fromFile, language) => examine(hint, fromFile, language, false);
+    /** True when the repository declares `name` as a type or as a namespace some declared key lies in, or `name` is the global namespace. */
+    const inRepository = (language, name) => name === '' || deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name);
+    /**
+     * What one reading of a written name `written` says about where the use points, when it binds nothing: `outside` when it can only bind outside the repository, `unfollowed` when it commits to a name of the repository that binds nothing, `pass` when the language reads on to the next reading. The reading is `<P><separator><written>`, `P` the level it is read at (a namespace, a type, the package of a same-package name, or nothing for the name as written), and is read as the compiler looks the name up: its first name in `P`, then each next name in what the one before named. A level the repository does not declare is a namespace from elsewhere (a using of `System.Text`, `java.lang`), unless the reading is a member type (`+`), which may be inherited. A first name the level does not hold reads on, except a dotted name as written, whose first name is then a namespace or type from elsewhere. A later name the repository does not declare leaves it; the last missing is the repository's name that binds nothing. A reading that is not `written` read at some level (an alias's target) is the repository's when its own namespace is.
+     */
+    const keyReason = (language, key, written) => {
+        const level = key === written ? '' : key.endsWith(written) && SEPARATORS.has(key[key.length - written.length - 1]) ? key.slice(0, key.length - written.length - 1) : undefined;
+        if (level === undefined) {
+            const parent = Math.max(...[...SEPARATORS].map((sep) => key.lastIndexOf(sep)));
+            return inRepository(language, parent === -1 ? '' : key.slice(0, parent)) ? 'unfollowed' : 'outside';
+        }
+        if (!inRepository(language, level))
+            return key[level.length] === '+' ? 'pass' : 'outside';
+        const names = splitName(written);
+        let name = level;
+        for (let i = 0; i < names.length; i++) {
+            name = name === '' ? names[i].text : `${name}${i === 0 ? key[level.length] : names[i].separator}${names[i].text}`;
+            if (i === names.length - 1)
+                return i === 0 ? 'pass' : 'unfollowed';
+            if (!inRepository(language, name))
+                return i === 0 && level !== '' ? 'pass' : 'outside';
+        }
+        return 'pass';
+    };
+    /** The written name of a group of symbol readings: the longest run of trailing names that every plain reading ends with (a reading inside a type, a nested-only, set or attribute reading aside); undefined when they share none. */
+    const writtenName = (candidates) => {
+        const keys = candidates.flatMap((c) => (c.kind === 'symbol' && c.within === undefined && c.nestedOnly !== true && c.set === undefined && c.attribute === undefined ? [c.symbolKey] : []));
+        if (keys.length === 0)
+            return undefined;
+        let written = keys.reduce((a, b) => (a.length <= b.length ? a : b));
+        while (written !== '' && !keys.every((k) => k === written || (k.endsWith(written) && SEPARATORS.has(k[k.length - written.length - 1])))) {
+            const cut = splitName(written);
+            written = cut.length <= 1 ? '' : written.slice(cut[0].text.length + 1);
+        }
+        return written === '' ? undefined : written;
+    };
+    /** What a group of C#, Java or Kotlin symbol readings says (see `keyReason`): the first reading that does not read on decides, and a group whose readings all read on names the repository's own name. */
+    const readingsReason = (readings, fromFile, language) => {
+        const written = writtenName(readings);
+        for (const reading of readings) {
+            const reason = readingReason(reading, fromFile, language, written);
+            if (reason === 'outside' || reason === 'unfollowed')
+                return reason;
+        }
+        return 'unfollowed';
+    };
+    /** What one candidate that bound nothing says of where its use points: see `TargetResolver.classifyUse`. undefined when the language's readers cannot tell. */
+    const readingReason = (hint, fromFile, language, written) => {
+        if (hint.kind === 'path') {
+            if (language === 'java')
+                return keyReason(language, hint.isPackage === true ? `${hint.specifier}.*` : hint.specifier, hint.isPackage === true ? `${hint.specifier}.*` : hint.specifier);
+            const miss = deps.resolvePathToFile.explainMiss?.(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
+            return typeof miss === 'string' ? miss : undefined;
+        }
+        if (language !== 'csharp' && !JVM_LANGUAGES.has(language))
+            return undefined;
+        if (hint.attribute !== undefined) {
+            const reasons = [readingsReason(hint.attribute.written, fromFile, language), ...(hint.attribute.suffixed === undefined ? [] : [readingsReason(hint.attribute.suffixed, fromFile, language)])];
+            return reasons.includes('outside') ? 'outside' : 'unfollowed';
+        }
+        if (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile)))
+            return 'pass';
+        if (shadowed(language, hint.shadow, fromFile))
+            return 'unfollowed';
+        if (hint.within !== undefined || hint.nestedOnly === true)
+            return 'pass';
+        if (hint.set === undefined)
+            return keyReason(language, hint.symbolKey, written ?? hint.symbolKey);
+        // The readings of one level (CS0104): one that commits to a name of the repository (an alias of a namespace of it) decides, else one that can only bind elsewhere.
+        const reasons = hint.set.filter((m) => m.nestedOnly !== true).map((m) => keyReason(language, m.symbolKey, written ?? m.symbolKey));
+        return reasons.includes('unfollowed') ? 'unfollowed' : reasons.includes('outside') ? 'outside' : 'pass';
+    };
     const classifyUse = (candidates, fromFile, language) => {
-        let passed;
+        const written = writtenName(candidates);
+        let told;
+        let readOn = false;
         for (const cand of candidates) {
             const outcome = examine(cand, fromFile, language, true);
             if (PASSED in outcome) {
-                passed ??= { kind: outcome.kind, candidates: outcome.candidates };
+                told ??= { kind: 'ambiguous', candidates: outcome.candidates };
                 continue;
             }
             if (outcome.kind !== 'absent')
                 return outcome;
+            if (told !== undefined)
+                continue;
+            if (outcome.reason !== undefined) {
+                told = outcome;
+                continue;
+            }
+            const reason = readingReason(cand, fromFile, language, written);
+            if (reason === 'pass')
+                readOn = true;
+            else if (reason !== undefined)
+                told = { kind: 'absent', reason };
         }
-        return passed ?? { kind: 'absent' };
+        return told ?? (readOn ? { kind: 'absent', reason: 'unfollowed' } : { kind: 'absent' });
     };
     const resolveFile = (hint, fromFile, language) => {
         const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;

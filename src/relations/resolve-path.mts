@@ -1,10 +1,10 @@
 import path from 'node:path';
-import { resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
+import { explainTsMiss, resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
 import { makePythonResolver } from './extractors/python-resolve.mjs';
 import { explainGoImport, resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
-import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
-import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
+import { explainPhpMiss, resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
+import { explainRustMiss, resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
 import { declarationCount, type SymbolTable } from './symbol-table.mjs';
 import { resolveIncludePath } from './extractors/include-resolve.mjs';
 import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
@@ -220,8 +220,12 @@ export function makeResolvePathToFile(
     return undefined;
   };
   // Why a path bound no file, for the resolver's `classifyUse`: asked only after the function above answered undefined for the same arguments.
-  const explainMiss = (specifier: string, fromFile: string, language: string): 'outside' | 'unfollowed' | { split: string[] } | undefined => {
+  const explainMiss = (specifier: string, fromFile: string, language: string, _isPackage?: boolean, symbolTable?: SymbolTable): 'outside' | 'unfollowed' | { split: string[] } | undefined => {
+    if (language === 'typescript' || language === 'tsx' || language === 'javascript') return explainTsMiss(specifier, fromFile, tsDeps);
+    if (language === 'python') return python.explain(specifier, fromFile);
     if (language === 'go') return explainGoImport(specifier, fromFile, goDeps);
+    if (language === 'php') return explainPhpMiss(specifier, fromFile, phpDeps);
+    if (language === 'rust') return explainRustMiss(specifier, fromFile, exists, rustDepsFor(symbolTable));
     return undefined;
   };
   return Object.assign(resolvePathToFile, { explainMiss });

@@ -35,6 +35,10 @@ export type TsCallForm = 'require' | 'import' | 'esm';
  *   the directory index (`index.ts|tsx|js|jsx|mjs|cjs`).
  */
 export declare function resolveTsPath(specifier: string, fromFile: string, existsAny: (repoRelPosix: string) => boolean, deps?: TsResolveDeps, callForm?: TsCallForm): string | undefined;
+/**
+ * Why a specifier `resolveTsPath` bound no file came to nothing: `outside` when it names what lies outside the repository (a Node built-in, a package no workspace of the repository holds, which resolution takes from `node_modules`); `unfollowed` when it names a place of the repository (a relative or root-absolute path, a `#` import of the package, a `paths` alias the tsconfig sets, a path under `baseUrl` whose first name the repository holds, a package of the repository); undefined when the project configuration cannot be read or no `deps` are given. A `#` import whose target is a bare specifier is told by that target.
+ */
+export declare function explainTsMiss(specifier: string, fromFile: string, deps?: TsResolveDeps): 'outside' | 'unfollowed' | undefined;
 /** Project configuration the non-relative rules read. Built from disk by {@link makeTsResolveDeps}. */
 export interface TsResolveDeps {
     /** The tsconfig in effect for a file (its `extends` chain applied; for a solution-style config, the referenced config that holds the file), `'unknown'` when it cannot be read reliably (unparseable, a relative `extends` that does not exist, a referenced config that may hold the file and cannot be read), or undefined when the file has none. */
@@ -51,6 +55,9 @@ export interface TsResolveDeps {
     entryMissing?(pkg: TsPackage, target: string, sourcesDisagree: boolean): void;
     /** Whether a repo-rel POSIX file is excluded: an excluded file is never a resolution target, whether or not it is on disk. */
     isExcluded?(repoRelPosix: string): boolean;
+    /** Whether a repo-rel POSIX directory, or a file that is not excluded, is there: what {@link explainTsMiss} reads of the paths under `baseUrl`. */
+    isDirectory?(repoRelPosix: string): boolean;
+    isFile?(repoRelPosix: string): boolean;
 }
 /** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
 export declare const SOURCES_DISAGREE: unique symbol;
