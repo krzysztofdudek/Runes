@@ -82,6 +82,7 @@ describe('MATRIX — across source roots and into Kotlin: JVM symbol-table fallb
   it('java-multi-module-wildcard-edge', () => runCase('java-multi-module-wildcard-edge'));
   it('java-multi-module-duplicate-fqn-silence', () => runCase('java-multi-module-duplicate-fqn-silence'));
   it('java-duplicate-fqn-candidates-silence', () => runCase('java-duplicate-fqn-candidates-silence'));
+  it('java-unresolved-outside-or-unfollowed-silence', () => runCase('java-unresolved-outside-or-unfollowed-silence'));
   it('java-test-root-to-main-root-edge', () => runCase('java-test-root-to-main-root-edge'));
   it('java-imports-kotlin-class-edge', () => runCase('java-imports-kotlin-class-edge'));
   it('java-imports-kotlin-file-facade-edge', () => runCase('java-imports-kotlin-file-facade-edge'));

@@ -656,3 +656,67 @@ describe('resolver.classifyUse — an ambiguous answer names its candidate files
     expect(r.classifyUse([], 'src/w/W.cs', 'csharp').kind).toBe('absent');
   });
 });
+
+// An absent answer of `classifyUse` says where the use points, where the readers can tell: `outside` (it leaves the repository), `unfollowed` (it names a place of the repository that binds no file) or `unowned` (it binds a file no owner maps); `classify` answers `{ kind: 'absent' }` as before.
+describe('resolver.classifyUse — a use that binds no file says whether it leaves the repository', () => {
+  const ownerOfPath = (f) => (f.startsWith('vendor/') ? undefined : f.split('/').at(-2));
+  const resolverOf = (decls, resolvePathToFile = () => undefined) => {
+    const st = new SymbolTable();
+    for (const [language, key, file] of decls) st.declare(language, key, file);
+    return makeResolver({ ownerIndex: { ownerOf: ownerOfPath }, symbolTable: st, resolvePathToFile });
+  };
+  const sym = (symbolKey, extra = {}) => ({ kind: 'symbol', symbolKey, ...extra });
+
+  it('a file of the repository no owner maps is unowned, named, and the first such reading decides', () => {
+    const r = resolverOf([['csharp', 'Gen.Thing', 'vendor/Thing.cs'], ['java', 'com.v.Lib', 'vendor/Lib.java']], (spec) => (spec === './v' ? 'vendor/v.ts' : undefined));
+    expect(r.classify(sym('Gen.Thing'), 'src/a/A.cs', 'csharp')).toEqual({ kind: 'absent' });
+    expect(r.classifyUse([sym('Gen.Thing'), sym('System.Thing')], 'src/a/A.cs', 'csharp')).toEqual({ kind: 'absent', reason: 'unowned', resolvedFile: 'vendor/Thing.cs' });
+    expect(r.classifyUse([{ kind: 'path', specifier: './v' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent', reason: 'unowned', resolvedFile: 'vendor/v.ts' });
+    expect(r.classifyUse([sym('com.v.Lib')], 'src/a/A.kt', 'kotlin')).toEqual({ kind: 'absent', reason: 'unowned', resolvedFile: 'vendor/Lib.java' });
+  });
+  it('Java and Kotlin: a package the repository declares nothing in leaves it; a name of its own packages that binds nothing does not', () => {
+    const r = resolverOf([['java', 'com.acme.app.Order', 'src/app/Order.java'], ['java', 'com.acme.app.Outer', 'src/app/Outer.java']]);
+    const java = (hint) => r.classifyUse([hint], 'src/use/Use.java', 'java');
+    expect(java({ kind: 'path', specifier: 'java.util.ArrayList' })).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(java({ kind: 'path', specifier: 'com.acme.app.Missing' })).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(java({ kind: 'path', specifier: 'com.acme.app.Outer.Missing' })).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(java({ kind: 'path', specifier: 'com.acme.app.gen', isPackage: true })).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(java({ kind: 'path', specifier: 'com.acme', isPackage: true })).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(java({ kind: 'path', specifier: 'Single' })).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(r.classifyUse([sym('kotlinx.coroutines.*')], 'src/use/Use.kt', 'kotlin')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A simple name of the file's own package: its readings read on, and a member type of a supertype the repository does not declare may be inherited from it.
+    expect(r.classifyUse([sym('com.acme.app.Base+Missing', { samePackage: true }), sym('com.acme.app.Missing', { samePackage: true })], 'src/use/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(r.classifyUse([sym('com.acme.app.Order+Missing', { samePackage: true }), sym('com.acme.app.Missing', { samePackage: true }), sym('java.lang.Missing')], 'src/use/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'outside' });
+  });
+  it('C#: a name only a namespace from elsewhere can give leaves it; a name read in the repository\'s namespaces, or through an alias of one, does not', () => {
+    const r = resolverOf([['csharp', 'Shop.Core.Order', 'src/core/Order.cs'], ['csharp', 'Shop.App.Use', 'src/app/Use.cs'], ['csharp', 'Microsoft.AspNetCore.Hosting.Boot', 'src/host/Boot.cs'], ['csharp', 'Shop.App.Ext', 'src/app/Ext.cs']]);
+    const cs = (...hints) => r.classifyUse(hints, 'src/app/Use.cs', 'csharp');
+    const levels = (written, ...more) => [sym(`Shop.App.Use+${written}`, { within: 'Shop.App.Use' }), sym(`Shop.App.${written}`), sym(`Shop.${written}`), sym(written), ...more];
+    expect(cs(...levels('StringBuilder', sym('System.Text.StringBuilder', { set: [{ symbolKey: 'System.Text.StringBuilder' }] })))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(cs(...levels('Missing'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(cs(...levels('Missing', sym('Shop.Core.Missing', { set: [{ symbolKey: 'Shop.Core.Missing' }] })))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(cs(...levels('Shop.Core.Gone', sym('System.Text.Shop.Core.Gone', { nestedOnly: true, set: [{ symbolKey: 'System.Text.Shop.Core.Gone', nestedOnly: true }] })))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(cs(...levels('System.Console'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(cs(...levels('Microsoft.Extensions.Logging.ILogger'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(cs(sym('Shop.App.L.Gone'), sym('Shop.Core.Gone', { set: [{ symbolKey: 'Shop.Core.Gone' }, { symbolKey: 'L.Gone' }] }), sym('L.Gone'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(cs(sym('Shop.App.Lib.Thing'), sym('Other.Lib.Thing', { set: [{ symbolKey: 'Other.Lib.Thing' }, { symbolKey: 'Lib.Thing' }] }), sym('Lib.Thing'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(cs(sym('Shop.App.Where()'), sym('Where()'), sym('System.Linq.Where()'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(cs(sym('Shop.App.Ext#Shout()'), sym('Ext#Shout()'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(cs(sym('Shop.App.Lib#Shout()'), sym('Lib#Shout()'))).toEqual({ kind: 'absent', reason: 'outside' });
+    // A nearer name of the repository the lookup stops at commits the use to the repository.
+    expect(cs(sym('System.Text.Encoder', { shadow: ['Shop.Core'] }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // An attribute: its written and suffixed readings, each a group of its own.
+    const attribute = (written, suffixed) => sym(written[0].symbolKey, { attribute: { written, ...(suffixed === undefined ? {} : { suffixed }) } });
+    expect(cs(attribute([sym('Shop.App.Serializable'), sym('Serializable')], [sym('Shop.App.SerializableAttribute'), sym('SerializableAttribute'), sym('System.SerializableAttribute')]))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(cs(attribute([sym('Shop.App.MineAttribute'), sym('MineAttribute')]))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('says nothing where the readers cannot tell, and nothing for a path when the path function cannot explain', () => {
+    const r = resolverOf([['ruby', 'Shop', 'lib/shop/s.rb']]);
+    expect(r.classifyUse([sym('Missing')], 'lib/a/x.rb', 'ruby')).toEqual({ kind: 'absent' });
+    expect(r.classifyUse([{ kind: 'path', specifier: 'react' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent' });
+    const explaining = Object.assign(() => undefined, { explainMiss: (spec) => (spec === 'react' ? 'outside' : undefined) });
+    const told = resolverOf([], explaining);
+    expect(told.classifyUse([{ kind: 'path', specifier: 'react' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(told.classifyUse([{ kind: 'path', specifier: 'x.h' }], 'src/a/a.c', 'c')).toEqual({ kind: 'absent' });
+  });
+});

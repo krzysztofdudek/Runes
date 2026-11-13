@@ -387,4 +387,5 @@ describe('RESOLVER — no-crate-root / malformed (no Cargo.toml ancestor or unre
   it('rust-path-attribute-in-inline-module-of-library-path-root-edge', () => runCase('rust-path-attribute-in-inline-module-of-library-path-root-edge'));
   it('rust-path-attribute-in-inline-module-of-path-loaded-file-edge', () => runCase('rust-path-attribute-in-inline-module-of-path-loaded-file-edge'));
   it('rust-path-attribute-in-inline-module-of-plain-module-file-edge', () => runCase('rust-path-attribute-in-inline-module-of-plain-module-file-edge'));
+  it('rust-unresolved-outside-or-unfollowed-silence', () => runCase('rust-unresolved-outside-or-unfollowed-silence'));
 });

@@ -175,6 +175,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-package-imports-edge', () => runCase('typescript-package-imports-edge'));
   it('typescript-package-subpath-imports-silence', () => runCase('typescript-package-subpath-imports-silence'));
   it('typescript-bare-specifier-silence', () => runCase('typescript-bare-specifier-silence'));
+  it('typescript-unresolved-outside-or-unfollowed-silence', () => runCase('typescript-unresolved-outside-or-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

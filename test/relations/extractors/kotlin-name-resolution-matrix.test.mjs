@@ -57,6 +57,7 @@ describe('MATRIX — star import (`import a.b.*`): package owner-set collapse, l
   it('kotlin-wildcard-one-owner-edge', () => runCase('kotlin-wildcard-one-owner-edge'));
   it('kotlin-wildcard-split-owner-silence', () => runCase('kotlin-wildcard-split-owner-silence'));
   it('kotlin-star-import-split-owners-candidates-silence', () => runCase('kotlin-star-import-split-owners-candidates-silence'));
+  it('kotlin-unresolved-outside-or-unfollowed-silence', () => runCase('kotlin-unresolved-outside-or-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

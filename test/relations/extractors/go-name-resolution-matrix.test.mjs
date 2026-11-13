@@ -86,4 +86,5 @@ describe('MATRIX — coverage / granularity silences (uncovered package, intra-p
   it('go-unmapped-package-silence', () => runCase('go-unmapped-package-silence'));
   it('go-intra-package-silence', () => runCase('go-intra-package-silence'));
   it('go-package-split-owners-candidates-silence', () => runCase('go-package-split-owners-candidates-silence'));
+  it('go-unresolved-outside-or-unfollowed-silence', () => runCase('go-unresolved-outside-or-unfollowed-silence'));
 });
