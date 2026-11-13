@@ -1408,6 +1408,13 @@ describe('csharp — a type named in a pattern or after `is`', () => {
     expect(keys).toContain('Other');
     expect(keys).toContain('App.Models.Line');
   });
+  it('a dotted name in an `is` chain led by a type parameter in scope is no type, in either shape the grammar gives the chain', async () => {
+    const { uses } = await run(['class C { bool A<Q>(object x, bool b) => x is Q.Item || b; bool B<Q>(object x) => x is Q.Item || x is Q.Line; bool D(object x) => x is Lib.Item || x is Lib.Line; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys.filter((k) => k.split(/[.+]/).includes('Q'))).toEqual([]);
+    expect(keys).toContain('Lib.Item');
+    expect(keys).toContain('Lib.Line');
+  });
   it('a generic name, a nullable type and an array type after `is` give the generic with its arity, each type argument and the element type', async () => {
     const { uses } = await run(['class C { bool A(object o) => o is Box<Item>; bool B(object o) => o is Note?; bool D(object o) => o is Card[]; bool E(object o) => o is Lib::Slip; }', ''].join('\n'));
     const keys = keysOf(uses);
