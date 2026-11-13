@@ -411,6 +411,22 @@ function uses(file: ParsedFile): DetectedDep[] {
     out.push(single({ kind: 'symbol', symbolKey }, 'type-ref', line));
   };
 
+  // A qualified type led by a simple name of the file's package (`Outer.Inner`, JLS §6.5.5.2) names a member type of what that name names: each reading of the name with the rest as its member types (`<package>.Outer+Inner`), then the name as written. False when the first name is no such name (a package, an import, a type of the file), which is read as written.
+  const emitQualified = (node: Node): boolean => {
+    const names = node.text.split('.');
+    if (scope === undefined || names.length < 2 || !names.every((n) => /^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(n)) || !isCapitalised(names[0])) return false;
+    const head = samePackageCandidates(scope, names[0], scopes.get(node.id)!);
+    if (head === undefined) return false;
+    const tail = names.slice(1).join('+');
+    const line = node.startPosition.row + 1;
+    const dedupKey = `${node.text} ${line}`;
+    if (seenSym.has(dedupKey)) return true;
+    seenSym.add(dedupKey);
+    const members = head.map((h): TargetHint => (h.kind === 'symbol' && h.samePackage === true ? { kind: 'symbol', symbolKey: `${h.symbolKey}+${tail}`, samePackage: true } : { kind: 'symbol', symbolKey: `${(h as { symbolKey: string }).symbolKey}+${tail}` }));
+    out.push({ candidates: [...members, { kind: 'symbol', symbolKey: node.text }], kind: 'type-ref', line });
+    return true;
+  };
+
   walkWithParent(file.tree.rootNode, (node, parent) => {
     if (node.type === 'type_identifier') {
       typeIdentifier(node, parent());
@@ -425,7 +441,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     // complete dotted FQN; inner ones are its `scope` segments. Type positions only — an
     // expression-position dotted access is a field_access chain, never this node.
     if (node.type === 'scoped_type_identifier' && parent()?.type !== 'scoped_type_identifier') {
-      emitSymbol(node.text, node);
+      if (!emitQualified(node)) emitSymbol(node.text, node);
       return undefined;
     }
 
@@ -534,7 +550,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const javaExtractor: DependencyExtractor = {
   languages: new Set(['java']),
-  rev: 5,
+  rev: 6,
   declarations,
   uses,
 };
