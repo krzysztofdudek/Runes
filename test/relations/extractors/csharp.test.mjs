@@ -1392,6 +1392,22 @@ describe('csharp — a type named in a pattern or after `is`', () => {
     expect(keys).not.toContain('Config.Limit');
     expect(keys).toContain('Lib.Limit');
   });
+  it('a dotted name at the head of an `is` chain, and one in each test of a chain, is read as the type it spells, once, as a lone one is', async () => {
+    const lines = (tests) => ['class C {', ...tests.map((t, i) => `  bool M${i}(object x, bool b) => ${t};`), '}', ''].join('\n');
+    const chains = await run(lines(['x is Models.Order || b', 'x is App.Models.Order || x is App.Models.Line', 'x is Lib.Box<int>.Item && b', 'x is global::Lib.Credit || b', 'x is Order || x is App.Models.Line']));
+    const lone = await run(lines(['x is Models.Order', 'x is App.Models.Order; bool N(object x) => x is App.Models.Line', 'x is Lib.Box<int>.Item', 'x is global::Lib.Credit', 'x is Order; bool N(object x) => x is App.Models.Line']));
+    const groups = ({ uses }) => uses.map((u) => [u.line, ...u.candidates.flatMap((c) => readingKeys(c))]);
+    expect(groups(lone).map((g) => g[g.length - 1])).toEqual(['Models.Order', 'App.Models.Order', 'App.Models.Line', 'Lib.Box`1.Item', 'Lib.Credit', 'Order', 'App.Models.Line']);
+    expect(groups(chains)).toEqual(groups(lone));
+  });
+  it('a dotted name in an `is` chain led by a value this file declares is no type, and the rest of the chain is read', async () => {
+    const { uses } = await run(['class C { Mode Config; bool A(object o) => o is Config.Limit || o is Other; bool B(object o) => o is Config.Limit || o is App.Models.Line; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys).not.toContain('Config.Limit');
+    expect(keys).not.toContain('Config');
+    expect(keys).toContain('Other');
+    expect(keys).toContain('App.Models.Line');
+  });
   it('a generic name, a nullable type and an array type after `is` give the generic with its arity, each type argument and the element type', async () => {
     const { uses } = await run(['class C { bool A(object o) => o is Box<Item>; bool B(object o) => o is Note?; bool D(object o) => o is Card[]; bool E(object o) => o is Lib::Slip; }', ''].join('\n'));
     const keys = keysOf(uses);
