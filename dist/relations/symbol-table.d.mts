@@ -44,5 +44,7 @@ export declare class SymbolTable {
      *  the resolver collapses by owner. Empty when no file declares into the package. */
     filesInPackage(language: string, packageFqn: string): string[];
 }
+/** The files declaring a `::`-qualified key whose last segment is `name` (see `SymbolTable.hasNestedTail`). Internal to Runes, like `declarationCount`. */
+export declare function nestedTailFiles(table: SymbolTable, language: string, name: string): string[];
 /** How many declarations `table` has taken so far. An answer read from the table, kept by a resolver, holds while this has not moved. Internal to Runes: the package exports `SymbolTable` alone. */
 export declare function declarationCount(table: SymbolTable): number;

@@ -1,4 +1,4 @@
-import { declarationCount, type SymbolTable } from './symbol-table.mjs';
+import { declarationCount, nestedTailFiles, type SymbolTable } from './symbol-table.mjs';
 import type { CsharpCondition, DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
@@ -15,8 +15,12 @@ export interface ResolvedTarget { owner: string; resolvedFile: string }
 export interface ResolverDeps {
   ownerIndex: OwnerLookup;
   symbolTable: SymbolTable;
-  /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both. */
-  resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined;
+  /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both.
+   *
+   * The function may carry `explainMiss` (added in 1.1.0), which `makeResolvePathToFile`'s function does: asked with the same arguments about a path that bound no file, it says why, for `classifyUse` (see `TargetResolver`). `{ split }` means the path names files of more than one owner, those files sorted (a Go package whose files two owners hold); undefined means it cannot say. `classify`, `resolve` and `resolveFile` never ask it. */
+  resolvePathToFile: ((specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined) & {
+    explainMiss?: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => 'outside' | 'unfollowed' | { split: string[] } | undefined;
+  };
   /**
    * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). A definer that declares the name only as internal to its assembly (the C# extractor's `internal:<key>` marker) is dropped too for a caller in another project its project does not name as a friend, when the `Reachability` answers `internalsVisible`. Both `resolve`, `classify` and `resolveFile` apply it.
    */
@@ -40,12 +44,22 @@ export interface ResolverDeps {
  */
 export type Classification =
   | { kind: 'resolved'; owner: string; resolvedFile: string }
-  | { kind: 'ambiguous' }
+  | {
+      kind: 'ambiguous';
+      /** Added in 1.1.0, set by `classifyUse` only: the files the use could name, sorted. */
+      candidates?: string[];
+    }
   | { kind: 'absent' };
 
 export interface TargetResolver {
   resolve(hint: TargetHint, fromFile: string, language: string): ResolvedTarget | undefined;
   classify(hint: TargetHint, fromFile: string, language: string): Classification;
+  /**
+   * Added in 1.1.0; `makeResolver` always provides it, a resolver written by hand may leave it out. What one use comes to: its candidate group walked in order exactly as the edge walk walks it (`resolveDetectedEdges`), so `resolved` comes back exactly where that walk binds, with the same owner and file, and a nearer `ambiguous` ends the use there too. Where `classify` answers only the kind, this answer says more:
+   *  - `ambiguous` carries `candidates`, the files the use could name, sorted and without repeats: the files that declare the name in each owner (a C# partial type, a JVM name two modules declare, a Ruby constant), every file declaring into a package a star import names, a file whose declarations could not be read and may hold the name, and for Ruby's gates the files of the namespace the lookup stops at or of a nested constant that may be inherited.
+   *  - A Go import of a package of the module whose files belong to more than one owner, which `classify` answers `absent` and the edge walk passes by, is `ambiguous` with the package's files, unless a farther candidate binds.
+   */
+  classifyUse?(candidates: readonly TargetHint[], fromFile: string, language: string): Classification;
   /**
    * The raw resolved file for a candidate hint, independent of ownership: 0 or ≥2
    * distinct files (unresolved or ambiguous) both yield undefined; exactly one file is
@@ -208,12 +222,15 @@ function rubyGate(
   return undefined;
 }
 
+/** Marks an outcome of `examine` that the edge walk passes by, though `classifyUse` reports it (a path split between owners). */
+const PASSED = Symbol('passed by the edge walk');
+
 /** The languages that share the one JVM namespace (see symbol-table.ts). */
 const JVM_LANGUAGES: ReadonlySet<string> = new Set(['java', 'kotlin']);
 
 /** The file-level outcome of a JVM lookup, before ownership is asked: exactly one file,
  *  a real ambiguity (silence the group), or nothing in-repository. */
-type JvmOutcome = { kind: 'file'; file: string } | { kind: 'ambiguous' } | { kind: 'none' };
+type JvmOutcome = { kind: 'file'; file: string } | { kind: 'ambiguous'; files: string[] } | { kind: 'none' };
 
 /**
  * The "declarations incomplete" markers a Kotlin file declares when part of it could not be
@@ -253,7 +270,7 @@ function withinReach(files: Set<string>, fromFile: string, reach: Reachability, 
   return new Set(same.length > 0 ? same : seen.keys());
 }
 
-export function makeResolver(deps: ResolverDeps): TargetResolver {
+export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick<TargetResolver, 'classifyUse'>> {
   /** The DISTINCT defining files a dotted symbol candidate maps to, across the verbatim key
    *  AND the guarded nested-type `+`-splits. The set-level rule: 0 distinct files → absent,
    *  exactly 1 → that file, ≥2 → ambiguous (silence). Counting every defining file (not the
@@ -578,13 +595,13 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     // marker file is ambiguous, exactly as before owner collapse).
     const owner = deps.ownerIndex.ownerOf(sorted[0]);
     if (sorted.length >= 2) {
-      if (owner === undefined || sorted.some((f) => deps.ownerIndex.ownerOf(f) !== owner)) return { kind: 'ambiguous' };
+      if (owner === undefined || sorted.some((f) => deps.ownerIndex.ownerOf(f) !== owner)) return { kind: 'ambiguous', files: sorted };
     }
     for (const key of bindingKeys) {
       for (const marker of incompletenessMarkers(key)) {
         for (const f of deps.symbolTable.filesFor(language, marker)) {
           if (files.has(f) || !visible(f)) continue;
-          if (owner === undefined || deps.ownerIndex.ownerOf(f) !== owner) return { kind: 'ambiguous' };
+          if (owner === undefined || deps.ownerIndex.ownerOf(f) !== owner) return { kind: 'ambiguous', files: [...files, f].sort() };
         }
       }
     }
@@ -610,7 +627,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       const owner = deps.ownerIndex.ownerOf(f);
       if (owner === undefined) continue;
       if (sole === undefined) sole = owner;
-      else if (owner !== sole) return { kind: 'ambiguous' };
+      else if (owner !== sole) return { kind: 'ambiguous', files: sorted };
     }
     if (sole === undefined) return { kind: 'file', file: sorted[0] };
     return { kind: 'file', file: sorted.find((f) => deps.ownerIndex.ownerOf(f) === sole)! };
@@ -635,8 +652,8 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       : jvmSymbolOutcome(language, hint.specifier);
   };
 
-  const classifyJvm = (outcome: JvmOutcome): Classification => {
-    if (outcome.kind === 'ambiguous') return { kind: 'ambiguous' };
+  const classifyJvm = (outcome: JvmOutcome, told = false): Classification => {
+    if (outcome.kind === 'ambiguous') return told ? { kind: 'ambiguous', candidates: outcome.files } : { kind: 'ambiguous' };
     if (outcome.kind === 'none') return { kind: 'absent' };
     const owner = deps.ownerIndex.ownerOf(outcome.file);
     return owner ? { kind: 'resolved', owner, resolvedFile: outcome.file } : { kind: 'absent' };
@@ -651,7 +668,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
    * other declaration split across files of ONE owner name exactly one dependency target — the
    * ambiguity that must silence is between OWNERS, never between files of one owner.
    */
-  const symbolOutcome = (files: Set<string>): Classification => {
+  const symbolOutcome = (files: Set<string>, told = false): Classification => {
     if (files.size === 0) return { kind: 'absent' };
     const sorted = [...files].sort();
     if (sorted.length === 1) {
@@ -660,7 +677,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       return owner ? { kind: 'resolved', owner, resolvedFile: sorted[0] } : { kind: 'absent' };
     }
     const owners = new Set<string | undefined>(sorted.map((f) => deps.ownerIndex.ownerOf(f)));
-    if (owners.size !== 1 || owners.has(undefined)) return { kind: 'ambiguous' };
+    if (owners.size !== 1 || owners.has(undefined)) return told ? { kind: 'ambiguous', candidates: sorted } : { kind: 'ambiguous' };
     return { kind: 'resolved', owner: [...owners][0] as string, resolvedFile: sorted[0] };
   };
 
@@ -690,9 +707,21 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return { owner, resolvedFile: file };
   };
 
-  const classify: TargetResolver['classify'] = (hint, fromFile, language) => {
+  /** A Ruby gate's ambiguity, with the files it stands on: those of the namespace the lookup stops at, or the files that bind the name with those of every constant of its name nested in a namespace, which may be inherited. */
+  const rubyAmbiguity = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: ReadonlySet<string>, told: boolean): Classification => {
+    if (!told) return { kind: 'ambiguous' };
+    const stands = files.size === 0
+      ? deps.symbolTable.filesFor('ruby', hint.rubyAnchor ?? '')
+      : [...files, ...nestedTailFiles(deps.symbolTable, 'ruby', hint.rubyInheritGuard ?? '')];
+    return { kind: 'ambiguous', candidates: [...new Set(stands)].sort() };
+  };
+
+  /**
+   * The outcome of one candidate. `told` asks for what `classifyUse` adds (see `TargetResolver`); without it this is exactly `classify`. With it, a path whose files belong to more than one owner (`explainMiss`'s `{ split }`) is answered ambiguous, marked `PASSED` because the edge walk passes it by.
+   */
+  const examine = (hint: TargetHint, fromFile: string, language: string, told: boolean): Classification => {
     const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
-    if (jvmFirst !== undefined) return classifyJvm(jvmFirst);
+    if (jvmFirst !== undefined) return classifyJvm(jvmFirst, told);
     if (hint.kind === 'symbol') {
       // Ruby: a multi-segment constant whose ROOT namespace is not itself declared in-repo
       // is reopening an EXTERNAL library (e.g. a test stub `module Rackup::Handler`) → absent,
@@ -711,9 +740,9 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       const files = hintFiles(hint, language, fromFile);
       if (language === 'ruby') {
         const forced = rubyGate(hint, files, deps.symbolTable);
-        if (forced !== undefined) return { kind: forced };
+        if (forced !== undefined) return forced === 'ambiguous' ? rubyAmbiguity(hint, files, told) : { kind: forced };
       }
-      const outcome = symbolOutcome(files);
+      const outcome = symbolOutcome(files, told);
       return outcome.kind === 'resolved' && !takesCall(hint, files, language, fromFile) ? { kind: 'absent' } : outcome;
     }
     // Path axis (PHP/Java/TS/JS/Py/Go/Rust/C/C++): resolution maps to AT MOST ONE file,
@@ -723,10 +752,28 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
     if (!file) {
       const fallback = jvmOutcome(hint, language, true, fromFile);
-      return fallback !== undefined ? classifyJvm(fallback) : { kind: 'absent' };
+      if (fallback !== undefined) return classifyJvm(fallback, told);
+      if (!told) return { kind: 'absent' };
+      const miss = deps.resolvePathToFile.explainMiss?.(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
+      return typeof miss === 'object' ? { kind: 'ambiguous', candidates: [...miss.split], [PASSED]: true } as Classification : { kind: 'absent' };
     }
     const owner = deps.ownerIndex.ownerOf(file);
     return owner ? { kind: 'resolved', owner, resolvedFile: file } : { kind: 'absent' };
+  };
+
+  const classify: TargetResolver['classify'] = (hint, fromFile, language) => examine(hint, fromFile, language, false);
+
+  const classifyUse = (candidates: readonly TargetHint[], fromFile: string, language: string): Classification => {
+    let passed: Classification | undefined;
+    for (const cand of candidates) {
+      const outcome = examine(cand, fromFile, language, true);
+      if (PASSED in outcome) {
+        passed ??= { kind: outcome.kind, candidates: (outcome as { candidates: string[] }).candidates } as Classification;
+        continue;
+      }
+      if (outcome.kind !== 'absent') return outcome;
+    }
+    return passed ?? { kind: 'absent' };
   };
 
   const resolveFile: TargetResolver['resolveFile'] = (hint, fromFile, language) => {
@@ -744,5 +791,5 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return fallback?.kind === 'file' ? fallback.file : undefined;
   };
 
-  return { resolve, classify, resolveFile };
+  return { resolve, classify, classifyUse, resolveFile };
 }

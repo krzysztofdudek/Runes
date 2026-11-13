@@ -1,4 +1,4 @@
-import { declarationCount } from './symbol-table.mjs';
+import { declarationCount, nestedTailFiles } from './symbol-table.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey, shapeTakes } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
@@ -137,6 +137,8 @@ function rubyGate(hint, files, symbolTable) {
     }
     return undefined;
 }
+/** Marks an outcome of `examine` that the edge walk passes by, though `classifyUse` reports it (a path split between owners). */
+const PASSED = Symbol('passed by the edge walk');
 /** The languages that share the one JVM namespace (see symbol-table.ts). */
 const JVM_LANGUAGES = new Set(['java', 'kotlin']);
 /**
@@ -527,7 +529,7 @@ export function makeResolver(deps) {
         const owner = deps.ownerIndex.ownerOf(sorted[0]);
         if (sorted.length >= 2) {
             if (owner === undefined || sorted.some((f) => deps.ownerIndex.ownerOf(f) !== owner))
-                return { kind: 'ambiguous' };
+                return { kind: 'ambiguous', files: sorted };
         }
         for (const key of bindingKeys) {
             for (const marker of incompletenessMarkers(key)) {
@@ -535,7 +537,7 @@ export function makeResolver(deps) {
                     if (files.has(f) || !visible(f))
                         continue;
                     if (owner === undefined || deps.ownerIndex.ownerOf(f) !== owner)
-                        return { kind: 'ambiguous' };
+                        return { kind: 'ambiguous', files: [...files, f].sort() };
                 }
             }
         }
@@ -565,7 +567,7 @@ export function makeResolver(deps) {
             if (sole === undefined)
                 sole = owner;
             else if (owner !== sole)
-                return { kind: 'ambiguous' };
+                return { kind: 'ambiguous', files: sorted };
         }
         if (sole === undefined)
             return { kind: 'file', file: sorted[0] };
@@ -592,9 +594,9 @@ export function makeResolver(deps) {
             ? jvmStarOutcome(language, hint.specifier)
             : jvmSymbolOutcome(language, hint.specifier);
     };
-    const classifyJvm = (outcome) => {
+    const classifyJvm = (outcome, told = false) => {
         if (outcome.kind === 'ambiguous')
-            return { kind: 'ambiguous' };
+            return told ? { kind: 'ambiguous', candidates: outcome.files } : { kind: 'ambiguous' };
         if (outcome.kind === 'none')
             return { kind: 'absent' };
         const owner = deps.ownerIndex.ownerOf(outcome.file);
@@ -609,7 +611,7 @@ export function makeResolver(deps) {
      * other declaration split across files of ONE owner name exactly one dependency target — the
      * ambiguity that must silence is between OWNERS, never between files of one owner.
      */
-    const symbolOutcome = (files) => {
+    const symbolOutcome = (files, told = false) => {
         if (files.size === 0)
             return { kind: 'absent' };
         const sorted = [...files].sort();
@@ -620,7 +622,7 @@ export function makeResolver(deps) {
         }
         const owners = new Set(sorted.map((f) => deps.ownerIndex.ownerOf(f)));
         if (owners.size !== 1 || owners.has(undefined))
-            return { kind: 'ambiguous' };
+            return told ? { kind: 'ambiguous', candidates: sorted } : { kind: 'ambiguous' };
         return { kind: 'resolved', owner: [...owners][0], resolvedFile: sorted[0] };
     };
     const resolve = (hint, fromFile, language) => {
@@ -652,10 +654,22 @@ export function makeResolver(deps) {
             return undefined; // UNMAPPED target → coverage matter, never a violation (an unowned target is a non-event)
         return { owner, resolvedFile: file };
     };
-    const classify = (hint, fromFile, language) => {
+    /** A Ruby gate's ambiguity, with the files it stands on: those of the namespace the lookup stops at, or the files that bind the name with those of every constant of its name nested in a namespace, which may be inherited. */
+    const rubyAmbiguity = (hint, files, told) => {
+        if (!told)
+            return { kind: 'ambiguous' };
+        const stands = files.size === 0
+            ? deps.symbolTable.filesFor('ruby', hint.rubyAnchor ?? '')
+            : [...files, ...nestedTailFiles(deps.symbolTable, 'ruby', hint.rubyInheritGuard ?? '')];
+        return { kind: 'ambiguous', candidates: [...new Set(stands)].sort() };
+    };
+    /**
+     * The outcome of one candidate. `told` asks for what `classifyUse` adds (see `TargetResolver`); without it this is exactly `classify`. With it, a path whose files belong to more than one owner (`explainMiss`'s `{ split }`) is answered ambiguous, marked `PASSED` because the edge walk passes it by.
+     */
+    const examine = (hint, fromFile, language, told) => {
         const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
         if (jvmFirst !== undefined)
-            return classifyJvm(jvmFirst);
+            return classifyJvm(jvmFirst, told);
         if (hint.kind === 'symbol') {
             // Ruby: a multi-segment constant whose ROOT namespace is not itself declared in-repo
             // is reopening an EXTERNAL library (e.g. a test stub `module Rackup::Handler`) → absent,
@@ -676,9 +690,9 @@ export function makeResolver(deps) {
             if (language === 'ruby') {
                 const forced = rubyGate(hint, files, deps.symbolTable);
                 if (forced !== undefined)
-                    return { kind: forced };
+                    return forced === 'ambiguous' ? rubyAmbiguity(hint, files, told) : { kind: forced };
             }
-            const outcome = symbolOutcome(files);
+            const outcome = symbolOutcome(files, told);
             return outcome.kind === 'resolved' && !takesCall(hint, files, language, fromFile) ? { kind: 'absent' } : outcome;
         }
         // Path axis (PHP/Java/TS/JS/Py/Go/Rust/C/C++): resolution maps to AT MOST ONE file,
@@ -688,10 +702,29 @@ export function makeResolver(deps) {
         const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
         if (!file) {
             const fallback = jvmOutcome(hint, language, true, fromFile);
-            return fallback !== undefined ? classifyJvm(fallback) : { kind: 'absent' };
+            if (fallback !== undefined)
+                return classifyJvm(fallback, told);
+            if (!told)
+                return { kind: 'absent' };
+            const miss = deps.resolvePathToFile.explainMiss?.(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
+            return typeof miss === 'object' ? { kind: 'ambiguous', candidates: [...miss.split], [PASSED]: true } : { kind: 'absent' };
         }
         const owner = deps.ownerIndex.ownerOf(file);
         return owner ? { kind: 'resolved', owner, resolvedFile: file } : { kind: 'absent' };
+    };
+    const classify = (hint, fromFile, language) => examine(hint, fromFile, language, false);
+    const classifyUse = (candidates, fromFile, language) => {
+        let passed;
+        for (const cand of candidates) {
+            const outcome = examine(cand, fromFile, language, true);
+            if (PASSED in outcome) {
+                passed ??= { kind: outcome.kind, candidates: outcome.candidates };
+                continue;
+            }
+            if (outcome.kind !== 'absent')
+                return outcome;
+        }
+        return passed ?? { kind: 'absent' };
     };
     const resolveFile = (hint, fromFile, language) => {
         const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
@@ -711,5 +744,5 @@ export function makeResolver(deps) {
         const fallback = jvmOutcome(hint, language, true, fromFile);
         return fallback?.kind === 'file' ? fallback.file : undefined;
     };
-    return { resolve, classify, resolveFile };
+    return { resolve, classify, classifyUse, resolveFile };
 }

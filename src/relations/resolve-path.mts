@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
 import { makePythonResolver } from './extractors/python-resolve.mjs';
-import { resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
+import { explainGoImport, resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
 import { resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
@@ -56,7 +56,9 @@ export function makeResolvePathToFile(
   ownerOf?: (repoRelPosix: string) => string | undefined,
   isExcluded?: (repoRelPosix: string) => boolean,
   options?: ResolvePathOptions,
-): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined {
+): ((specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined) & {
+  explainMiss: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => 'outside' | 'unfollowed' | { split: string[] } | undefined;
+} {
   // Every read goes through one of two sources, and with a view given they are the same one. On the disk they differ in a single manner: a candidate probe exists only under the name its directory lists (on a case-insensitive file system existsSync would also find lib/root.rs as lib/Root.rs, issue 482), while a configuration read or a repository walk takes the file system's own rule.
   const probe: FileSource = options?.files ?? diskFileView(projectRoot, true);
   const plain: FileSource = options?.files ?? diskFileView(projectRoot, false);
@@ -149,7 +151,7 @@ export function makeResolvePathToFile(
   // non-relative specifiers read tsconfig `paths`/`baseUrl` and in-repo package.json files.
   const isFile = (repoRelPosix: string): boolean => probe.isFile(repoRelPosix);
   const tsDeps = makeTsResolveDeps(projectRoot, isExcluded, plain, report);
-  return (specifier, fromFile, language, isPackage = false, symbolTable = undefined, callForm = undefined) => {
+  const resolvePathToFile = (specifier: string, fromFile: string, language: string, isPackage = false, symbolTable: SymbolTable | undefined = undefined, callForm: 'require' | 'import' | 'esm' | undefined = undefined): string | undefined => {
     if (language === 'typescript' || language === 'tsx' || language === 'javascript') {
       return resolveTsPath(specifier, fromFile, isFile, tsDeps, callForm);
     }
@@ -217,6 +219,12 @@ export function makeResolvePathToFile(
     }
     return undefined;
   };
+  // Why a path bound no file, for the resolver's `classifyUse`: asked only after the function above answered undefined for the same arguments.
+  const explainMiss = (specifier: string, fromFile: string, language: string): 'outside' | 'unfollowed' | { split: string[] } | undefined => {
+    if (language === 'go') return explainGoImport(specifier, fromFile, goDeps);
+    return undefined;
+  };
+  return Object.assign(resolvePathToFile, { explainMiss });
 }
 
 /**

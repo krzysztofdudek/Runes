@@ -14,8 +14,14 @@ export interface ResolvedTarget {
 export interface ResolverDeps {
     ownerIndex: OwnerLookup;
     symbolTable: SymbolTable;
-    /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both. */
-    resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined;
+    /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both.
+     *
+     * The function may carry `explainMiss` (added in 1.1.0), which `makeResolvePathToFile`'s function does: asked with the same arguments about a path that bound no file, it says why, for `classifyUse` (see `TargetResolver`). `{ split }` means the path names files of more than one owner, those files sorted (a Go package whose files two owners hold); undefined means it cannot say. `classify`, `resolve` and `resolveFile` never ask it. */
+    resolvePathToFile: ((specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined) & {
+        explainMiss?: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => 'outside' | 'unfollowed' | {
+            split: string[];
+        } | undefined;
+    };
     /**
      * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). A definer that declares the name only as internal to its assembly (the C# extractor's `internal:<key>` marker) is dropped too for a caller in another project its project does not name as a friend, when the `Reachability` answers `internalsVisible`. Both `resolve`, `classify` and `resolveFile` apply it.
      */
@@ -42,12 +48,20 @@ export type Classification = {
     resolvedFile: string;
 } | {
     kind: 'ambiguous';
+    /** Added in 1.1.0, set by `classifyUse` only: the files the use could name, sorted. */
+    candidates?: string[];
 } | {
     kind: 'absent';
 };
 export interface TargetResolver {
     resolve(hint: TargetHint, fromFile: string, language: string): ResolvedTarget | undefined;
     classify(hint: TargetHint, fromFile: string, language: string): Classification;
+    /**
+     * Added in 1.1.0; `makeResolver` always provides it, a resolver written by hand may leave it out. What one use comes to: its candidate group walked in order exactly as the edge walk walks it (`resolveDetectedEdges`), so `resolved` comes back exactly where that walk binds, with the same owner and file, and a nearer `ambiguous` ends the use there too. Where `classify` answers only the kind, this answer says more:
+     *  - `ambiguous` carries `candidates`, the files the use could name, sorted and without repeats: the files that declare the name in each owner (a C# partial type, a JVM name two modules declare, a Ruby constant), every file declaring into a package a star import names, a file whose declarations could not be read and may hold the name, and for Ruby's gates the files of the namespace the lookup stops at or of a nested constant that may be inherited.
+     *  - A Go import of a package of the module whose files belong to more than one owner, which `classify` answers `absent` and the edge walk passes by, is `ambiguous` with the package's files, unless a farther candidate binds.
+     */
+    classifyUse?(candidates: readonly TargetHint[], fromFile: string, language: string): Classification;
     /**
      * The raw resolved file for a candidate hint, independent of ownership: 0 or ≥2
      * distinct files (unresolved or ambiguous) both yield undefined; exactly one file is
@@ -88,4 +102,4 @@ export declare function resolveDetectedEdges(detected: readonly DetectedDep[], r
     line: number;
     owner: string;
 }>;
-export declare function makeResolver(deps: ResolverDeps): TargetResolver;
+export declare function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick<TargetResolver, 'classifyUse'>>;

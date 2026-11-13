@@ -623,8 +623,8 @@ describe('resolver.classifyUse — an ambiguous answer names its candidate files
     expect(marked.classifyUse([{ kind: 'symbol', symbolKey: 'com.a.Owner' }], 'c/c/Use.kt', 'kotlin')).toEqual({ kind: 'ambiguous', candidates: ['a/a/Owner.kt', 'z/z/Broken.kt'] });
   });
   it('a Java on-demand import the source roots do not hold, split between owners, names the package files', () => {
-    const r = resolverOf(symbols(['java', 'com.acme.app.Order', 'app/app/Order.java'], ['java', 'com.acme.app.Clock', 'other/app/Clock.java']));
-    expect(r.classifyUse([{ kind: 'path', specifier: 'com.acme.app', isPackage: true }], 'use/use/Use.java', 'java')).toEqual({ kind: 'ambiguous', candidates: ['app/app/Order.java', 'other/app/Clock.java'] });
+    const r = resolverOf(symbols(['java', 'com.acme.app.Order', 'm1/app/Order.java'], ['java', 'com.acme.app.Clock', 'm2/other/Clock.java']));
+    expect(r.classifyUse([{ kind: 'path', specifier: 'com.acme.app', isPackage: true }], 'm3/use/Use.java', 'java')).toEqual({ kind: 'ambiguous', candidates: ['m1/app/Order.java', 'm2/other/Clock.java'] });
   });
   it('a C# partial type whose parts two owners declare names its parts, and an unmapped part counts as one', () => {
     const r = resolverOf(symbols(['csharp', 'Shop.Customer', 'src/people/Customer.cs'], ['csharp', 'Shop.Customer', 'src/generated/Customer.g.cs']));
