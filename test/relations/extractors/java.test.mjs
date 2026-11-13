@@ -253,6 +253,15 @@ describe('java extractor — same-package references (uses())', () => {
     }
   });
 
+  it('ends the group of a simple name java.lang holds with its java.lang reading, after the package, and adds none to another name', async () => {
+    const g = await groups('class T extends Exception { @Override public String toString() { return ""; } Owner o; Thread.State s; }');
+    expect(g.find((x) => x.keys.includes('com.a.String'))).toEqual({ line: 2, keys: ['com.a.Exception+String', 'com.a.String', 'java.lang.String'], flags: [true, true, false] });
+    expect(g.find((x) => x.keys.includes('com.a.Override'))?.keys).toEqual(['com.a.Exception+Override', 'com.a.Override', 'java.lang.Override']);
+    expect(g.find((x) => x.keys.includes('com.a.Exception'))?.keys).toEqual(['com.a.Exception', 'java.lang.Exception']);
+    expect(g.find((x) => x.keys.includes('com.a.Owner'))?.keys).toEqual(['com.a.Exception+Owner', 'com.a.Owner']);
+    expect(g.find((x) => x.keys.includes('com.a.Thread'))?.keys).toEqual(['com.a.Exception+Thread', 'com.a.Thread', 'java.lang.Thread']);
+  });
+
   it('gives nothing in the unnamed package', async () => {
     expect(await keysOf('class T { Owner a; }', '')).toEqual([]);
   });

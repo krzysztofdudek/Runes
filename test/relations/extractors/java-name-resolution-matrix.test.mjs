@@ -93,6 +93,7 @@ describe('MATRIX — java.lang / stdlib / external / vendored: fail-to-find sile
   it('java-jdk-import-silence', () => runCase('java-jdk-import-silence'));
   it('java-explicit-stdlib-import-silence', () => runCase('java-explicit-stdlib-import-silence'));
   it('java-bare-autoimport-usage-silence', () => runCase('java-bare-autoimport-usage-silence'));
+  it('java-standard-library-name-outside-silence', () => runCase('java-standard-library-name-outside-silence'));
   it('java-meta-annotation-usage-silence', () => runCase('java-meta-annotation-usage-silence'));
   it('java-external-library-import-silence', () => runCase('java-external-library-import-silence'));
   it('java-vendored-jdk-mapped-edge', () => runCase('java-vendored-jdk-mapped-edge'));

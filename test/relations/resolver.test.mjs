@@ -720,3 +720,17 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
     expect(told.classifyUse([{ kind: 'path', specifier: 'x.h' }], 'src/a/a.c', 'c')).toEqual({ kind: 'absent' });
   });
 });
+
+// Java reads a simple name of java.lang through the implicit on-demand import of java.lang (JLS §7.3), after the file's own package: its use leaves the repository, where a simple name of the package that no file declares was not followed.
+describe('resolver.classifyUse — a simple Java name of java.lang leaves the repository', () => {
+  it('tells String from a name of the package that binds nothing, and binds the repository\'s own java.lang where it has one', () => {
+    const st = new SymbolTable();
+    st.declare('java', 'com.a.Order', 'src/a/Order.java');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const group = (name) => [{ kind: 'symbol', symbolKey: `com.a.${name}`, samePackage: true }, ...(name === 'String' ? [{ kind: 'symbol', symbolKey: 'java.lang.String' }] : [])];
+    expect(r.classifyUse(group('String'), 'src/a/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(r.classifyUse(group('Gone'), 'src/a/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    st.declare('java', 'java.lang.String', 'jdk/lang/String.java');
+    expect(r.classifyUse(group('String'), 'src/a/Use.java', 'java')).toEqual({ kind: 'resolved', owner: 'lang', resolvedFile: 'jdk/lang/String.java' });
+  });
+});
