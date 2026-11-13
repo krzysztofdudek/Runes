@@ -734,3 +734,21 @@ describe('kotlin extractor — a simple name Kotlin imports by default', () => {
     expect(r.classify({ kind: 'symbol', symbolKey: 'kotlin.String' }, 'k/b/T.kt', 'kotlin')).toEqual({ kind: 'absent' });
   });
 });
+
+// Kotlin reads a star import before its default imports: a simple name a star import of a repository package declares is the repository's, not the standard library's, even where a default package holds the same name.
+describe('kotlin extractor — a star import of the repository comes before the default imports', () => {
+  it('answers unfollowed, not outside, for Result and Pair that a starred package of the repository declares; Charsets and HexFormat are default names', async () => {
+    const st = new SymbolTable();
+    st.declare('kotlin', 'com.acme.model.Result', 'k/model/Result.kt');
+    st.declare('kotlin', 'com.acme.model.Pair', 'k/model/Pair.kt');
+    st.declare('kotlin', 'com.acme.app.Order', 'k/app/Order.kt');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run('package com.acme.app\n\nimport com.acme.model.*\n\nclass T(val r: Result<Int>?, val p: Pair<Int, Int>?, val c: Charsets?, val h: HexFormat?)\n');
+    const answer = (name) => r.classifyUse(uses.find((u) => u.candidates[0].symbolKey === `com.acme.app.${name}`).candidates, 'k/app/T.kt', 'kotlin');
+    expect(answer('Result')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(answer('Pair')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(answer('Charsets')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(answer('HexFormat')).toEqual({ kind: 'absent', reason: 'outside' });
+    for (const name of ['Result', 'Pair']) expect(r.classify(uses.find((u) => u.candidates[0].symbolKey === `com.acme.app.${name}`).candidates[0], 'k/app/T.kt', 'kotlin')).toEqual({ kind: 'absent' });
+  });
+});
