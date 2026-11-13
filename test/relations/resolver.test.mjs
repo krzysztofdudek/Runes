@@ -1,6 +1,6 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/resolver.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../helpers/expect.mjs';
-import { makeResolver } from '@chrisdudek/runes/relations';
+import { makeResolver, makeResolvePathToFile, listedFileView } from '@chrisdudek/runes/relations';
 import { SymbolTable } from '@chrisdudek/runes/relations';
 
 const owner = { ownerOf: (f) => (f === 'src/b.cs' ? 'b' : undefined) };
@@ -596,5 +596,63 @@ describe('resolver — C# shadowed readings', () => {
     const reach = () => 'reachable';
     expect(mk(table(), reach).classify({ kind: 'symbol', symbolKey: 'Program', shadow: ['App.Thing'] }, 'src/c/C.cs', 'csharp')).toEqual({ kind: 'absent' });
     expect(mk(table(), reach).classify({ kind: 'symbol', symbolKey: 'Program', shadow: ['Web.Program'] }, 'src/c/C.cs', 'csharp')).toMatchObject({ kind: 'resolved', owner: 'lib' });
+  });
+});
+
+// What a use comes to, beyond `classify`: `classifyUse` walks a use's candidates as the edge walk does and answers with what a consumer that judges the files itself needs. An ambiguous answer names its candidate files, sorted; `classify` answers exactly as before.
+describe('resolver.classifyUse — an ambiguous answer names its candidate files', () => {
+  const ownerOfPath = (f) => f.split('/').at(-2);
+  const symbols = (...decls) => {
+    const st = new SymbolTable();
+    for (const [language, key, file] of decls) st.declare(language, key, file);
+    return st;
+  };
+  const resolverOf = (st, resolvePathToFile = () => undefined, ownerOf = ownerOfPath) => makeResolver({ ownerIndex: { ownerOf }, symbolTable: st, resolvePathToFile });
+
+  it('a Kotlin star import of a package two owners declare into names their files, and classify answers as before', () => {
+    const r = resolverOf(symbols(['kotlin', 'com.acme.app.Order', 'k/other/Order.kt'], ['kotlin', 'com.acme.app.Clock', 'k/app/Clock.kt'], ['kotlin', 'com.acme.app.Tick', 'k/app/Tick.kt']));
+    const star = { kind: 'symbol', symbolKey: 'com.acme.app.*' };
+    expect(r.classify(star, 'k/use/Use.kt', 'kotlin')).toEqual({ kind: 'ambiguous' });
+    expect(r.classifyUse([star], 'k/use/Use.kt', 'kotlin')).toEqual({ kind: 'ambiguous', candidates: ['k/app/Clock.kt', 'k/app/Tick.kt', 'k/other/Order.kt'] });
+  });
+  it('a JVM name declared by two owners names both files; a file whose declarations could not be read joins them', () => {
+    const r = resolverOf(symbols(['java', 'com.a.Owner', 'b/b/Owner.java'], ['java', 'com.a.Owner', 'a/a/Owner.java']));
+    expect(r.classifyUse([{ kind: 'symbol', symbolKey: 'com.a.Owner' }], 'c/c/Use.java', 'java')).toEqual({ kind: 'ambiguous', candidates: ['a/a/Owner.java', 'b/b/Owner.java'] });
+    const marked = resolverOf(symbols(['kotlin', 'com.a.Owner', 'a/a/Owner.kt'], ['kotlin', 'com.a.*', 'z/z/Broken.kt']));
+    expect(marked.classify({ kind: 'symbol', symbolKey: 'com.a.Owner' }, 'c/c/Use.kt', 'kotlin')).toEqual({ kind: 'ambiguous' });
+    expect(marked.classifyUse([{ kind: 'symbol', symbolKey: 'com.a.Owner' }], 'c/c/Use.kt', 'kotlin')).toEqual({ kind: 'ambiguous', candidates: ['a/a/Owner.kt', 'z/z/Broken.kt'] });
+  });
+  it('a Java on-demand import the source roots do not hold, split between owners, names the package files', () => {
+    const r = resolverOf(symbols(['java', 'com.acme.app.Order', 'app/app/Order.java'], ['java', 'com.acme.app.Clock', 'other/app/Clock.java']));
+    expect(r.classifyUse([{ kind: 'path', specifier: 'com.acme.app', isPackage: true }], 'use/use/Use.java', 'java')).toEqual({ kind: 'ambiguous', candidates: ['app/app/Order.java', 'other/app/Clock.java'] });
+  });
+  it('a C# partial type whose parts two owners declare names its parts, and an unmapped part counts as one', () => {
+    const r = resolverOf(symbols(['csharp', 'Shop.Customer', 'src/people/Customer.cs'], ['csharp', 'Shop.Customer', 'src/generated/Customer.g.cs']));
+    expect(r.classifyUse([{ kind: 'symbol', symbolKey: 'Shop.Customer' }], 'src/app/Uses.cs', 'csharp')).toEqual({ kind: 'ambiguous', candidates: ['src/generated/Customer.g.cs', 'src/people/Customer.cs'] });
+    const unmapped = resolverOf(symbols(['csharp', 'Shop.Customer', 'src/people/Customer.cs'], ['csharp', 'Shop.Customer', 'gen/Customer.g.cs']), undefined, (f) => (f.startsWith('src/') ? ownerOfPath(f) : undefined));
+    expect(unmapped.classifyUse([{ kind: 'symbol', symbolKey: 'Shop.Customer' }], 'src/app/Uses.cs', 'csharp')).toEqual({ kind: 'ambiguous', candidates: ['gen/Customer.g.cs', 'src/people/Customer.cs'] });
+  });
+  it('Ruby names the files of the namespace it stops at, and the files that may hand down a nested constant', () => {
+    const anchored = resolverOf(symbols(['ruby', 'Shop', 'lib/shop/s.rb'], ['ruby', 'Shop::Billing', 'lib/shop/s.rb'], ['ruby', 'Shop::Billing', 'lib/shop/t.rb']));
+    expect(anchored.classifyUse([{ kind: 'symbol', symbolKey: 'Shop::Billing::Invoice', rubyAnchor: 'Shop::Billing' }], 'lib/a/x.rb', 'ruby')).toEqual({ kind: 'ambiguous', candidates: ['lib/shop/s.rb', 'lib/shop/t.rb'] });
+    const guarded = resolverOf(symbols(['ruby', 'Order', 'lib/models/order.rb'], ['ruby', 'Admin', 'lib/admin/o.rb'], ['ruby', 'Admin::Order', 'lib/admin/o.rb'], ['ruby', 'Shop::Order', 'lib/shop/o.rb']));
+    expect(guarded.classifyUse([{ kind: 'symbol', symbolKey: 'Order', rubyInheritGuard: 'Order' }], 'lib/a/x.rb', 'ruby')).toEqual({ kind: 'ambiguous', candidates: ['lib/admin/o.rb', 'lib/models/order.rb', 'lib/shop/o.rb'] });
+  });
+  it('a Go package of the module whose files belong to two owners is ambiguous with its files, where classify answers absent', () => {
+    const contents = new Map([['go.mod', 'module example.com/m\n'], ['service/a.go', 'package service'], ['service/b_gen.go', 'package service'], ['service/a_test.go', 'package service'], ['domain/order.go', 'package domain'], ['solo/x.go', 'package solo']]);
+    const own = { 'service/a.go': 'app', 'service/b_gen.go': 'gen', 'service/a_test.go': 'app', 'domain/order.go': 'domain', 'solo/x.go': 'solo' };
+    const ownerOf = (f) => own[f];
+    const r = makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+    const split = { kind: 'path', specifier: 'example.com/m/service', isPackage: true };
+    expect(r.classify(split, 'domain/order.go', 'go')).toEqual({ kind: 'absent' });
+    expect(r.classifyUse([split], 'domain/order.go', 'go')).toEqual({ kind: 'ambiguous', candidates: ['service/a.go', 'service/b_gen.go'] });
+    // The edge walk passes a split package by, so a farther reading that binds is still the answer.
+    expect(r.classifyUse([split, { kind: 'path', specifier: 'example.com/m/solo', isPackage: true }], 'domain/order.go', 'go')).toEqual({ kind: 'resolved', owner: 'solo', resolvedFile: 'solo/x.go' });
+  });
+  it('walks a use as the edge walk does: the first binding resolves, a nearer ambiguity ends the use', () => {
+    const r = resolverOf(symbols(['csharp', 'App.A', 'src/a/A.cs'], ['csharp', 'Lib.A', 'src/x/A.cs'], ['csharp', 'Lib.A', 'src/y/A.cs']));
+    expect(r.classifyUse([{ kind: 'symbol', symbolKey: 'App.Web.A' }, { kind: 'symbol', symbolKey: 'App.A' }], 'src/w/W.cs', 'csharp')).toEqual({ kind: 'resolved', owner: 'a', resolvedFile: 'src/a/A.cs' });
+    expect(r.classifyUse([{ kind: 'symbol', symbolKey: 'Lib.A' }, { kind: 'symbol', symbolKey: 'App.A' }], 'src/w/W.cs', 'csharp')).toEqual({ kind: 'ambiguous', candidates: ['src/x/A.cs', 'src/y/A.cs'] });
+    expect(r.classifyUse([], 'src/w/W.cs', 'csharp').kind).toBe('absent');
   });
 });

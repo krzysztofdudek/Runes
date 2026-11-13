@@ -56,6 +56,7 @@ describe('MATRIX — enum / companion / object member imports (resolve at the de
 describe('MATRIX — star import (`import a.b.*`): package owner-set collapse, like Java (one owner → edge; 0 or 2+ → SILENCE; never expanded)', () => {
   it('kotlin-wildcard-one-owner-edge', () => runCase('kotlin-wildcard-one-owner-edge'));
   it('kotlin-wildcard-split-owner-silence', () => runCase('kotlin-wildcard-split-owner-silence'));
+  it('kotlin-star-import-split-owners-candidates-silence', () => runCase('kotlin-star-import-split-owners-candidates-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

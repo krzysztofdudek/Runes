@@ -69,6 +69,7 @@ describe('MATRIX — static imports: the declaring TYPE is the edge, never a mem
 describe('MATRIX — wildcard / on-demand type import: package hint → owner-set collapse', () => {
   it('java-wildcard-one-owner-edge', () => runCase('java-wildcard-one-owner-edge'));
   it('java-wildcard-zero-owner-silence', () => runCase('java-wildcard-zero-owner-silence'));
+  it('java-wildcard-split-owners-candidates-silence', () => runCase('java-wildcard-split-owners-candidates-silence'));
   it('java-two-wildcards-each-own-merit-edge', () => runCase('java-two-wildcards-each-own-merit-edge'));
 });
 
@@ -80,6 +81,7 @@ describe('MATRIX — across source roots and into Kotlin: JVM symbol-table fallb
   it('java-multi-module-sibling-import-edge', () => runCase('java-multi-module-sibling-import-edge'));
   it('java-multi-module-wildcard-edge', () => runCase('java-multi-module-wildcard-edge'));
   it('java-multi-module-duplicate-fqn-silence', () => runCase('java-multi-module-duplicate-fqn-silence'));
+  it('java-duplicate-fqn-candidates-silence', () => runCase('java-duplicate-fqn-candidates-silence'));
   it('java-test-root-to-main-root-edge', () => runCase('java-test-root-to-main-root-edge'));
   it('java-imports-kotlin-class-edge', () => runCase('java-imports-kotlin-class-edge'));
   it('java-imports-kotlin-file-facade-edge', () => runCase('java-imports-kotlin-file-facade-edge'));
