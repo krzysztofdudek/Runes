@@ -139,6 +139,10 @@ function rubyGate(hint, files, symbolTable) {
 }
 /** The separators of a key's names: a namespace or package (`.`), a nested type (`+`), a C# extension method's class (`#`). */
 const SEPARATORS = new Set(['.', '+', '#']);
+/** A key as its source writes it: a member type is written after a dot. */
+function asWritten(key) {
+    return key.replaceAll('+', '.');
+}
 /** A key's names, each with the separator before it (none before the first). */
 function splitName(key) {
     const out = [];
@@ -736,14 +740,17 @@ export function makeResolver(deps) {
      * What one reading of a written name `written` says about where the use points, when it binds nothing: `outside` when it can only bind outside the repository, `unfollowed` when it commits to a name of the repository that binds nothing, `pass` when the language reads on to the next reading. The reading is `<P><separator><written>`, `P` the level it is read at (a namespace, a type, the package of a same-package name, or nothing for the name as written), and is read as the compiler looks the name up: its first name in `P`, then each next name in what the one before named. A level the repository does not declare is a namespace from elsewhere (a using of `System.Text`, `java.lang`), unless the reading is a member type (`+`), which may be inherited. A first name the level does not hold reads on, except a dotted name as written, whose first name is then a namespace or type from elsewhere. A later name the repository does not declare leaves it; the last missing is the repository's name that binds nothing. A reading that is not `written` read at some level (an alias's target) is the repository's when its own namespace is.
      */
     const keyReason = (language, key, written) => {
-        const level = key === written ? '' : key.endsWith(written) && SEPARATORS.has(key[key.length - written.length - 1]) ? key.slice(0, key.length - written.length - 1) : undefined;
-        if (level === undefined) {
+        const plain = asWritten(key);
+        const end = plain === written ? 0 : plain.endsWith(written) && SEPARATORS.has(plain[plain.length - written.length - 1]) ? plain.length - written.length - 1 : undefined;
+        if (end === undefined) {
             const parent = Math.max(...[...SEPARATORS].map((sep) => key.lastIndexOf(sep)));
             return inRepository(language, parent === -1 ? '' : key.slice(0, parent)) ? 'unfollowed' : 'outside';
         }
+        const level = key.slice(0, end);
         if (!inRepository(language, level))
             return key[level.length] === '+' ? 'pass' : 'outside';
-        const names = splitName(written);
+        // The names of the reading past its level, each with the separator the key writes (a member type `+` where the written name has a dot).
+        const names = splitName(end === 0 ? key : key.slice(end + 1));
         let name = level;
         for (let i = 0; i < names.length; i++) {
             name = name === '' ? names[i].text : `${name}${i === 0 ? key[level.length] : names[i].separator}${names[i].text}`;
@@ -754,9 +761,9 @@ export function makeResolver(deps) {
         }
         return 'pass';
     };
-    /** The written name of a group of symbol readings: the longest run of trailing names that every plain reading ends with (a reading inside a type, a nested-only, set or attribute reading aside); undefined when they share none. */
+    /** The written name of a group of symbol readings, its member types written with dots as the source writes them (a JVM reading of a simple name in the file's package is that name): the longest run of trailing names that every plain reading ends with (a reading inside a type, a nested-only, set or attribute reading aside); undefined when they share none. */
     const writtenName = (candidates) => {
-        const keys = candidates.flatMap((c) => (c.kind === 'symbol' && c.within === undefined && c.nestedOnly !== true && c.set === undefined && c.attribute === undefined ? [c.symbolKey] : []));
+        const keys = candidates.flatMap((c) => (c.kind === 'symbol' && c.within === undefined && c.nestedOnly !== true && c.set === undefined && c.attribute === undefined ? [c.samePackage === true && !c.symbolKey.includes('+') ? c.symbolKey.slice(c.symbolKey.lastIndexOf('.') + 1) : asWritten(c.symbolKey)] : []));
         if (keys.length === 0)
             return undefined;
         let written = keys.reduce((a, b) => (a.length <= b.length ? a : b));
@@ -804,10 +811,13 @@ export function makeResolver(deps) {
         const reasons = hint.set.filter((m) => m.nestedOnly !== true).map((m) => keyReason(language, m.symbolKey, written ?? m.symbolKey));
         return reasons.includes('unfollowed') ? 'unfollowed' : reasons.includes('outside') ? 'outside' : 'pass';
     };
-    /** What the on-demand imports of a Java or Kotlin file say of a simple name its package does not declare (`TargetHint.onDemand`), read after the package and before Kotlin's default imports: a starred package or type of the repository that declares the name makes the use the repository's, though the readers bind it through the package alone. */
+    /** What the on-demand imports of a Java or Kotlin file say of a simple name its package does not declare (`TargetHint.onDemand`), read after the package and before Kotlin's default imports: a starred package or type of the repository that declares the name makes the use the repository's, though the readers bind it through the package alone; else a starred package from elsewhere can give it, and the use leaves the repository. */
     const onDemandReason = (language, key, onDemand) => {
         const name = key.slice(key.lastIndexOf('.') + 1);
-        return onDemand.some((pkg) => symbolFiles(language, `${pkg}.${name}`).size > 0) ? 'unfollowed' : 'pass';
+        if (onDemand.some((pkg) => symbolFiles(language, `${pkg}.${name}`).size > 0))
+            return 'unfollowed';
+        // Else an on-demand import of a package the repository declares nothing in (a library's, `java.util`) can give the name.
+        return onDemand.some((pkg) => !inRepository(language, pkg)) ? 'outside' : 'pass';
     };
     const classifyUse = (candidates, fromFile, language) => {
         const written = writtenName(candidates);
