@@ -499,6 +499,9 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-public-and-internal-extension-method-one-file-internal-call-binds-other-edge', () => runCase('csharp-public-and-internal-extension-method-one-file-internal-call-binds-other-edge'));
   it('csharp-is-type-test-chain-or-edge', () => runCase('csharp-is-type-test-chain-or-edge'));
   it('csharp-is-type-test-chain-dotted-edge', () => runCase('csharp-is-type-test-chain-dotted-edge'));
+  it('csharp-pattern-constant-led-by-same-named-property-edge', () => runCase('csharp-pattern-constant-led-by-same-named-property-edge'));
+  it('csharp-pattern-constant-led-by-same-named-local-edge', () => runCase('csharp-pattern-constant-led-by-same-named-local-edge'));
+  it('csharp-pattern-constant-led-by-same-named-lambda-parameter-edge', () => runCase('csharp-pattern-constant-led-by-same-named-lambda-parameter-edge'));
   it('csharp-file-type-dotted-receiver-inherited-nested-type-edge', () => runCase('csharp-file-type-dotted-receiver-inherited-nested-type-edge'));
   it('csharp-using-namespace-hidden-by-unreachable-namespace-edge', () => runCase('csharp-using-namespace-hidden-by-unreachable-namespace-edge'));
   it('csharp-extension-ambiguous-names-receiver-type-takes-one-edge', () => runCase('csharp-extension-ambiguous-names-receiver-type-takes-one-edge'));
