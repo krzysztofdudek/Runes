@@ -282,8 +282,31 @@ function samePackageCandidates(scope: FileScope, name: string, around: AroundSco
   const supertypeLists: string[][] = [];
   for (let t = around.typeParameters; t !== null; t = t.outer) if (t.names.has(name)) return undefined;
   for (let s = around.supertypes; s !== null; s = s.outer) supertypeLists.push(s.names);
-  return samePackageGroup(scope, name, supertypeLists);
+  const group = samePackageGroup(scope, name, supertypeLists);
+  // The implicit on-demand import of java.lang (JLS §7.3) comes after the package: its reading binds only a repository that declares java.lang, and otherwise says the name is the standard library's.
+  if (group !== undefined && JAVA_LANG_TYPES.has(name)) group.push({ kind: 'symbol', symbolKey: `java.lang.${name}` });
+  return group;
 }
+
+/** The public top-level types of `java.lang` in any JDK from 8 to 25, so a name of an older or newer one is read too. */
+const JAVA_LANG_TYPES: ReadonlySet<string> = new Set(
+  (
+    'AbstractMethodError Appendable ArithmeticException ArrayIndexOutOfBoundsException ArrayStoreException AssertionError AutoCloseable ' +
+    'Boolean BootstrapMethodError Byte Character CharSequence Class ClassCastException ClassCircularityError ClassFormatError ClassLoader ' +
+    'ClassNotFoundException ClassValue CloneNotSupportedException Cloneable Comparable Compiler Deprecated Double Enum ' +
+    'EnumConstantNotPresentException Error Exception ExceptionInInitializerError Float FunctionalInterface IO IllegalAccessError ' +
+    'IllegalAccessException IllegalArgumentException IllegalCallerException IllegalMonitorStateException IllegalStateException ' +
+    'IllegalThreadStateException IncompatibleClassChangeError IndexOutOfBoundsException InheritableThreadLocal InstantiationError ' +
+    'InstantiationException Integer InternalError InterruptedException Iterable LayerInstantiationException LinkageError Long ' +
+    'MatchException Math Module ModuleLayer NegativeArraySizeException NoClassDefFoundError NoSuchFieldError NoSuchFieldException ' +
+    'NoSuchMethodError NoSuchMethodException NullPointerException Number NumberFormatException Object OutOfMemoryError Override ' +
+    'Package Process ProcessBuilder ProcessHandle Readable Record ReflectiveOperationException Runnable Runtime RuntimeException ' +
+    'RuntimePermission SafeVarargs ScopedValue SecurityException SecurityManager Short StackOverflowError StackTraceElement ' +
+    'StackWalker StrictMath String StringBuffer StringBuilder StringIndexOutOfBoundsException StringTemplate SuppressWarnings System ' +
+    'Thread ThreadDeath ThreadGroup ThreadLocal Throwable TypeNotPresentException UnknownError UnsatisfiedLinkError ' +
+    'UnsupportedClassVersionError UnsupportedOperationException VerifyError VirtualMachineError Void WrongThreadException'
+  ).split(' '),
+);
 
 /**
  * What the declarations around a node say about the simple names written in it, carried down the walk instead of read by climbing from each node: `typeParameters` links the type parameters of every ancestor that declares some, `supertypes` the supertype names of every enclosing type body (innermost first), and `entering` the declaration (or anonymous class creation) whose children are being entered, so that its supertypes count for the child that is a body and for no other.
@@ -511,7 +534,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const javaExtractor: DependencyExtractor = {
   languages: new Set(['java']),
-  rev: 4,
+  rev: 5,
   declarations,
   uses,
 };
