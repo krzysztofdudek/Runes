@@ -12,7 +12,7 @@ function namespaceOf(language: string): string {
 
 export class SymbolTable {
   private readonly defs = new Map<string, Set<string>>(); // `${namespace}\0${symbolKey}` → set of defining files
-  private readonly nestedTails = new Set<string>(); // `${namespace}\0${lastSegment}` of every `A::B`-style key
+  private readonly nestedTails = new Map<string, Set<string>>(); // `${namespace}\0${lastSegment}` of every `A::B`-style key → the files declaring such a key
   /** `${namespace}\0${package}` → files declaring a DIRECT top-level member of that package (a key
    *  `<package>.<Name>` whose last segment carries no `+` nested-type separator). */
   private readonly packageMembers = new Map<string, Set<string>>();
@@ -44,7 +44,12 @@ export class SymbolTable {
     if (!s) { s = new Set(); this.defs.set(k, s); }
     s.add(file);
     const sep = symbolKey.lastIndexOf('::');
-    if (sep !== -1) this.nestedTails.add(this.key(language, symbolKey.slice(sep + 2)));
+    if (sep !== -1) {
+      const tail = this.key(language, symbolKey.slice(sep + 2));
+      let tailFiles = this.nestedTails.get(tail);
+      if (!tailFiles) { tailFiles = new Set(); this.nestedTails.set(tail, tailFiles); }
+      tailFiles.add(file);
+    }
     const plus = symbolKey.indexOf('+');
     const typePart = plus === -1 ? symbolKey : symbolKey.slice(0, plus);
     for (let i = typePart.indexOf('.'); i !== -1; i = typePart.indexOf('.', i + 1)) this.namespaces.add(this.key(language, typePart.slice(0, i)));
@@ -125,6 +130,11 @@ export class SymbolTable {
     const s = this.packageMembers.get(this.key(language, packageFqn));
     return s ? [...s] : [];
   }
+}
+
+/** The files declaring a `::`-qualified key whose last segment is `name` (see `SymbolTable.hasNestedTail`). Internal to Runes, like `declarationCount`. */
+export function nestedTailFiles(table: SymbolTable, language: string, name: string): string[] {
+  return [...(table['nestedTails'].get(table['key'](language, name)) ?? [])];
 }
 
 /** How many declarations `table` has taken so far. An answer read from the table, kept by a resolver, holds while this has not moved. Internal to Runes: the package exports `SymbolTable` alone. */

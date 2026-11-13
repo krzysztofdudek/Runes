@@ -1,4 +1,4 @@
-import { declarationCount, type SymbolTable } from './symbol-table.mjs';
+import { declarationCount, nestedTailFiles, type SymbolTable } from './symbol-table.mjs';
 import type { CsharpCondition, DetectedDep, TargetHint } from './extractors/types.mjs';
 import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
@@ -15,8 +15,12 @@ export interface ResolvedTarget { owner: string; resolvedFile: string }
 export interface ResolverDeps {
   ownerIndex: OwnerLookup;
   symbolTable: SymbolTable;
-  /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both. */
-  resolvePathToFile: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined;
+  /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both.
+   *
+   * The function may carry `explainMiss` (added in 1.1.0), which `makeResolvePathToFile`'s function does: asked with the same arguments about a path that bound no file, it says why, for `classifyUse` (see `TargetResolver`). `{ split }` means the path names files of more than one owner, those files sorted (a Go package whose files two owners hold); undefined means it cannot say. `classify`, `resolve` and `resolveFile` never ask it. */
+  resolvePathToFile: ((specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined) & {
+    explainMiss?: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => 'outside' | 'unfollowed' | { split: string[] } | undefined;
+  };
   /**
    * C# only, optional: which of the repository's C# projects the caller's project can see (`buildCsharpReachability`). Absent, every in-repository declaration of a name is a candidate, as before. Given, a symbol hint's definers in a project the calling file's project cannot reach are dropped before the owners are counted, and when a definer lies in the calling file's own project only the definers of that project stay (a type of the compilation wins over one of a referenced assembly of the same name). A definer that declares the name only as internal to its assembly (the C# extractor's `internal:<key>` marker) is dropped too for a caller in another project its project does not name as a friend, when the `Reachability` answers `internalsVisible`. Both `resolve`, `classify` and `resolveFile` apply it.
    */
@@ -40,12 +44,27 @@ export interface ResolverDeps {
  */
 export type Classification =
   | { kind: 'resolved'; owner: string; resolvedFile: string }
-  | { kind: 'ambiguous' }
-  | { kind: 'absent' };
+  | {
+      kind: 'ambiguous';
+      /** Added in 1.1.0, set by `classifyUse` only: the files the use could name, sorted. */
+      candidates?: string[];
+    }
+  | {
+      kind: 'absent';
+      /** Added in 1.1.0, set by `classifyUse` only, where the readers can tell (TypeScript, JavaScript, Python, Go, Rust, PHP, Java, Kotlin, C#): `outside` when the use leaves the repository (an installed package, the standard library), `unfollowed` when it names a place of the repository that binds no file, `unowned` when it binds a file of the repository no owner maps, which `resolvedFile` names. */
+      reason?: 'outside' | 'unfollowed' | 'unowned';
+      resolvedFile?: string;
+    };
 
 export interface TargetResolver {
   resolve(hint: TargetHint, fromFile: string, language: string): ResolvedTarget | undefined;
   classify(hint: TargetHint, fromFile: string, language: string): Classification;
+  /**
+   * Added in 1.1.0; `makeResolver` always provides it, a resolver written by hand may leave it out. What one use comes to: its candidate group walked in order exactly as the edge walk walks it (`resolveDetectedEdges`), so `resolved` comes back exactly where that walk binds, with the same owner and file, and a nearer `ambiguous` ends the use there too. Where `classify` answers only the kind, this answer says more:
+   *  - `ambiguous` carries `candidates`, the files the use could name, sorted and without repeats: the files that declare the name in each owner (a C# partial type, a JVM name two modules declare, a Ruby constant), every file declaring into a package a star import names, a file whose declarations could not be read and may hold the name, and for Ruby's gates the files of the namespace the lookup stops at or of a nested constant that may be inherited.
+   *  - A Go import of a package of the module whose files belong to more than one owner, which `classify` answers `absent` and the edge walk passes by, is `ambiguous` with the package's files, unless a farther candidate binds.
+   */
+  classifyUse?(candidates: readonly TargetHint[], fromFile: string, language: string): Classification;
   /**
    * The raw resolved file for a candidate hint, independent of ownership: 0 or ≥2
    * distinct files (unresolved or ambiguous) both yield undefined; exactly one file is
@@ -208,12 +227,38 @@ function rubyGate(
   return undefined;
 }
 
+/** The separators of a key's names: a namespace or package (`.`), a nested type (`+`), a C# extension method's class (`#`). */
+const SEPARATORS: ReadonlySet<string> = new Set(['.', '+', '#']);
+
+/** A key as its source writes it: a member type is written after a dot. */
+function asWritten(key: string): string {
+  return key.replaceAll('+', '.');
+}
+
+/** A key's names, each with the separator before it (none before the first). */
+function splitName(key: string): Array<{ separator: string; text: string }> {
+  const out: Array<{ separator: string; text: string }> = [];
+  let start = 0;
+  let separator = '';
+  for (let i = 0; i < key.length; i++) {
+    if (!SEPARATORS.has(key[i])) continue;
+    out.push({ separator, text: key.slice(start, i) });
+    separator = key[i];
+    start = i + 1;
+  }
+  out.push({ separator, text: key.slice(start) });
+  return out;
+}
+
+/** Marks an outcome of `examine` that the edge walk passes by, though `classifyUse` reports it (a path split between owners). */
+const PASSED = Symbol('passed by the edge walk');
+
 /** The languages that share the one JVM namespace (see symbol-table.ts). */
 const JVM_LANGUAGES: ReadonlySet<string> = new Set(['java', 'kotlin']);
 
 /** The file-level outcome of a JVM lookup, before ownership is asked: exactly one file,
  *  a real ambiguity (silence the group), or nothing in-repository. */
-type JvmOutcome = { kind: 'file'; file: string } | { kind: 'ambiguous' } | { kind: 'none' };
+type JvmOutcome = { kind: 'file'; file: string } | { kind: 'ambiguous'; files: string[] } | { kind: 'none' };
 
 /**
  * The "declarations incomplete" markers a Kotlin file declares when part of it could not be
@@ -253,7 +298,7 @@ function withinReach(files: Set<string>, fromFile: string, reach: Reachability, 
   return new Set(same.length > 0 ? same : seen.keys());
 }
 
-export function makeResolver(deps: ResolverDeps): TargetResolver {
+export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick<TargetResolver, 'classifyUse'>> {
   /** The DISTINCT defining files a dotted symbol candidate maps to, across the verbatim key
    *  AND the guarded nested-type `+`-splits. The set-level rule: 0 distinct files → absent,
    *  exactly 1 → that file, ≥2 → ambiguous (silence). Counting every defining file (not the
@@ -578,13 +623,13 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     // marker file is ambiguous, exactly as before owner collapse).
     const owner = deps.ownerIndex.ownerOf(sorted[0]);
     if (sorted.length >= 2) {
-      if (owner === undefined || sorted.some((f) => deps.ownerIndex.ownerOf(f) !== owner)) return { kind: 'ambiguous' };
+      if (owner === undefined || sorted.some((f) => deps.ownerIndex.ownerOf(f) !== owner)) return { kind: 'ambiguous', files: sorted };
     }
     for (const key of bindingKeys) {
       for (const marker of incompletenessMarkers(key)) {
         for (const f of deps.symbolTable.filesFor(language, marker)) {
           if (files.has(f) || !visible(f)) continue;
-          if (owner === undefined || deps.ownerIndex.ownerOf(f) !== owner) return { kind: 'ambiguous' };
+          if (owner === undefined || deps.ownerIndex.ownerOf(f) !== owner) return { kind: 'ambiguous', files: [...files, f].sort() };
         }
       }
     }
@@ -610,7 +655,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       const owner = deps.ownerIndex.ownerOf(f);
       if (owner === undefined) continue;
       if (sole === undefined) sole = owner;
-      else if (owner !== sole) return { kind: 'ambiguous' };
+      else if (owner !== sole) return { kind: 'ambiguous', files: sorted };
     }
     if (sole === undefined) return { kind: 'file', file: sorted[0] };
     return { kind: 'file', file: sorted.find((f) => deps.ownerIndex.ownerOf(f) === sole)! };
@@ -635,11 +680,11 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       : jvmSymbolOutcome(language, hint.specifier);
   };
 
-  const classifyJvm = (outcome: JvmOutcome): Classification => {
-    if (outcome.kind === 'ambiguous') return { kind: 'ambiguous' };
+  const classifyJvm = (outcome: JvmOutcome, told = false): Classification => {
+    if (outcome.kind === 'ambiguous') return told ? { kind: 'ambiguous', candidates: outcome.files } : { kind: 'ambiguous' };
     if (outcome.kind === 'none') return { kind: 'absent' };
     const owner = deps.ownerIndex.ownerOf(outcome.file);
-    return owner ? { kind: 'resolved', owner, resolvedFile: outcome.file } : { kind: 'absent' };
+    return owner ? { kind: 'resolved', owner, resolvedFile: outcome.file } : told ? { kind: 'absent', reason: 'unowned', resolvedFile: outcome.file } : { kind: 'absent' };
   };
 
   /**
@@ -651,16 +696,16 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
    * other declaration split across files of ONE owner name exactly one dependency target — the
    * ambiguity that must silence is between OWNERS, never between files of one owner.
    */
-  const symbolOutcome = (files: Set<string>): Classification => {
+  const symbolOutcome = (files: Set<string>, told = false): Classification => {
     if (files.size === 0) return { kind: 'absent' };
     const sorted = [...files].sort();
     if (sorted.length === 1) {
       const owner = deps.ownerIndex.ownerOf(sorted[0]);
       // Resolved-but-UNMAPPED is the non-event of an unowned target → absent (continue), never ambiguous.
-      return owner ? { kind: 'resolved', owner, resolvedFile: sorted[0] } : { kind: 'absent' };
+      return owner ? { kind: 'resolved', owner, resolvedFile: sorted[0] } : told ? { kind: 'absent', reason: 'unowned', resolvedFile: sorted[0] } : { kind: 'absent' };
     }
     const owners = new Set<string | undefined>(sorted.map((f) => deps.ownerIndex.ownerOf(f)));
-    if (owners.size !== 1 || owners.has(undefined)) return { kind: 'ambiguous' };
+    if (owners.size !== 1 || owners.has(undefined)) return told ? { kind: 'ambiguous', candidates: sorted } : { kind: 'ambiguous' };
     return { kind: 'resolved', owner: [...owners][0] as string, resolvedFile: sorted[0] };
   };
 
@@ -690,9 +735,21 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return { owner, resolvedFile: file };
   };
 
-  const classify: TargetResolver['classify'] = (hint, fromFile, language) => {
+  /** A Ruby gate's ambiguity, with the files it stands on: those of the namespace the lookup stops at, or the files that bind the name with those of every constant of its name nested in a namespace, which may be inherited. */
+  const rubyAmbiguity = (hint: Extract<TargetHint, { kind: 'symbol' }>, files: ReadonlySet<string>, told: boolean): Classification => {
+    if (!told) return { kind: 'ambiguous' };
+    const stands = files.size === 0
+      ? deps.symbolTable.filesFor('ruby', hint.rubyAnchor ?? '')
+      : [...files, ...nestedTailFiles(deps.symbolTable, 'ruby', hint.rubyInheritGuard ?? '')];
+    return { kind: 'ambiguous', candidates: [...new Set(stands)].sort() };
+  };
+
+  /**
+   * The outcome of one candidate. `told` asks for what `classifyUse` adds (see `TargetResolver`); without it this is exactly `classify`. With it, a path whose files belong to more than one owner (`explainMiss`'s `{ split }`) is answered ambiguous, marked `PASSED` because the edge walk passes it by.
+   */
+  const examine = (hint: TargetHint, fromFile: string, language: string, told: boolean): Classification => {
     const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
-    if (jvmFirst !== undefined) return classifyJvm(jvmFirst);
+    if (jvmFirst !== undefined) return classifyJvm(jvmFirst, told);
     if (hint.kind === 'symbol') {
       // Ruby: a multi-segment constant whose ROOT namespace is not itself declared in-repo
       // is reopening an EXTERNAL library (e.g. a test stub `module Rackup::Handler`) → absent,
@@ -711,9 +768,9 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
       const files = hintFiles(hint, language, fromFile);
       if (language === 'ruby') {
         const forced = rubyGate(hint, files, deps.symbolTable);
-        if (forced !== undefined) return { kind: forced };
+        if (forced !== undefined) return forced === 'ambiguous' ? rubyAmbiguity(hint, files, told) : { kind: forced };
       }
-      const outcome = symbolOutcome(files);
+      const outcome = symbolOutcome(files, told);
       return outcome.kind === 'resolved' && !takesCall(hint, files, language, fromFile) ? { kind: 'absent' } : outcome;
     }
     // Path axis (PHP/Java/TS/JS/Py/Go/Rust/C/C++): resolution maps to AT MOST ONE file,
@@ -723,10 +780,118 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     const file = deps.resolvePathToFile(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
     if (!file) {
       const fallback = jvmOutcome(hint, language, true, fromFile);
-      return fallback !== undefined ? classifyJvm(fallback) : { kind: 'absent' };
+      if (fallback !== undefined) return classifyJvm(fallback, told);
+      if (!told) return { kind: 'absent' };
+      const miss = deps.resolvePathToFile.explainMiss?.(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
+      return typeof miss === 'object' ? { kind: 'ambiguous', candidates: [...miss.split], [PASSED]: true } as Classification : { kind: 'absent' };
     }
     const owner = deps.ownerIndex.ownerOf(file);
-    return owner ? { kind: 'resolved', owner, resolvedFile: file } : { kind: 'absent' };
+    return owner ? { kind: 'resolved', owner, resolvedFile: file } : told ? { kind: 'absent', reason: 'unowned', resolvedFile: file } : { kind: 'absent' };
+  };
+
+  const classify: TargetResolver['classify'] = (hint, fromFile, language) => examine(hint, fromFile, language, false);
+
+  /** True when the repository declares `name` as a type or as a namespace some declared key lies in, or `name` is the global namespace. */
+  const inRepository = (language: string, name: string): boolean => name === '' || deps.symbolTable.has(language, name) || deps.symbolTable.hasNamespace(language, name);
+
+  /**
+   * What one reading of a written name `written` says about where the use points, when it binds nothing: `outside` when it can only bind outside the repository, `unfollowed` when it commits to a name of the repository that binds nothing, `pass` when the language reads on to the next reading. The reading is `<P><separator><written>`, `P` the level it is read at (a namespace, a type, the package of a same-package name, or nothing for the name as written), and is read as the compiler looks the name up: its first name in `P`, then each next name in what the one before named. A level the repository does not declare is a namespace from elsewhere (a using of `System.Text`, `java.lang`), unless the reading is a member type (`+`), which may be inherited. A first name the level does not hold reads on, except a dotted name as written, whose first name is then a namespace or type from elsewhere. A later name the repository does not declare leaves it; the last missing is the repository's name that binds nothing. A reading that is not `written` read at some level (an alias's target) is the repository's when its own namespace is.
+   */
+  const keyReason = (language: string, key: string, written: string): 'outside' | 'unfollowed' | 'pass' => {
+    const plain = asWritten(key);
+    const end = plain === written ? 0 : plain.endsWith(written) && SEPARATORS.has(plain[plain.length - written.length - 1]) ? plain.length - written.length - 1 : undefined;
+    if (end === undefined) {
+      const parent = Math.max(...[...SEPARATORS].map((sep) => key.lastIndexOf(sep)));
+      return inRepository(language, parent === -1 ? '' : key.slice(0, parent)) ? 'unfollowed' : 'outside';
+    }
+    const level = key.slice(0, end);
+    if (!inRepository(language, level)) return key[level.length] === '+' ? 'pass' : 'outside';
+    // The names of the reading past its level, each with the separator the key writes (a member type `+` where the written name has a dot).
+    const names = splitName(end === 0 ? key : key.slice(end + 1));
+    let name = level;
+    for (let i = 0; i < names.length; i++) {
+      name = name === '' ? names[i].text : `${name}${i === 0 ? key[level.length] : names[i].separator}${names[i].text}`;
+      if (i === names.length - 1) return i === 0 ? 'pass' : 'unfollowed';
+      if (!inRepository(language, name)) return i === 0 && level !== '' ? 'pass' : 'outside';
+    }
+    return 'pass';
+  };
+
+  /** The written name of a group of symbol readings, its member types written with dots as the source writes them (a JVM reading of a simple name in the file's package is that name): the longest run of trailing names that every plain reading ends with (a reading inside a type, a nested-only, set or attribute reading aside); undefined when they share none. */
+  const writtenName = (candidates: readonly TargetHint[]): string | undefined => {
+    const keys = candidates.flatMap((c) => (c.kind === 'symbol' && c.within === undefined && c.nestedOnly !== true && c.set === undefined && c.attribute === undefined ? [c.samePackage === true && !c.symbolKey.includes('+') ? c.symbolKey.slice(c.symbolKey.lastIndexOf('.') + 1) : asWritten(c.symbolKey)] : []));
+    if (keys.length === 0) return undefined;
+    let written = keys.reduce((a, b) => (a.length <= b.length ? a : b));
+    while (written !== '' && !keys.every((k) => k === written || (k.endsWith(written) && SEPARATORS.has(k[k.length - written.length - 1])))) {
+      const cut = splitName(written);
+      written = cut.length <= 1 ? '' : written.slice(cut[0].text.length + 1);
+    }
+    return written === '' ? undefined : written;
+  };
+
+  /** What a group of C#, Java or Kotlin symbol readings says (see `keyReason`): the first reading that does not read on decides, and a group whose readings all read on names the repository's own name. */
+  const readingsReason = (readings: readonly TargetHint[], fromFile: string, language: string): 'outside' | 'unfollowed' => {
+    const written = writtenName(readings);
+    for (const reading of readings) {
+      const reason = readingReason(reading, fromFile, language, written);
+      if (reason === 'outside' || reason === 'unfollowed') return reason;
+    }
+    return 'unfollowed';
+  };
+
+  /** What one candidate that bound nothing says of where its use points: see `TargetResolver.classifyUse`. undefined when the language's readers cannot tell. */
+  const readingReason = (hint: TargetHint, fromFile: string, language: string, written: string | undefined): 'outside' | 'unfollowed' | 'pass' | undefined => {
+    if (hint.kind === 'path') {
+      if (language === 'java') return keyReason(language, hint.isPackage === true ? `${hint.specifier}.*` : hint.specifier, hint.isPackage === true ? `${hint.specifier}.*` : hint.specifier);
+      const miss = deps.resolvePathToFile.explainMiss?.(hint.specifier, fromFile, language, hint.isPackage, deps.symbolTable, hint.callForm);
+      return typeof miss === 'string' ? miss : undefined;
+    }
+    if (language !== 'csharp' && !JVM_LANGUAGES.has(language)) return undefined;
+    if (hint.attribute !== undefined) {
+      const reasons = [readingsReason(hint.attribute.written, fromFile, language), ...(hint.attribute.suffixed === undefined ? [] : [readingsReason(hint.attribute.suffixed, fromFile, language)])];
+      return reasons.includes('outside') ? 'outside' : 'unfollowed';
+    }
+    if (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile))) return 'pass';
+    if (shadowed(language, hint.shadow, fromFile)) return 'unfollowed';
+    if (hint.within !== undefined || hint.nestedOnly === true) return 'pass';
+    if (hint.set === undefined) {
+      const reason = keyReason(language, hint.symbolKey, written ?? hint.symbolKey);
+      return reason === 'pass' && hint.onDemand !== undefined ? onDemandReason(language, hint.symbolKey, hint.onDemand) : reason;
+    }
+    // The readings of one level (CS0104): one that commits to a name of the repository (an alias of a namespace of it) decides, else one that can only bind elsewhere.
+    const reasons = hint.set.filter((m) => m.nestedOnly !== true).map((m) => keyReason(language, m.symbolKey, written ?? m.symbolKey));
+    return reasons.includes('unfollowed') ? 'unfollowed' : reasons.includes('outside') ? 'outside' : 'pass';
+  };
+
+  /** What the on-demand imports of a Java or Kotlin file say of a simple name its package does not declare (`TargetHint.onDemand`), read after the package and before Kotlin's default imports: a starred package or type of the repository that declares the name makes the use the repository's, though the readers bind it through the package alone; else a starred package from elsewhere can give it, and the use leaves the repository. */
+  const onDemandReason = (language: string, key: string, onDemand: readonly string[]): 'outside' | 'unfollowed' | 'pass' => {
+    const name = key.slice(key.lastIndexOf('.') + 1);
+    if (onDemand.some((pkg) => symbolFiles(language, `${pkg}.${name}`).size > 0)) return 'unfollowed';
+    // Else an on-demand import of a package the repository declares nothing in (a library's, `java.util`) can give the name.
+    return onDemand.some((pkg) => !inRepository(language, pkg)) ? 'outside' : 'pass';
+  };
+
+  const classifyUse = (candidates: readonly TargetHint[], fromFile: string, language: string): Classification => {
+    const written = writtenName(candidates);
+    let told: Classification | undefined;
+    let readOn = false;
+    for (const cand of candidates) {
+      const outcome = examine(cand, fromFile, language, true);
+      if (PASSED in outcome) {
+        told ??= { kind: 'ambiguous', candidates: (outcome as { candidates: string[] }).candidates };
+        continue;
+      }
+      if (outcome.kind !== 'absent') return outcome;
+      if (told !== undefined) continue;
+      if (outcome.reason !== undefined) {
+        told = outcome;
+        continue;
+      }
+      const reason = readingReason(cand, fromFile, language, written);
+      if (reason === 'pass') readOn = true;
+      else if (reason !== undefined) told = { kind: 'absent', reason };
+    }
+    return told ?? (readOn ? { kind: 'absent', reason: 'unfollowed' } : { kind: 'absent' });
   };
 
   const resolveFile: TargetResolver['resolveFile'] = (hint, fromFile, language) => {
@@ -744,5 +909,5 @@ export function makeResolver(deps: ResolverDeps): TargetResolver {
     return fallback?.kind === 'file' ? fallback.file : undefined;
   };
 
-  return { resolve, classify, resolveFile };
+  return { resolve, classify, classifyUse, resolveFile };
 }

@@ -10,7 +10,7 @@ function namespaceOf(language) {
 }
 export class SymbolTable {
     defs = new Map(); // `${namespace}\0${symbolKey}` → set of defining files
-    nestedTails = new Set(); // `${namespace}\0${lastSegment}` of every `A::B`-style key
+    nestedTails = new Map(); // `${namespace}\0${lastSegment}` of every `A::B`-style key → the files declaring such a key
     /** `${namespace}\0${package}` → files declaring a DIRECT top-level member of that package (a key
      *  `<package>.<Name>` whose last segment carries no `+` nested-type separator). */
     packageMembers = new Map();
@@ -51,8 +51,15 @@ export class SymbolTable {
         }
         s.add(file);
         const sep = symbolKey.lastIndexOf('::');
-        if (sep !== -1)
-            this.nestedTails.add(this.key(language, symbolKey.slice(sep + 2)));
+        if (sep !== -1) {
+            const tail = this.key(language, symbolKey.slice(sep + 2));
+            let tailFiles = this.nestedTails.get(tail);
+            if (!tailFiles) {
+                tailFiles = new Set();
+                this.nestedTails.set(tail, tailFiles);
+            }
+            tailFiles.add(file);
+        }
         const plus = symbolKey.indexOf('+');
         const typePart = plus === -1 ? symbolKey : symbolKey.slice(0, plus);
         for (let i = typePart.indexOf('.'); i !== -1; i = typePart.indexOf('.', i + 1))
@@ -145,6 +152,10 @@ export class SymbolTable {
         const s = this.packageMembers.get(this.key(language, packageFqn));
         return s ? [...s] : [];
     }
+}
+/** The files declaring a `::`-qualified key whose last segment is `name` (see `SymbolTable.hasNestedTail`). Internal to Runes, like `declarationCount`. */
+export function nestedTailFiles(table, language, name) {
+    return [...(table['nestedTails'].get(table['key'](language, name)) ?? [])];
 }
 /** How many declarations `table` has taken so far. An answer read from the table, kept by a resolver, holds while this has not moved. Internal to Runes: the package exports `SymbolTable` alone. */
 export function declarationCount(table) {

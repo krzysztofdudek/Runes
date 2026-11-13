@@ -39,7 +39,11 @@ export interface ResolvePathOptions {
  *  the surviving, non-excluded, fully enforced candidate.
  *
  *  The function it returns takes the pass's `SymbolTable` as an optional fifth argument, which `makeResolver` passes. Rust reads it for two questions, both answered by what the Rust extractor declares from each file's parse tree: whether a crate-root file binds a name at its top level, which a `crate::` path, a path into a dependency and an edition 2015 `use` path from the crate root need (`rustTopLevelItemKey`, `rustExternNameKey`), and which files a file declares as its modules by name alone, which tells the crate roots that compile a file where a package has several in one tree (`rustModuleFileKey`). Without the table no parse tree is at hand: an edition 2015 `use` path stays silent, a `crate::` path or a path into a dependency binds the root file when the file's text, with comments blanked, declares the name anywhere (`rustFileDeclares`, which a word in a string or an item nested in a function also satisfies), and no module is known to be declared, so no root is preferred. */
-export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined;
+export declare function makeResolvePathToFile(projectRoot: string, ownerOf?: (repoRelPosix: string) => string | undefined, isExcluded?: (repoRelPosix: string) => boolean, options?: ResolvePathOptions): ((specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined) & {
+    explainMiss: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => 'outside' | 'unfollowed' | {
+        split: string[];
+    } | undefined;
+};
 /** Which Cargo target a package-relative `.rs` path belongs to, following Cargo's target
  *  auto-discovery. `srcDir` is the target's module-tree root and `rootFiles` its crate-root
  *  files in probe order (both package-relative); `fileIsRoot` says whether `rel` IS the

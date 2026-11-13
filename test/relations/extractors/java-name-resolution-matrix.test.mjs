@@ -69,6 +69,7 @@ describe('MATRIX — static imports: the declaring TYPE is the edge, never a mem
 describe('MATRIX — wildcard / on-demand type import: package hint → owner-set collapse', () => {
   it('java-wildcard-one-owner-edge', () => runCase('java-wildcard-one-owner-edge'));
   it('java-wildcard-zero-owner-silence', () => runCase('java-wildcard-zero-owner-silence'));
+  it('java-wildcard-split-owners-candidates-silence', () => runCase('java-wildcard-split-owners-candidates-silence'));
   it('java-two-wildcards-each-own-merit-edge', () => runCase('java-two-wildcards-each-own-merit-edge'));
 });
 
@@ -80,6 +81,8 @@ describe('MATRIX — across source roots and into Kotlin: JVM symbol-table fallb
   it('java-multi-module-sibling-import-edge', () => runCase('java-multi-module-sibling-import-edge'));
   it('java-multi-module-wildcard-edge', () => runCase('java-multi-module-wildcard-edge'));
   it('java-multi-module-duplicate-fqn-silence', () => runCase('java-multi-module-duplicate-fqn-silence'));
+  it('java-duplicate-fqn-candidates-silence', () => runCase('java-duplicate-fqn-candidates-silence'));
+  it('java-unresolved-outside-or-unfollowed-silence', () => runCase('java-unresolved-outside-or-unfollowed-silence'));
   it('java-test-root-to-main-root-edge', () => runCase('java-test-root-to-main-root-edge'));
   it('java-imports-kotlin-class-edge', () => runCase('java-imports-kotlin-class-edge'));
   it('java-imports-kotlin-file-facade-edge', () => runCase('java-imports-kotlin-file-facade-edge'));
@@ -90,6 +93,8 @@ describe('MATRIX — java.lang / stdlib / external / vendored: fail-to-find sile
   it('java-jdk-import-silence', () => runCase('java-jdk-import-silence'));
   it('java-explicit-stdlib-import-silence', () => runCase('java-explicit-stdlib-import-silence'));
   it('java-bare-autoimport-usage-silence', () => runCase('java-bare-autoimport-usage-silence'));
+  it('java-standard-library-name-outside-silence', () => runCase('java-standard-library-name-outside-silence'));
+  it('java-on-demand-library-name-outside-silence', () => runCase('java-on-demand-library-name-outside-silence'));
   it('java-meta-annotation-usage-silence', () => runCase('java-meta-annotation-usage-silence'));
   it('java-external-library-import-silence', () => runCase('java-external-library-import-silence'));
   it('java-vendored-jdk-mapped-edge', () => runCase('java-vendored-jdk-mapped-edge'));
@@ -161,6 +166,8 @@ describe('MATRIX — same-package references without an import', () => {
   it('java-same-package-kotlin-class-edge', () => runCase('java-same-package-kotlin-class-edge'));
   it('java-same-package-unnamed-package-silence', () => runCase('java-same-package-unnamed-package-silence'));
   it('java-same-package-qualified-and-annotation-edge', () => runCase('java-same-package-qualified-and-annotation-edge'));
+  it('java-same-package-qualified-nested-type-edge', () => runCase('java-same-package-qualified-nested-type-edge'));
+  it('java-qualified-member-not-in-outer-file-unfollowed-edge', () => runCase('java-qualified-member-not-in-outer-file-unfollowed-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

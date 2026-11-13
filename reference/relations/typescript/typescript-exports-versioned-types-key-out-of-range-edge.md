@@ -3,7 +3,7 @@ id: typescript-exports-versioned-types-key-out-of-range-edge
 language: typescript
 category: import
 expectation: edge
-cites: "TypeScript 6.0.3 isApplicableVersionedTypesKey: a `types@<range>` key is entered only when the compiler's version satisfies the range, and is passed over otherwise"
+cites: "TypeScript 7.0.2 isApplicableVersionedTypesKey: a `types@<range>` key is entered only when the compiler's version satisfies the range, and is passed over otherwise"
 ---
 
 ## Rule
@@ -52,4 +52,4 @@ console.log(value);
 
 ## Why
 
-`loadModuleFromTargetExportOrImport` enters a versioned key only when `isApplicableVersionedTypesKey` holds, that is when the range accepts the compiler's major and minor version. TypeScript 6.0 fails `>=99`, so the next key, `types`, binds.
+`loadModuleFromTargetExportOrImport` enters a versioned key only when `isApplicableVersionedTypesKey` holds, that is when the range accepts the compiler's major and minor version. TypeScript 7.0 fails `>=99`, so the next key, `types`, binds.

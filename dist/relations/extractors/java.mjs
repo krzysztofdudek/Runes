@@ -1,7 +1,7 @@
 import { walk } from '../../ast/walk.mjs';
 import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
-import { isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
+import { defaultImport, isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
 /**
  * Java dependency extractor.
  *
@@ -289,7 +289,12 @@ function samePackageCandidates(scope, name, around) {
             return undefined;
     for (let s = around.supertypes; s !== null; s = s.outer)
         supertypeLists.push(s.names);
-    return samePackageGroup(scope, name, supertypeLists);
+    const group = samePackageGroup(scope, name, supertypeLists);
+    // The implicit on-demand import of java.lang (JLS §7.3) comes after the package: its reading binds only a repository that declares java.lang, and otherwise says the name is the standard library's.
+    const implicit = defaultImport('java', name);
+    if (group !== undefined && implicit !== undefined)
+        group.push({ kind: 'symbol', symbolKey: implicit });
+    return group;
 }
 const OUTSIDE = { typeParameters: null, supertypes: null, entering: null };
 /** The scope around every node of a compilation unit, by node id. */
@@ -393,6 +398,24 @@ function uses(file) {
         seenSym.add(dedupKey);
         out.push(single({ kind: 'symbol', symbolKey }, 'type-ref', line));
     };
+    // A qualified type led by a simple name of the file's package (`Outer.Inner`, JLS §6.5.5.2) names a member type of what that name names: each reading of the name with the rest as its member types (`<package>.Outer+Inner`), then the name as written. False when the first name is no such name (a package, an import, a type of the file), which is read as written.
+    const emitQualified = (node) => {
+        const names = node.text.split('.');
+        if (scope === undefined || names.length < 2 || !names.every((n) => /^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(n)) || !isCapitalised(names[0]))
+            return false;
+        const head = samePackageCandidates(scope, names[0], scopes.get(node.id));
+        if (head === undefined)
+            return false;
+        const tail = names.slice(1).join('+');
+        const line = node.startPosition.row + 1;
+        const dedupKey = `${node.text} ${line}`;
+        if (seenSym.has(dedupKey))
+            return true;
+        seenSym.add(dedupKey);
+        const members = head.map((h) => (h.kind === 'symbol' && h.samePackage === true ? { kind: 'symbol', symbolKey: `${h.symbolKey}+${tail}`, samePackage: true } : { kind: 'symbol', symbolKey: `${h.symbolKey}+${tail}` }));
+        out.push({ candidates: [...members, { kind: 'symbol', symbolKey: node.text }], kind: 'type-ref', line });
+        return true;
+    };
     walkWithParent(file.tree.rootNode, (node, parent) => {
         if (node.type === 'type_identifier') {
             typeIdentifier(node, parent());
@@ -406,7 +429,8 @@ function uses(file) {
         // complete dotted FQN; inner ones are its `scope` segments. Type positions only — an
         // expression-position dotted access is a field_access chain, never this node.
         if (node.type === 'scoped_type_identifier' && parent()?.type !== 'scoped_type_identifier') {
-            emitSymbol(node.text, node);
+            if (!emitQualified(node))
+                emitSymbol(node.text, node);
             return undefined;
         }
         // `module-info.java`: emit the TYPE references of `uses` / `provides … with …`
@@ -512,7 +536,7 @@ function declarations(file) {
 }
 export const javaExtractor = {
     languages: new Set(['java']),
-    rev: 4,
+    rev: 7,
     declarations,
     uses,
 };

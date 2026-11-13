@@ -709,3 +709,56 @@ describe('kotlin extractor — same-package references (uses())', () => {
     expect(await keysOf('class T {\n  fun m(o: Other) {\n    lower()\n    o.Member()\n    this@T.go()\n  }\n}')).toEqual(['com.a.Other']);
   });
 });
+
+// Kotlin imports the names of kotlin.*, kotlin.annotation.*, kotlin.collections.*, kotlin.comparisons.*, kotlin.io.*, kotlin.ranges.*, kotlin.sequences.*, kotlin.text.* and, on the JVM, java.lang.* and kotlin.jvm.* into every file, after the file's own package: a simple name of one of them ends its group with that reading, so a use of it reads as outside the repository.
+describe('kotlin extractor — a simple name Kotlin imports by default', () => {
+  const groupsOf = async (code) => (await run(code)).uses.map((u) => ({ line: u.line, keys: u.candidates.map((c) => c.symbolKey), flags: u.candidates.map((c) => c.samePackage === true) }));
+  it('ends the group of a default-imported name with its default reading, after the package, and adds none to another name', async () => {
+    const g = await groupsOf('package com.a\n\nclass T(val s: String, val l: List<Int>, val r: Regex, val t: Thread, val o: Owner)\n');
+    const of = (name) => g.find((x) => x.keys.includes(`com.a.${name}`))?.keys;
+    expect(g.find((x) => x.keys.includes('com.a.String'))).toEqual({ line: 3, keys: ['com.a.String', 'kotlin.String'], flags: [true, false] });
+    expect(of('List')).toEqual(['com.a.List', 'kotlin.collections.List']);
+    expect(of('Int')).toEqual(['com.a.Int', 'kotlin.Int']);
+    expect(of('Regex')).toEqual(['com.a.Regex', 'kotlin.text.Regex']);
+    expect(of('Thread')).toEqual(['com.a.Thread', 'java.lang.Thread']);
+    expect(of('Owner')).toEqual(['com.a.Owner']);
+  });
+  it('answers outside for a default-imported name and unfollowed for a name of the package that binds nothing; classify answers as before', async () => {
+    const st = new SymbolTable();
+    st.declare('kotlin', 'com.a.Order', 'k/a/Order.kt');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run('package com.a\n\nclass T(val s: String, val m: Missing)\n');
+    const answer = (name) => r.classifyUse(uses.find((u) => u.candidates[0].symbolKey === `com.a.${name}`).candidates, 'k/b/T.kt', 'kotlin');
+    expect(answer('String')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(answer('Missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(r.classify({ kind: 'symbol', symbolKey: 'kotlin.String' }, 'k/b/T.kt', 'kotlin')).toEqual({ kind: 'absent' });
+  });
+});
+
+// Kotlin reads a star import before its default imports: a simple name a star import of a repository package declares is the repository's, not the standard library's, even where a default package holds the same name.
+describe('kotlin extractor — a star import of the repository comes before the default imports', () => {
+  it('answers unfollowed, not outside, for Result and Pair that a starred package of the repository declares; Charsets and HexFormat are default names', async () => {
+    const st = new SymbolTable();
+    st.declare('kotlin', 'com.acme.model.Result', 'k/model/Result.kt');
+    st.declare('kotlin', 'com.acme.model.Pair', 'k/model/Pair.kt');
+    st.declare('kotlin', 'com.acme.app.Order', 'k/app/Order.kt');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run('package com.acme.app\n\nimport com.acme.model.*\n\nclass T(val r: Result<Int>?, val p: Pair<Int, Int>?, val c: Charsets?, val h: HexFormat?)\n');
+    const answer = (name) => r.classifyUse(uses.find((u) => u.candidates[0].symbolKey === `com.acme.app.${name}`).candidates, 'k/app/T.kt', 'kotlin');
+    expect(answer('Result')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(answer('Pair')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(answer('Charsets')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(answer('HexFormat')).toEqual({ kind: 'absent', reason: 'outside' });
+    for (const name of ['Result', 'Pair']) expect(r.classify(uses.find((u) => u.candidates[0].symbolKey === `com.acme.app.${name}`).candidates[0], 'k/app/T.kt', 'kotlin')).toEqual({ kind: 'absent' });
+  });
+});
+
+describe('kotlin extractor — a name a star import of a library can give', () => {
+  it('answers outside, where a name no starred package can give stays unfollowed', async () => {
+    const st = new SymbolTable();
+    st.declare('kotlin', 'com.acme.app.Order', 'k/app/Order.kt');
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const { uses } = await run('package com.acme.app\n\nimport kotlinx.coroutines.*\n\nclass T(val j: Job)\n');
+    expect(r.classifyUse(uses.find((u) => u.candidates[0].symbolKey === 'com.acme.app.Job').candidates, 'k/app/T.kt', 'kotlin')).toEqual({ kind: 'absent', reason: 'outside' });
+  });
+});

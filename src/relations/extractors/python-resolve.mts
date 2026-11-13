@@ -31,7 +31,7 @@ export function makePythonResolver(
   isExcluded?: (repoRelPosix: string) => boolean,
   projectRoots?: () => readonly string[],
   listDir?: (repoRelPosix: string) => readonly string[] | undefined,
-): (specifier: string, fromFile: string) => string | undefined {
+): ((specifier: string, fromFile: string) => string | undefined) & { explain(specifier: string, fromFile: string): 'outside' | 'unfollowed' } {
   const known = new Map<string, boolean>();
   const has = (repoRelPosix: string): boolean => {
     let found = known.get(repoRelPosix);
@@ -119,8 +119,23 @@ export function makePythonResolver(
       return matches;
     },
   };
-  return (specifier, fromFile) =>
+  const resolve = (specifier: string, fromFile: string): string | undefined =>
     specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : resolveAbsolute(specifier, fromFile, ctx);
+  // Why an import bound no module: a relative one, or an absolute one whose top-level name a root it searches holds (a package, a module, a namespace directory), names a module of the repository; any other leaves it (the standard library, an installed package).
+  const explain = (specifier: string, fromFile: string): 'outside' | 'unfollowed' => {
+    if (specifier.startsWith('.')) return 'unfollowed';
+    const top = specifier.split('.').find((s) => s.length > 0) ?? '';
+    const holds = (root: string): boolean =>
+      ctx.exists(joinUnder(root, `${top}/__init__.py`)) || ctx.exists(joinUnder(root, `${top}.py`)) || namesIn(root)?.has(top.normalize('NFC')) === true;
+    const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(top);
+    const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+    for (const dir of ancestorDirs(ownDir)) {
+      const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
+      if (isRoot && !ctx.insideRegularPackage(dir) && holds(dir)) return 'unfollowed';
+    }
+    return !stdlibName && discovered().usable.some(holds) ? 'unfollowed' : 'outside';
+  };
+  return Object.assign(resolve, { explain });
 }
 
 /** The discovered project roots: all of them (an ancestor directory strictly below any is no root), and the usable ones, outside every regular package. */

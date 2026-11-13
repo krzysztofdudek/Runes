@@ -160,4 +160,5 @@ describe('MATRIX — require/include (file-relative via __DIR__/dirname → EDGE
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — grammar gaps that must not cost an edge', () => {
   it('php-84-asymmetric-promotion-edge', () => runCase('php-84-asymmetric-promotion-edge'));
+  it('php-unresolved-outside-or-unfollowed-silence', () => runCase('php-unresolved-outside-or-unfollowed-silence'));
 });

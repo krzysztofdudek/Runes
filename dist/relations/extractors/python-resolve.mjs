@@ -108,7 +108,23 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
             return matches;
         },
     };
-    return (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : resolveAbsolute(specifier, fromFile, ctx);
+    const resolve = (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : resolveAbsolute(specifier, fromFile, ctx);
+    // Why an import bound no module: a relative one, or an absolute one whose top-level name a root it searches holds (a package, a module, a namespace directory), names a module of the repository; any other leaves it (the standard library, an installed package).
+    const explain = (specifier, fromFile) => {
+        if (specifier.startsWith('.'))
+            return 'unfollowed';
+        const top = specifier.split('.').find((s) => s.length > 0) ?? '';
+        const holds = (root) => ctx.exists(joinUnder(root, `${top}/__init__.py`)) || ctx.exists(joinUnder(root, `${top}.py`)) || namesIn(root)?.has(top.normalize('NFC')) === true;
+        const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(top);
+        const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+        for (const dir of ancestorDirs(ownDir)) {
+            const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
+            if (isRoot && !ctx.insideRegularPackage(dir) && holds(dir))
+                return 'unfollowed';
+        }
+        return !stdlibName && discovered().usable.some(holds) ? 'unfollowed' : 'outside';
+    };
+    return Object.assign(resolve, { explain });
 }
 function emptyMatches() {
     return { exact: new Set(), parentPackages: new Set(), parentModules: new Set() };

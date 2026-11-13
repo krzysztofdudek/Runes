@@ -6,7 +6,7 @@ import path from 'node:path';
 import {
   resolveTsPath, makeTsResolveDeps, parseJsonc,
 } from '../../helpers/internal/relations.mjs';
-import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile, listedFileView } from '@chrisdudek/runes/relations';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([
@@ -200,6 +200,20 @@ describe('resolveTsPath — packages', () => {
       'packages/b/index.ts': '',
     });
     expect(r('#dep', 'src/a.ts')).toBe('packages/b/index.ts');
+  });
+  it('takes a package.json imports target as written: a target without an extension names that file and nothing beside it', () => {
+    const r = project({
+      'packages/app/package.json': '{ "name": "app", "imports": { "#u/*": "./src/u/*", "#w/*": "./src/u/*.js", "#d": "./src/u", "#t": "./src/t.js" } }',
+      'packages/app/src/u/thing.js': '',
+      'packages/app/src/u/index.js': '',
+      'packages/app/src/t.ts': '',
+    });
+    expect(r('#u/thing', 'packages/app/use.js')).toBeUndefined();
+    expect(r('#w/thing', 'packages/app/use.js')).toBe('packages/app/src/u/thing.js');
+    expect(r('#d', 'packages/app/use.js')).toBeUndefined();
+    expect(r('#t', 'packages/app/use.js')).toBe('packages/app/src/t.ts');
+    const up = project({ 'app/package.json': '{ "name": "app", "imports": { "#out": "./../../out.js" } }', 'out.js': '' });
+    expect(up('#out', 'app/use.js')).toBeUndefined();
   });
   it('root-absolute resolves from the package root and is silent without one', () => {
     const r = project({ 'web/package.json': '{}', 'web/src/x.ts': '', 'src/x.ts': '' });
@@ -542,12 +556,12 @@ describe('resolveTsPath — a versioned types key is entered when the compiler\'
     'app/tsconfig.json': '{ "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" } }',
   })('lib', 'app/a.ts');
   it('enters a key the version satisfies', () => {
-    for (const range of ['>=5', '>=6.0', '>5.9', '<=6', '<7', '=6.0', '6.0', '6', '6.x', '6.*', '5 - 6', '5.1 - 6.0', '>=4.7 <7', '<5 || >=6', '~6.0', '^6.0', '>=6.0.0-0', 'x', '*', '']) {
+    for (const range of ['>=5', '>=7', '>=7.0', '>6.9', '<=7', '<8', '=7.0', '7.0', '7', '7.0.2', '>=7.0.2', '7.x', '7.*', '6 - 7', '6.1 - 7.0', '>=4.7 <8', '<5 || >=7', '~7.0', '^7.0', '>=7.0.0-0', 'x', '*', '']) {
       expect(resolveKey(`types@${range}`), range).toBe('lib/ranged.d.ts');
     }
   });
   it('skips a key the version fails, or whose range does not parse', () => {
-    for (const range of ['>=99', '>6.0', '<6.0', '<=5.9', '=5', '5.x', '7 - 8', '>=7 <8', '<5 || >=7', '~5.9', '^7.0', 'nonsense', '>=', '>=1.2.3.4', '>=a.b']) {
+    for (const range of ['>=99', '<7', '>7.0', '<7.0', '<=6.9', '=6', '6.x', '6.0.3', '7.0.3', '>=7.0.3', '8 - 9', '>=8 <9', '<5 || >=8', '~6.0', '^8.0', 'nonsense', '>=', '>=1.2.3.4', '>=a.b']) {
       expect(resolveKey(`types@${range}`), range).toBe('lib/plain.d.ts');
     }
   });
@@ -1504,6 +1518,26 @@ describe('resolveTsPath — a package entry under outDir that is not in the repo
     }
     const committed = project(pkg({ main: './dist/index.js' }, built, { 'packages/core/dist/index.js': '' }));
     expect(committed('@acme/core', 'packages/app/a.ts')).toBe('packages/core/dist/index.js');
+  });
+  it('reads rootDir, outDir and declarationDir the same with or without a trailing slash, a leading ./ or a doubled slash', () => {
+    const spellings = (dir) => [dir, `${dir}/`, `./${dir}`, `./${dir}/`, `.//${dir.replace('/', '//')}//`];
+    const answers = new Set();
+    for (const rootDir of spellings('src')) {
+      for (const outDir of spellings('dist/js')) {
+        for (const declarationDir of [undefined, ...spellings('dist/types')]) {
+          const compilerOptions = { rootDir, outDir, declaration: true, ...(declarationDir === undefined ? {} : { declarationDir }) };
+          const types = declarationDir === undefined ? './dist/js/index.d.ts' : './dist/types/index.d.ts';
+          const files = pkg({ exports: { '.': { types, default: './dist/js/index.js' } } }, { compilerOptions });
+          const contents = new Map(Object.entries(files));
+          const resolve = makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) });
+          const label = JSON.stringify(compilerOptions);
+          expect(resolve('@acme/core', 'packages/app/a.ts', 'typescript', true), label).toBe('packages/core/src/index.ts');
+          expect(resolve('@acme/core', 'packages/app/a.ts', 'typescript', true, undefined, 'require'), label).toBe('packages/core/src/index.ts');
+          answers.add(resolve('@acme/core', 'packages/app/a.ts', 'typescript', true));
+        }
+      }
+    }
+    expect([...answers]).toEqual(['packages/core/src/index.ts']);
   });
   it('gives the same answer when the output is on disk and the caller excludes it', () => {
     const files = pkg({ main: './dist/index.js', types: './dist/index.d.ts' }, built, { 'packages/core/dist/index.js': '', 'packages/core/dist/index.d.ts': '' });

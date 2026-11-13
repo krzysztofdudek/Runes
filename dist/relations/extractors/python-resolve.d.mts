@@ -15,4 +15,6 @@ export declare function resolvePythonModule(specifier: string, fromFile: string,
  *
  * `listDir`, when supplied, lists the names directly inside a directory (undefined when it cannot be listed), and every path `exists` accepts must be spelled with names those listings give. Each directory is then listed at most once, and an import probes only the discovered roots that hold the path of its parent module (`a/b` as a directory or `a/b.py` for `a.b.c`, `a` for `a`): an external library such as `requests` probes none, and `airflow.models.dag` probes the one distribution that holds `airflow/models` although every distribution holds `airflow/`. Without it every discovered root is probed, with the same answers.
  */
-export declare function makePythonResolver(exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly string[], listDir?: (repoRelPosix: string) => readonly string[] | undefined): (specifier: string, fromFile: string) => string | undefined;
+export declare function makePythonResolver(exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly string[], listDir?: (repoRelPosix: string) => readonly string[] | undefined): ((specifier: string, fromFile: string) => string | undefined) & {
+    explain(specifier: string, fromFile: string): 'outside' | 'unfollowed';
+};

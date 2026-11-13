@@ -5,7 +5,7 @@ import fs, { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 
-import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile, listedFileView, SymbolTable } from '@chrisdudek/runes/relations';
 
 // Unit coverage for the production resolvePathToFile dispatcher: it must route
 // TS-family languages through resolveTsPath against on-disk files, and return
@@ -520,5 +520,129 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(resolved[4]).toBe('proj1/src/pkg1/m1.py');
     // today's cost was about six probes per discovered root for every import (60 × 900 × 6); bounded here by a constant per import and per project
     expect(probes).toBeLessThan(10 * (calls.length + projects));
+  });
+});
+
+// Why a path bound no file, which `makeResolver`'s `classifyUse` reads: a path that leaves the repository (`outside`) and one that names a place of it binding nothing (`unfollowed`), per language; undefined where the readers cannot say.
+describe('makeResolvePathToFile — explainMiss tells a path that leaves the repository from one that binds nothing in it', () => {
+  const resolverOf = (files) => {
+    const contents = new Map(Object.entries(files));
+    return makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) });
+  };
+  it('TypeScript and JavaScript: packages and built-ins leave it; paths, aliases, the baseUrl tree, # imports and its own packages are the repository', () => {
+    const r = resolverOf({
+      'package.json': '{ "name": "root", "workspaces": ["packages/*"], "imports": { "#lodash": "lodash", "#own": "./src/own.ts", "#both": ["lodash", "./src/x.ts"] } }',
+      'packages/lib/package.json': '{ "name": "@acme/lib", "main": "./index.ts" }',
+      'tsconfig.json': '{ "compilerOptions": { "baseUrl": "./src", "paths": { "@/*": ["./src/*"], "~cfg": ["./cfg.ts"], "*": ["./types/*"] } } }',
+      'src/components/button.ts': '',
+      'src/util.ts': '',
+      'app/tsconfig.json': '{ "extends": "./missing-base.json" }',
+    });
+    const why = (spec, from = 'src/main.ts') => r.explainMiss(spec, from, 'typescript');
+    expect(why('react')).toBe('outside');
+    expect(why('@scope/pkg/sub')).toBe('outside');
+    expect(why('node:fs')).toBe('outside');
+    expect(why('#lodash')).toBe('outside');
+    expect(why('./missing')).toBe('unfollowed');
+    expect(why('/public/x')).toBe('unfollowed');
+    expect(why('#own')).toBe('unfollowed');
+    expect(why('#both')).toBe('unfollowed');
+    expect(why('#unknown')).toBe('unfollowed');
+    expect(why('@/gone')).toBe('unfollowed');
+    expect(why('~cfg')).toBe('unfollowed');
+    expect(why('components/missing')).toBe('unfollowed');
+    expect(why('util/x')).toBe('unfollowed');
+    expect(why('@acme/lib/deep')).toBe('unfollowed');
+    expect(why('?raw')).toBeUndefined();
+    expect(why('react', 'app/main.ts')).toBeUndefined();
+    expect(r.explainMiss('react', 'src/main.js', 'javascript')).toBe('outside');
+    const noPackage = resolverOf({ 'src/a.ts': '' });
+    expect(noPackage.explainMiss('#x', 'src/a.ts', 'typescript')).toBe('unfollowed');
+  });
+  it('Python: the standard library and installed packages leave it; a relative import and the project packages are the repository', () => {
+    const r = resolverOf({
+      'mypkg/__init__.py': '',
+      'mypkg/core.py': '',
+      'single.py': '',
+      'nsdir/thing.py': '',
+      'lib/pyproject.toml': '',
+      'lib/src/libpkg/__init__.py': '',
+      'tests/test_x.py': '',
+    });
+    const why = (spec, from = 'mypkg/core.py') => r.explainMiss(spec, from, 'python');
+    expect(why('os')).toBe('outside');
+    expect(why('requests.adapters')).toBe('outside');
+    expect(why('.missing')).toBe('unfollowed');
+    expect(why('mypkg.gone.thing')).toBe('unfollowed');
+    expect(why('single.gone')).toBe('unfollowed');
+    expect(why('nsdir.gone')).toBe('unfollowed');
+    expect(why('libpkg.gone', 'tests/test_x.py')).toBe('unfollowed');
+  });
+  it('PHP: a name under a prefix of a Composer map is the repository, any other name leaves it, and without a map nothing is told', () => {
+    const r = resolverOf({
+      'composer.json': '{ "autoload": { "psr-4": { "App\\\\": "src/", "": "fallback/" }, "psr-0": { "Legacy_": "legacy/" } } }',
+      'packages/tool/composer.json': '{ "autoload": { "psr-4": { "Tool\\\\": "src/" } } }',
+      'src/Service.php': '',
+    });
+    const why = (spec, from = 'src/Service.php') => r.explainMiss(spec, from, 'php');
+    expect(why('Symfony\\Component\\Console\\Command')).toBe('outside');
+    expect(why('\\App\\Generated\\Proxy')).toBe('unfollowed');
+    expect(why('Legacy_Thing')).toBe('unfollowed');
+    expect(why('Tool\\Missing')).toBe('unfollowed');
+    expect(why('../lib/helpers.php')).toBe('unfollowed');
+    const none = resolverOf({ 'a.php': '' });
+    expect(none.explainMiss('App\\X', 'a.php', 'php')).toBeUndefined();
+  });
+  it('Rust: crates from elsewhere leave it; crate, self, super, the own crate, path dependencies and crate-root items are the repository', () => {
+    const r = resolverOf({
+      'Cargo.toml': '[package]\nname = "app"\nedition = "2021"\n\n[dependencies]\ncore_lib = { path = "core_lib" }\nserde = "1"\n',
+      'src/main.rs': '',
+      'src/lib.rs': '',
+      'core_lib/Cargo.toml': '[package]\nname = "core_lib"\nedition = "2021"\n',
+      'core_lib/src/lib.rs': '',
+      'old/Cargo.toml': '[package]\nname = "old"\n',
+      'old/src/lib.rs': 'pub mod util;\n',
+    });
+    const why = (spec, from = 'src/main.rs') => r.explainMiss(spec, from, 'rust');
+    expect(why('std::fmt::Display')).toBe('outside');
+    expect(why('serde::Serialize')).toBe('outside');
+    expect(why('extern::serde')).toBe('outside');
+    expect(why('crate::made::Thing')).toBe('unfollowed');
+    expect(why('self::x')).toBe('unfollowed');
+    expect(why('super::x')).toBe('unfollowed');
+    expect(why('app::gone')).toBe('unfollowed');
+    expect(why('core_lib::gone')).toBe('unfollowed');
+    expect(why('extern::core_lib::gone')).toBe('unfollowed');
+    expect(why('use::1::<block>::x::y')).toBe('unfollowed');
+    expect(why('use::1::serde::serde::de')).toBe('outside');
+    expect(why('use::1::crate::m::m::x')).toBe('unfollowed');
+    expect(why('use::x::y')).toBeUndefined();
+    expect(why('extern')).toBeUndefined();
+    expect(why('')).toBeUndefined();
+    expect(resolverOf({ 'loose/plain.rs': '' }).explainMiss('std::fmt', 'loose/plain.rs', 'rust')).toBeUndefined();
+    // Edition 2015: a path starts at the crate root, whose top-level items the pass's table names.
+    const table = new SymbolTable();
+    table.declare('rust', 'item:util', 'old/src/lib.rs');
+    const old = (spec) => r.explainMiss(spec, 'old/src/lib.rs', 'rust', false, table);
+    expect(old('util::gone')).toBe('unfollowed');
+    expect(old('other::gone')).toBe('outside');
+    expect(old('std::fmt')).toBe('outside');
+    expect(old('extern::x::as::util::gone')).toBe('unfollowed');
+    expect(old('use::1::util::util::gone')).toBe('unfollowed');
+  });
+  it('Go: packages outside the module leave it; a package of the module that binds nothing is the repository; no module tells nothing', () => {
+    const r = resolverOf({ 'go.mod': 'module example.com/m\n', 'empty/README.md': '', 'domain/order.go': '', 'loose/x.go': '' });
+    const why = (spec, from = 'domain/order.go') => r.explainMiss(spec, from, 'go');
+    expect(why('fmt')).toBe('outside');
+    expect(why('example.com/other/x')).toBe('outside');
+    expect(why('example.com/m/generated')).toBe('unfollowed');
+    expect(why('example.com/m/empty')).toBe('unfollowed');
+    const none = resolverOf({ 'loose/x.go': '' });
+    expect(none.explainMiss('fmt', 'loose/x.go', 'go')).toBeUndefined();
+  });
+  it('tells nothing for a language whose readers cannot say', () => {
+    const r = resolverOf({ 'a.c': '', 'a.rb': '' });
+    expect(r.explainMiss('missing.h', 'a.c', 'c')).toBeUndefined();
+    expect(r.explainMiss('missing', 'a.rb', 'ruby')).toBeUndefined();
   });
 });

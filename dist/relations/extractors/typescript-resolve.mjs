@@ -21,7 +21,8 @@ import { typeScriptSatisfies } from './typescript-version-range.mjs';
  *      directory, which names a file the import does not mean.
  *   3. Package-internal ('#x') → the nearest package.json `imports` map (exact key, then
  *      the longest `*` pattern; the target chosen by the conditions, as for `exports`); a
- *      relative target resolves inside that package, a bare target resolves as step 4 would.
+ *      relative target names the file inside that package as written (as an `exports` target
+ *      does: no extension added, no directory index), a bare target resolves as step 4 would.
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
@@ -58,12 +59,52 @@ export function resolveTsPath(specifier, fromFile, existsAny, deps, callForm) {
         if (pkg === undefined)
             return undefined;
         return pickTarget(matchSubpathKey(pkg.manifest.imports, spec), exportConditions(from, deps, callForm), (target) => target.startsWith('./')
-            ? probe(joinUnder(pkg.dir, target), exists, deps)
+            ? probeTarget(joinUnder(pkg.dir, target), exists)
             : target.startsWith('#') || target.startsWith('/') || target.startsWith('.')
                 ? undefined
                 : resolveBare(target, from, exists, deps, callForm));
     }
     return resolveBare(spec, from, exists, deps, callForm);
+}
+/**
+ * Why a specifier `resolveTsPath` bound no file came to nothing: `outside` when it names what lies outside the repository (a Node built-in, a package no workspace of the repository holds, which resolution takes from `node_modules`); `unfollowed` when it names a place of the repository (a relative or root-absolute path, a `#` import of the package, a `paths` alias the tsconfig sets, a path under `baseUrl` whose first name the repository holds, a package of the repository); undefined when the project configuration cannot be read or no `deps` are given. A `#` import whose target is a bare specifier is told by that target.
+ */
+export function explainTsMiss(specifier, fromFile, deps) {
+    const spec = stripQuery(specifier);
+    if (spec === '')
+        return undefined;
+    if (spec.startsWith('.') || spec.startsWith('/'))
+        return 'unfollowed';
+    if (deps === undefined)
+        return undefined;
+    const from = toPosix(fromFile);
+    if (spec.startsWith('#')) {
+        const pkg = deps.nearestPackage(from);
+        const match = pkg === undefined ? undefined : matchSubpathKey(pkg.manifest.imports, spec);
+        const targets = collectTargets(match?.value, match?.captured) ?? [];
+        const bare = targets.every((t) => !t.startsWith('.') && !t.startsWith('/') && !t.startsWith('#'));
+        return targets.length > 0 && bare && targets.every((t) => explainBare(t, from, deps) === 'outside') ? 'outside' : 'unfollowed';
+    }
+    return explainBare(spec, from, deps);
+}
+function explainBare(spec, from, deps) {
+    if (spec.startsWith('node:'))
+        return 'outside';
+    const config = deps.tsconfigFor(from);
+    if (config === 'unknown')
+        return undefined;
+    const split = splitPackageSpecifier(spec);
+    if (split !== undefined && deps.packageNamed(split[0], from) !== undefined)
+        return 'unfollowed';
+    // An alias that names more than any specifier (`@/*`, `~lib`) is the project's; a catch-all `*` hands what it does not find to the packages.
+    if (config?.paths !== undefined && Object.keys(config.paths.map).some((key) => key !== '*' && matchPattern({ [key]: [] }, spec) !== undefined))
+        return 'unfollowed';
+    if (config?.baseUrl !== undefined) {
+        const first = joinUnder(config.baseUrl, spec.split('/')[0]);
+        if (first !== undefined && (deps.isDirectory?.(first) === true || fileCandidates(first).some((cand) => deps.isFile?.(cand) === true)))
+            return 'unfollowed';
+    }
+    return 'outside';
 }
 /** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
 export const SOURCES_DISAGREE = Symbol('sources disagree');
@@ -426,12 +467,15 @@ function probe(joined, exists, deps) {
     return undefined;
 }
 /**
- * The file an `exports` target names. Node and TypeScript take the target as it is written: the file itself, or for a JavaScript extension the source it is compiled from (`./a.js` for `./a.ts`); a target without an extension names that file and no `.ts` or `.js` beside it, and a directory names no index.
+ * The file an `exports` or `imports` target names. Node and TypeScript take the target as it is written: the file itself, or for a JavaScript extension the source it is compiled from (`./a.js` for `./a.ts`); a target without an extension names that file and no `.ts` or `.js` beside it, and a directory names no index.
  */
 function probeExact(joined, exists) {
     const ext = path.posix.extname(joined);
     const candidates = ext in JS_REWRITES || TS_EXTENSIONS.has(ext) ? fileCandidates(joined) : [joined];
     return candidates.find((candidate) => exists(candidate));
+}
+function probeTarget(joined, exists) {
+    return joined === undefined ? undefined : probeExact(joined, exists);
 }
 /** A package directory's own entry file from its `types`/`typings`/`module`/`main` fields. */
 function entryOf(pkg, exists, deps, missing) {
@@ -514,6 +558,11 @@ function joinUnder(baseDir, rel) {
  *  anchored at the repository root (a rewritten `${configDir}`). */
 function joinConfigPath(baseDir, value) {
     return value.startsWith('/') ? joinUnder('', value.slice(1)) : joinUnder(baseDir, value);
+}
+/** A tsconfig directory option (`rootDir`, `outDir`, `declarationDir`) joined onto its base: a trailing slash names the same directory, and normalising keeps it, so it is dropped. */
+function joinConfigDir(baseDir, value) {
+    const joined = joinConfigPath(baseDir, value);
+    return joined?.endsWith('/') === true ? joined.slice(0, -1) : joined;
 }
 function stripQuery(specifier) {
     const q = specifier.indexOf('?');
@@ -1052,7 +1101,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
                 const value = options?.[field];
                 if (typeof value !== 'string')
                     continue;
-                const at = joinConfigPath(dir, withConfigDir(value, leafDir));
+                const at = joinConfigDir(dir, withConfigDir(value, leafDir));
                 if (at === undefined)
                     delete merged[field];
                 else
@@ -1060,7 +1109,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
             }
             // `rootDir` resolves like them; one outside the repository is kept as null: no source in the repository is under it.
             if (typeof options?.rootDir === 'string')
-                merged.rootDir = joinConfigPath(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
+                merged.rootDir = joinConfigDir(dir, withConfigDir(options.rootDir, leafDir)) ?? null;
             for (const field of ['allowJs', 'checkJs', 'noEmit']) {
                 const value = options?.[field];
                 if (typeof value === 'boolean')
@@ -1479,6 +1528,8 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         packageAt,
         sourceOfOutput,
         entryMissing,
+        isDirectory: (repoRel) => files.isDirectory(repoRel),
+        isFile,
         ...(isExcluded !== undefined ? { isExcluded } : {}),
     };
 }
