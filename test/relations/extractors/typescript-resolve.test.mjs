@@ -6,7 +6,7 @@ import path from 'node:path';
 import {
   resolveTsPath, makeTsResolveDeps, parseJsonc,
 } from '../../helpers/internal/relations.mjs';
-import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
+import { makeResolvePathToFile, listedFileView } from '@chrisdudek/runes/relations';
 
 // `exists` predicate over a fixed set of repo-relative POSIX files.
 const known = new Set([
@@ -1518,6 +1518,26 @@ describe('resolveTsPath — a package entry under outDir that is not in the repo
     }
     const committed = project(pkg({ main: './dist/index.js' }, built, { 'packages/core/dist/index.js': '' }));
     expect(committed('@acme/core', 'packages/app/a.ts')).toBe('packages/core/dist/index.js');
+  });
+  it('reads rootDir, outDir and declarationDir the same with or without a trailing slash, a leading ./ or a doubled slash', () => {
+    const spellings = (dir) => [dir, `${dir}/`, `./${dir}`, `./${dir}/`, `.//${dir.replace('/', '//')}//`];
+    const answers = new Set();
+    for (const rootDir of spellings('src')) {
+      for (const outDir of spellings('dist/js')) {
+        for (const declarationDir of [undefined, ...spellings('dist/types')]) {
+          const compilerOptions = { rootDir, outDir, declaration: true, ...(declarationDir === undefined ? {} : { declarationDir }) };
+          const types = declarationDir === undefined ? './dist/js/index.d.ts' : './dist/types/index.d.ts';
+          const files = pkg({ exports: { '.': { types, default: './dist/js/index.js' } } }, { compilerOptions });
+          const contents = new Map(Object.entries(files));
+          const resolve = makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) });
+          const label = JSON.stringify(compilerOptions);
+          expect(resolve('@acme/core', 'packages/app/a.ts', 'typescript', true), label).toBe('packages/core/src/index.ts');
+          expect(resolve('@acme/core', 'packages/app/a.ts', 'typescript', true, undefined, 'require'), label).toBe('packages/core/src/index.ts');
+          answers.add(resolve('@acme/core', 'packages/app/a.ts', 'typescript', true));
+        }
+      }
+    }
+    expect([...answers]).toEqual(['packages/core/src/index.ts']);
   });
   it('gives the same answer when the output is on disk and the caller excludes it', () => {
     const files = pkg({ main: './dist/index.js', types: './dist/index.d.ts' }, built, { 'packages/core/dist/index.js': '', 'packages/core/dist/index.d.ts': '' });
