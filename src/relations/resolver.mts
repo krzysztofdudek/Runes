@@ -846,10 +846,19 @@ export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick
     if (hint.unless !== undefined && hint.unless.some((condition) => holds(condition, fromFile))) return 'pass';
     if (shadowed(language, hint.shadow, fromFile)) return 'unfollowed';
     if (hint.within !== undefined || hint.nestedOnly === true) return 'pass';
-    if (hint.set === undefined) return keyReason(language, hint.symbolKey, written ?? hint.symbolKey);
+    if (hint.set === undefined) {
+      const reason = keyReason(language, hint.symbolKey, written ?? hint.symbolKey);
+      return reason === 'pass' && hint.onDemand !== undefined ? onDemandReason(language, hint.symbolKey, hint.onDemand) : reason;
+    }
     // The readings of one level (CS0104): one that commits to a name of the repository (an alias of a namespace of it) decides, else one that can only bind elsewhere.
     const reasons = hint.set.filter((m) => m.nestedOnly !== true).map((m) => keyReason(language, m.symbolKey, written ?? m.symbolKey));
     return reasons.includes('unfollowed') ? 'unfollowed' : reasons.includes('outside') ? 'outside' : 'pass';
+  };
+
+  /** What the on-demand imports of a Java or Kotlin file say of a simple name its package does not declare (`TargetHint.onDemand`), read after the package and before Kotlin's default imports: a starred package or type of the repository that declares the name makes the use the repository's, though the readers bind it through the package alone. */
+  const onDemandReason = (language: string, key: string, onDemand: readonly string[]): 'unfollowed' | 'pass' => {
+    const name = key.slice(key.lastIndexOf('.') + 1);
+    return onDemand.some((pkg) => symbolFiles(language, `${pkg}.${name}`).size > 0) ? 'unfollowed' : 'pass';
   };
 
   const classifyUse = (candidates: readonly TargetHint[], fromFile: string, language: string): Classification => {

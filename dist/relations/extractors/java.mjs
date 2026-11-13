@@ -536,7 +536,7 @@ function declarations(file) {
 }
 export const javaExtractor = {
     languages: new Set(['java']),
-    rev: 6,
+    rev: 7,
     declarations,
     uses,
 };
