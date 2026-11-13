@@ -2,6 +2,7 @@
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { runExtractor } from '../../helpers/tree-sitter.mjs';
 import { javaExtractor } from '../../helpers/internal/relations.mjs';
+import { SymbolTable, makeResolver } from '@chrisdudek/runes/relations';
 
 const run = (code) => runExtractor(javaExtractor, 'java', '.java', code);
 
@@ -260,6 +261,35 @@ describe('java extractor — same-package references (uses())', () => {
     expect(g.find((x) => x.keys.includes('com.a.Exception'))?.keys).toEqual(['com.a.Exception', 'java.lang.Exception']);
     expect(g.find((x) => x.keys.includes('com.a.Owner'))?.keys).toEqual(['com.a.Exception+Owner', 'com.a.Owner']);
     expect(g.find((x) => x.keys.includes('com.a.Thread'))?.keys).toEqual(['com.a.Exception+Thread', 'com.a.Thread', 'java.lang.Thread']);
+  });
+
+  it('reads a qualified type led by a simple name of the package as a member type of each reading of that name, then as written', async () => {
+    const g = await groups('class T extends Base { Outer.Inner a; Outer.Mid.Leaf b; Thread.State c; }');
+    expect(g.find((x) => x.keys.includes('Outer.Inner'))).toEqual({ line: 2, keys: ['com.a.Base+Outer+Inner', 'com.a.Outer+Inner', 'Outer.Inner'], flags: [true, true, false] });
+    expect(g.find((x) => x.keys.includes('Outer.Mid.Leaf'))?.keys).toEqual(['com.a.Base+Outer+Mid+Leaf', 'com.a.Outer+Mid+Leaf', 'Outer.Mid.Leaf']);
+    expect(g.find((x) => x.keys.includes('Thread.State'))?.keys).toEqual(['com.a.Base+Thread+State', 'com.a.Thread+State', 'java.lang.Thread+State', 'Thread.State']);
+    // The leading name still gives its own group, and a name the file imports or declares, a package-led name and a generic outer are read as written.
+    expect(g.find((x) => x.keys.length === 2 && x.keys[1] === 'com.a.Outer')?.keys).toEqual(['com.a.Base+Outer', 'com.a.Outer']);
+    for (const [body, key] of [['import x.Map;\nclass T { Map.Entry e; }', 'Map.Entry'], ['class T { class Own { class In {} } Own.In i; }', 'Own.In'], ['class T { java.util.Map.Entry e; }', 'java.util.Map.Entry'], ['class T { Outer<String>.Inner i; }', 'Outer<String>.Inner']]) {
+      expect((await groups(body)).filter((x) => x.keys.includes(key)).map((x) => x.keys), body).toEqual([[key]]);
+    }
+  });
+
+  it('a use written Outer.Inner resolves to the file that declares the member type in another file of the package', async () => {
+    const files = [
+      ['src/a/Outer.java', 'package com.a;\npublic class Outer { public static class Inner {} }\n'],
+      ['src/b/Use.java', 'package com.a;\nclass Use { Outer.Inner i; }\n'],
+    ];
+    const st = new SymbolTable();
+    const used = [];
+    for (const [file, code] of files) {
+      const { declarations, uses } = await run(code);
+      for (const d of declarations) st.declare('java', d.symbolKey, file);
+      if (file === 'src/b/Use.java') used.push(...uses);
+    }
+    const r = makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: st, resolvePathToFile: () => undefined });
+    const answers = used.filter((u) => u.line === 2).map((u) => r.classifyUse(u.candidates, 'src/b/Use.java', 'java'));
+    expect(answers).toEqual([{ kind: 'resolved', owner: 'a', resolvedFile: 'src/a/Outer.java' }, { kind: 'resolved', owner: 'a', resolvedFile: 'src/a/Outer.java' }]);
   });
 
   it('gives nothing in the unnamed package', async () => {

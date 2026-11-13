@@ -165,6 +165,7 @@ describe('MATRIX — same-package references without an import', () => {
   it('java-same-package-kotlin-class-edge', () => runCase('java-same-package-kotlin-class-edge'));
   it('java-same-package-unnamed-package-silence', () => runCase('java-same-package-unnamed-package-silence'));
   it('java-same-package-qualified-and-annotation-edge', () => runCase('java-same-package-qualified-and-annotation-edge'));
+  it('java-same-package-qualified-nested-type-edge', () => runCase('java-same-package-qualified-nested-type-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
