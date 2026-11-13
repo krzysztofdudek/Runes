@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { listCases, loadCaseDoc } from './reference-case-runner.mjs';
-import { writeRustFixture } from '../helpers/rust-fixtures.mjs';
+import { cargoConfig, writeRustFixture } from '../helpers/rust-fixtures.mjs';
 
 const PINNED = '1.99.1';
 
@@ -103,4 +103,54 @@ test('a Rust case listed as not building yet still does not build, and names a c
     if (build(id).ok) stale.push(id);
   }
   assert.deepEqual(stale, [], 'these cases build now: take them out of DO_NOT_BUILD_YET');
+});
+
+/** The text of a TOML basic string (`"…"`) as Cargo's TOML reader takes it: a backslash starts one of `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`, any other escape is an error, and so is a control character or a quote left unescaped. */
+function tomlBasicString(text) {
+  assert.ok(text.length >= 2 && text.startsWith('"') && text.endsWith('"'), `not a basic string: ${text}`);
+  let out = '';
+  for (let i = 1; i < text.length - 1; i++) {
+    const ch = text[i];
+    if (ch === '"' || /[\u0000-\u0008\u000a-\u001f\u007f]/.test(ch)) throw new SyntaxError(`${JSON.stringify(ch)} must be escaped, at ${i} of ${text}`);
+    if (ch !== '\\') {
+      out += ch;
+      continue;
+    }
+    const e = text[++i];
+    const simple = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' }[e];
+    if (simple !== undefined) {
+      out += simple;
+      continue;
+    }
+    const width = e === 'u' ? 4 : e === 'U' ? 8 : 0;
+    const hex = text.slice(i + 1, i + 1 + width);
+    if (width === 0 || !new RegExp(`^[0-9A-Fa-f]{${width}}$`).test(hex)) throw new SyntaxError(`invalid escape \\${e}${hex}, at ${i} of ${text}`);
+    out += String.fromCodePoint(parseInt(hex, 16));
+    i += width;
+  }
+  return out;
+}
+
+// Cargo reads .cargo/config.toml as TOML, where a backslash in a double-quoted string starts an escape: a Windows path written there as it stands (`C:\Users\…`) is refused (`\U` wants eight hex digits) and Cargo stops with "could not load Cargo configuration", or it is read as another path (`\r` is a carriage return).
+test('the Cargo configuration of the stub crates keeps the stub directory as it is on every platform, a Windows path included', () => {
+  const externals = [{ name: 'kit', versions: new Set(['1.0.0']), gits: new Set(['https://example.com/kit.git']), registries: new Set(['inner']) }];
+  for (const stubs of [
+    String.raw`C:\Users\RUNNER~1\AppData\Local\Temp\runes-rust-cases-d1pwrM\case-8oUoUd\.stubs`,
+    String.raw`D:\a\Runes\Runes\tmp\runes-rust-cases-x\case-y\.stubs`,
+    '/tmp/runes-rust-cases-x/case-y/.stubs',
+    '/home/o"brien/a b/.stubs',
+  ]) {
+    const values = new Map();
+    let table = '';
+    for (const line of cargoConfig(stubs, externals).split('\n')) {
+      const header = /^\[([^\]]+)\]$/.exec(line);
+      if (header) table = header[1];
+      const kv = /^([\w-]+) = (.*)$/.exec(line);
+      if (kv) values.set(`${table}.${kv[1]}`, tomlBasicString(kv[2]));
+    }
+    assert.equal(values.get('source.stubs.directory'), stubs);
+    assert.equal(values.get('source.crates-io.replace-with'), 'stubs');
+    assert.equal(values.get('source.git0.git'), 'https://example.com/kit.git');
+    assert.equal(values.get('registries.inner.index'), 'sparse+https://inner.example/index/');
+  }
 });

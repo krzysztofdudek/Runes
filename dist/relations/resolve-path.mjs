@@ -108,11 +108,8 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
                 }
                 return modules.size === 1 || (modules.size > 1 && [...modules.values()].filter(Boolean).length <= 1);
             };
-            // The files whose `mod` loads `file` through a `path` attribute: relative to the declaring file's directory, or from inside an inline module relative to the directory that file's modules lie in. A module root and a file loaded through a `path` attribute itself hold their modules in their own directory (a mod.rs, a crate root of any name, a file the attribute names); any other file holds them in a directory named after it.
-            const holdsModulesBeside = (by, depth) => {
-                const name = path.posix.basename(by);
-                return name === 'mod.rs' || name === 'lib.rs' || name === 'main.rs' || rustDeps.crateRootFor(by, declaresModule)?.fileIsRoot === true || (depth < 8 && loadersOf(by, depth + 1).length > 0);
-            };
+            // The files whose `mod` loads `file` through a `path` attribute: relative to the declaring file's directory, or from inside an inline module relative to the directory that file's modules lie in. A module root and a file loaded through a `path` attribute itself hold their modules in their own directory (a mod.rs, a crate root of any name, a file the attribute names); any other file holds them in a directory named after it, a module file named lib.rs or main.rs too.
+            const holdsModulesBeside = (by, depth) => path.posix.basename(by) === 'mod.rs' || rustDeps.crateRootFor(by, declaresModule)?.fileIsRoot === true || (depth < 8 && loadersOf(by, depth + 1).length > 0);
             const loadersOf = (file, depth) => {
                 const nameKey = rustPathModuleNameKey(path.posix.basename(file));
                 if (!table.has('rust', nameKey))
