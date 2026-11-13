@@ -2262,6 +2262,7 @@ Emby.Server.Implementations/Library/LibraryManager.cs:3487	MediaBrowser.Controll
 Emby.Server.Implementations/Library/LibraryManager.cs:3487	MediaBrowser.Controller/Entities/Video.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3493	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3510	MediaBrowser.Model/Entities/MetadataField.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3517	MediaBrowser.Model/Entities/ExtraType.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:352	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:352	MediaBrowser.Controller/Library/DeleteOptions.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3547	src/Jellyfin.Extensions/StringExtensions.cs
@@ -2271,7 +2272,18 @@ Emby.Server.Implementations/Library/LibraryManager.cs:3571	Emby.Naming/Video/Ext
 Emby.Server.Implementations/Library/LibraryManager.cs:3572	Emby.Naming/Video/ExtraRuleType.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3593	MediaBrowser.Model/Entities/ExtraType.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3606	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3608	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3609	MediaBrowser.Model/Entities/ExtraType.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:361	MediaBrowser.Controller/Entities/BaseItem.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3610	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3611	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3612	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3613	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3614	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3615	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3616	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3617	MediaBrowser.Model/Entities/ExtraType.cs
+Emby.Server.Implementations/Library/LibraryManager.cs:3618	MediaBrowser.Model/Entities/ExtraType.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3622	MediaBrowser.Controller/Entities/BaseItem.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3626	Emby.Server.Implementations/Library/PathExtensions.cs
 Emby.Server.Implementations/Library/LibraryManager.cs:3635	MediaBrowser.Controller/Entities/InternalPeopleQuery.cs
@@ -17913,6 +17925,7 @@ MediaBrowser.Model/Dlna/StreamInfo.cs:225	MediaBrowser.Model/Dto/MediaSourceInfo
 MediaBrowser.Model/Dlna/StreamInfo.cs:237	MediaBrowser.Model/Dlna/SubtitleDeliveryMethod.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:255	MediaBrowser.Model/Session/TranscodeReason.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:282	MediaBrowser.Model/Entities/VideoType.cs
+MediaBrowser.Model/Dlna/StreamInfo.cs:283	MediaBrowser.Model/Session/PlayMethod.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:289	MediaBrowser.Model/Entities/MediaStream.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:295	MediaBrowser.Model/Entities/MediaStream.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:45	MediaBrowser.Model/Session/PlayMethod.cs
@@ -18099,6 +18112,10 @@ MediaBrowser.Model/Entities/MediaStream.cs:769	src/Jellyfin.Extensions/Enumerabl
 MediaBrowser.Model/Entities/MediaStream.cs:806	Jellyfin.Data/Enums/VideoRange.cs
 MediaBrowser.Model/Entities/MediaStream.cs:806	Jellyfin.Data/Enums/VideoRangeType.cs
 MediaBrowser.Model/Entities/MediaStream.cs:808	MediaBrowser.Model/Entities/MediaStreamType.cs
+MediaBrowser.Model/Entities/MediaStream.cs:859	Jellyfin.Data/Enums/VideoRangeType.cs
+MediaBrowser.Model/Entities/MediaStream.cs:860	Jellyfin.Data/Enums/VideoRangeType.cs
+MediaBrowser.Model/Entities/MediaStream.cs:876	Jellyfin.Data/Enums/VideoRangeType.cs
+MediaBrowser.Model/Entities/MediaStream.cs:877	Jellyfin.Data/Enums/VideoRangeType.cs
 MediaBrowser.Model/Entities/ParentalRating.cs:13	MediaBrowser.Model/Entities/ParentalRatingScore.cs
 MediaBrowser.Model/Entities/ParentalRating.cs:39	MediaBrowser.Model/Entities/ParentalRatingScore.cs
 MediaBrowser.Model/Entities/ParentalRatingEntry.cs:21	MediaBrowser.Model/Entities/ParentalRatingScore.cs
