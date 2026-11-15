@@ -313,7 +313,7 @@ export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick
     return files;
   };
 
-  /** What the resolver has read from the table for C#, kept while the table has taken no declaration since: the same few names are read through every using directive of every file, and each answer is the same each time. */
+  /** What the resolver has read from the table for C#, kept while the table has taken no declaration since: the same few names are read through every using directive of every file, and each answer is the same each time. The C# type lookup (`csharp`) and the answers to C# conditions (`holds`) are kept the same way and renewed with the rest. */
   const kept = { at: -1, declared: new Map<string, boolean>(), shadowSeen: new Map<string, boolean>(), files: new Map<string, string[]>(), plain: new Map<string, string[]>(), nestedOnly: new Map<string, string[]>(), within: new Map<string, string[]>() };
   const keepFresh = (): void => {
     const declarations = declarationCount(deps.symbolTable);
@@ -325,6 +325,8 @@ export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick
     kept.plain.clear();
     kept.nestedOnly.clear();
     kept.within.clear();
+    csharpLookup = undefined;
+    held = new WeakMap();
   };
 
   /** The files that declare a key, as `SymbolTable.filesFor` gives them; a C# key's are kept (see `kept`), the same list read again and again and never changed by a reader. */
@@ -541,15 +543,19 @@ export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick
     return undefined;
   };
   let csharpLookup: CsharpTypeLookup | undefined;
-  const csharp = (): CsharpTypeLookup => (csharpLookup ??= makeCsharpTypeLookup(
-    deps.symbolTable,
-    (readings, fromFile) => whileWorking(() => bindCsharpType(readings, fromFile)?.key),
-    (readings, fromFile) => whileWorking(() => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0)),
-  ));
+  const csharp = (): CsharpTypeLookup => {
+    keepFresh();
+    return (csharpLookup ??= makeCsharpTypeLookup(
+      deps.symbolTable,
+      (readings, fromFile) => whileWorking(() => bindCsharpType(readings, fromFile)?.key),
+      (readings, fromFile) => whileWorking(() => readings.some((hint) => hintFiles(hint, 'csharp', fromFile).size > 0)),
+    ));
+  };
 
-  /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file, however many readings carry it. */
-  const held = new WeakMap<CsharpCondition, Map<string, boolean>>();
+  /** Whether a C# condition holds for a reading of `fromFile` (see `CsharpCondition`); asked once per condition and file while the table takes no declaration, however many readings carry it. */
+  let held = new WeakMap<CsharpCondition, Map<string, boolean>>();
   const holds = (condition: CsharpCondition, fromFile: string): boolean => {
+    keepFresh();
     let byFile = held.get(condition);
     if (byFile === undefined) held.set(condition, (byFile = new Map()));
     let answer = byFile.get(fromFile);

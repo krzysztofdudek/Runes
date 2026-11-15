@@ -1386,11 +1386,42 @@ describe('csharp — a type named in a pattern or after `is`', () => {
     expect(group.indexOf('App.Core.Limits')).toBeGreaterThanOrEqual(0);
     expect(group.indexOf('App.Core.Limits')).toBeLessThan(group.indexOf('Limits.Max'));
   });
-  it('a dotted name led by a value this file declares is no type', async () => {
-    const { uses } = await run(['class C { Mode Config; bool A(object o) => o is Config.Limit; bool B(object o) => o is Lib.Limit; }', ''].join('\n'));
+  it('a dotted name in a constant pattern led by a name the file also declares as a property, a local or a lambda parameter is read as the type, as C# binds it (§12.8.7.2)', async () => {
+    const { uses } = await run([
+      'class C {',
+      '  public Status Status { get; set; }',
+      '  bool A(object o) => o is Status.Active;',
+      '  bool B(object o) { var Kind = Sdk.Make(); return o is Kind.Open; }',
+      '  bool D(object o) => Sdk.Any(Mode => o is Mode.Fast);',
+      '  bool E(object o) => o is Lib.Limit;',
+      '}',
+      '',
+    ].join('\n'));
     const keys = keysOf(uses);
-    expect(keys).not.toContain('Config.Limit');
-    expect(keys).toContain('Lib.Limit');
+    for (const k of ['Status.Active', 'Kind.Open', 'Mode.Fast', 'Lib.Limit']) expect(keys).toContain(k);
+  });
+  it('a dotted name at the head of an `is` chain, and one in each test of a chain, is read as the type it spells, once, as a lone one is', async () => {
+    const lines = (tests) => ['class C {', ...tests.map((t, i) => `  bool M${i}(object x, bool b) => ${t};`), '}', ''].join('\n');
+    const chains = await run(lines(['x is Models.Order || b', 'x is App.Models.Order || x is App.Models.Line', 'x is Lib.Box<int>.Item && b', 'x is global::Lib.Credit || b', 'x is Order || x is App.Models.Line']));
+    const lone = await run(lines(['x is Models.Order', 'x is App.Models.Order; bool N(object x) => x is App.Models.Line', 'x is Lib.Box<int>.Item', 'x is global::Lib.Credit', 'x is Order; bool N(object x) => x is App.Models.Line']));
+    const groups = ({ uses }) => uses.map((u) => [u.line, ...u.candidates.flatMap((c) => readingKeys(c))]);
+    expect(groups(lone).map((g) => g[g.length - 1])).toEqual(['Models.Order', 'App.Models.Order', 'App.Models.Line', 'Lib.Box`1.Item', 'Lib.Credit', 'Order', 'App.Models.Line']);
+    expect(groups(chains)).toEqual(groups(lone));
+  });
+  it('a dotted name in an `is` chain led by a name the file also declares as a property is read as the type, as alone, and the rest of the chain is read', async () => {
+    const { uses } = await run(['class C { public Status Status { get; set; } bool A(object o, bool b) => o is Status.Active || b; bool B(object o) => o is Status.Active || o is Other; bool D(object o) => o is Status.Active || o is App.Models.Line; }', ''].join('\n'));
+    const groups = uses.map((u) => u.candidates.flatMap((c) => readingKeys(c)));
+    expect(groups.filter((g) => g.includes('Status.Active'))).toHaveLength(3);
+    const keys = groups.flat();
+    expect(keys).toContain('Other');
+    expect(keys).toContain('App.Models.Line');
+  });
+  it('a dotted name in an `is` chain led by a type parameter in scope is no type, in either shape the grammar gives the chain', async () => {
+    const { uses } = await run(['class C { bool A<Q>(object x, bool b) => x is Q.Item || b; bool B<Q>(object x) => x is Q.Item || x is Q.Line; bool D(object x) => x is Lib.Item || x is Lib.Line; }', ''].join('\n'));
+    const keys = keysOf(uses);
+    expect(keys.filter((k) => k.split(/[.+]/).includes('Q'))).toEqual([]);
+    expect(keys).toContain('Lib.Item');
+    expect(keys).toContain('Lib.Line');
   });
   it('a generic name, a nullable type and an array type after `is` give the generic with its arity, each type argument and the element type', async () => {
     const { uses } = await run(['class C { bool A(object o) => o is Box<Item>; bool B(object o) => o is Note?; bool D(object o) => o is Card[]; bool E(object o) => o is Lib::Slip; }', ''].join('\n'));
