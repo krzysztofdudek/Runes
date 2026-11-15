@@ -409,6 +409,8 @@ describe('MATRIX — C# type positions in patterns', () => {
   it('csharp-pattern-switch-constants-of-nearer-type-edge', () => runCase('csharp-pattern-switch-constants-of-nearer-type-edge'));
   it('csharp-pattern-constant-through-block-using-edge', () => runCase('csharp-pattern-constant-through-block-using-edge'));
   it('csharp-pattern-nested-type-through-type-edge', () => runCase('csharp-pattern-nested-type-through-type-edge'));
+  it('csharp-pattern-property-path-silence', () => runCase('csharp-pattern-property-path-silence'));
+  it('csharp-pattern-property-path-beside-types-edge', () => runCase('csharp-pattern-property-path-beside-types-edge'));
 });
 
 describe('MATRIX — C# ref types, query range variable types and function pointer types', () => {

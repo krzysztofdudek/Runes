@@ -1606,6 +1606,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   const emitted = { has: (id: number): boolean => !capturing && emittedIds.has(id), add: (id: number): void => void (capturing || emittedIds.add(id)) };
   // The member accesses a pattern has read whole as the dotted type they spell: the walk reads nothing more in them.
   const readAsType = new Set<number>();
+  // The member paths of extended property patterns (`{ Order.Id: 3 }`): names of members of the value tested, which the walk never reads as a receiver.
+  const memberPaths = new Set<number>();
 
   // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
   const lists: string[][] = [];
@@ -2171,6 +2173,12 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       emitTypeNode(node.childForFieldName('type'));
       return undefined;
     }
+    // An extended property pattern (`x is { Order.Id: 3 }`, C# 10) is `x is { Order: { Id: 3 } }`: its path before the colon names a member of the value tested, then a member of that member, and no name of it is looked up in scope, so a type named like its first member is not what it names (spec §11.2.7). The grammar reads the path as a member access, the one child of a subpattern that is no pattern and no simple name; nothing in it is read. The pattern after the colon is read as any pattern is.
+    if (type === 'subpattern') {
+      const path = node.child(0)!;
+      if (path.type === 'member_access_expression') memberPaths.add(path.id);
+      return undefined;
+    }
     if (type === 'constant_pattern') {
       // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
       // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
@@ -2292,7 +2300,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     // `Shop.Core.Guard.NotNull(o)`. Handled once, at the innermost access (the one whose receiver
     // is the leftmost identifier). A generic receiver `Result<int>.Ok()` is a type position.
     if (type === 'member_access_expression') {
-      if (readAsType.has(node.id)) return false;
+      if (readAsType.has(node.id) || memberPaths.has(node.id)) return false;
       const expr = node.childForFieldName('expression');
       // A receiver written after `global::` (`global::Guard.NotNull(o)`, `global::Shop.Core.Guard.NotNull(o)`) is read from the global namespace only (R12): its name, not the alias-qualified node, leads the chain, and no name this file declares shadows it.
       const rootedName = expr !== null && expr.type === 'alias_qualified_name' && expr.childForFieldName('alias')!.text === 'global' ? expr.childForFieldName('name') : null;
@@ -3057,7 +3065,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 43,
+  rev: 44,
   declarations,
   uses,
 };
