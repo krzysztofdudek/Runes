@@ -1,4 +1,4 @@
-// Every Rust case of the catalogue is a crate (or a workspace) that rustc reads, so a case cannot pass for a reason no compiler agrees with. This builds each one with `cargo check --offline` under the pinned toolchain, in a throwaway directory, with stub crates in place of every registry and git dependency (test/helpers/rust-fixtures.mjs). Where that toolchain is not installed the test is skipped, with the reason.
+// Every Rust case of the catalogue is a crate (or a workspace) that rustc reads, so a case cannot pass for a reason no compiler agrees with. This builds each one with `cargo check --offline` under the pinned toolchain, in a throwaway directory, with stub crates in place of every registry and git dependency (test/helpers/rust-fixtures.mjs). Where that toolchain is missing or of another version the test is skipped with the reason, except on CI, where the workflow installs it and the test fails instead (rustToolchainVerdict).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -6,9 +6,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { listCases, loadCaseDoc } from './reference-case-runner.mjs';
-import { cargoConfig, writeRustFixture } from '../helpers/rust-fixtures.mjs';
+import { PINNED_RUST, cargoConfig, rustToolchainVerdict, writeRustFixture } from '../helpers/rust-fixtures.mjs';
 
-const PINNED = '1.99.1';
+const PINNED = PINNED_RUST;
 
 const toolchain = (tool) => {
   const r = spawnSync(tool, ['--version'], { encoding: 'utf8' });
@@ -16,10 +16,8 @@ const toolchain = (tool) => {
 };
 const rustc = toolchain('rustc');
 const cargo = toolchain('cargo');
-// CI has no Rust toolchain, so this test runs where a developer has installed the pinned one and is skipped on CI.
-const skip = rustc === undefined || cargo === undefined
-  ? `rustc and cargo ${PINNED} are not installed (CI has no Rust toolchain; the test runs where the pinned one is)`
-  : !rustc.startsWith(`rustc ${PINNED} `) || !cargo.startsWith(`cargo ${PINNED} `) ? `the Rust catalogue builds under ${PINNED}; found ${rustc} and ${cargo}` : false;
+const verdict = rustToolchainVerdict({ rustc, cargo, pinned: PINNED, ci: process.env.CI === 'true' });
+const skip = verdict.skip;
 
 /** The cases that do not build yet: skeletons that hold the files a resolver reads and no crate root or module declaration around them, a `[patch]` or a proc-macro crate the stubs do not stand in for, a bench or a test target without its file, manifests written for the reader (a dotted key before `[package]`), macros from crates the stubs do not define (`cfg_if!`), and one file that is unparsable on purpose. Each is a fixture to complete, and the test below says when one has been, so this list only shrinks. */
 const DO_NOT_BUILD_YET = new Set([
@@ -72,7 +70,7 @@ const DO_NOT_BUILD_YET = new Set([
 ]);
 
 // One folder holds everything the builds write: the cases, the build output and a cargo home of its own, so the developer's cargo folder is never touched; it is removed when the tests end.
-const work = skip === false ? mkdtempSync(path.join(tmpdir(), 'runes-rust-cases-')) : undefined;
+const work = skip === false && verdict.fail === undefined ? mkdtempSync(path.join(tmpdir(), 'runes-rust-cases-')) : undefined;
 after(() => {
   if (work !== undefined) rmSync(work, { recursive: true, force: true });
 });
@@ -92,11 +90,13 @@ function build(id) {
 const rustCases = listCases().filter((c) => c.language === 'rust').map((c) => c.id);
 
 test('every Rust case of the catalogue builds under the pinned toolchain, except the ones listed as not building yet', { skip, timeout: 900000 }, () => {
+  if (verdict.fail !== undefined) assert.fail(verdict.fail);
   const broken = rustCases.filter((id) => !DO_NOT_BUILD_YET.has(id)).map((id) => ({ id, ...build(id) })).filter((r) => !r.ok);
   assert.deepEqual(broken.map((b) => `${b.id}: ${b.output.split('\n').filter((l) => /^error/.test(l)).slice(0, 2).join(' | ')}`), []);
 });
 
 test('a Rust case listed as not building yet still does not build, and names a case of the catalogue', { skip, timeout: 900000 }, () => {
+  if (verdict.fail !== undefined) assert.fail(verdict.fail);
   const stale = [];
   for (const id of DO_NOT_BUILD_YET) {
     assert.ok(rustCases.includes(id), `${id} is no Rust case`);
@@ -152,5 +152,20 @@ test('the Cargo configuration of the stub crates keeps the stub directory as it 
     assert.equal(values.get('source.crates-io.replace-with'), 'stubs');
     assert.equal(values.get('source.git0.git'), 'https://example.com/kit.git');
     assert.equal(values.get('registries.inner.index'), 'sparse+https://inner.example/index/');
+  }
+});
+
+test('the Rust build tests fail on CI where the pinned toolchain is missing or differs, and are skipped with the reason elsewhere', () => {
+  const pinned = '1.99.1';
+  const found = { rustc: 'rustc 1.99.1 (aaaaaaaaa 2026-10-01)', cargo: 'cargo 1.99.1 (bbbbbbbbb 2026-09-20)' };
+  const newer = { rustc: 'rustc 1.100.0 (ccccccccc 2026-11-12)', cargo: 'cargo 1.100.0 (ddddddddd 2026-11-01)' };
+  for (const ci of [false, true]) assert.deepEqual(rustToolchainVerdict({ ...found, pinned, ci }), { skip: false, fail: undefined });
+  for (const toolchain of [{}, { rustc: found.rustc }, { cargo: found.cargo }, newer, { rustc: found.rustc, cargo: newer.cargo }]) {
+    const local = rustToolchainVerdict({ ...toolchain, pinned, ci: false });
+    assert.equal(local.fail, undefined);
+    assert.match(local.skip, /1\.99\.1/);
+    const onCi = rustToolchainVerdict({ ...toolchain, pinned, ci: true });
+    assert.equal(onCi.skip, false);
+    assert.match(onCi.fail ?? '', /1\.99\.1/);
   }
 });

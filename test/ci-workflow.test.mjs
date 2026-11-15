@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PINNED_RUST } from './helpers/rust-fixtures.mjs';
 
 const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
@@ -31,6 +32,17 @@ for (const [name, runner] of PLATFORMS) {
     assert.match(text, /^ {8}node: \[22, 24\]$/m);
   });
 }
+
+test('every job that runs the suite installs the pinned Rust toolchain before it, for the Rust case build test', () => {
+  for (const [name] of PLATFORMS) {
+    const text = job(name);
+    const install = text.indexOf(`run: rustup toolchain install ${PINNED_RUST} --profile minimal --no-self-update && echo "RUSTUP_TOOLCHAIN=${PINNED_RUST}" >> "$GITHUB_ENV"`);
+    assert.ok(install >= 0, `the ${name} job does not install Rust ${PINNED_RUST}`);
+    assert.match(text.slice(text.lastIndexOf('- name:', install)), /^- name: [^\n]*\n {8}shell: bash\n/);
+    const suite = Math.min(...['npm test', 'npm run coverage'].map((run) => text.indexOf(run)).filter((at) => at >= 0));
+    assert.ok(install < suite, `the ${name} job installs Rust after the suite starts`);
+  }
+});
 
 test('the Windows job runs the suite in three shards, and every job that is not Linux reads the grammars the grammars job built', () => {
   const windows = job('test-windows');
