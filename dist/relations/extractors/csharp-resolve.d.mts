@@ -39,7 +39,7 @@ export interface CsharpTypeLookup {
  */
 export declare function attributeReading(written: 'yes' | 'no' | 'maybe' | undefined, suffixed: 'yes' | 'no' | 'maybe' | undefined, hasSuffixed: boolean): 'written' | 'suffixed' | undefined;
 /**
- * The lookup over one symbol table. `bind` gives the key of the one type an ordered group of readings binds for the file that wrote it, or undefined when it binds none or more than one; the resolver passes its own reading of a hint, so a base is found exactly as a reference to it is. `declared` says whether some reading of such a group names a declaration that file can see at all: where `bind` gives nothing and `declared` answers no, the name is a type from outside the repository. Without it every unbound name may be a type of the repository.
+ * The lookup over one symbol table, as it stands: every answer is worked out once and kept, so a table that takes a declaration needs a new lookup (the resolver makes one). `bind` gives the key of the one type an ordered group of readings binds for the file that wrote it, or undefined when it binds none or more than one; the resolver passes its own reading of a hint, so a base is found exactly as a reference to it is. `declared` says whether some reading of such a group names a declaration that file can see at all: where `bind` gives nothing and `declared` answers no, the name is a type from outside the repository. Without it every unbound name may be a type of the repository.
  */
 export declare function makeCsharpTypeLookup(table: SymbolTable, bind: (readings: SymbolHint[], fromFile: string) => string | undefined, declared?: (readings: SymbolHint[], fromFile: string) => boolean): CsharpTypeLookup;
 export {};

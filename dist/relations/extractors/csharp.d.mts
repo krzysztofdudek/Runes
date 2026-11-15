@@ -1,4 +1,9 @@
+import type { Node } from 'web-tree-sitter';
 import type { DependencyExtractor, DetectedDep, ParsedFile, TargetHint } from './types.mjs';
+/**
+ * The nodes of type `type` at or below `root`, in document order, leaving out any that sits inside another of them: the nodes a `walk` that does not descend into such a node visits. The runtime finds them in one call, where a walk asks for the type of every node of the file one call at a time. For a type whose nodes are never empty (each holds a token of the file, as a using directive and a namespace declaration do): the runtime's search passes over an empty node at the start of the file, and an empty node at the end of another cannot be told from one just after it.
+ */
+export declare function outermostOfType(root: Node, type: string): Node[];
 /**
  * The head of the key that records the shapes of the extension methods one file declares under the extension key `key` (`extensionKey`, `classExtensionKey`): `shapes:<key>`. The file declares `shapes:<key>\t<value>` once, the value listing the shape of each such method (`methodShape`, without the receiver) joined by spaces, a shape led by `-` for a method only its own assembly sees (`assemblyOnlyExtension`) and led by `~` for a private one, which only the file that declares it sees (`privateExtension`). A shape ends with `|` and the written type of the method's receiver (`receiverEntry`) where the method declares one a record can hold, so a call whose receiver's type is written can tell the methods of one name apart by the receiver they take. A call binds an extension method only when the method can take its arguments, so a reading of the key binds nothing where no shape of its definers takes the call (`shapeTakes`); a definer that declares no such record takes any call.
  */
