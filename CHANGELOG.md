@@ -4,7 +4,7 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 
 ## [1.1.0] - 2026-11-15
 
-A minor release of the relation readers, for someone upgrading from 1.0.0. They find dependencies they used to miss in C#, TypeScript and JavaScript, Rust, Python, Java and Kotlin, and drop edges they reported by mistake. The API gains a file view, the C# project reference graph, diagnostics for configuration files that cannot be read, and `TargetResolver.classifyUse`. The additions are optional arguments, fields and methods, so a call written for 1.0.0 needs no change; the edges it gets change as listed below. The changes prepared as 1.0.1, which was never published, are part of this release.
+A minor release of the relation readers, for someone upgrading from 1.0.0. They find dependencies they used to miss in C#, TypeScript and JavaScript, Rust, Python, Java and Kotlin, and drop edges they reported by mistake. The API gains a file view, the C# project reference graph, diagnostics for configuration files that cannot be read, and `TargetResolver.classifyUse`. A call written for 1.0.0 works unchanged, and the new API is optional; the edges a call gets change as listed below, and the C# extract records changed shape (Before you upgrade). The changes prepared as 1.0.1, which was never published, are part of this release.
 
 ### Before you upgrade
 
