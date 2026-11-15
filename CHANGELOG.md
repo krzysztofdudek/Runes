@@ -4,7 +4,7 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 
 ## [1.1.0] - 2026-11-15
 
-A minor release of the relation readers, for someone upgrading from 1.0.0. They find dependencies they used to miss in C#, TypeScript and JavaScript, Rust, Python, Java and Kotlin, and drop edges they reported by mistake. The API gains a file view, the C# project reference graph, diagnostics for configuration files that cannot be read, and `TargetResolver.classifyUse`. A call written for 1.0.0 works unchanged, and the new API is optional; the edges a call gets change as listed below, and the C# extract records changed shape (Before you upgrade). The changes prepared as 1.0.1, which was never published, are part of this release.
+A minor release of the relation readers, for someone upgrading from 1.0.0. They find dependencies they used to miss in C#, TypeScript and JavaScript, Rust, Python, Java and Kotlin, and drop edges they reported by mistake. The API gains a file view, the C# project reference graph, diagnostics for configuration files that cannot be read, and `TargetResolver.classifyUse`. A call written for 1.0.0 works unchanged, and the new API is optional; the edges a call gets change as listed below, and the C# extract records changed shape (Before you upgrade).
 
 ### Before you upgrade
 
@@ -52,8 +52,6 @@ A minor release of the relation readers, for someone upgrading from 1.0.0. They 
 - `using static T;` imports the nested types and the extension methods of `T` at the level of its directive (the compilation unit, a namespace body, or the whole project for `global using static`), and a generic `using static Repo<Order>;` gives the edges of `Repo` and `Order`. Two `using static` classes that each declare an extension method of one name give no edge.
 - A `file` type, and a type nested in one, binds by its name inside its own file, also as a using alias or `using static` target and after an alias qualifier, so a public type of the same name in another file gets no edge from that file. A `file` type reads the nested types, members and instance methods of its base classes, and a `file` interface the nested types of its base interfaces.
 - A large C# repository is read in less time than with 1.0.0: reading the declarations and references of its files takes 0.65 to 0.70 of 1.0.0's time on jellyfin and about 0.75 on eShop, and resolving its references about a fifth (jellyfin: 5.1 s against 24.2 s on one machine). A file of many deconstruction lines, named-tuple generics or broken lines with dotted names is read in time proportional to its size.
-- A resolver whose symbol table takes C# declarations after its first lookups gives the same C# edges as one that met the whole table first.
-
 ### TypeScript and JavaScript
 
 - Path aliases in a solution-style tsconfig.json (`files: []` plus `references`, as Vite and create-vue scaffold it) come from the referenced config whose `include` holds the file, matched as tsc matches it (a wildcard skips dot-names and node_modules, an include ending in `**` matches nothing, `outDir` and `declarationDir` are excluded when no `exclude` is set), and from the first direct reference that holds it before any nested one (Airflow UI's `tests/e2e/fixtures`). When several referenced configs hold the file and disagree, the import stays unresolved. A `.vue` or `.svelte` component reads jsconfig.json paths as a JavaScript file does.
@@ -103,7 +101,7 @@ A minor release of the relation readers, for someone upgrading from 1.0.0. They 
 ### All languages
 
 - A `composer.json` or `compile_commands.json` that starts with a byte order mark is read, so PHP imports through its autoload maps and C includes through its include roots resolve.
-- Reading takes time in proportion to the size of the file: walking a syntax tree, also a long flat run of error nodes (a binary file named .ts) or a tree nested hundreds of levels deep, which walks without running out of stack; extracting a TypeScript file of malformed lines such as `g<import('x').T>(`, a Kotlin file with many damaged declarations, and a Java, Kotlin, PHP, Rust or Ruby file of tens of thousands of unterminated strings. Large Rust packages resolve their paths in time that grows with the number of files. The edges are the same.
+- Reading takes time in proportion to the size of the file: walking a syntax tree, also a long flat run of error nodes (a binary file named .ts) or a tree nested hundreds of levels deep, which walks without running out of stack; extracting a TypeScript file of malformed lines such as `g<import('x').T>(`, a Kotlin file with many damaged declarations, and a Java, Kotlin, PHP, Rust or Ruby file of tens of thousands of unterminated strings. The edges are the same.
 
 ### Command table
 
@@ -117,10 +115,6 @@ A minor release of the relation readers, for someone upgrading from 1.0.0. They 
 - `classifyUse` answers `outside` for a type an annotation processor generates into the file's own package (`AutoValue_Use`, `DaggerAppComponent`) where a star import of a library could give its simple name, since the repository holds no file for it; without such a star import it answers `unfollowed`.
 - `classifyUse` in Python and PHP answers `absent` with the reason `unfollowed`, and names no candidates, where several roots or projects could hold the use.
 - C#: a chain of `is not` tests of dotted types (`x is not App.Models.Order || x is not App.Models.Line`) gives no edge.
-
-### Other
-
-- Runes is built and checked with TypeScript 7.0.2. The published code and its type declarations are the same as with the earlier compiler.
 
 ## [1.0.0] - 2026-09-28
 
