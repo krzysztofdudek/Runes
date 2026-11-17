@@ -356,6 +356,11 @@ describe('rust extractor — a use path that starts with a name in scope', () =>
     ]);
   });
 
+  it('reads the path a use of an outer scope bound where that use stands, past a nearer block that binds the next name too', async () => {
+    const { uses } = await run('mod m;\nuse m::k as n;\nfn f() {\n    use crate::q as m;\n    use n::X;\n}');
+    expect(specs(uses)).toEqual(['self::m', 'use::2::self::m::m::k', 'crate::q', 'use::3::self::m::k::n::X']);
+  });
+
   it('emits the path as written under an inline module whose directory a path attribute moved', async () => {
     const { uses } = await run('#[path = "elsewhere"]\nmod outer {\n    mod m;\n    use m::X;\n    use crate::k;\n    use k::Y;\n}');
     expect(specs(uses)).toEqual(['m::X', 'crate::k', 'use::2::crate::k::k::Y']);
