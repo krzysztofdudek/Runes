@@ -311,11 +311,11 @@ describe('a parse the runtime aborts', () => {
   };
   const after = (events, mark) => events.slice(events.indexOf(mark) + 1);
 
-  it('a call waiting for its grammar when another call aborts makes no parser on the runtime and rejects with ERUNTIMEABORTED naming the file that aborted', async () => {
+  it('a call in flight when another call aborts makes no parser on the runtime and rejects with ERUNTIMEABORTED naming the file that aborted', async () => {
     const events = [];
     const h = createParserHost({ runtime: loggingRuntime(events), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
     await h.getParser('.cs');
-    const files = [['a.cs', 'abort'], ['b.ts', 'one'], ['d.py', 'two'], ['e.ts', 'three']];
+    const files = [['a.cs', 'abort'], ['c.cs', 'four'], ['b.ts', 'one'], ['d.py', 'two'], ['e.ts', 'three']];
     const outcomes = await Promise.allSettled(files.map(([file, content]) => h.withParsedFile(file, content, (tree) => tree.rootNode.type)));
     assert.ok(events.includes('ABORT'));
     assert.deepEqual(after(events, 'ABORT'), [], 'nothing reached the runtime after the abort');
@@ -351,6 +351,15 @@ describe('a parse the runtime aborts', () => {
     await assert.rejects(h.loadGrammarsFor(['.py']), (error) => error.code === 'ERUNTIMEABORTED');
     assert.throws(() => h.newParser(), (error) => error.code === 'ERUNTIMEABORTED');
     assert.deepEqual(events.slice(mark), []);
+  });
+
+  it('after an abort, loadedParserFor returns undefined, also for a parser the host held before the abort', async () => {
+    const events = [];
+    const h = createParserHost({ runtime: loggingRuntime(events), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    await h.getParser('.cs');
+    assert.ok(h.loadedParserFor('.cs'), 'the C# parser is held before the abort');
+    await assert.rejects(h.parseFile('a.cs', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
+    assert.equal(h.loadedParserFor('.cs'), undefined);
   });
 
   it('a throw that is no abort is still taken for a scanner trap: retried once on a fresh parser, and the host stays usable', async () => {
