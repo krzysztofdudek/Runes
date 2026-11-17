@@ -19,6 +19,9 @@ import {
 /** Support-file basenames the path resolvers read but never parse as source. A `## Files` block whose extension has no grammar language is accepted only when its basename is one of these (anything else is a typo and throws). Go reads go.mod (and go.work), PHP reads composer.json, C/C++ reads compile_commands.json, Rust reads Cargo.toml, C# reads Directory.Build.*, the TS resolver reads .npmrc and the lockfiles to know the package manager and .babelrc for its module-resolver aliases; the lock and sum files are harmless to materialize. */
 const CONFIG_BASENAMES = new Set(['.npmrc', '.babelrc', 'yarn.lock', 'compile_commands.json', 'go.mod', 'go.work', 'go.sum', 'composer.json', 'Cargo.toml', 'Cargo.lock', 'Directory.Build.props', 'Directory.Build.targets']);
 
+/** Python project manifests the Python resolver reads for its source roots. `pyproject.toml` has a grammar (TOML), so like the TS project files below these are recognised by basename before the language lookup: materialized for the resolver, never parsed, never owned. */
+const PYTHON_MANIFEST_BASENAMES = new Set(['pyproject.toml', 'setup.cfg']);
+
 /** Support-file extensions accepted the same way: a C# project file scopes global usings to its project and carries `<Using>` items. */
 const CONFIG_EXTENSIONS = new Set(['.csproj']);
 
@@ -78,9 +81,9 @@ export function loadCaseDoc(id, mdPath) {
     const ext = path.extname(fpath);
     const base = path.posix.basename(fpath);
     // A Vue/Svelte component has no grammar of its own; relation extraction reads its `<script>` view (sfcScriptView), and so does this runner.
-    const lang = TS_CONFIG_BASENAME.test(base) ? null : (getLanguageForExtension(ext) ?? sfcScriptView(fpath, m[3])?.language ?? null);
+    const lang = TS_CONFIG_BASENAME.test(base) || PYTHON_MANIFEST_BASENAMES.has(base) ? null : (getLanguageForExtension(ext) ?? sfcScriptView(fpath, m[3])?.language ?? null);
     if (lang) files.push({ path: fpath, language: lang, code: m[3], owner: m[2] ?? ownerOfPath(fpath) });
-    else if (CONFIG_BASENAMES.has(base) || CONFIG_EXTENSIONS.has(ext) || TS_CONFIG_BASENAME.test(base)) configFiles.push({ path: fpath, code: m[3] });
+    else if (CONFIG_BASENAMES.has(base) || CONFIG_EXTENSIONS.has(ext) || TS_CONFIG_BASENAME.test(base) || PYTHON_MANIFEST_BASENAMES.has(base)) configFiles.push({ path: fpath, code: m[3] });
     else throw new Error(`reference-case ${id}: no language for extension '${ext}' (${fpath})`);
   }
   if (files.length === 0) throw new Error(`reference-case ${id}: ## Files has no path-tagged code blocks`);

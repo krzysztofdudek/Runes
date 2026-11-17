@@ -12,6 +12,7 @@ import { single } from './types.mjs';
  * ONLY by a module-specifier-bearing construct: a static import, a re-export
  * with a source, `import x = require(...)`, a `require(...)` call, an
  * `import(...)` with a string-literal specifier (in a value or a type position),
+ * `vi.mock('<lit>')` and `jest.mock('<lit>')` with a string-literal path,
  * a module augmentation `declare module '<spec>' { … }`,
  * or `new URL('<lit>', import.meta.url)`. Usage-site nodes (extends, implements, calls,
  * JSX, type references) would only REFINE the relation type of an
@@ -113,6 +114,15 @@ function argumentAt(call: Node, index: number): Node | null {
     seen++;
   }
   return null;
+}
+
+/** The callee of `vi.mock(…)` (Vitest) or `jest.mock(…)`: a call that replaces the module its first argument names. */
+function isMockCallee(fn: Node): boolean {
+  if (fn.type !== 'member_expression') return false;
+  const object = fn.childForFieldName('object');
+  const property = fn.childForFieldName('property');
+  return object !== null && object.type === 'identifier' && (object.text === 'vi' || object.text === 'jest')
+    && property !== null && property.text === 'mock';
 }
 
 /** True for the expression `import.meta.url`. */
@@ -371,7 +381,8 @@ function uses(file: ParsedFile): DetectedDep[] {
         // Require: callee is an identifier whose text is `require`.
         const isDynamicImport = fn.type === 'import';
         const isRequire = fn.type === 'identifier' && fn.text === 'require';
-        if (!isDynamicImport && !isRequire) break;
+        const isMock = isMockCallee(fn);
+        if (!isDynamicImport && !isRequire && !isMock) break;
         // An import type (`typeof import('./x')`, `let v: import('./x').T`) is a
         // dependency like a value-position import() and gives the same edge.
         const arg = argumentAt(node, 0);
@@ -455,7 +466,7 @@ export const typescriptExtractor: DependencyExtractor = {
   // import(), `import type = require`) and a module augmentation names its module.
   // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
   // `new URL(…, import.meta.url)`; ERROR-region recovery.
-  rev: 6,
+  rev: 9,
   declarations,
   uses,
 };
@@ -471,7 +482,129 @@ export interface SfcScriptView {
 }
 
 const SFC_EXTENSIONS = new Set(['.vue', '.svelte']);
-const SCRIPT_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+
+interface ScriptElement {
+  attributes: string;
+  tagStart: number;
+  bodyStart: number;
+  bodyEnd: number;
+}
+
+/** Elements whose content an HTML tokenizer reads as raw text, where a `<!--` is text. */
+const RAW_TEXT_ELEMENTS = new Set(['iframe', 'noembed', 'noframes', 'noscript', 'style', 'textarea', 'title', 'xmp']);
+
+/**
+ * The `<script>` elements of a component, in document order. The markup is read as an
+ * HTML tokenizer reads it: a `<!--` starts a comment only in markup text, so inside an
+ * attribute value, a raw-text element, a Svelte `{…}` expression or a script body it is
+ * text. A comment is skipped whole, and a `<!--` with no `-->` after it is text too.
+ */
+function scriptElements(content: string, svelte: boolean): ScriptElement[] {
+  const elements: ScriptElement[] = [];
+  const scriptOpen = /<script\b([^>]*)>/iy;
+  const scriptClose = /<\/script\s*>/gi;
+  const tagName = /[A-Za-z][^\s/>]*/y;
+  let i = 0;
+  let inTag = false;
+  let quote = '';
+  let previous = '';
+  let name = '';
+  let raw = '';
+  let depth = 0;
+  let stringQuote = '';
+  // A search that finds no `-->` settles it for the rest of the component: no later `<!--` has one either.
+  let noClose = false;
+  while (i < content.length) {
+    if (content[i] === '<') {
+      scriptOpen.lastIndex = i;
+      const open = scriptOpen.exec(content);
+      if (open !== null) {
+        const bodyStart = i + open[0].length;
+        scriptClose.lastIndex = bodyStart;
+        const close = scriptClose.exec(content);
+        if (close === null) break;
+        elements.push({ attributes: open[1], tagStart: i, bodyStart, bodyEnd: close.index });
+        i = close.index + close[0].length;
+        inTag = false;
+        quote = '';
+        raw = '';
+        depth = 0;
+        stringQuote = '';
+        continue;
+      }
+    }
+    const c = content[i];
+    if (raw !== '') {
+      if (c === '<' && content.slice(i + 1, i + 2 + raw.length).toLowerCase() === `/${raw}`) raw = '';
+      i++;
+    } else if (depth > 0) {
+      if (stringQuote !== '') {
+        if (c === '\\') i++;
+        else if (c === stringQuote) stringQuote = '';
+      } else if (c === '"' || c === "'" || c === '`') {
+        stringQuote = c;
+      } else if (c === '{') {
+        depth++;
+      } else if (c === '}') {
+        depth--;
+      }
+      i++;
+    } else if (inTag) {
+      const before = previous;
+      if (!/\s/.test(c)) previous = c;
+      if (quote !== '') {
+        if (c === quote) quote = '';
+      } else if ((c === '"' || c === "'") && before === '=') {
+        quote = c;
+      } else if (svelte && c === '{') {
+        depth = 1;
+      } else if (c === '>') {
+        inTag = false;
+        raw = RAW_TEXT_ELEMENTS.has(name) ? name : '';
+      }
+      i++;
+    } else if (!noClose && content.startsWith('<!--', i)) {
+      // `<!-->` and `<!--->` end the comment at once, as HTML reads them.
+      const end = content.indexOf('-->', i + 2);
+      if (end === -1) noClose = true;
+      i = end === -1 ? i + 4 : end + 3;
+    } else if (svelte && c === '{') {
+      depth = 1;
+      i++;
+    } else {
+      tagName.lastIndex = i + 1;
+      const tag = c === '<' ? tagName.exec(content) : null;
+      if (tag === null) {
+        i++;
+      } else {
+        inTag = true;
+        previous = '';
+        name = tag[0].toLowerCase();
+        i += 1 + tag[0].length;
+      }
+    }
+  }
+  return elements;
+}
+
+const SRC_ATTRIBUTE = /(?<=\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
+const SRC_RELATIVE = /^\.\.?\/[^"'\\\r\n]*$/;
+
+/**
+ * The import an element with a relative `src` and no body stands for, as `import "<src>";`.
+ * It is written over the element's own tag, and only where it fits on the line the tag
+ * starts on: the view must keep every line of the component where it was.
+ */
+function srcImport(element: ScriptElement, content: string): string | undefined {
+  if (content.slice(element.bodyStart, element.bodyEnd).trim() !== '') return undefined;
+  const m = SRC_ATTRIBUTE.exec(element.attributes);
+  const src = m?.[1] ?? m?.[2] ?? m?.[3];
+  if (src === undefined || !SRC_RELATIVE.test(src)) return undefined;
+  const text = `import "${src}";`;
+  const lineEnd = content.indexOf('\n', element.tagStart);
+  const roomEnd = Math.min(element.bodyStart, lineEnd === -1 ? content.length : lineEnd);
+  return element.tagStart + text.length <= roomEnd ? text : undefined;
+}
 
 /**
  * Vue and Svelte single-file components carry their imports in `<script>` blocks
@@ -480,28 +613,30 @@ const SCRIPT_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
  * byte outside a script body becomes a space (newlines are kept, so every line
  * number is the component's own), and the view is parsed with the TS, TSX or JS
  * grammar the blocks' `lang` names (`ts`/`typescript` → TS, `tsx` → TSX, otherwise
- * JS). Returns null for any other file, or a component with no script block.
+ * JS). Returns null for any other file, or a component with no script block outside
+ * its HTML comments. A script element with a `src` and no body stands for the file it
+ * names, as an import written over its own tag.
  */
 export function sfcScriptView(filePath: string, content: string): SfcScriptView | null {
   if (!SFC_EXTENSIONS.has(path.posix.extname(filePath).toLowerCase())) return null;
-  const keep: Array<[number, number]> = [];
+  const elements = scriptElements(content, path.posix.extname(filePath).toLowerCase() === '.svelte');
+  if (elements.length === 0) return null;
   let language = 'javascript';
-  SCRIPT_BLOCK.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = SCRIPT_BLOCK.exec(content)) !== null) {
-    const lang = /\blang\s*=\s*["']?([\w-]+)/i.exec(m[1])?.[1]?.toLowerCase();
+  for (const element of elements) {
+    const lang = /\blang\s*=\s*["']?([\w-]+)/i.exec(element.attributes)?.[1]?.toLowerCase();
     if (lang === 'tsx') language = 'tsx';
     else if ((lang === 'ts' || lang === 'typescript') && language !== 'tsx') language = 'typescript';
-    const bodyStart = m.index + m[0].indexOf('>') + 1;
-    keep.push([bodyStart, bodyStart + m[2].length]);
   }
-  if (keep.length === 0) return null;
   let view = '';
   let cursor = 0;
   const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
-  for (const [start, end] of keep) {
-    view += blank(content.slice(cursor, start)) + content.slice(start, end);
-    cursor = end;
+  for (const element of elements) {
+    const injected = srcImport(element, content);
+    const head = injected === undefined
+      ? blank(content.slice(cursor, element.bodyStart))
+      : blank(content.slice(cursor, element.tagStart)) + injected + blank(content.slice(element.tagStart + injected.length, element.bodyStart));
+    view += head + content.slice(element.bodyStart, element.bodyEnd);
+    cursor = element.bodyEnd;
   }
   view += blank(content.slice(cursor));
   const ext = language === 'typescript' ? '.ts' : language === 'tsx' ? '.tsx' : '.js';
