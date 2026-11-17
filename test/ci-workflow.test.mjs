@@ -83,3 +83,25 @@ test('the shards of the Windows job, started as the workflow starts them, run ev
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('the grammars job builds every pin as the package ships them, so the offline jobs can pack the package', () => {
+  const text = job('grammars');
+  const all = text.indexOf('run: npm run grammars:package');
+  assert.ok(all >= 0, 'the grammars job does not build every pin');
+  assert.ok(all < text.indexOf('uses: actions/upload-artifact@'), 'the grammars job uploads the cache before every pin is in it');
+});
+
+test('the release builds and verifies every pinned grammar and checks the packed list before it publishes', () => {
+  const release = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const publish = release.slice(release.indexOf('\n  publish:\n'));
+  const at = (needle) => {
+    const i = publish.indexOf(needle);
+    assert.ok(i >= 0, `the publish job has no ${needle}`);
+    return i;
+  };
+  const install = at('- run: npm ci');
+  const build = at('run: npm run grammars:package');
+  const check = at('npm pack --dry-run --json');
+  const publishing = at('run: npm publish ');
+  assert.ok(install < build && build < check && check < publishing, 'install, build the grammars, check the pack, then publish');
+});

@@ -1,5 +1,5 @@
 /**
- * The grammar build recipe: turns manifest pins into the two files a parser loads, `<wasmFile>` and `<name>.node-types.json`, and writes a file only after its bytes were hashed and matched against the pin, whatever its source (see `GrammarSource`). Built and downloaded files land in a content-addressed cache named by their sha256 and are re-hashed on every read: a warm cache needs no network and no toolchain, and a damaged entry is evicted, never written out. Source builds are byte-reproducible on Linux and macOS (the same bytes from Linux x64 and macOS arm64), so the pinned sha256 is also the reproducibility check. Windows is the exception, and a source build there is refused before any download: the refusal was written for tree-sitter-cli 0.27.0, whose wasi-sdk (wasi-sdk-34) names its clang `23.1.0-rc3` in the WASM `producers` section on Windows, where the Linux and macOS builds of the same LLVM commit say `23.1.0-wasi-sdk`. For that version the code was byte-identical, and only that metadata string differed, which changes the sha256. The Windows build with tree-sitter-cli 0.27.2 is not verified; on Linux, 0.27.2 builds with wasi-sdk 34.0 and reproduces every pin. On Windows the grammars come from the cache, filled from a Linux, macOS or WSL build.
+ * The grammar build recipe: turns manifest pins into the two files a parser loads, `<wasmFile>` and `<name>.node-types.json`, and writes a file only after its bytes were hashed and matched against the pin, whatever its source (see `GrammarSource`). The published package carries every pin's two files in `grammars/built/`, built and verified by the release before the pack, so a consumer installed from npm reads them there first and needs no network, no toolchain and no grammar package; a checkout of the repository has no such files (they never enter git) and goes on to the sources below. Built and downloaded files land in a content-addressed cache named by their sha256 and are re-hashed on every read: a warm cache needs no network and no toolchain, and a damaged entry is evicted, never written out. Source builds are byte-reproducible on Linux and macOS (the same bytes from Linux x64 and macOS arm64), so the pinned sha256 is also the reproducibility check. Windows is the exception, and a source build there is refused before any download: the refusal was written for tree-sitter-cli 0.27.0, whose wasi-sdk (wasi-sdk-34) names its clang `23.1.0-rc3` in the WASM `producers` section on Windows, where the Linux and macOS builds of the same LLVM commit say `23.1.0-wasi-sdk`. For that version the code was byte-identical, and only that metadata string differed, which changes the sha256. The Windows build with tree-sitter-cli 0.27.2 is not verified; on Linux, 0.27.2 builds with wasi-sdk 34.0 and reproduces every pin. On Windows the grammars come from the cache, filled from a Linux, macOS or WSL build.
  *
  * This runs at build time, never at run time: it downloads, checks out repositories and runs the tree-sitter CLI. A consumer calls it from its own build or test script; `@chrisdudek/runes` itself ships no executable.
  */
@@ -14,6 +14,10 @@ import { parseGrammarManifest, syntaxNodeTypesFile } from './manifest.mjs';
 /** The shipped grammars/ directory: the manifest, its schema and the patches. */
 export function shippedGrammarsDir() {
     return fileURLToPath(new URL('../../grammars/', import.meta.url));
+}
+/** Where the published package carries the built grammar files: `<wasmFile>` and its node-types.json for every pin. */
+export function shippedGrammarFilesDir() {
+    return path.join(shippedGrammarsDir(), 'built');
 }
 /** The shipped grammar manifest, parsed and validated. */
 export function loadGrammarManifest() {
@@ -111,12 +115,13 @@ function buildFromSource(pin, source, cli, patchesRoot) {
 }
 const rawNodeTypesUrl = (pin) => `https://raw.githubusercontent.com/${pin.repo.replace(/^https:\/\/github\.com\//, '')}/${pin.commit}/src/node-types.json`;
 /**
- * Builds (or fetches, or copies) the pinned grammars into `outDir`, verified by sha256. Every requested grammar is materialized before anything is written, so a failing pin leaves no partial set behind. A grammar whose two files already sit in `outDir` with the pinned bytes is left as it is.
+ * Builds (or fetches, or copies) the pinned grammars into `outDir`, verified by sha256. The sources are tried in order: the files already in `outDir`, the files the package ships, then by the pin's kind the installed npm package, or the cache and then a download or a source build. Every requested grammar is materialized before anything is written, so a failing pin leaves no partial set behind. A grammar whose two files already sit in `outDir` with the pinned bytes is left as it is.
  */
 export async function buildGrammars(options) {
     const manifest = options.manifest ?? loadGrammarManifest();
     const log = options.log ?? (() => { });
     const cacheDir = options.cacheDir ?? process.env.RUNES_GRAMMAR_CACHE ?? path.join(os.homedir(), '.cache', 'runes', 'grammars');
+    const shippedDir = options.shippedDir ?? shippedGrammarFilesDir();
     const patchesRoot = options.patchesRoot ?? shippedGrammarsDir();
     const resolveFrom = path.resolve(options.resolveFrom ?? process.cwd());
     const only = options.only === undefined ? undefined : new Set(options.only);
@@ -136,6 +141,13 @@ export async function buildGrammars(options) {
         if (inOut.wasm && inOut.nodeTypes && !options.rebuild) {
             outputs.push({ pin, wasm: inOut.wasm, nodeTypes: inOut.nodeTypes, from: 'out' });
             continue;
+        }
+        if (!options.rebuild) {
+            const shipped = { wasm: readVerified(path.join(shippedDir, pin.wasmFile), pin.sha256.wasm), nodeTypes: readVerified(path.join(shippedDir, syntaxNodeTypesFile(pin.wasmFile)), pin.sha256.nodeTypes) };
+            if (shipped.wasm && shipped.nodeTypes) {
+                outputs.push({ pin, wasm: shipped.wasm, nodeTypes: shipped.nodeTypes, from: 'shipped' });
+                continue;
+            }
         }
         const src = pin.source;
         if (src.kind === 'npm') {

@@ -127,17 +127,47 @@ describe('validateGrammarManifest', () => {
 
 describe('buildGrammars and verifyGrammarFiles', () => {
   const tmp = () => mkdtempSync(path.join(tmpdir(), 'runes-grammars-'));
+  // The tests of the sources below the shipped files point the shipped tier at a folder that does not exist, so a checkout that has built the package's files (npm run grammars:package) answers them as one that has not.
 
   test('an npm pin is copied from the installed package and verified; a second run leaves the files alone', async () => {
     const out = tmp();
     try {
-      const first = await buildGrammars({ outDir: out, only: ['javascript', 'go'], resolveFrom: root, offline: true, cacheDir: path.join(out, 'cache') });
+      const first = await buildGrammars({ outDir: out, only: ['javascript', 'go'], resolveFrom: root, offline: true, cacheDir: path.join(out, 'cache'), shippedDir: path.join(out, 'none-shipped') });
       assert.deepEqual(first.map((b) => [b.language, b.from]), [['javascript', 'npm'], ['go', 'npm']]);
       assert.equal(sha(readFileSync(path.join(out, 'tree-sitter-go.wasm'))), byLanguage.get('go').sha256.wasm);
       assert.equal(sha(readFileSync(path.join(out, 'tree-sitter-go.node-types.json'))), byLanguage.get('go').sha256.nodeTypes);
       const second = await buildGrammars({ outDir: out, only: ['go'], resolveFrom: root, offline: true, cacheDir: path.join(out, 'cache') });
       assert.deepEqual(second.map((b) => b.from), ['out']);
       assert.deepEqual(verifyGrammarFiles(out, { only: ['javascript', 'go'] }), []);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  test('the shipped files come first for every kind of pin, offline, with an empty cache and nothing installed; a damaged one is passed over, and rebuild passes them over', async () => {
+    const out = tmp();
+    const shipped = path.join(out, 'shipped');
+    const empty = path.join(out, 'empty');
+    const only = ['typescript', 'go', 'rust'];
+    try {
+      mkdirSync(shipped);
+      mkdirSync(empty);
+      for (const language of only) {
+        const pin = byLanguage.get(language);
+        for (const file of [pin.wasmFile, syntaxNodeTypesFile(pin.wasmFile)]) cpSync(path.join(root, '.grammars', file), path.join(shipped, file));
+      }
+      assert.deepEqual(only.map((l) => byLanguage.get(l).source.kind), ['source', 'npm', 'github-release']);
+      const built = await buildGrammars({ outDir: path.join(out, 'g'), only, shippedDir: shipped, cacheDir: empty, resolveFrom: empty, offline: true });
+      assert.deepEqual(built.map((b) => [b.language, b.from]), only.map((l) => [l, 'shipped']));
+      assert.deepEqual(verifyGrammarFiles(path.join(out, 'g'), { only }), []);
+      assert.deepEqual(readdirSync(empty), [], 'nothing was cached');
+      const audit = await buildGrammars({ outDir: path.join(out, 'h'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: root, rebuild: true });
+      assert.deepEqual(audit.map((b) => b.from), ['npm']);
+      writeFileSync(path.join(shipped, 'tree-sitter-go.node-types.json'), 'damaged');
+      const passedOver = await buildGrammars({ outDir: path.join(out, 'i'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: root, offline: true });
+      assert.deepEqual(passedOver.map((b) => b.from), ['npm']);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'j'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: empty, offline: true }), /tree-sitter-go@0\.25\.0 is not installed/);
+      assert.ok(!existsSync(path.join(out, 'j')), 'nothing written');
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
@@ -152,11 +182,11 @@ describe('buildGrammars and verifyGrammarFiles', () => {
       const src = path.join(root, '.grammars');
       writeFileSync(path.join(cache, pin.sha256.wasm), readFileSync(path.join(src, pin.wasmFile)));
       writeFileSync(path.join(cache, pin.sha256.nodeTypes), readFileSync(path.join(src, syntaxNodeTypesFile(pin.wasmFile))));
-      const built = await buildGrammars({ outDir: path.join(out, 'g'), only: ['rust'], resolveFrom: root, offline: true, cacheDir: cache });
+      const built = await buildGrammars({ outDir: path.join(out, 'g'), only: ['rust'], resolveFrom: root, offline: true, cacheDir: cache, shippedDir: path.join(out, 'none-shipped') });
       assert.deepEqual(built.map((b) => b.from), ['cache']);
       writeFileSync(path.join(cache, pin.sha256.wasm), 'damaged');
       const logs = [];
-      await assert.rejects(buildGrammars({ outDir: path.join(out, 'h'), only: ['rust'], resolveFrom: root, offline: true, cacheDir: cache, log: (l) => logs.push(l) }), /not in the cache .* offline/);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'h'), only: ['rust'], resolveFrom: root, offline: true, cacheDir: cache, shippedDir: path.join(out, 'none-shipped'), log: (l) => logs.push(l) }), /not in the cache .* offline/);
       assert.ok(logs.some((l) => l.includes('evicted a damaged cache entry')));
       assert.ok(!existsSync(path.join(cache, pin.sha256.wasm)));
       assert.ok(!existsSync(path.join(out, 'h', pin.wasmFile)), 'nothing written for a failed pin');
@@ -172,12 +202,12 @@ describe('buildGrammars and verifyGrammarFiles', () => {
     try {
       assert.equal(pin.source.kind, 'source');
       mkdirSync(cache);
-      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g'), only: ['typescript'], resolveFrom: root, cacheDir: cache, platform: 'win32' }), /typescript is not in the cache .* does not work on Windows: .* Linux, macOS or WSL/);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g'), only: ['typescript'], resolveFrom: root, cacheDir: cache, shippedDir: path.join(out, 'none-shipped'), platform: 'win32' }), /typescript is not in the cache .* does not work on Windows: .* Linux, macOS or WSL/);
       assert.ok(!existsSync(path.join(out, 'g')), 'nothing written');
       const src = path.join(root, '.grammars');
       writeFileSync(path.join(cache, pin.sha256.wasm), readFileSync(path.join(src, pin.wasmFile)));
       writeFileSync(path.join(cache, pin.sha256.nodeTypes), readFileSync(path.join(src, syntaxNodeTypesFile(pin.wasmFile))));
-      const built = await buildGrammars({ outDir: path.join(out, 'g'), only: ['typescript'], resolveFrom: root, cacheDir: cache, platform: 'win32' });
+      const built = await buildGrammars({ outDir: path.join(out, 'g'), only: ['typescript'], resolveFrom: root, cacheDir: cache, shippedDir: path.join(out, 'none-shipped'), platform: 'win32' });
       assert.deepEqual(built.map((b) => b.from), ['cache']);
     } finally {
       rmSync(out, { recursive: true, force: true });
@@ -190,7 +220,7 @@ describe('buildGrammars and verifyGrammarFiles', () => {
       const m = structuredClone(manifest);
       const go = m.grammars.find((g) => g.language === 'go');
       go.sha256.wasm = hex('0');
-      await assert.rejects(buildGrammars({ outDir: out, manifest: m, only: ['javascript', 'go'], resolveFrom: root, offline: true }), /grammar pin mismatch for go \(wasm\)/);
+      await assert.rejects(buildGrammars({ outDir: out, manifest: m, only: ['javascript', 'go'], resolveFrom: root, offline: true, shippedDir: path.join(out, 'none-shipped') }), /grammar pin mismatch for go \(wasm\)/);
       assert.deepEqual(readdirSync(out), [], 'a failing pin leaves no partial set behind');
       cpSync(path.join(root, '.grammars', 'tree-sitter-go.wasm'), path.join(out, 'tree-sitter-go.wasm'));
       const problems = verifyGrammarFiles(out, { only: ['go'], manifest: m });
@@ -205,7 +235,7 @@ describe('buildGrammars and verifyGrammarFiles', () => {
     try {
       const m = structuredClone(manifest);
       m.grammars.find((g) => g.language === 'python').source.version = '0.24.0';
-      await assert.rejects(buildGrammars({ outDir: out, manifest: m, only: ['python'], resolveFrom: root, offline: true }), /tree-sitter-python@0\.25\.0 is installed, but its pin is 0\.24\.0/);
+      await assert.rejects(buildGrammars({ outDir: out, manifest: m, only: ['python'], resolveFrom: root, offline: true, shippedDir: path.join(out, 'none-shipped') }), /tree-sitter-python@0\.25\.0 is installed, but its pin is 0\.24\.0/);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }

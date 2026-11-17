@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync } from 'node:zlib';
-import { loadGrammarManifest } from '@chrisdudek/runes/grammars';
+import { loadGrammarManifest, verifyGrammarFiles } from '@chrisdudek/runes/grammars';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const manifest = loadGrammarManifest();
@@ -92,4 +92,30 @@ test('the packed package carries every pinned grammar, and buildGrammars install
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the package build of the grammars refuses a folder that holds a file no pin names, and takes no language list', { timeout: 600_000 }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'runes-packed-'));
+  try {
+    const script = path.join(root, 'scripts', 'build-grammars.mjs');
+    const out = path.join(dir, 'built');
+    mkdirSync(out);
+    writeFileSync(path.join(out, 'tree-sitter-cobol.wasm'), 'stale');
+    const stray = spawnSync(process.execPath, [script, '--package', '--out', out], { cwd: root, encoding: 'utf8', timeout: 600_000 });
+    assert.equal(stray.status, 1, stray.stderr);
+    assert.match(stray.stderr, /must hold exactly the pinned grammar files, and does not:\n {2}tree-sitter-cobol\.wasm: no pin names it/);
+    assert.deepEqual(verifyGrammarFiles(out), [], 'every pin was still built and verified');
+    const listed = spawnSync(process.execPath, [script, '--package', '--only', 'go'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(listed.status, 2);
+    assert.match(listed.stderr, /--package builds every pin and takes no --only or --table/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the grammar files are built when the package is published, never when it is installed', () => {
+  const { scripts } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(scripts.prepublishOnly, 'npm run grammars:package');
+  assert.equal(scripts['grammars:package'], 'node scripts/build-grammars.mjs --package');
+  for (const name of ['preinstall', 'install', 'postinstall', 'prepare', 'preprepare', 'postprepare', 'prepack', 'postpack']) assert.equal(scripts[name], undefined, `${name} runs on an install from git or on a pack`);
 });

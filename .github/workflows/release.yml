@@ -97,6 +97,25 @@ jobs:
       - name: Build and confirm dist/ is what the tag carries
         if: steps.npm-check.outputs.published == 'false'
         run: npm run check:dist
+      # The package carries every pinned grammar built (grammars/built/, never in git). The cache only saves the source builds and downloads: every file read from it is checked against the manifest's sha256, so a cache cannot change what is published.
+      - uses: actions/cache@v6
+        if: steps.npm-check.outputs.published == 'false'
+        with:
+          path: ~/.cache/runes/grammars
+          key: grammars-${{ hashFiles('grammars/manifest.json', 'grammars/patches/**') }}
+      - name: Every pinned grammar, built and verified for the package
+        if: steps.npm-check.outputs.published == 'false'
+        run: npm run grammars:package
+      - name: The package carries the two files of every pin and nothing else under grammars/built
+        if: steps.npm-check.outputs.published == 'false'
+        run: |
+          npm pack --dry-run --json > "${RUNNER_TEMP}/pack.json"
+          PACKED=$(jq -r '[.[0].files[].path | select(startswith("grammars/built/"))] | sort | join(" ")' "${RUNNER_TEMP}/pack.json")
+          PINNED=$(jq -r '[.grammars[].wasmFile | ("grammars/built/" + .), ("grammars/built/" + sub("\\.wasm$"; ".node-types.json"))] | sort | join(" ")' grammars/manifest.json)
+          if [ "${PACKED}" != "${PINNED}" ]; then
+            echo "::error::The package does not carry exactly the pinned grammar files. Packed: ${PACKED}. Pinned: ${PINNED}."
+            exit 1
+          fi
       # No NODE_AUTH_TOKEN: authentication is npm trusted publishing over OIDC (id-token: write above), configured on npmjs.com for this repository and this workflow file.
       - name: Publish to npm
         if: steps.npm-check.outputs.published == 'false'

@@ -146,6 +146,8 @@ To tell these, `ResolverDeps.resolvePathToFile` may carry the method `explainMis
 
 The grammar manifest and its recipe (`buildGrammars`, `verifyGrammarFiles`, `loadGrammarManifest`) and the language table.
 
+**Shipped grammars (added in 1.2.0).** The package published on npm carries every pin of the manifest built: `grammars/built/` holds `<wasmFile>` and `<name>.node-types.json` for each of the 23 pins, built by the release and checked against the manifest's sha256 before the pack. They are never in git, so a checkout of the repository and a vendored copy have none. `buildGrammars` reads them before any other source, after the files already in `outDir`, and checks each against its pin as it checks every source: from an installed package it needs no network, no toolchain, no grammar package and no cache, on Windows as elsewhere, and `offline: true` succeeds with an empty cache. A shipped file that does not match its pin is passed over and the pin's own source is tried. `BuildGrammarsOptions.shippedDir` points that step at another folder of built files, and `rebuild` passes over them as it passes over the cache. `BuiltGrammar.from` says `'shipped'` for a grammar taken from them. The package is 3.5 MB packed and 35 MB unpacked, of which the grammars are 33.5 MB.
+
 | Export | Kind | Consumers |
 |---|---|---|
 | `version` | value | Yggdrasil |
