@@ -648,8 +648,13 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
       '[tool.hatch.build]\nsources = { a.b = "" }\n',
     ];
     for (const body of unread) expect(tree(body)('pkg.data.d.x'), body).toBeUndefined();
-    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a", "b/"]\n[tool.hatch.build.targets.wheel.sources]\n"c/d" = ""\n[tool.maturin]\npython-source = "py"\n[tool.pdm.build]\npackage-dir = "lib"\n')).toEqual(['py', 'lib', 'a', 'b', 'c/d']);
-    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = { "b" = "", "c" = "x" }\n')).toEqual(['a']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a", "b/"]\n[tool.maturin]\npython-source = "py"\n[tool.pdm.build]\npackage-dir = "lib"\n')).toEqual(['py', 'lib', 'a', 'b']);
+    // Hatch reads the wheel target's sources alone whenever the target sets them, so the build-wide ones then name nothing, also when the wheel's are refused or empty.
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a", "b/"]\n[tool.hatch.build.targets.wheel.sources]\n"c/d" = ""\n')).toEqual(['c/d']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build.targets.wheel]\nsources = ["src"]\n[tool.hatch.build]\nsources = ["lib"]\n')).toEqual(['src']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = { "b" = "", "c" = "x" }\n')).toEqual([]);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = []\n')).toEqual([]);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = {}\n')).toEqual([]);
   });
 
   it('a root from configuration never shadows the standard library, and the same tree under src/ answers as before', () => {
