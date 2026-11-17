@@ -585,9 +585,10 @@ function scriptElements(content: string, svelte: boolean): ScriptElement[] {
 }
 
 const SRC_ATTRIBUTE = /(?<=\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
+const SRC_RELATIVE = /^\.\.?\/[^"'\\\r\n]*$/;
 
 /**
- * The import an element with a `src` and no body stands for, as `import "<src>";`.
+ * The import an element with a relative `src` and no body stands for, as `import "<src>";`.
  * It is written over the element's own tag, and only where it fits on the line the tag
  * starts on: the view must keep every line of the component where it was.
  */
@@ -595,7 +596,7 @@ function srcImport(element: ScriptElement, content: string): string | undefined 
   if (content.slice(element.bodyStart, element.bodyEnd).trim() !== '') return undefined;
   const m = SRC_ATTRIBUTE.exec(element.attributes);
   const src = m?.[1] ?? m?.[2] ?? m?.[3];
-  if (src === undefined || src === '') return undefined;
+  if (src === undefined || !SRC_RELATIVE.test(src)) return undefined;
   const text = `import "${src}";`;
   const lineEnd = content.indexOf('\n', element.tagStart);
   const roomEnd = Math.min(element.bodyStart, lineEnd === -1 ? content.length : lineEnd);

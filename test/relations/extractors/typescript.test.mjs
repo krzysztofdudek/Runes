@@ -422,6 +422,19 @@ describe('sfcScriptView', () => {
     const view = sfcScriptView('c/S.svelte', '<p>x</p>\n<!-- <script>import { d } from "../data/d"</script> -->\n<script>import { e } from "../data/e"</script>\n');
     expect(await importsOf(view)).toEqual([['../data/e', 3]]);
   });
+  it('reads a src only as a relative path with no quote or backslash, and gives no use for any other', async () => {
+    expect(await importsOf(sfcScriptView('c/r.vue', '<script src="../data/d.ts"></script>'))).toEqual([['../data/d.ts', 1]]);
+    for (const tag of [
+      '<script src="//cdn.example.com/d.js"></script>',
+      '<script src="/js/a.js"></script>',
+      '<script src="https://cdn.example.com/d.js"></script>',
+      `<script src='../data/d" ; import "../data/e.ts'></script>`,
+      '<script src="..\\data\\d.ts"></script>',
+      '<script src=".\\x.js"></script>',
+    ]) {
+      expect(await importsOf(sfcScriptView('c/r.vue', tag))).toEqual([]);
+    }
+  });
 });
 
 describe('typescript extractor — test mocks and the bundler forms that stay unread', () => {
