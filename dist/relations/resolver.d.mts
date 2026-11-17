@@ -16,7 +16,7 @@ export interface ResolverDeps {
     symbolTable: SymbolTable;
     /** language-specific path → repo-rel file (or undefined). Injected per language. The resolver passes `symbolTable` as the fifth argument, which `makeResolvePathToFile`'s function reads for Rust crate-root items, and the hint's `callForm` as the sixth, which it reads for the conditions of a TypeScript or JavaScript `require()` or `import()` and of an import whose `resolution-mode` attribute names its mode; a function that takes four ignores both.
      *
-     * The function may carry `explainMiss` (added in 1.1.0), which `makeResolvePathToFile`'s function does: asked with the same arguments about a path that bound no file, it says why, for `classifyUse` (see `TargetResolver`). `{ split }` means the path names files of more than one owner, those files sorted (a Go package whose files two owners hold); undefined means it cannot say. `classify`, `resolve` and `resolveFile` never ask it. */
+     * The function may carry `explainMiss` (added in 1.1.0), which `makeResolvePathToFile`'s function does: asked with the same arguments about a path that bound no file, it says why, for `classifyUse` (see `TargetResolver`). `{ split }` means the path names several files and binds none, those files sorted (a Go package whose files two owners hold, a Python module two source roots hold, a PHP class two autoload directories map); undefined means it cannot say. `classify`, `resolve` and `resolveFile` never ask it. */
     resolvePathToFile: ((specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => string | undefined) & {
         explainMiss?: (specifier: string, fromFile: string, language: string, isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm') => 'outside' | 'unfollowed' | {
             split: string[];
@@ -62,7 +62,7 @@ export interface TargetResolver {
     /**
      * Added in 1.1.0; `makeResolver` always provides it, a resolver written by hand may leave it out. What one use comes to: its candidate group walked in order exactly as the edge walk walks it (`resolveDetectedEdges`), so `resolved` comes back exactly where that walk binds, with the same owner and file, and a nearer `ambiguous` ends the use there too. Where `classify` answers only the kind, this answer says more:
      *  - `ambiguous` carries `candidates`, the files the use could name, sorted and without repeats: the files that declare the name in each owner (a C# partial type, a JVM name two modules declare, a Ruby constant), every file declaring into a package a star import names, a file whose declarations could not be read and may hold the name, and for Ruby's gates the files of the namespace the lookup stops at or of a nested constant that may be inherited.
-     *  - A Go import of a package of the module whose files belong to more than one owner, which `classify` answers `absent` and the edge walk passes by, is `ambiguous` with the package's files, unless a farther candidate binds.
+     *  - A Go import of a package of the module whose files belong to more than one owner, a Python import of a module two source roots hold and a PHP class two autoload directories map, which `classify` answers `absent` and the edge walk passes by, are `ambiguous` with those files, unless a farther candidate binds.
      */
     classifyUse?(candidates: readonly TargetHint[], fromFile: string, language: string): Classification;
     /**

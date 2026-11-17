@@ -52,6 +52,7 @@ describe('MATRIX — from-import (module + longest-match submodule candidate, ne
 describe('MATRIX — relative imports (directory-pinned climb by dot-count)', () => {
   it('python-relative-sibling-import-edge', () => runCase('python-relative-sibling-import-edge'));
   it('python-relative-parent-import-edge', () => runCase('python-relative-parent-import-edge'));
+  it('python-relative-member-of-module-edge', () => runCase('python-relative-member-of-module-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,6 +100,9 @@ describe('MATRIX — source roots (ancestor packages are not roots; discovered p
   it('python-stdlib-shadowed-by-ancestor-module-silence', () =>
     runCase('python-stdlib-shadowed-by-ancestor-module-silence'));
   it('python-src-layout-tests-edge', () => runCase('python-src-layout-tests-edge'));
+  it('python-config-root-pyproject-where-edge', () => runCase('python-config-root-pyproject-where-edge'));
+  it('python-config-root-setup-cfg-package-dir-edge', () => runCase('python-config-root-setup-cfg-package-dir-edge'));
+  it('python-module-under-two-roots-ambiguous-silence', () => runCase('python-module-under-two-roots-ambiguous-silence'));
   it('python-workspace-member-edge', () => runCase('python-workspace-member-edge'));
   it('python-workspace-stdlib-name-silence', () => runCase('python-workspace-stdlib-name-silence'));
   it('python-namespace-package-not-a-root-edge', () => runCase('python-namespace-package-not-a-root-edge'));

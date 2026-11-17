@@ -691,7 +691,7 @@ export function makeResolver(deps) {
         return { kind: 'ambiguous', candidates: [...new Set(stands)].sort() };
     };
     /**
-     * The outcome of one candidate. `told` asks for what `classifyUse` adds (see `TargetResolver`); without it this is exactly `classify`. With it, a path whose files belong to more than one owner (`explainMiss`'s `{ split }`) is answered ambiguous, marked `PASSED` because the edge walk passes it by.
+     * The outcome of one candidate. `told` asks for what `classifyUse` adds (see `TargetResolver`); without it this is exactly `classify`. With it, a path that names several files and binds none (`explainMiss`'s `{ split }`) is answered ambiguous, marked `PASSED` because the edge walk passes it by.
      */
     const examine = (hint, fromFile, language, told) => {
         const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;

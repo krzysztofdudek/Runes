@@ -721,6 +721,132 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
   });
 });
 
+// A Python name imported from a relative module that is no module itself (`from ..data.m import x`, `from ..data import x`) binds that module's file, as the absolute form (`from pkg.data.m import x`) does.
+describe('resolver.classifyUse — a Python name imported from a relative module', () => {
+  const contents = new Map([['src/pkg/__init__.py', ''], ['src/pkg/data/__init__.py', ''], ['src/pkg/data/m.py', 'x = 1'], ['src/pkg/ui/__init__.py', ''], ['src/pkg/ui/a.py', '']]);
+  const ownerOf = (f) => (contents.has(f) ? f.split('/').at(-2) : undefined);
+  const r = makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  const use = (specifier) => r.classifyUse([{ kind: 'path', specifier }], 'src/pkg/ui/a.py', 'python');
+
+  it('binds the module or the package\'s __init__.py, the file the absolute form binds', () => {
+    expect(use('..data.m.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/m.py' });
+    expect(use('pkg.data.m.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/m.py' });
+    expect(use('..data.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/__init__.py' });
+    expect(use('pkg.data.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/__init__.py' });
+    expect(r.classify({ kind: 'path', specifier: '..data.m.x' }, 'src/pkg/ui/a.py', 'python')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/m.py' });
+  });
+  it('a relative path that binds no file stays unfollowed', () => {
+    expect(use('..data.gone.x')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(use('..gone.x')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(use('.missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+});
+
+// A Python package under a source root that only the project's configuration names (`[tool.setuptools.packages.find] where = ["lib"]`, a setup.cfg `package_dir`) has its absolute imports answered from that root.
+describe('resolver.classifyUse — a Python source root named by configuration', () => {
+  const resolverOf = (files) => {
+    const contents = new Map(Object.entries(files));
+    const ownerOf = (f) => (f.endsWith('.py') && contents.has(f) ? f.split('/').at(-2) : undefined);
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const layout = (prefix) => ({ [`${prefix}/pkg/__init__.py`]: '', [`${prefix}/pkg/data/__init__.py`]: '', [`${prefix}/pkg/data/d.py`]: 'x = 1', [`${prefix}/pkg/ui/__init__.py`]: '', [`${prefix}/pkg/ui/a.py`]: '' });
+  const uses = (r, prefix) => ['pkg.data.d', 'pkg.data.d.x', '..data.d'].map((specifier) => r.classifyUse([{ kind: 'path', specifier }], `${prefix}/pkg/ui/a.py`, 'python'));
+  const resolved = (file) => ({ kind: 'resolved', owner: 'data', resolvedFile: file });
+
+  it('a pyproject.toml naming where = ["lib"] and a setup.cfg mapping package_dir to lib resolve the package in lib/', () => {
+    const pyproject = resolverOf({ 'pyproject.toml': '[project]\nname = "x"\n\n[tool.setuptools.packages.find]\nwhere = ["lib"]\n', ...layout('lib') });
+    expect(uses(pyproject, 'lib')).toEqual([resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py')]);
+    const cfg = resolverOf({ 'setup.cfg': '[metadata]\nname = x\n\n[options]\npackage_dir =\n    = lib\n', ...layout('lib') });
+    expect(uses(cfg, 'lib')).toEqual([resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py')]);
+    expect(pyproject.classify({ kind: 'path', specifier: 'pkg.data.d' }, 'lib/pkg/ui/a.py', 'python')).toEqual(resolved('lib/pkg/data/d.py'));
+  });
+  it('the same tree under src/ answers as it did, and without the key the package in lib/ stays outside', () => {
+    const src = resolverOf({ 'pyproject.toml': '[project]\nname = "x"\n', ...layout('src') });
+    expect(uses(src, 'src')).toEqual([resolved('src/pkg/data/d.py'), resolved('src/pkg/data/d.py'), resolved('src/pkg/data/d.py')]);
+    const plain = resolverOf({ 'pyproject.toml': '[project]\nname = "x"\n', ...layout('lib') });
+    expect(uses(plain, 'lib').slice(0, 2)).toEqual([{ kind: 'absent', reason: 'outside' }, { kind: 'absent', reason: 'outside' }]);
+  });
+});
+
+// A Python module two source roots hold, and a PHP class two PSR-4 directories map, bind no file; `classifyUse` answers them ambiguous with both files, sorted, where `classify` and the edges answer as before.
+describe('resolver.classifyUse — a Python module or a PHP class that several roots answer', () => {
+  const resolverOf = (files, ownerOf) => {
+    const contents = new Map(Object.entries(files));
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const byDir = (f) => (/\.(py|php)$/.test(f) ? f.split('/').at(-2) : undefined);
+
+  it('Python: a module under two project roots', () => {
+    const r = resolverOf({ 'b/pyproject.toml': '', 'b/src/shared/__init__.py': '', 'b/src/shared/util.py': '', 'a/pyproject.toml': '', 'a/src/shared/__init__.py': '', 'a/src/shared/util.py': '', 'c/app/main.py': '', 'c/app/solo.py': '' }, byDir);
+    const hint = { kind: 'path', specifier: 'shared.util' };
+    expect(r.classifyUse([hint], 'c/app/main.py', 'python')).toEqual({ kind: 'ambiguous', candidates: ['a/src/shared/util.py', 'b/src/shared/util.py'] });
+    expect(r.classify(hint, 'c/app/main.py', 'python')).toEqual({ kind: 'absent' });
+    expect(r.resolve(hint, 'c/app/main.py', 'python')).toBeUndefined();
+    // A name of a module two roots hold falls back to the module, ambiguous the same way; a farther reading that binds still answers.
+    expect(r.classifyUse([{ kind: 'path', specifier: 'shared.util.run' }], 'c/app/main.py', 'python')).toEqual({ kind: 'ambiguous', candidates: ['a/src/shared/util.py', 'b/src/shared/util.py'] });
+    expect(r.classifyUse([hint, { kind: 'path', specifier: '.solo' }], 'c/app/main.py', 'python')).toEqual({ kind: 'resolved', owner: 'app', resolvedFile: 'c/app/solo.py' });
+    // An excluded copy leaves one file, which binds as before.
+    const excluded = makeResolver({ ownerIndex: { ownerOf: byDir }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', byDir, (p) => p.startsWith('b/'), { files: listedFileView(['a/pyproject.toml', 'a/src/shared/__init__.py', 'a/src/shared/util.py', 'b/pyproject.toml', 'b/src/shared/util.py', 'c/app/main.py'], () => '') }) });
+    expect(excluded.classifyUse([hint], 'c/app/main.py', 'python')).toEqual({ kind: 'resolved', owner: 'shared', resolvedFile: 'a/src/shared/util.py' });
+  });
+  it('PHP: a class two PSR-4 directories of one prefix map, in the nearest map and in the repository\'s union', () => {
+    const near = resolverOf({ 'composer.json': '{ "autoload": { "psr-4": { "App\\\\": ["src/", "lib/"] } } }', 'src/Pay/G.php': '<?php', 'lib/Pay/G.php': '<?php', 'src/Order/Handler.php': '<?php' }, byDir);
+    const hint = { kind: 'path', specifier: 'App\\Pay\\G' };
+    expect(near.classifyUse([hint], 'src/Order/Handler.php', 'php')).toEqual({ kind: 'ambiguous', candidates: ['lib/Pay/G.php', 'src/Pay/G.php'] });
+    expect(near.classify(hint, 'src/Order/Handler.php', 'php')).toEqual({ kind: 'absent' });
+    expect(near.classifyUse([{ kind: 'path', specifier: 'App\\Pay\\Gone' }], 'src/Order/Handler.php', 'php')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    const union = resolverOf({ 'p1/composer.json': '{ "autoload": { "psr-4": { "Lib\\\\": "src/" } } }', 'p1/src/Thing.php': '<?php', 'p2/composer.json': '{ "autoload": { "psr-4": { "Lib\\\\": "src/" } } }', 'p2/src/Thing.php': '<?php', 'app/composer.json': '{ "autoload": { "psr-4": { "App\\\\": "src/" } } }', 'app/src/Use.php': '<?php' }, (f) => f.split('/')[0]);
+    expect(union.classifyUse([{ kind: 'path', specifier: 'Lib\\Thing' }], 'app/src/Use.php', 'php')).toEqual({ kind: 'ambiguous', candidates: ['p1/src/Thing.php', 'p2/src/Thing.php'] });
+  });
+});
+
+// A Go module of the repository that the importing file's go.mod reaches only through `replace` with a relative directory binds there, as the toolchain loads it; a replacement by a version, by a directory outside the repository or by a directory whose go.mod declares another module stays outside.
+describe('resolver.classifyUse — a Go module wired with replace', () => {
+  const resolverOf = (files) => {
+    const contents = new Map(Object.entries(files));
+    const ownerOf = (f) => (f.endsWith('.go') && contents.has(f) ? f.split('/').at(-2) : undefined);
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const use = (r, specifier) => r.classifyUse([{ kind: 'path', specifier, isPackage: true }], 'ui/a.go', 'go');
+  const data = { 'data/go.mod': 'module example.com/data\n', 'data/d.go': 'package data', 'data/sub/s.go': 'package sub', 'ui/a.go': 'package ui' };
+
+  it('a replace to a sibling directory whose go.mod declares the module resolves into it, with no go.work', () => {
+    for (const replace of ['replace example.com/data => ../data', 'replace example.com/data v0.0.0 => "../data/" // local', 'replace (\n\texample.com/data => ../data\n)']) {
+      const r = resolverOf({ ...data, 'ui/go.mod': `module example.com/ui\n\nrequire example.com/data v0.0.0\n\n${replace}\n` });
+      expect(use(r, 'example.com/data'), replace).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+      expect(use(r, 'example.com/data/sub'), replace).toEqual({ kind: 'resolved', owner: 'sub', resolvedFile: 'data/sub/s.go' });
+      expect(use(r, 'example.com/data/gone'), replace).toEqual({ kind: 'absent', reason: 'unfollowed' });
+      expect(r.classify({ kind: 'path', specifier: 'example.com/data', isPackage: true }, 'ui/a.go', 'go')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+    }
+  });
+  it('a replace by a version, by a directory outside the repository, by one with no go.mod or another module stays outside', () => {
+    for (const replace of ['replace example.com/data => example.com/fork v1.0.0', 'replace example.com/data => ../../data', 'replace example.com/data => /abs/data', 'replace example.com/data => ../other', 'replace example.com/data => ../plain', 'replace example.com/data => ../data extra']) {
+      const r = resolverOf({ ...data, 'other/go.mod': 'module example.com/other\n', 'other/o.go': 'package other', 'plain/p.go': 'package plain', 'ui/go.mod': `module example.com/ui\n\n${replace}\n` });
+      expect(use(r, 'example.com/data'), replace).toEqual({ kind: 'absent', reason: 'outside' });
+    }
+  });
+  it('a replace with a version on its left applies only when the go.mod requires the module at that version', () => {
+    const at = (requires, replace) => use(resolverOf({ ...data, 'ui/go.mod': `module example.com/ui\n\n${requires}\n\n${replace}\n` }), 'example.com/data');
+    expect(at('require example.com/data v1.0.0', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+    expect(at('require (\n\texample.com/data v1.0.0 // indirect\n)', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+    expect(at('require example.com/data v1.2.0', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(at('', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(at('require example.com/data v1.2.0', 'replace example.com/data => ../data')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+  });
+  it('a replace that names the repository root or a module above, in any spelling, keeps the edge the ancestor walk gives', () => {
+    const tools = { 'go.mod': 'module golang.org/x/tools\n', 'go/packages/p.go': 'package packages' };
+    for (const [dir, file, replace] of [['gopls', 'gopls/main.go', '../'], ['gopls', 'gopls/main.go', '..'], ['x/gopls', 'x/gopls/main.go', '../../'], ['x/gopls', 'x/gopls/main.go', '../..'], ['x/gopls', 'x/gopls/main.go', './../../']]) {
+      const r = resolverOf({ ...tools, [`${dir}/go.mod`]: `module golang.org/x/tools/gopls\n\nrequire golang.org/x/tools v0.30.0\n\nreplace golang.org/x/tools => ${replace}\n`, [file]: 'package main' });
+      expect(r.classifyUse([{ kind: 'path', specifier: 'golang.org/x/tools/go/packages', isPackage: true }], file, 'go'), replace).toEqual({ kind: 'resolved', owner: 'packages', resolvedFile: 'go/packages/p.go' });
+    }
+  });
+  it('only the importing file\'s own go.mod replaces: a replace in another module\'s go.mod reaches nothing here', () => {
+    const r = resolverOf({ ...data, 'ui/go.mod': 'module example.com/ui\n', 'tool/go.mod': 'module example.com/tool\n\nreplace example.com/data => ../data\n', 'tool/t.go': 'package tool' });
+    expect(use(r, 'example.com/data')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(r.classifyUse([{ kind: 'path', specifier: 'example.com/data', isPackage: true }], 'tool/t.go', 'go')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+  });
+});
+
 // Java reads a simple name of java.lang through the implicit on-demand import of java.lang (JLS §7.3), after the file's own package: its use leaves the repository, where a simple name of the package that no file declares was not followed.
 describe('resolver.classifyUse — a simple Java name of java.lang leaves the repository', () => {
   it('tells String from a name of the package that binds nothing, and binds the repository\'s own java.lang where it has one', () => {
