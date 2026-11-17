@@ -9,6 +9,7 @@ import { single } from './types.mjs';
  * ONLY by a module-specifier-bearing construct: a static import, a re-export
  * with a source, `import x = require(...)`, a `require(...)` call, an
  * `import(...)` with a string-literal specifier (in a value or a type position),
+ * `vi.mock('<lit>')` and `jest.mock('<lit>')` with a string-literal path,
  * a module augmentation `declare module '<spec>' { … }`,
  * or `new URL('<lit>', import.meta.url)`. Usage-site nodes (extends, implements, calls,
  * JSX, type references) would only REFINE the relation type of an
@@ -114,6 +115,15 @@ function argumentAt(call, index) {
         seen++;
     }
     return null;
+}
+/** The callee of `vi.mock(…)` (Vitest) or `jest.mock(…)`: a call that replaces the module its first argument names. */
+function isMockCallee(fn) {
+    if (fn.type !== 'member_expression')
+        return false;
+    const object = fn.childForFieldName('object');
+    const property = fn.childForFieldName('property');
+    return object !== null && object.type === 'identifier' && (object.text === 'vi' || object.text === 'jest')
+        && property !== null && property.text === 'mock';
 }
 /** True for the expression `import.meta.url`. */
 function isImportMetaUrl(node) {
@@ -388,7 +398,8 @@ function uses(file) {
                 // Require: callee is an identifier whose text is `require`.
                 const isDynamicImport = fn.type === 'import';
                 const isRequire = fn.type === 'identifier' && fn.text === 'require';
-                if (!isDynamicImport && !isRequire)
+                const isMock = isMockCallee(fn);
+                if (!isDynamicImport && !isRequire && !isMock)
                     break;
                 // An import type (`typeof import('./x')`, `let v: import('./x').T`) is a
                 // dependency like a value-position import() and gives the same edge.
@@ -480,7 +491,7 @@ export const typescriptExtractor = {
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
     // `new URL(…, import.meta.url)`; ERROR-region recovery.
-    rev: 8,
+    rev: 9,
     declarations,
     uses,
 };

@@ -398,6 +398,36 @@ describe('sfcScriptView', () => {
   });
 });
 
+describe('typescript extractor — test mocks and the bundler forms that stay unread', () => {
+  it('gives vi.mock and jest.mock with a literal path the edge of an import() of that path', async () => {
+    const { uses } = await run(
+      [
+        `vi.mock('../data/d');`,
+        `jest.mock("./j", () => ({}));`,
+        'vi.mock(`../data/t`);',
+        `vi.mock(path);`,
+        `vi.mock();`,
+        `vi.fn('../data/n');`,
+        `other.mock('../data/o');`,
+      ].join('\n'),
+    );
+    expect(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm, u.line])).toEqual([
+      ['../data/d', 'import', 1],
+      ['./j', 'import', 2],
+      ['../data/t', 'import', 3],
+    ]);
+  });
+  it('reads no use from import.meta.glob or require.context', async () => {
+    const { uses } = await run(
+      [
+        `const m = import.meta.glob('../data/*.ts');`,
+        `const c = require.context('../data', false, /\\.ts$/);`,
+      ].join('\n'),
+    );
+    expect(uses).toEqual([]);
+  });
+});
+
 describe('typescript extractor — declarations()', () => {
   it('returns top-level class/interface/function names', async () => {
     const { declarations } = await run(`export class Foo {}\ninterface Bar {}\nfunction baz(){}`);
