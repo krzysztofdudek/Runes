@@ -825,6 +825,14 @@ describe('resolver.classifyUse — a Go module wired with replace', () => {
       expect(use(r, 'example.com/data'), replace).toEqual({ kind: 'absent', reason: 'outside' });
     }
   });
+  it('a replace with a version on its left applies only when the go.mod requires the module at that version', () => {
+    const at = (requires, replace) => use(resolverOf({ ...data, 'ui/go.mod': `module example.com/ui\n\n${requires}\n\n${replace}\n` }), 'example.com/data');
+    expect(at('require example.com/data v1.0.0', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+    expect(at('require (\n\texample.com/data v1.0.0 // indirect\n)', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+    expect(at('require example.com/data v1.2.0', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(at('', 'replace example.com/data v1.0.0 => ../data')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(at('require example.com/data v1.2.0', 'replace example.com/data => ../data')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+  });
   it('a replace that names the repository root or a module above, in any spelling, keeps the edge the ancestor walk gives', () => {
     const tools = { 'go.mod': 'module golang.org/x/tools\n', 'go/packages/p.go': 'package packages' };
     for (const [dir, file, replace] of [['gopls', 'gopls/main.go', '../'], ['gopls', 'gopls/main.go', '..'], ['x/gopls', 'x/gopls/main.go', '../../'], ['x/gopls', 'x/gopls/main.go', '../..'], ['x/gopls', 'x/gopls/main.go', './../../']]) {

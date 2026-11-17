@@ -1398,12 +1398,15 @@ function makeGoResolveDeps(
   // Cache: go.mod directory → the modules its `replace` directives take from directories of the repository.
   const replacedByDir = new Map<string, Array<{ modulePath: string; moduleDir: string }>>();
 
-  /** The modules the go.mod in `moduleDir` replaces with a directory inside the repository whose own go.mod declares that module, as the toolchain requires of a directory replacement. */
+  /** The modules the go.mod in `moduleDir` replaces with a directory inside the repository whose own go.mod declares that module, as the toolchain requires of a directory replacement. A replacement whose left side names a version applies, as in the toolchain, only to that version, so it is taken only when the go.mod requires the module at that version. */
   function replacedModules(moduleDir: string): Array<{ modulePath: string; moduleDir: string }> {
     let replaced = replacedByDir.get(moduleDir);
     if (replaced === undefined) {
       replaced = [];
-      for (const { modulePath, dir } of parseGoModReplaces(plain.read(joinRel(moduleDir, 'go.mod')) ?? '')) {
+      const text = plain.read(joinRel(moduleDir, 'go.mod')) ?? '';
+      const requires = parseGoModRequires(text);
+      for (const { modulePath, dir, version } of parseGoModReplaces(text)) {
+        if (version !== undefined && requires.get(modulePath) !== version) continue;
         // The directory keyed as the ancestor walk keys it ('' for the repository root, no trailing slash), so `../` naming the root module is that same module.
         const joined = path.posix.normalize(moduleDir === '' ? dir : path.posix.join(moduleDir, dir)).replace(/\/+$/, '');
         if (joined === '..' || joined.startsWith('../')) continue;
@@ -1499,32 +1502,53 @@ export function parseGoModulePath(text: string): string | undefined {
   return undefined;
 }
 
-/** The modules go.mod text replaces with a local directory: each `replace <module> [<version>] => <dir>` (single-line and block form, quoted or bare) whose right side is one path beginning with `./` or `../`, as written, relative to the go.mod directory. A replacement by another module and version, an absolute directory, and a line it cannot split into those parts give nothing. */
-export function parseGoModReplaces(text: string): Array<{ modulePath: string; dir: string }> {
-  const out: Array<{ modulePath: string; dir: string }> = [];
-  const tokens = (side: string): string[] => (side.match(/"(?:[^"\\]|\\.)*"|`[^`]*`|\S+/g) ?? []).map(goUnquote);
-  const take = (spec: string): void => {
-    const sides = spec.split('=>');
-    if (sides.length !== 2) return;
-    const left = tokens(sides[0]);
-    const right = tokens(sides[1]);
-    if (left.length < 1 || left.length > 2 || right.length !== 1 || left[0] === '') return;
-    if (right[0].startsWith('./') || right[0].startsWith('../')) out.push({ modulePath: left[0], dir: right[0] });
-  };
+/** The tokens of a go.mod line: quoted strings unquoted, bare words as written. */
+function goTokens(text: string): string[] {
+  return (text.match(/"(?:[^"\\]|\\.)*"|`[^`]*`|\S+/g) ?? []).map(goUnquote);
+}
+
+/** Each line of a go.mod directive `verb`, in its single-line and block forms (`verb x`, `verb (x)`, `verb (` … `)`), comments dropped. */
+function goDirectiveLines(text: string, verb: string): string[] {
+  const out: string[] = [];
+  const head = new RegExp(`^${verb}(?:\\s+|(?=\\())(.*)$`);
   let inBlock = false;
   for (const rawLine of text.split('\n')) {
     const line = goLine(rawLine);
     if (line === '') continue;
     if (inBlock) {
       if (line === ')') inBlock = false;
-      else take(line);
+      else out.push(line);
       continue;
     }
-    const m = /^replace(?:\s+|(?=\())(.*)$/.exec(line);
+    const m = head.exec(line);
     if (!m) continue;
     const rest = m[1].trim();
     if (rest === '(') inBlock = true;
-    else take(rest.startsWith('(') && rest.endsWith(')') ? rest.slice(1, -1) : rest);
+    else out.push(rest.startsWith('(') && rest.endsWith(')') ? rest.slice(1, -1) : rest);
+  }
+  return out;
+}
+
+/** The modules go.mod text replaces with a local directory: each `replace <module> [<version>] => <dir>` (single-line and block form, quoted or bare) whose right side is one path beginning with `./` or `../`, as written, relative to the go.mod directory, with the version its left side names, if any. A replacement by another module and version, an absolute directory, and a line it cannot split into those parts give nothing. */
+export function parseGoModReplaces(text: string): Array<{ modulePath: string; dir: string; version?: string }> {
+  const out: Array<{ modulePath: string; dir: string; version?: string }> = [];
+  for (const spec of goDirectiveLines(text, 'replace')) {
+    const sides = spec.split('=>');
+    if (sides.length !== 2) continue;
+    const left = goTokens(sides[0]);
+    const right = goTokens(sides[1]);
+    if (left.length < 1 || left.length > 2 || right.length !== 1 || left[0] === '') continue;
+    if (right[0].startsWith('./') || right[0].startsWith('../')) out.push({ modulePath: left[0], dir: right[0], ...(left.length === 2 ? { version: left[1] } : {}) });
+  }
+  return out;
+}
+
+/** The version go.mod text requires of each module (`require <module> <version>`, single-line and block form); the first requirement of a module keeps it. */
+export function parseGoModRequires(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const spec of goDirectiveLines(text, 'require')) {
+    const tokens = goTokens(spec);
+    if (tokens.length === 2 && !out.has(tokens[0])) out.set(tokens[0], tokens[1]);
   }
   return out;
 }

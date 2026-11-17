@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, listedFileView, SymbolTable } from '@chrisdudek/runes/relations';
-import { pythonManifestRoots, parseGoModReplaces } from '../helpers/internal/relations.mjs';
+import { pythonManifestRoots, parseGoModReplaces, parseGoModRequires } from '../helpers/internal/relations.mjs';
 
 // Unit coverage for the production resolvePathToFile dispatcher: it must route
 // TS-family languages through resolveTsPath against on-disk files, and return
@@ -398,10 +398,14 @@ describe('parseGoModReplaces — the directory replacements of a go.mod', () => 
     ].join('\n');
     expect(parseGoModReplaces(text)).toEqual([
       { modulePath: 'example.com/a', dir: '../a' },
-      { modulePath: 'example.com/b', dir: './vendor/b' },
+      { modulePath: 'example.com/b', dir: './vendor/b', version: 'v1.2.3' },
       { modulePath: 'example.com/c', dir: '../c' },
       { modulePath: 'example.com/d', dir: '../d' },
     ]);
+  });
+  it('reads the version each module is required at, the first requirement keeping it', () => {
+    const text = 'module m\nrequire example.com/a v1.0.0\nrequire (\n\texample.com/b v2.0.0 // indirect\n\t"example.com/c" v3.0.0\n\texample.com/a v9.0.0\n\tbroken\n)\nrequire (example.com/d v4.0.0)\n';
+    expect([...parseGoModRequires(text)]).toEqual([['example.com/a', 'v1.0.0'], ['example.com/b', 'v2.0.0'], ['example.com/c', 'v3.0.0'], ['example.com/d', 'v4.0.0']]);
   });
 });
 
