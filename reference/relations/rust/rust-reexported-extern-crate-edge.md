@@ -8,7 +8,7 @@ cites: "Rust Reference — Extern crate declarations (`extern crate name as alia
 
 ## Rule
 
-A facade crate can expose other crates as its own modules with `pub extern crate inner as name;`: ripgrep's `grep` crate does this for `printer`, `matcher`, `searcher` and the rest, and the `rg` binary imports `grep::printer::Standard`. The name `printer` is an item of `grep`'s crate root, bound there by the extern crate declaration, so the path binds `grep`'s crate root file `crates/grep/src/lib.rs` (node `src`), exactly as a `pub use` in that file would; the dependency is on `grep`, the crate the importing package names in its manifest. `crates/app/Cargo.toml` depends on `grep`; `use grep::printer::Standard;` and `use grep::matcher::Matcher;` (its declaration under a `#[macro_use]` attribute) bind `crates/grep/src/lib.rs`. `grep::searcher::Searcher` names nothing the root file declares and stays silent (line 3).
+A facade crate can expose other crates as its own modules with `pub extern crate inner as name;`: ripgrep's `grep` crate does this for `printer`, `matcher`, `searcher` and the rest, and the `rg` binary imports `grep::printer::Standard`. The name `printer` is an item of `grep`'s crate root, bound there by the extern crate declaration, so the path binds `grep`'s crate root file `crates/grep/src/lib.rs` (node `src`), exactly as a `pub use` in that file would; the dependency is on `grep`, the crate the importing package names in its manifest. `crates/app/Cargo.toml` depends on `grep`; `use grep::printer::Standard;` and `use grep::matcher::Matcher;` (its declaration under a `#[macro_use]` attribute) bind `crates/grep/src/lib.rs`. `grep::searcher::Searcher` names nothing the root file declares and stays silent; rustc refuses that path, so it stands in `crates/app/src/cmd/search.rs`, a file no `mod` declares, which the crate does not compile.
 
 ## Files
 
@@ -62,6 +62,9 @@ pub trait Matcher {}
 ```rust path=crates/app/src/cmd/run.rs
 use grep::printer::Standard;
 use grep::matcher::Matcher;
+```
+
+```rust path=crates/app/src/cmd/search.rs
 use grep::searcher::Searcher;
 ```
 

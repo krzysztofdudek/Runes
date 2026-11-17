@@ -7,4 +7,4 @@ export { RUNES_VERSION as version } from '../version.mjs';
 
 export { walk, closest } from './walk.mjs';
 export { destroyParseCache, type ParseCache } from './parse-cache.mjs';
-export { createParserHost, fileSha256, type ParserHost, type ParserHostOptions, type TreeSitterRuntime } from './parser.mjs';
+export { createParserHost, fileSha256, type ParseFileOptions, type ParserHost, type ParserHostOptions, type TreeSitterRuntime } from './parser.mjs';

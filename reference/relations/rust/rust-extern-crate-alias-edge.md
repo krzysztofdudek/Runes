@@ -8,7 +8,7 @@ cites: "Rust Reference — Extern crate declarations (`extern crate name as alia
 
 ## Rule
 
-`extern crate core_lib as cl;` links the in-repo path dependency `core_lib` and binds it under the local alias `cl`. The declaration itself names the crate, so it binds the crate's root file `crates/core-lib/src/lib.rs` (node `src`) on its own line. The package gives no edition, so it is edition 2015, where a `use` path is relative to the crate root: `use cl::Engine;` in the module `cmd::run` names a `cl` of the crate root, which binds none, so it stays silent. The dependency is carried by the declaration line. `extern crate std as s;` names an external crate and stays silent too.
+`extern crate core_lib as cl;` links the in-repo path dependency `core_lib` and binds it under the local alias `cl`. The declaration itself names the crate, so it binds the crate's root file `crates/core-lib/src/lib.rs` (node `src`) on its own line. The package gives no edition, so it is edition 2015, where a `use` path is relative to the crate root: `use cl::Engine;` in the module `cmd::run` names the `cl` of the crate root, the registry crate `cl` that the root links with `extern crate cl;`, never the alias of the module itself, so it stays silent. The dependency is carried by the declaration line. `extern crate std as s;` names an external crate and stays silent too.
 
 ## Files
 
@@ -28,6 +28,7 @@ name = "server"
 
 [dependencies]
 core-lib = { path = "../core-lib" }
+cl = "1"
 ```
 
 ```rust path=crates/core-lib/src/lib.rs
@@ -46,6 +47,7 @@ pub mod run;
 
 ```rust path=crates/server/src/lib.rs
 pub mod cmd;
+extern crate cl;
 ```
 
 ## Expect

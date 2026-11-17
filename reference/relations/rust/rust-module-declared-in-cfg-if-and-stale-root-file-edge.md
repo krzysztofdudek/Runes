@@ -8,7 +8,7 @@ cites: "Rust Reference — Modules (a file is a module only when a `mod` item de
 
 ## Rule
 
-`src/lib.rs` (node `root`) declares `mod unix;` inside a `cfg_if!` branch and defines `pub fn legacy()`. A `mod` in a `cfg_if!` branch declares its module like any other, so `use crate::unix::f;` binds `src/unix/mod.rs` (node `unix`). No `mod` declares the leftover `src/legacy.rs` (node `stale`), so `use crate::legacy;` names the root's function and binds the root file.
+`src/lib.rs` (node `root`) declares `mod unix;` inside a `cfg_if!` branch and defines `pub fn legacy()`. A `mod` in a `cfg_if!` branch declares its module like any other, so `use crate::unix::f;` binds `src/unix/mod.rs` (node `unix`). No `mod` declares the leftover `src/legacy.rs` (node `stale`), so `use crate::legacy;` names the root's function and binds the root file. The root takes `cfg_if!` from the registry crate `cfg-if` with `#[macro_use] extern crate`.
 
 ## Files
 
@@ -16,6 +16,8 @@ cites: "Rust Reference — Modules (a file is a module only when a `mod` item de
 [package]
 name = "app"
 edition = "2021"
+[dependencies]
+cfg-if = "1"
 ```
 
 ```rust path=src/lib.rs owner=root
@@ -26,6 +28,8 @@ cfg_if! {
 }
 mod api;
 pub fn legacy() {}
+#[macro_use]
+extern crate cfg_if;
 ```
 
 ```rust path=src/unix/mod.rs

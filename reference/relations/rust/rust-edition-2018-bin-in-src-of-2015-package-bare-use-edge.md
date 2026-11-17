@@ -8,7 +8,7 @@ cites: "Rust Reference, Use declarations (in edition 2015 a `use` path is relati
 
 ## Rule
 
-The package is edition 2015, and its `[[bin]]` at `src/cli.rs` writes `edition = "2018"`. `src/cli.rs` declares `mod foo;` and `mod args;`, so the binary is the one root known to compile `src/args/mod.rs`, and the file reads its paths in that binary's edition. There `use foo::Bar;` names a crate called `foo`, not the module beside it, so it gives no edge. Only the two `mod` declarations are edges.
+The package is edition 2015, and its `[[bin]]` at `src/cli.rs` writes `edition = "2018"`. `src/cli.rs` declares `mod foo;` and `mod args;`, so the binary is the one root known to compile `src/args/mod.rs`, and the file reads its paths in that binary's edition. There `use foo::Bar;` names the registry crate `foo` the package depends on, not the module beside it, so it gives no edge. Only the two `mod` declarations are edges.
 
 ## Files
 
@@ -19,6 +19,9 @@ name = "app"
 name = "cli"
 path = "src/cli.rs"
 edition = "2018"
+
+[dependencies]
+foo = "1"
 ```
 
 ```rust path=src/cli.rs owner=bin
