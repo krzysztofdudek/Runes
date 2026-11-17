@@ -8,7 +8,7 @@ cites: "Rust Reference — Paths, Path qualifiers (`crate` names the crate root)
 
 ## Rule
 
-A `crate::` path whose first segment the crate root file binds at its top level binds that file, in every edition. `src/lib.rs` (node `src`) defines `LIMIT` with `const`, brings in `Mode` with a top-level `use` under another name, and defines `REGISTRY` inside `lazy_static!`, an item macro whose items are read from its tokens. Each of the three `use` lines in `src/api/mod.rs` binds `src/lib.rs`. `Hidden` is defined only by a macro whose expansion is not known, so line 4 stays silent.
+A `crate::` path whose first segment the crate root file binds at its top level binds that file, in every edition. `src/lib.rs` (node `src`) defines `LIMIT` with `const`, brings in `Mode` with a top-level `use` under another name, and defines `REGISTRY` inside `lazy_static!`, an item macro whose items are read from its tokens. Each of the three `use` lines in `src/api/mod.rs` binds `src/lib.rs`. `Hidden` is defined only by a macro whose expansion is not known, so line 4 stays silent. The root takes `lazy_static!` and `define_types!` from the registry crates it depends on, with `#[macro_use] extern crate`.
 
 ## Files
 
@@ -16,6 +16,9 @@ A `crate::` path whose first segment the crate root file binds at its top level 
 [package]
 name = "app"
 edition = "2021"
+[dependencies]
+lazy_static = "1"
+type-macros = "1"
 ```
 
 ```rust path=src/lib.rs
@@ -27,6 +30,10 @@ lazy_static! {
 define_types! {
     pub struct Hidden;
 }
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate type_macros;
 ```
 
 ```rust path=src/api/mod.rs
