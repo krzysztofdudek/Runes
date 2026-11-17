@@ -387,11 +387,12 @@ describe('a parse the runtime aborts', () => {
 });
 
 describe('freeing and resetting around a runtime abort', () => {
-  // Freeing a tree or a parser, and resetting a parser, take a little of the runtime's memory too, so each can abort as a parse does. A stub runtime logs every call made into it: a parse of 'abort' aborts, `aborts` names one more call that aborts ('reset', 'parser delete' or 'tree delete'), and with `trapFirst` the first parse traps, so the host retries on a fresh parser.
-  const freeingRuntime = (events, { aborts, trapFirst = false } = {}) => {
+  // Freeing a tree or a parser, and resetting a parser, take a little of the runtime's memory too, so each can abort as a parse does. A stub runtime logs every call made into it: a parse of 'abort' aborts, `aborts` names one more call that aborts ('reset', 'parser delete' or 'tree delete'), `fails` one that throws an error that is no abort, and with `trapFirst` the first parse traps, so the host retries on a fresh parser.
+  const freeingRuntime = (events, { aborts, fails, trapFirst = false } = {}) => {
     let parses = 0;
     const call = (kind, label = kind) => {
       events.push(label);
+      if (kind === fails) throw new Error(`${kind} failed`);
       if (kind === aborts) {
         events.push('ABORT');
         throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.');
@@ -481,6 +482,14 @@ describe('freeing and resetting around a runtime abort', () => {
     await assert.rejects(h.withParsedFile('a.rb', 'x', () => 'unreached', undefined, STOP), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.rb/.test(error.message));
     assert.deepEqual(after(events, 'ABORT'), []);
     await refusesLaterCalls(h, events, 'while parsing a.rb');
+  });
+
+  it('a delete that throws an error that is no abort is passed through as it is, and the host stays usable', async () => {
+    const events = [];
+    const h = hostOver(events, { fails: 'tree delete' });
+    await assert.rejects(h.withParsedFile('a.cs', 'x', (tree) => tree.rootNode.type), (error) => error.message === 'tree delete failed' && error.code === undefined);
+    assert.equal(await h.parseFile('b.cs', 'y').then((tree) => tree.rootNode.type), 'program', 'the next call reaches the runtime');
+    assert.deepEqual(events, ['new Parser', 'parse x', 'tree delete x', 'parse y']);
   });
 
   it('without an abort the host still frees the retry parser and the tree withParsedFile parsed', async () => {
