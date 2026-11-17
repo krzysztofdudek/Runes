@@ -517,6 +517,8 @@ function scriptElements(content, svelte) {
     let raw = '';
     let depth = 0;
     let stringQuote = '';
+    // A search that finds no `-->` settles it for the rest of the component: no later `<!--` has one either.
+    let noClose = false;
     while (i < content.length) {
         if (content[i] === '<') {
             scriptOpen.lastIndex = i;
@@ -581,9 +583,11 @@ function scriptElements(content, svelte) {
             }
             i++;
         }
-        else if (content.startsWith('<!--', i)) {
+        else if (!noClose && content.startsWith('<!--', i)) {
             // `<!-->` and `<!--->` end the comment at once, as HTML reads them.
             const end = content.indexOf('-->', i + 2);
+            if (end === -1)
+                noClose = true;
             i = end === -1 ? i + 4 : end + 3;
         }
         else if (svelte && c === '{') {

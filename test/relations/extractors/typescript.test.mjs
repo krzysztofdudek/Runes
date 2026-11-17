@@ -530,3 +530,27 @@ describe('typescript extractor — about 1 MB of source is read in linear time (
     expect(elapsed).toBeLessThan(BOUND_MS);
   });
 });
+
+describe('sfcScriptView — a component of about 1 MB is read in linear time', () => {
+  const MB = 1024 * 1024;
+  const BOUND_MS = 15_000;
+  const timedView = (file, code) => {
+    const start = performance.now();
+    const view = sfcScriptView(file, code);
+    return { view, elapsed: performance.now() - start };
+  };
+
+  it('a comment that never closes, repeated, leaves the script after them read', () => {
+    const unclosed = `<!--${'x'.repeat(10)}`;
+    const code = `<template>${unclosed.repeat(Math.floor(MB / unclosed.length))}</template>\n<script>import a from "./a"</script>\n`;
+    const { view, elapsed } = timedView('c/big.vue', code);
+    expect(view.content).toContain('import a from "./a"');
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+
+  it('a run of script tags with no closing angle bracket is read in linear time', () => {
+    const { view, elapsed } = timedView('c/tags.vue', '<script'.repeat(Math.floor(MB / 7)));
+    expect(view).toBeNull();
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+});
