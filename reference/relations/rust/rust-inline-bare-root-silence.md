@@ -41,7 +41,7 @@ pub mod external;
 
 ## Expect
 
-- silence      # the inline path names a crate the package does not have; no edge to node:external even though src/external/mod.rs exists
+- silence      # the inline path names the registry crate `external`, which binds no file of the repository; no edge to node:external even though src/external/mod.rs exists
 - src/lib.rs:1 -> node:c      # the module declaration of the completed crate
 - src/lib.rs:2 -> node:external      # the module declaration of the completed crate
 

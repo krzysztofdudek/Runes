@@ -120,10 +120,13 @@ jobs:
             exit 1
           fi
       # No NODE_AUTH_TOKEN: authentication is npm trusted publishing over OIDC (id-token: write above), configured on npmjs.com for this repository and this workflow file.
+      # npm publish runs prepublishOnly, which builds the package's grammars again: the same cache, offline, so that build can never fetch or compile.
       - name: Publish to npm
         if: steps.npm-check.outputs.published == 'false'
         env:
           DISTTAG: ${{ steps.version.outputs.disttag }}
+          RUNES_GRAMMAR_CACHE: ${{ runner.temp }}/grammar-cache
+          RUNES_GRAMMAR_OFFLINE: '1'
         run: npm publish --provenance --access public --tag "${DISTTAG}"
       - uses: softprops/action-gh-release@v3
         if: steps.npm-check.outputs.published == 'false'

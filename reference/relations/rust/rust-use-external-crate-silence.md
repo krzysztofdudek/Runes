@@ -16,8 +16,8 @@ This is the cardinal false-positive guard: `serde::Deserialize` is external →
 SILENCE *even though `src/serde/mod.rs` (node `serde`) exists in-repo*. The guard
 never probes `src/serde.rs`, so an external path can never mis-bind to the
 same-named in-repo module; that in-repo twin is reachable ONLY via `crate::serde`.
-Here the package is edition 2021, depends on the registry crate `serde`, and its
-root declares the module `serde` as well: from `src/c/use.rs` the name is the crate.
+
+Here the package is edition 2021, depends on the registry crate `serde`, and its root declares the module `serde` as well: from `src/c/use.rs` the name is the crate.
 
 ## Files
 
