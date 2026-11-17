@@ -187,7 +187,7 @@ describe('readBundlerAliases — where an alias stands', () => {
       "export default defineConfig(async ({ command }) => ({ resolve: { alias: { a: '/x' } } }));",
       "module.exports = (env, argv) => {\n  const config = { resolve: { alias: { a: '/x' } } };\n  switch (argv.mode) { case 'production': return config; default: return config; }\n};",
       "const config = { resolve: { alias: { a: '/x' } } };\nmodule.exports = (env) => config;",
-      "export default (((defineConfig)({ resolve: { alias: { a: '/x' } } })) as UserConfig);",
+      "export default ((defineConfig({ resolve: { alias: { a: '/x' } } })) as UserConfig);",
       "module.exports = [(env) => ({ resolve: { alias: { a: '/x' } } })];",
       "export = { resolve: { alias: { a: '/x' } } };",
     ]) expect(read(text)).toEqual(READ);

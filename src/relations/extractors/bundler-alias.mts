@@ -23,7 +23,7 @@ export interface AliasEntry {
 }
 
 /**
- * The aliases a bundler configuration defines, read from its text without running it: one list per `alias` property found, each in the order the bundler tries its keys. `'unknown'` when the text holds an alias the reader cannot follow, so any bare specifier may be mapped: an `alias` anywhere but as a literal object (or, for Vite, a literal array of `{ find, replacement }`) under `resolve` (Vite also `test`) of a configuration object that no other object holds, or in the options of module-resolver in the `plugins` of such an object; module-resolver referenced in any other way, with a `root`, `cwd` or `resolvePath` option, or with options it cannot read; or text the token reader cannot balance. A list is one unknown entry when the alias object, the `resolve` (or `test`) object or the configuration object holds a member that may replace a key the lookup reads: a spread, a computed or escaped key, a method or accessor, a key written twice, or a shorthand of the name the lookup reads.
+ * The aliases a bundler configuration defines, read from its text without running it: one list per `alias` property found, each in the order the bundler tries its keys. The configuration is what the file exports, read as {@link configurationObjects} says; `'unknown'` when it exports anything else, so any bare specifier may be mapped, and when the text holds an alias the reader cannot follow: an `alias` anywhere but as a literal object (or, for Vite, a literal array of `{ find, replacement }`) under the `resolve` (Vite also `test`) of a configuration object, or in the options of module-resolver in the `plugins` of one; module-resolver referenced in any other way, with a `root`, `cwd` or `resolvePath` option, or with options it cannot read; or text the token reader cannot balance. A list is one unknown entry when the alias object holds a member that may replace a key the lookup reads (a spread, a computed or escaped key, a method or accessor, a key written twice, or a shorthand of `alias`), and for each configuration object, whether or not it writes an alias, that may take one from something the reader does not see: a member it cannot read; a spread that a key the lookup reads (`resolve` and `test` for Vite, `resolve` for webpack, `plugins` for Babel) does not follow; an `extends` (webpack, Babel); a `resolve` or `test` that is not a literal object, or one whose own members may hide an `alias` (read as the alias object is); a Babel `plugins` that is not a literal array (or one filtered with `.filter(…)`, which only drops plugins) or that spreads another. A value is literal when it is written there or bound by a name the file declares once with it and never assigns again.
  *
  * A replacement counts only in these forms; any other is an alias whose key is known and whose target is not:
  * - `path.resolve(__dirname, '<p>', …)` and `path.join(__dirname, '<p>', …)`, with `path` imported from Node's `path` and no `__dirname` declared by the file, and `fileURLToPath(new URL('<p>', import.meta.url))`: `<p>` from the configuration's directory;
@@ -32,9 +32,12 @@ export interface AliasEntry {
 export function readBundlerAliases(text: string, kind: BundlerKind, configDir: string): AliasEntry[][] | 'unknown' {
   const tokens = tokenize(text);
   if (tokens === undefined) return 'unknown';
-  const { close, parent } = brackets(tokens);
+  const { close, open, parent } = brackets(tokens);
+  const structure = configurationObjects(tokens, close, open, parent);
+  if (structure === 'unknown') return 'unknown';
+  const configs = structure.objects;
   const isKey = (i: number): boolean => (tokens[i].t === 'id' || tokens[i].t === 'str') && tokens[i + 1]?.v === ':' && tokens[i + 1].t === 'punct' && (tokens[i - 1]?.v === '{' || tokens[i - 1]?.v === ',') && tokens[i - 1].t === 'punct';
-  const keyOf = (open: number): string | undefined => (open >= 2 && tokens[open - 1].v === ':' && isKey(open - 2) ? tokens[open - 2].v : undefined);
+  const keyOf = (at: number): string | undefined => (at >= 2 && tokens[at - 1].v === ':' && isKey(at - 2) ? tokens[at - 2].v : undefined);
   const env: ReadEnv = {
     kind,
     configDir,
@@ -44,28 +47,62 @@ export function readBundlerAliases(text: string, kind: BundlerKind, configDir: s
   };
   // The members of each object read once: an object that many `alias` properties share is not read again for each.
   const memberCache = new Map<number, Member[] | undefined>();
-  const members = (open: number): Member[] | undefined => {
-    if (!memberCache.has(open)) memberCache.set(open, membersOf(tokens, close, open));
-    return memberCache.get(open);
+  const members = (at: number): Member[] | undefined => {
+    if (!memberCache.has(at)) memberCache.set(at, membersOf(tokens, close, at));
+    return memberCache.get(at);
   };
-  // For each bracket, whether an object literal holds it, found in one pass from the outside in (a block, a function body, is no object).
-  const insideObject: boolean[] = [];
-  tokens.forEach((tok, k) => {
-    const around = parent[k];
-    if (tok.t === 'punct' && (tok.v === '{' || tok.v === '[' || tok.v === '(')) insideObject[k] = around !== -1 && ((tokens[around].v === '{' && !isBlock(tokens, around)) || insideObject[around]);
-  });
-  // An object no other object holds.
-  const outermost = (open: number): boolean => tokens[open].v === '{' && !isBlock(tokens, open) && !insideObject[open];
-  // Whether the object holds every member as a key it can read, none of them a shorthand of a name the lookup reads, and every spread before each of those names, which then replaces what the spread wrote.
-  const readable = (open: number, names: string[]): boolean => {
-    const all = members(open);
-    if (all === undefined) return false;
+  // Whether every spread among the members comes before each of the names, which then replaces what the spread wrote.
+  const followed = (all: Member[], names: string[]): boolean => {
     const last = new Map<string, number>();
     all.forEach((m, k) => {
       if (!m.spread) last.set(m.key, k);
     });
-    return all.every((m, k) => (m.spread ? names.every((name) => (last.get(name) ?? -1) > k) : !(m.shorthand && names.includes(m.key))));
+    return all.every((m, k) => !m.spread || names.every((name) => (last.get(name) ?? -1) > k));
   };
+  // Whether the object holds every member as a key it can read, none of them a shorthand of a name the lookup reads, and every spread before each of those names.
+  const readable = (at: number, names: string[]): boolean => {
+    const all = members(at);
+    return all !== undefined && followed(all, names) && all.every((m) => !(m.shorthand && names.includes(m.key)));
+  };
+
+  // Each configuration object whose members may take an alias from something the reader does not see.
+  const reads = kind === 'vite' ? ['resolve', 'test'] : kind === 'webpack' ? ['resolve'] : ['plugins'];
+  const want = kind === 'babel' ? '[' : '{';
+  const literalOf = (m: Member, scope: number): number | undefined => {
+    const at = m.shorthand ? m.end - 1 : m.value;
+    if (at < m.end && tokens[at].t === 'id' && m.end === at + 1) {
+      const bound = structure.named(scope, tokens[at].v);
+      if (bound === undefined || tokens[bound.at].v !== want || tokens[bound.at].t !== 'punct') return undefined;
+      return structure.endsDeclaration(filtered(bound.at)) ? bound.at : undefined;
+    }
+    return at < m.end && tokens[at].v === want && tokens[at].t === 'punct' && filtered(at) === m.end ? at : undefined;
+  };
+  // Past a Babel `plugins` array, a `.filter(…)` on it, which can only drop a plugin.
+  const filtered = (at: number): number => {
+    const after = close[at] + 1;
+    return kind === 'babel' && tokens[after]?.v === '.' && tokens[after + 1]?.v === 'filter' && tokens[after + 2]?.v === '(' ? close[after + 2] + 1 : after;
+  };
+  const shownCache = new Map<number, boolean>();
+  const showsAll = (at: number): boolean => {
+    if (!shownCache.has(at)) shownCache.set(at, kind === 'babel' ? segments(tokens, close, at).every(([s]) => tokens[s].v !== '...' || tokens[s].t !== 'punct') : readable(at, ['alias']));
+    return shownCache.get(at)!;
+  };
+  const unread = new Set<number>();
+  for (const [config, scope] of configs) {
+    const all = members(config);
+    const whole =
+      all !== undefined &&
+      followed(all, reads) &&
+      (kind === 'vite' || all.every((m) => m.spread || m.key !== 'extends')) &&
+      all.every((m) => {
+        if (m.spread || !reads.includes(m.key)) return true;
+        const at = literalOf(m, scope);
+        return at !== undefined && showsAll(at);
+      });
+    if (!whole) unread.add(config);
+  }
+  // The configuration objects an alias stands in, which give their list (or an unknown one) through it.
+  const covered = new Set<number>();
 
   // The options objects of module-resolver, written `['module-resolver', { … }]`.
   const resolverOptions = new Set<number>();
@@ -82,10 +119,11 @@ export function readBundlerAliases(text: string, kind: BundlerKind, configDir: s
     if (next?.v !== '{' || tokens[close[i + 2] + 1]?.v !== ']') return 'unknown';
     const options = members(i + 2);
     if (options === undefined || options.some((m) => m.spread || m.shorthand || ['root', 'cwd', 'resolvePath'].includes(m.key))) return 'unknown';
-    // The pair stands in the `plugins` of the configuration itself: `overrides` and `env` apply theirs to some files only.
+    // The pair stands in the `plugins` of a configuration object itself: `overrides` and `env` apply theirs to some files only.
     const list = parent[i - 1];
     const config = list === -1 ? -1 : parent[list];
-    if (list === -1 || tokens[list].v !== '[' || keyOf(list) !== 'plugins' || config === -1 || !outermost(config) || !readable(config, ['plugins'])) return 'unknown';
+    if (list === -1 || tokens[list].v !== '[' || keyOf(list) !== 'plugins' || !configs.has(config) || unread.has(config)) return 'unknown';
+    covered.add(config);
     resolverOptions.add(i + 2);
   }
 
@@ -98,18 +136,20 @@ export function readBundlerAliases(text: string, kind: BundlerKind, configDir: s
     const placed = kind === 'babel' ? resolverOptions.has(owner) : ownerKey === 'resolve' || (kind === 'vite' && ownerKey === 'test');
     if (!placed) return 'unknown';
     const config = parent[owner];
-    if (kind !== 'babel' && (config === -1 || !outermost(config))) return 'unknown';
-    if (!readable(owner, ['alias']) || (kind !== 'babel' && !readable(config, kind === 'vite' ? ['resolve', 'test'] : ['resolve']))) {
+    if (kind !== 'babel' && !configs.has(config)) return 'unknown';
+    if (kind !== 'babel') covered.add(config);
+    if (!readable(owner, ['alias']) || (kind !== 'babel' && unread.has(config))) {
       lists.push([UNKNOWN_KEY]);
       continue;
     }
-    const open = i + 2;
-    const value = tokens[open];
-    const ends = (at: number): boolean => tokens[at]?.v === ',' || tokens[at]?.v === '}';
-    if (value?.v === '{' && ends(close[open] + 1)) lists.push(objectEntries(tokens, close, open, env));
-    else if (kind === 'vite' && value?.v === '[' && ends(close[open] + 1)) lists.push(arrayEntries(tokens, close, open, env));
+    const at = i + 2;
+    const value = tokens[at];
+    const ends = (k: number): boolean => tokens[k]?.v === ',' || tokens[k]?.v === '}';
+    if (value?.v === '{' && ends(close[at] + 1)) lists.push(objectEntries(tokens, close, at, env));
+    else if (kind === 'vite' && value?.v === '[' && ends(close[at] + 1)) lists.push(arrayEntries(tokens, close, at, env));
     else lists.push([{ exact: false, replacement: { kind: 'unknown' } }]);
   }
+  for (const config of unread) if (!covered.has(config)) lists.push([UNKNOWN_KEY]);
   return lists;
 }
 
@@ -128,8 +168,12 @@ export function applyBundlerAliases(spec: string, entries: AliasEntry[]): AliasA
   return undefined;
 }
 
+/** A node of the keys of one alias list, compressed along its chains of single children: the edge into it is the UTF-16 code units `[from, to)` of `label`, a key of the list, so a node holds no text of its own. `any` is the first entry whose key ends here, `loose` the first such entry that also matches a longer specifier. */
 interface KeyNode {
-  children: Map<string, KeyNode>;
+  label: string;
+  from: number;
+  to: number;
+  children?: Map<string, KeyNode>;
   any?: number;
   loose?: number;
 }
@@ -137,32 +181,50 @@ interface KeyNode {
 /** More alias lists than any configuration writes by hand: a file with more is not read, so a crafted one cannot make each import slow. */
 export const MAX_ALIAS_LISTS = 64;
 
-/** The aliases of the configurations one directory holds, indexed by key, so an import costs the number of lists times the length of its specifier at most, whatever the number and the length of the keys. Answers are remembered by specifier. */
+/** The aliases of the configurations one directory holds, indexed by key, so an import costs the number of lists times the length of its specifier at most, whatever the number and the length of the keys, and the index holds at most two nodes per key and no copy of a key's text. Answers are remembered by specifier. */
 export interface AliasTable {
   lookup(spec: string): AliasAnswer | undefined;
+}
+
+/** Adds the key of entry `k` to the trie under `root`, splitting the edge where the key leaves it. Linear in the length of the key. */
+function addKey(root: KeyNode, key: string, k: number, exact: boolean): void {
+  let node = root;
+  let at = 0;
+  while (at < key.length) {
+    const first = key[at];
+    const child = node.children?.get(first);
+    if (child === undefined) {
+      const leaf: KeyNode = { label: key, from: at, to: key.length };
+      (node.children ??= new Map()).set(first, leaf);
+      node = leaf;
+      break;
+    }
+    let same = 1;
+    const length = child.to - child.from;
+    while (same < length && at + same < key.length && child.label[child.from + same] === key[at + same]) same++;
+    if (same < length) {
+      const middle: KeyNode = { label: child.label, from: child.from, to: child.from + same, children: new Map([[child.label[child.from + same], child]]) };
+      child.from += same;
+      node.children!.set(first, middle);
+      node = middle;
+    } else node = child;
+    at += same;
+  }
+  node.any ??= k;
+  if (!exact) node.loose ??= k;
 }
 
 /** The {@link AliasTable} of alias lists that all apply, one list `'unknown'` where a configuration cannot be read; above {@link MAX_ALIAS_LISTS} lists it answers unknown for every specifier. */
 export function makeAliasTable(lists: Array<AliasEntry[] | 'unknown'>): AliasTable {
   const unknown: AliasAnswer = { kind: 'unknown' };
   if (lists.length > MAX_ALIAS_LISTS || lists.includes('unknown')) return { lookup: () => unknown };
-  // For each list: a trie of its keys, each node holding the first entry of its key (exact or not) and the first that also matches a longer specifier, and the first unreadable key. A specifier walks the trie once, character by character, so a lookup costs the length of the specifier at most.
+  // For each list: a trie of its keys and the first unreadable key. A key is added and a specifier walked by the same UTF-16 code units, the specifier once, so a lookup costs the length of the specifier at most.
   const indexed = (lists as AliasEntry[][]).map((entries) => {
-    const root: KeyNode = { children: new Map() };
+    const root: KeyNode = { label: '', from: 0, to: 0 };
     let firstUnknown = Infinity;
     entries.forEach((entry, k) => {
-      if (entry.find === undefined) {
-        firstUnknown = Math.min(firstUnknown, k);
-        return;
-      }
-      let node = root;
-      for (const c of entry.find) {
-        let next = node.children.get(c);
-        if (next === undefined) node.children.set(c, (next = { children: new Map() }));
-        node = next;
-      }
-      node.any ??= k;
-      if (!entry.exact) node.loose ??= k;
+      if (entry.find === undefined) firstUnknown = Math.min(firstUnknown, k);
+      else addKey(root, entry.find, k, entry.exact);
     });
     return { entries, root, firstUnknown };
   });
@@ -173,12 +235,20 @@ export function makeAliasTable(lists: Array<AliasEntry[] | 'unknown'>): AliasTab
       const found: Array<AliasAnswer | undefined> = [];
       for (const list of indexed) {
         let best = Infinity;
-        let node: KeyNode | undefined = list.root;
-        for (let at = 0; at < spec.length && node !== undefined; at++) {
-          node = node.children.get(spec[at]);
-          if (node === undefined) break;
-          if (at === spec.length - 1) best = Math.min(best, node.any ?? Infinity);
-          else if (spec[at + 1] === '/') best = Math.min(best, node.loose ?? Infinity);
+        let node = list.root;
+        let at = 0;
+        while (at < spec.length) {
+          const child = node.children?.get(spec[at]);
+          if (child === undefined) break;
+          const length = child.to - child.from;
+          if (at + length > spec.length) break;
+          let same = 1;
+          while (same < length && child.label[child.from + same] === spec[at + same]) same++;
+          if (same < length) break;
+          at += length;
+          node = child;
+          if (at === spec.length) best = Math.min(best, node.any ?? Infinity);
+          else if (spec[at] === '/') best = Math.min(best, node.loose ?? Infinity);
         }
         const first = Math.min(best, list.firstUnknown);
         found.push(first === Infinity ? undefined : applyBundlerAliases(spec, [list.entries[first]]));
@@ -204,6 +274,200 @@ interface ReadEnv {
   pathImported: boolean;
   rootSet: boolean;
   dirnameDeclared: boolean;
+}
+
+/** The configuration objects of a file, as {@link configurationObjects} reads them. */
+interface Configurations {
+  /** Each configuration object, by its opening brace, with the scope its names are looked up in: the body of the function that returns it, or -1 for the top level. */
+  objects: Map<number, number>;
+  /** The first token of the value a name is declared with, in the scope or else at the top level, when the file declares it there once, with a value, and never assigns it again. */
+  named(scope: number, name: string): { at: number; scope: number } | undefined;
+  /** Whether a declaration's value that ends just before `at` ends there: a TypeScript `as` or `satisfies` may follow, then a `,`, a `;`, a closing bracket, the end of the text or the next statement. */
+  endsDeclaration(at: number): boolean;
+}
+
+// The limits of an expression that ends where a statement does, and of one that may also end at the `,` of the next declarator.
+const STATEMENT = -1;
+const DECLARATOR = -2;
+// The statements whose braces hold a block of the function around them, so a `return` or a declaration there belongs to that function.
+const BLOCK_HEADS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with']);
+const BLOCK_WORDS = new Set(['else', 'try', 'finally', 'do', 'catch']);
+// Words that start a statement or a declaration, which no type annotation holds.
+const TYPE_STOPS = new Set(['const', 'let', 'var', 'return', 'export', 'import', 'function', 'class']);
+
+/**
+ * The configuration objects of a file: what it exports (`export default …`, `module.exports = …` or `export = …`, or the whole text when it is one object, as a JSON configuration is), read through the forms a configuration is written in: an object literal, an array of them, `defineConfig(…)` of one, a function (an arrow or a function expression, async or not) whose every `return`, or whose expression body, is one, and a name the file declares once with one and never assigns again; any of these in parentheses or followed by a TypeScript `as` or `satisfies`. A function counts only as the export, an element of an exported array or the argument of `defineConfig`, where the bundlers call it. `'unknown'` when the file exports anything else (a merge, another call, a `require`, a member, a condition, a spread), exports twice, or exports nothing the reader can see; a text with no tokens exports no configuration. Linear in the tokens: each expression is read once, and a type annotation is passed over up to the first token no type holds.
+ */
+function configurationObjects(tokens: Token[], close: number[], open: number[], parent: number[]): Configurations | 'unknown' {
+  const n = tokens.length;
+  const is = (k: number, v: string, t: TokenType = 'punct'): boolean => tokens[k]?.v === v && tokens[k].t === t;
+  const isAssign = (k: number): boolean => is(k, '=') && !is(k + 1, '=') && !is(k + 1, '>');
+  // For each brace, the scope whose statements it holds: a function body, or any brace that is no statement's block, is its own; a statement's block is the scope around it.
+  const home: number[] = [];
+  const scopeOf = (i: number): number => {
+    const p = parent[i];
+    return p === -1 ? -1 : (home[p] ?? p);
+  };
+  const statementBlock = (k: number): boolean => {
+    const before = tokens[k - 1];
+    if (before?.t === 'id') return BLOCK_WORDS.has(before.v);
+    if (before?.t !== 'punct' || before.v !== ')') return false;
+    const head = open[k - 1] - 1;
+    return tokens[head]?.t === 'id' && (BLOCK_HEADS.has(tokens[head].v) || (tokens[head].v === 'await' && is(head - 1, 'for', 'id')));
+  };
+  for (let k = 0; k < n; k++) if (is(k, '{')) home[k] = statementBlock(k) ? scopeOf(k) : k;
+
+  // Where a type annotation from `j` on ends, before `stop`: the index of the `=` of an initializer, the `=>` of an arrow or the `{` of a function body it leads to, or -1 when another token ends it first; for 'end', the index of the first token no type holds. Inside `<…>` a `,` or a `=>` belongs to the type.
+  const typeEnd = (j: number, until: '=' | '=>' | '{' | 'end', stop: number): number => {
+    let angle = 0;
+    for (; j < stop; j++) {
+      const tok = tokens[j];
+      if (tok.t === 'id' && TYPE_STOPS.has(tok.v)) return until === 'end' ? j : -1;
+      if (tok.t !== 'punct') continue;
+      const v = tok.v;
+      if (v === '<') angle++;
+      else if (v === '>') angle = Math.max(0, angle - 1);
+      else if (v === '=' && is(j + 1, '>')) {
+        if (until === '=>' && angle === 0) return j;
+        j++;
+      } else if (v === '=') return until === '=' && angle === 0 ? j : until === 'end' ? j : -1;
+      else if (v === '{' && until === '{' && angle === 0) return j;
+      else if (v === '{' || v === '[' || v === '(') j = close[j];
+      else if (v === ';' || v === '}' || v === ']' || v === ')' || (v === ',' && angle === 0)) return until === 'end' ? j : -1;
+    }
+    return until === 'end' ? stop : -1;
+  };
+
+  // The declarations (`const`, `let`, `var`) of each scope by name, the names assigned anywhere else, the `return`s of each scope and what the file exports, in one pass.
+  const declared = new Map<string, number>();
+  const assigned = new Set<string>();
+  const returns = new Map<number, number[]>();
+  const roots: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const tok = tokens[i];
+    if (tok.t !== 'id') continue;
+    if ((tok.v === 'const' || tok.v === 'let' || tok.v === 'var') && tokens[i + 1]?.t === 'id') {
+      const key = `${scopeOf(i)} ${tokens[i + 1].v}`;
+      const eq = is(i + 2, ':') ? typeEnd(i + 3, '=', n) : i + 2;
+      declared.set(key, declared.has(key) || eq === -1 || !isAssign(eq) ? -1 : eq + 1);
+    } else if (tok.v === 'return') {
+      const scope = scopeOf(i);
+      const list = returns.get(scope);
+      if (list === undefined) returns.set(scope, [i]);
+      else list.push(i);
+    } else if (tok.v === 'export' && is(i + 1, 'default', 'id')) roots.push(i + 2);
+    else if (tok.v === 'export' && isAssign(i + 1)) roots.push(i + 2);
+    else if (tok.v === 'module' && !is(i - 1, '.') && is(i + 1, '.') && is(i + 2, 'exports', 'id') && isAssign(i + 3)) roots.push(i + 4);
+    else if (isAssign(i + 1) && !is(i - 1, '.') && !(tokens[i - 1]?.t === 'id' && ['const', 'let', 'var'].includes(tokens[i - 1].v))) assigned.add(tok.v);
+  }
+  const named = (scope: number, name: string): { at: number; scope: number } | undefined => {
+    for (const s of scope === -1 ? [-1] : [scope, -1]) {
+      const value = declared.get(`${s} ${name}`);
+      if (value !== undefined) return value === -1 || assigned.has(name) ? undefined : { at: value, scope: s };
+    }
+    return undefined;
+  };
+  // Past the TypeScript `as` and `satisfies` after a value.
+  const pastCasts = (e: number, stop: number): number => {
+    while (e < stop && (is(e, 'as', 'id') || is(e, 'satisfies', 'id'))) e = is(e, 'as', 'id') && is(e + 1, 'const', 'id') ? e + 2 : typeEnd(e + 1, 'end', stop);
+    return e;
+  };
+  // Whether an expression whose last token is just before `e` ends there: exactly at an index, or where a statement (or a declarator) may end.
+  const ends = (e: number, limit: number): boolean => {
+    if (limit >= 0) return e === limit;
+    const tok = tokens[e];
+    if (tok === undefined) return true;
+    if (tok.t === 'punct') return tok.v === ';' || tok.v === '}' || tok.v === ')' || tok.v === ']' || (limit === DECLARATOR && tok.v === ',');
+    return tok.t === 'id' && tok.v !== 'in' && tok.v !== 'instanceof';
+  };
+  // The `=>` after the parameters that open at `paren`, past a return type, or -1.
+  const arrowAfter = (paren: number, stop: number): number => {
+    const after = close[paren] + 1;
+    if (is(after, '=') && is(after + 1, '>')) return after;
+    return is(after, ':') ? typeEnd(after + 1, '=>', stop) : -1;
+  };
+  // The function that starts at `at`: its body, a block or an expression; 'none' when no function starts there, 'bad' when one starts and the reader cannot find its body.
+  const functionAt = (at: number, stop: number): { body: number; block: boolean } | 'none' | 'bad' => {
+    let k = at;
+    if (is(k, 'async', 'id') && (is(k + 1, 'function', 'id') || is(k + 1, '(') || (tokens[k + 1]?.t === 'id' && is(k + 2, '=') && is(k + 3, '>')))) k++;
+    if (is(k, 'function', 'id')) {
+      k++;
+      if (is(k, '*')) k++;
+      if (tokens[k]?.t === 'id') k++;
+      if (!is(k, '(')) return 'bad';
+      const after = close[k] + 1;
+      const body = is(after, '{') ? after : is(after, ':') ? typeEnd(after + 1, '{', stop) : -1;
+      return body === -1 || body >= stop ? 'bad' : { body, block: true };
+    }
+    let arrow = -1;
+    if (tokens[k]?.t === 'id' && is(k + 1, '=') && is(k + 2, '>')) arrow = k + 1;
+    else if (is(k, '(')) arrow = arrowAfter(k, stop);
+    if (arrow === -1) return k === at ? 'none' : 'bad';
+    return arrow + 2 >= stop ? 'bad' : { body: arrow + 2, block: is(arrow + 2, '{') };
+  };
+
+  if (roots.length > 1) return 'unknown';
+  const objects = new Map<number, number>();
+  // An expression to read: where it starts, where it must end (an index, or STATEMENT or DECLARATOR), whether a function may stand there, and the scope its names are looked up in.
+  const work: Array<{ start: number; limit: number; top: boolean; scope: number }> = [];
+  if (roots.length === 1) work.push({ start: roots[0], limit: STATEMENT, top: true, scope: -1 });
+  else if (n > 0 && is(0, '{') && close[0] === n - 1) work.push({ start: 0, limit: STATEMENT, top: false, scope: -1 });
+  else if (n > 0) return 'unknown';
+  const seen = new Set<number>();
+  while (work.length > 0) {
+    const { start, limit, top, scope } = work.pop()!;
+    if (seen.has(2 * start + (top ? 1 : 0))) continue;
+    seen.add(2 * start + (top ? 1 : 0));
+    const stop = limit >= 0 ? limit : n;
+    // The parentheses around the expression, from the outside in, each closing where the next one's expression ends.
+    const parens: number[] = [];
+    let at = start;
+    while (is(at, '(') && arrowAfter(at, stop) === -1) parens.push(close[at++]);
+    if (at >= stop) return 'unknown';
+    const fn = functionAt(at, stop);
+    let end: number;
+    if (fn === 'bad') return 'unknown';
+    if (fn !== 'none') {
+      if (!top) return 'unknown';
+      if (fn.block) {
+        const found = returns.get(fn.body);
+        if (found === undefined) return 'unknown';
+        for (const r of found) work.push({ start: r + 1, limit: STATEMENT, top: false, scope: fn.body });
+        end = close[fn.body] + 1;
+      } else {
+        // An expression body ends where the function does, which the body's own reading checks: at the innermost parenthesis around the function, or at its limit.
+        work.push({ start: fn.body, limit: parens.length > 0 ? parens[parens.length - 1] : limit, top: false, scope });
+        if (parens.length === 0) continue;
+        end = parens[parens.length - 1];
+      }
+    } else if (is(at, '{')) {
+      objects.set(at, scope);
+      end = close[at] + 1;
+    } else if (is(at, '[')) {
+      for (const [s, e] of segments(tokens, close, at)) {
+        if (is(s, '...')) return 'unknown';
+        work.push({ start: s, limit: e, top, scope });
+      }
+      end = close[at] + 1;
+    } else if (is(at, 'defineConfig', 'id') && is(at + 1, '(')) {
+      const args = segments(tokens, close, at + 1);
+      if (args.length !== 1 || is(args[0][0], '...')) return 'unknown';
+      work.push({ start: args[0][0], limit: args[0][1], top, scope });
+      end = close[at + 1] + 1;
+    } else if (tokens[at].t === 'id') {
+      const bound = named(scope, tokens[at].v);
+      if (bound === undefined) return 'unknown';
+      work.push({ start: bound.at, limit: DECLARATOR, top, scope: bound.scope });
+      end = at + 1;
+    } else return 'unknown';
+    end = pastCasts(end, stop);
+    for (let k = parens.length - 1; k >= 0; k--) {
+      if (end !== parens[k]) return 'unknown';
+      end = pastCasts(parens[k] + 1, stop);
+    }
+    if (!ends(end, limit)) return 'unknown';
+  }
+  return { objects, named, endsDeclaration: (at) => ends(pastCasts(at, n), DECLARATOR) };
 }
 
 /** A member of an object literal: `key: value` (the value in tokens `[value, end)`), a shorthand `key`, or a spread `...x`, which may write any key. */
@@ -233,14 +497,6 @@ function membersOf(tokens: Token[], close: number[], open: number): Member[] | u
     out.push({ key: key.v, shorthand, spread: false, value: start + 2, end });
   }
   return out;
-}
-
-/** Whether the brace at `open` opens a block (a function body, an `else`) rather than an object literal. */
-function isBlock(tokens: Token[], open: number): boolean {
-  const before = tokens[open - 1];
-  if (before === undefined) return false;
-  if (before.t === 'punct') return before.v === ')' || (before.v === '>' && tokens[open - 2]?.v === '=');
-  return before.t === 'id' && ['else', 'try', 'finally', 'do'].includes(before.v);
 }
 
 /** Whether the `__dirname` at `i` declares a name of the file's own: a variable, a function or class, an import or destructured binding, an assignment, or a parameter. */
@@ -364,17 +620,21 @@ interface Token {
   v: string;
 }
 
-/** For each opening bracket, the index of its closing one; for each token, the index of the innermost bracket around it (-1 at the top). */
-function brackets(tokens: Token[]): { close: number[]; parent: number[] } {
+/** For each opening bracket, the index of its closing one; for each closing bracket, the index of its opening one; for each token, the index of the innermost bracket around it (-1 at the top). */
+function brackets(tokens: Token[]): { close: number[]; open: number[]; parent: number[] } {
   const close: number[] = [];
+  const open: number[] = [];
   const parent: number[] = [];
   const stack: number[] = [];
   tokens.forEach((tok, i) => {
-    if (tok.t === 'punct' && (tok.v === '}' || tok.v === ']' || tok.v === ')')) close[stack.pop()!] = i;
+    if (tok.t === 'punct' && (tok.v === '}' || tok.v === ']' || tok.v === ')')) {
+      open[i] = stack.pop()!;
+      close[open[i]] = i;
+    }
     parent[i] = stack.length === 0 ? -1 : stack[stack.length - 1];
     if (tok.t === 'punct' && (tok.v === '{' || tok.v === '[' || tok.v === '(')) stack.push(i);
   });
-  return { close, parent };
+  return { close, open, parent };
 }
 
 const PAIRS: Record<string, string> = { '}': '{', ']': '[', ')': '(' };
