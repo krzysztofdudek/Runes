@@ -392,14 +392,28 @@ describe('rust extractor — a use path that starts with ::', () => {
 });
 
 describe('rust extractor — a path attribute and what stands between it and its mod', () => {
-  it('skips the mod behind a doc comment, a line comment, a block comment and another attribute', async () => {
+  it('reads the attribute behind a doc comment, a line comment, a block comment and another attribute, so the mod names the file it gives', async () => {
     const { uses } = await run('#[path = "a.rs"]\n/// doc\nmod a;\n#[path = "b.rs"]\n// line\n/* block */\n#[allow(dead_code)]\nmod b;\n/// doc only\nmod c;\n#[cfg(unix)]\n/** block doc */\nmod d;');
-    expect(specs(uses)).toEqual(['self::c', 'self::d']);
+    expect(specs(uses)).toEqual(['mod::a.rs', 'mod::b.rs', 'self::c', 'self::d']);
   });
 
   it('silences what an inline module holds when a comment follows its path attribute', async () => {
     const { uses } = await run('#[path = "elsewhere"]\n/// doc\nmod outer {\n    mod inner;\n    use self::inner::X;\n}');
     expect(specs(uses)).toEqual([]);
+  });
+});
+
+describe('rust extractor — a mod with a path attribute among the items of the file', () => {
+  const at = (uses) => uses.map((u) => `${u.candidates[0].specifier}@${u.line}`);
+
+  it('names the file the attribute gives, relative to the directory of the file, on its own line and on one line with the mod', async () => {
+    const { uses } = await run('pub mod f;\n#[path = "../data/orphan.rs"]\npub mod via_attr;\n#[path = "./imp/../data//d.rs"] mod dd;\n#[cfg(unix)] #[path = "r#gen.rs"] pub(crate) mod r#gen;');
+    expect(at(uses)).toEqual(['self::f@1', 'mod::../data/orphan.rs@3', 'mod::data/d.rs@4', 'mod::r#gen.rs@5']);
+  });
+
+  it('stays silent inside an inline module, under one that carries a path attribute, in a function body, and for a path it cannot place', async () => {
+    const { uses } = await run('mod outer {\n    #[path = "x.rs"]\n    mod x;\n}\n#[path = "elsewhere"]\nmod moved {\n    #[path = "y.rs"]\n    mod y;\n}\nfn f() {\n    #[path = "z.rs"]\n    mod z;\n}\n#[path = "/abs.rs"]\nmod a;\n#[path = ""]\nmod e;\n#[path = ".."]\nmod up;\n#[cfg_attr(unix, path = "u.rs")]\nmod u;');
+    expect(specs(uses)).toEqual(['self::u']);
   });
 });
 

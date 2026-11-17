@@ -80,6 +80,9 @@
  * under a directory named after it. Its `super` is the module of the file that loads it,
  * whatever their places on disk: `super::x` there is `self::x` read from that file. Two files
  * that load it make its parent a module that cannot be told, so such a path names nothing.
+ * The `mod` that carries the attribute is emitted as `mod::<path>`, the attribute's path
+ * normalized and relative to the directory of the file that writes it (`mod` is a keyword, so
+ * no path of the source starts with it), and binds that file when it exists in a Cargo package.
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
@@ -139,7 +142,7 @@ export interface RustResolveDeps {
 }
 export declare function resolveRustPath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): string | undefined;
 /**
- * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
+ * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, a file a `path` attribute names, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
  */
 export declare function explainRustMiss(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): 'outside' | 'unfollowed' | undefined;
 /** The symbol key under which the Rust extractor declares `name` for a file whose top level binds it as an item (an item the file defines there, one an `extern` block or a known item macro defines there, or a name a top-level `use` brings in). It is what an edition 2015 `use` path from the crate root can name in that file when the file is the crate root; the key's `item:` prefix keeps it apart from the extractor's other declarations and can never be a Rust identifier. */

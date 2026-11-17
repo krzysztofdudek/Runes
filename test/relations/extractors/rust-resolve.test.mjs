@@ -2049,3 +2049,23 @@ describe('resolveRustPath — a file loaded through a path attribute (injected d
     expect(resolveRustPath('self::other', 'src/lib.rs', exists, deps(true))).toBe('src/other.rs');
   });
 });
+
+describe('resolveRustPath — the file a path attribute on a mod among the items of its file names', () => {
+  const known = new Set(['src/lib.rs', 'src/ui/mod.rs', 'src/data/orphan.rs', 'lib.rs', 'top.rs']);
+  const exists = (p) => known.has(p);
+  const deps = { crateRootFor: (f) => (f.startsWith('loose/') ? undefined : { srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: false }) };
+
+  it('binds the file relative to the directory of the file that writes the mod, where it exists in a Cargo package', () => {
+    expect(resolveRustPath('mod::../data/orphan.rs', 'src/ui/mod.rs', exists, deps)).toBe('src/data/orphan.rs');
+    expect(resolveRustPath('mod::top.rs', 'lib.rs', exists, deps)).toBe('top.rs');
+    for (const missing of ['mod::../data/gone.rs', 'mod::../../../out.rs', 'mod', 'mod::']) expect(resolveRustPath(missing, 'src/ui/mod.rs', exists, deps)).toBeUndefined();
+    expect(resolveRustPath('mod::../top.rs', 'loose/a.rs', exists, deps)).toBeUndefined();
+  });
+
+  it('says a file it could not find was not followed, as for a relative path', () => {
+    const files = new Map([['Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n'], ['src/lib.rs', 'mod ui;\n'], ['src/ui/mod.rs', '#[path = "../data/gone.rs"]\nmod gone;\n']]);
+    const resolve = makeResolvePathToFile('/absent', undefined, undefined, { files: listedFileView(files.keys(), (p) => files.get(p)) });
+    expect(resolve('mod::../data/gone.rs', 'src/ui/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve.explainMiss('mod::../data/gone.rs', 'src/ui/mod.rs', 'rust')).toBe('unfollowed');
+  });
+});

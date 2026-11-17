@@ -44,6 +44,7 @@ pub struct L;
 
 ## Expect
 
+- src/lib.rs:2 -> node:linux   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/plat/inner/p.rs:1 -> node:leaf   # `mod leaf;` in the file loaded from the inline module of a path-loaded file
 
 ## Why

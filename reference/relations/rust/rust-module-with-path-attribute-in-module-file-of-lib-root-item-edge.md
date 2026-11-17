@@ -39,6 +39,7 @@ use crate::Opts;
 
 ## Expect
 
+- src/sys.rs:2 -> node:unix   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/unix.rs:1 -> node:root
 
 ## Why

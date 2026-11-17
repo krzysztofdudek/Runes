@@ -86,9 +86,13 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * intra-crate file dependency that crosses a node boundary when that file is mapped to another
  * node. It is emitted as the relative path `self::foo`, which the resolver maps through the
  * module tree exactly like any `self::` import. A `#[path = "…"]` attribute OVERRIDES the
- * conventional location; resolving the override correctly requires nesting-sensitive rules a
- * source-only walk cannot get right in every case, so a `#[path]`-annotated `mod` is SKIPPED
- * (silence) rather than risk binding the wrong file. An INLINE `mod foo { … }` (with a body)
+ * conventional location. On a `mod` among the items of the file, outside every inline module,
+ * the attribute's path is relative to the directory of the file that writes it, so such a `mod`
+ * is emitted as `mod::<that path, normalized>` (`mod::../data/orphan.rs`), which the resolver
+ * binds to that file when it exists. `mod` is a keyword, so no path of the source starts with
+ * it. Inside an inline module, and under one that carries a `#[path]` itself, the directory the
+ * path starts from depends on nesting rules a source-only walk cannot always pin, so such a
+ * `mod` is SKIPPED (silence) rather than risk binding the wrong file. An INLINE `mod foo { … }` (with a body)
  * declares no separate file — its contents are walked in place (its own `use`/paths are
  * caught), and the `mod` itself emits nothing.
  *
@@ -455,14 +459,17 @@ function uses(file: ParsedFile): DetectedDep[] {
       return false; // do not descend into the use tree again
     }
 
-    // File-backed `mod foo;` (no body) → the submodule file, addressed as `self::foo`. A
-    // `#[path]`-overridden mod is skipped (silence); an inline `mod foo { … }` (body present)
+    // File-backed `mod foo;` (no body) → the submodule file, addressed as `self::foo`. One with
+    // a `#[path]` attribute among the items of the file is the file the attribute names
+    // (`mod::<path>`), and is skipped elsewhere; an inline `mod foo { … }` (body present)
     // emits nothing here and is descended into so its own paths are caught.
     if (node.type === 'mod_item') {
       const body = node.childForFieldName('body');
       if (body === null && !modHasPathOverride(node)) {
         const name = node.childForFieldName('name');
         if (name !== null) emit(`self::${name.text}`, node);
+      } else if (body === null && parent()?.type === 'source_file') {
+        for (const file of pathAttributeFiles(node, [])) out.push(single({ kind: 'path', specifier: `mod::${file}` }, 'import', node.startPosition.row + 1));
       }
       if (body === null) return undefined;
       // An inline module: what sits inside it is read relative to it.
@@ -788,21 +795,28 @@ export function pathModules(root: Node, directory: readonly string[] = []): Arra
       if (name !== '' && !modHasPathOverride(node)) out.push(...pathModules(body, [...directory, name]));
       continue;
     }
-    for (const item of attributesBefore(node)) {
-      const attr = item.namedChild(0);
-      const id = attr?.namedChild(0) ?? null;
-      const value = attr?.childForFieldName('value') ?? null;
-      if (id === null || id.type !== 'identifier' || id.text !== 'path' || value === null || value.type !== 'string_literal') continue;
-      const text = value.text.slice(1, -1);
-      if (text === '' || text.startsWith('/') || text.includes('\\')) continue;
-      const parts: string[] = [...directory];
-      for (const part of text.split('/')) {
-        if (part === '' || part === '.') continue;
-        if (part === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
-        else parts.push(part);
-      }
-      if (parts.length > 0 && parts[parts.length - 1] !== '..') out.push({ path: parts.join('/'), line: node.startPosition.row + 1, inline: directory.length > 0 });
+    for (const path of pathAttributeFiles(node, directory)) out.push({ path, line: node.startPosition.row + 1, inline: directory.length > 0 });
+  }
+  return out;
+}
+
+/** The files the `path` attributes in front of the `mod` without a body `modItem` name, each read as a path with `/` between its parts, normalized, and with `directory` (the names of the inline modules around the `mod`) in front: `a/b.rs` for `#[path = "./imp/../a//b.rs"]`; a leading `..` stays. Left out: a `path` a `cfg_attr` applies, and a path that is absolute, empty, written with an escape or a `\`, or that ends in `..`. */
+function pathAttributeFiles(modItem: Node, directory: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const item of attributesBefore(modItem)) {
+    const attr = item.namedChild(0);
+    const id = attr?.namedChild(0) ?? null;
+    const value = attr?.childForFieldName('value') ?? null;
+    if (id === null || id.type !== 'identifier' || id.text !== 'path' || value === null || value.type !== 'string_literal') continue;
+    const text = value.text.slice(1, -1);
+    if (text === '' || text.startsWith('/') || text.includes('\\')) continue;
+    const parts: string[] = [...directory];
+    for (const part of text.split('/')) {
+      if (part === '' || part === '.') continue;
+      if (part === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
+      else parts.push(part);
     }
+    if (parts.length > 0 && parts[parts.length - 1] !== '..') out.push(parts.join('/'));
   }
   return out;
 }
@@ -1143,7 +1157,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 26,
+  rev: 27,
   declarations,
   uses,
 };

@@ -35,6 +35,7 @@ use super::Thing;
 
 ## Expect
 
+- tests/it.rs:2 -> node:util   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/lib.rs:1 -> node:util   # `mod util;`
 - src/util.rs:1 -> node:lib   # `super` by name is the library root
 
