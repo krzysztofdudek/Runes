@@ -37,7 +37,7 @@ export interface ParserHost {
   getParser(extension: string): Promise<Parser>;
   /** Loads the grammar of every extension that has one, so `loadedParserFor` can parse synchronously afterwards. */
   loadGrammarsFor(extensions: Iterable<string>): Promise<void>;
-  /** The parser of `extension` when its grammar is already loaded, else undefined. Never loads anything. */
+  /** The parser of `extension` when its grammar is already loaded and the runtime has not aborted, else undefined. Never loads anything. */
   loadedParserFor(extension: string): Parser | undefined;
   /** A new parser with no language set, outside the cache; the caller deletes it. Needs the runtime initialized, which any earlier parse did. */
   newParser(): Parser;
@@ -249,7 +249,7 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
     },
     loadedParserFor(extension) {
       const wasmFile = grammarFor(extension);
-      return wasmFile === undefined ? undefined : parserCache.get(wasmFile);
+      return wasmFile === undefined || abortedOn !== undefined ? undefined : parserCache.get(wasmFile);
     },
     newParser,
     parseFile,

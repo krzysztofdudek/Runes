@@ -216,7 +216,7 @@ export function createParserHost(options) {
         },
         loadedParserFor(extension) {
             const wasmFile = grammarFor(extension);
-            return wasmFile === undefined ? undefined : parserCache.get(wasmFile);
+            return wasmFile === undefined || abortedOn !== undefined ? undefined : parserCache.get(wasmFile);
         },
         newParser,
         parseFile,
