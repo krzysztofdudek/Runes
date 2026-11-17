@@ -3,12 +3,12 @@
   "schema": "runes-grammars/1",
   "runtime": {
     "package": "web-tree-sitter",
-    "version": "0.27.0",
-    "wasmSha256": "c03bccdc3b448a32848f5ae327e209c982bbb0840d43eec8bc2d5759544a1ed3"
+    "version": "0.27.2",
+    "wasmSha256": "488beeff7adb7fd7e21e97cc29a43dc6d031977755eda892d6d96c7f456cfdec"
   },
   "cli": {
     "package": "tree-sitter-cli",
-    "version": "0.27.0"
+    "version": "0.27.2"
   },
   "grammars": [
     {
@@ -17,7 +17,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-typescript",
       "commit": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
       "version": "v0.23.2 + upstream PRs #357 #358 #364 #365, regenerated",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 15,
       "source": {
         "kind": "source",
@@ -48,7 +48,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-typescript",
       "commit": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
       "version": "v0.23.2 + upstream PRs #357 #358 #364 #365, regenerated",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 15,
       "source": {
         "kind": "source",
@@ -156,7 +156,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-java",
       "commit": "94703d5a6bed02b98e438d7cad1136c01a60ba2c",
       "version": "0.23.5",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 14,
       "source": {
         "kind": "source",
@@ -174,7 +174,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-c-sharp",
       "commit": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
       "version": "master after 0.23.5 (unreleased): C# 14",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 15,
       "source": {
         "kind": "source",
@@ -209,7 +209,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-cpp",
       "commit": "c009222808634c1014f82438d4883753516a2c24",
       "version": "master after 0.23.4 (unreleased)",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 15,
       "source": {
         "kind": "source",
@@ -227,7 +227,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-php",
       "commit": "3fda2fb9577166c6399834917f9844f30370beea",
       "version": "master after 0.24.2 (unreleased)",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 15,
       "source": {
         "kind": "source",
@@ -246,7 +246,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-ruby",
       "commit": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
       "version": "master after 0.23.1 (unreleased)",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 14,
       "source": {
         "kind": "source",
@@ -264,7 +264,7 @@
       "repo": "https://github.com/tree-sitter/tree-sitter-json",
       "commit": "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24",
       "version": "0.24.8",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 14,
       "source": {
         "kind": "source",
@@ -282,7 +282,7 @@
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-kotlin",
       "commit": "77dd60ea0a9003ce062c9728a513ffe1aaff8c82",
       "version": "1.1.0",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 14,
       "source": {
         "kind": "source",
@@ -300,7 +300,7 @@
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-yaml",
       "commit": "7708026449bed86239b1cd5bce6e3c34dbca6415",
       "version": "0.7.2",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 14,
       "source": {
         "kind": "source",
@@ -318,7 +318,7 @@
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
       "commit": "64b56832c2cffe41758f28e05c756a3a98d16f41",
       "version": "0.7.0",
-      "cli": "0.27.0",
+      "cli": "0.27.2",
       "abi": 14,
       "source": {
         "kind": "source",

@@ -2,6 +2,11 @@
 
 All notable changes to Runes are recorded here, one line per change. Runes follows [Semantic Versioning](https://semver.org/); one version covers every subpath.
 
+## [Unreleased]
+
+### Changed
+- `grammars`: the pinned web-tree-sitter runtime and tree-sitter-cli move to 0.27.2. The grammar bytes stay the same, and the relation pass finds and stops finding the same dependencies on the public repositories the corpus checks. A consumer still on web-tree-sitter 0.27.0 gets a new runtime pin report until it installs 0.27.2; no relation finding changes.
+
 ## [1.1.0] - 2026-11-15
 
 A minor release of the relation readers, for someone upgrading from 1.0.0. They find dependencies they used to miss in C#, TypeScript and JavaScript, Rust, Python, Java and Kotlin, and drop edges they reported by mistake. The API gains a file view, the C# project reference graph, diagnostics for configuration files that cannot be read, and `TargetResolver.classifyUse`. A call written for 1.0.0 works unchanged, and the new API is optional; the edges a call gets change as listed below, and the C# extract records changed shape (Before you upgrade).
