@@ -1408,10 +1408,11 @@ function makeGoResolveDeps(plain, probe, ownerOf, isExcluded) {
         if (replaced === undefined) {
             replaced = [];
             for (const { modulePath, dir } of parseGoModReplaces(plain.read(joinRel(moduleDir, 'go.mod')) ?? '')) {
-                const joined = path.posix.normalize(moduleDir === '' ? dir : path.posix.join(moduleDir, dir));
+                // The directory keyed as the ancestor walk keys it ('' for the repository root, no trailing slash), so `../` naming the root module is that same module.
+                const joined = path.posix.normalize(moduleDir === '' ? dir : path.posix.join(moduleDir, dir)).replace(/\/+$/, '');
                 if (joined === '..' || joined.startsWith('../'))
                     continue;
-                const target = joined === '.' ? '' : joined.replace(/\/+$/, '');
+                const target = joined === '.' ? '' : joined;
                 if (moduleAt(target) === modulePath)
                     replaced.push({ modulePath, moduleDir: target });
             }

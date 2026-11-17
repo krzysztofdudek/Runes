@@ -825,6 +825,13 @@ describe('resolver.classifyUse — a Go module wired with replace', () => {
       expect(use(r, 'example.com/data'), replace).toEqual({ kind: 'absent', reason: 'outside' });
     }
   });
+  it('a replace that names the repository root or a module above, in any spelling, keeps the edge the ancestor walk gives', () => {
+    const tools = { 'go.mod': 'module golang.org/x/tools\n', 'go/packages/p.go': 'package packages' };
+    for (const [dir, file, replace] of [['gopls', 'gopls/main.go', '../'], ['gopls', 'gopls/main.go', '..'], ['x/gopls', 'x/gopls/main.go', '../../'], ['x/gopls', 'x/gopls/main.go', '../..'], ['x/gopls', 'x/gopls/main.go', './../../']]) {
+      const r = resolverOf({ ...tools, [`${dir}/go.mod`]: `module golang.org/x/tools/gopls\n\nrequire golang.org/x/tools v0.30.0\n\nreplace golang.org/x/tools => ${replace}\n`, [file]: 'package main' });
+      expect(r.classifyUse([{ kind: 'path', specifier: 'golang.org/x/tools/go/packages', isPackage: true }], file, 'go'), replace).toEqual({ kind: 'resolved', owner: 'packages', resolvedFile: 'go/packages/p.go' });
+    }
+  });
   it('only the importing file\'s own go.mod replaces: a replace in another module\'s go.mod reaches nothing here', () => {
     const r = resolverOf({ ...data, 'ui/go.mod': 'module example.com/ui\n', 'tool/go.mod': 'module example.com/tool\n\nreplace example.com/data => ../data\n', 'tool/t.go': 'package tool' });
     expect(use(r, 'example.com/data')).toEqual({ kind: 'absent', reason: 'outside' });
