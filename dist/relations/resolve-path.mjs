@@ -1391,8 +1391,12 @@ function makeGoResolveDeps(plain, probe, ownerOf, isExcluded) {
         const work = joinRel(dir, 'go.work');
         if (plain.exists(work)) {
             for (const use of parseGoWorkUses(plain.read(work) ?? '')) {
-                const joined = path.posix.normalize(dir === '' ? use : path.posix.join(dir, use));
-                if (joined === '..' || joined.startsWith('../') || path.posix.isAbsolute(joined))
+                // Keyed as the ancestor walk and replacedModules key a directory ('' for the repository root, no trailing slash), so `use ./` is the module `use .` names.
+                const normalized = path.posix.normalize(dir === '' ? use : path.posix.join(dir, use));
+                if (path.posix.isAbsolute(normalized))
+                    continue;
+                const joined = normalized.replace(/\/+$/, '');
+                if (joined === '..' || joined.startsWith('../'))
                     continue;
                 members.push(joined === '.' ? '' : joined);
             }
