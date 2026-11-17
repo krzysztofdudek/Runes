@@ -175,10 +175,13 @@ function uses(file: ParsedFile): DetectedDep[] {
       emitPath(literalStringArg(node), node.startPosition.row + 1);
       return; // a string arg, no constant children to descend for symbols
     }
-    // require '<lit>' → a PATH hint marked `callForm: 'require'`, resolved on the load path.
+    // require '<lit>' → a PATH hint marked `callForm: 'require'`, resolved on the load path; a computed argument is read on for the constants it names.
     if (isBareCallTo(node, REQUIRE)) {
-      emitPath(literalStringArg(node), node.startPosition.row + 1, true);
-      return;
+      const specifier = literalStringArg(node);
+      if (specifier !== undefined) {
+        emitPath(specifier, node.startPosition.row + 1, true);
+        return;
+      }
     }
 
     // (b) class C < Base / module M → superclass in the OUTER nesting, then the body under

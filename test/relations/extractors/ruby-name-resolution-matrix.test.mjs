@@ -39,6 +39,9 @@ import { runCase } from '../reference-case-runner.mjs';
 describe('MATRIX — the path-precise link (require_relative is the only file-precise static link)', () => {
   it('ruby-require-relative-path-edge', () => runCase('ruby-require-relative-path-edge'));
   it('ruby-plain-require-load-path-edge', () => runCase('ruby-plain-require-load-path-edge'));
+  it('ruby-require-spec-and-test-load-path-edge', () => runCase('ruby-require-spec-and-test-load-path-edge'));
+  it('ruby-require-repository-file-off-load-path-unfollowed-silence', () => runCase('ruby-require-repository-file-off-load-path-unfollowed-silence'));
+  it('ruby-require-computed-argument-constant-edge', () => runCase('ruby-require-computed-argument-constant-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

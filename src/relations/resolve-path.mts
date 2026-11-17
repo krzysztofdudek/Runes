@@ -212,9 +212,9 @@ export function makeResolvePathToFile(
     if (language === 'ruby') {
       // `require_relative '<lit>'` resolves relative to the requiring file's directory (`.rb`
       // appended); a plain `require '<lit>'` (the hint's `callForm` `require`) under the
-      // repository's load-path roots. Constant references carry no path — they route through
+      // load-path roots the repository gives the requiring file. Constant references carry no path — they route through
       // the SymbolTable, so they never reach this branch.
-      return callForm === 'require' ? resolveRubyRequire(specifier, exists, layout.rubyLoadRoots(), isExcluded) : resolveRubyRequireRelative(specifier, fromFile, exists);
+      return callForm === 'require' ? resolveRubyRequire(specifier, fromFile, exists, layout.rubyLoadPath) : resolveRubyRequireRelative(specifier, fromFile, exists);
     }
     return undefined;
   };
@@ -226,7 +226,7 @@ export function makeResolvePathToFile(
     if (language === 'php') return explainPhpMiss(specifier, fromFile, phpDeps);
     if (language === 'rust') return explainRustMiss(specifier, fromFile, exists, rustDepsFor(symbolTable));
     if (language === 'c' || language === 'cpp') return explainIncludeMiss(specifier, fromFile, exists, layout.includeRoots);
-    if (language === 'ruby') return callForm === 'require' ? explainRubyRequireMiss(specifier, exists, layout.rubyLoadRoots(), isExcluded) : explainRubyRequireRelativeMiss(specifier, fromFile);
+    if (language === 'ruby') return callForm === 'require' ? explainRubyRequireMiss(specifier, fromFile, exists, layout.rubyLoadPath) : explainRubyRequireRelativeMiss(specifier, fromFile);
     return undefined;
   };
   return Object.assign(resolvePathToFile, { explainMiss });
