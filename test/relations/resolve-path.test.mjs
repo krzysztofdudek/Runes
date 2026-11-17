@@ -653,6 +653,31 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(makeResolvePathToFile(root)('proj_mod', 'src/tool/chef.py', 'python')).toBe('testing/proj/proj_mod.py');
   });
 
+  it('the importing file\'s own directory is no root when it is a package directory under a discovered root', () => {
+    write('pyproject.toml', '[tool.poetry]\nname = "poetry"\npackages = [{ include = "poetry", from = "src" }]\n');
+    write('src/poetry/__version__.py');
+    write('src/poetry/poetry.py', 'from poetry.__version__ import __version__\nfrom poetry.toml import load\n');
+    write('src/poetry/factory.py', 'from poetry.__version__ import __version__\nfrom poetry.json import validate\nfrom poetry.poetry import Poetry\n');
+    write('src/poetry/json/__init__.py');
+    write('src/poetry/toml/__init__.py');
+    write('src/main.py', 'import helper\n');
+    write('src/helper.py');
+    write('scripts/run.py', 'import util\n');
+    write('scripts/util.py');
+    const resolve = makeResolvePathToFile(root);
+    // `from poetry.json import validate` gives the module use poetry.json and the name use poetry.json.validate.
+    for (const spec of ['poetry.__version__', 'poetry.__version__.__version__']) expect(resolve(spec, 'src/poetry/factory.py', 'python'), spec).toBe('src/poetry/__version__.py');
+    for (const spec of ['poetry.json', 'poetry.json.validate']) expect(resolve(spec, 'src/poetry/factory.py', 'python'), spec).toBe('src/poetry/json/__init__.py');
+    for (const spec of ['poetry.poetry', 'poetry.poetry.Poetry']) expect(resolve(spec, 'src/poetry/factory.py', 'python'), spec).toBe('src/poetry/poetry.py');
+    // Never the importing file itself.
+    expect(resolve('poetry.__version__', 'src/poetry/poetry.py', 'python')).toBe('src/poetry/__version__.py');
+    expect(resolve('poetry.toml', 'src/poetry/poetry.py', 'python')).toBe('src/poetry/toml/__init__.py');
+    expect(resolve.explainMiss('poetry.missing.x', 'src/poetry/poetry.py', 'python')).toBe('unfollowed');
+    // A file directly in a root, and a script directory outside every root, still have their own directory as a root.
+    expect(resolve('helper', 'src/main.py', 'python')).toBe('src/helper.py');
+    expect(resolve('util', 'scripts/run.py', 'python')).toBe('scripts/util.py');
+  });
+
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {
     // 60 src-layout projects; every module imports three external libraries, its own package and the first project's.
     const projects = 60;
