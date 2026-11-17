@@ -482,6 +482,7 @@ describe('typescript extractor — test mocks and the bundler forms that stay un
         `  .mock('../data/af')`,
         `  .unmock('../data/ag');`,
         `jest.useFakeTimers().clearAllMocks().doMock('../data/ah'); jest.isolateModules(f).mock('../data/ai'); jest.fn().mock('../data/aj');`,
+        `jest.autoMockOff().autoMockOn().onGenerateMock(f).setTimerTickMode('manual').mock('../data/ak'); jest.unstable_mockModule('../data/al', () => ({})); jest.unstable_unmockModule('../data/am');`,
       ].join('\n'),
     );
     // A chain is read from its outer call in: the last path of `jest.mock('g').mock('h')` comes first. Every link of a chain gives its use on the line the chain starts, as the call does.
@@ -511,6 +512,10 @@ describe('typescript extractor — test mocks and the bundler forms that stay un
       ['../data/ag', 'import', 18],
       ['../data/af', 'import', 18],
       ['../data/ah', 'import', 21],
+      ['../data/ai', 'import', 21],
+      ['../data/ak', 'import', 22],
+      ['../data/al', 'import', 22],
+      ['../data/am', 'import', 22],
     ]);
   });
   it('reads no use from import.meta.glob or require.context', async () => {
