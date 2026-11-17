@@ -353,6 +353,24 @@ describe('sfcScriptView', () => {
     expect(sfcScriptView('c/N.vue', '<template><a/></template>')).toBeNull();
     expect(sfcScriptView('c/x.ts', '<script></script>')).toBeNull();
   });
+  it('reads no script inside an HTML comment, and reads the script beside one', async () => {
+    const commented = '<!-- <script>import { d } from "../data/d"</script> -->';
+    expect(sfcScriptView('c/V.vue', `<template><b/></template>\n${commented}\n`)).toBeNull();
+    expect(sfcScriptView('c/S.svelte', `${commented}\n<p>x</p>`)).toBeNull();
+    const beside = sfcScriptView('c/B.vue', `<template><b/></template>\n${commented}\n<script>import { e } from "../data/e"</script>\n`);
+    expect(beside.content.split('\n')).toHaveLength(4);
+    const { uses } = await run(beside.content, '.js', 'javascript');
+    expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/e', 3]]);
+  });
+  it('reads a comment that closes at once, and gives nothing for a comment or a script that never closes', () => {
+    expect(sfcScriptView('c/A.vue', '<!--><script>import a from "./a"</script>').content.trim()).toBe('import a from "./a"');
+    expect(sfcScriptView('c/U.vue', '<!-- <script>import a from "./a"</script>')).toBeNull();
+    expect(sfcScriptView('c/O.vue', '<script>import a from "./a"')).toBeNull();
+  });
+  it('keeps the body that an html string names as it was read before comments were skipped', () => {
+    const view = sfcScriptView('c/H.svelte', "<p>{@html '<script>'}</p>\n<script>import a from './a'</script>");
+    expect(view.content).toBe(`${' '.repeat(19)}'}</p>\n<script>import a from './a'${' '.repeat(9)}`);
+  });
 });
 
 describe('typescript extractor — declarations()', () => {

@@ -480,12 +480,40 @@ export const typescriptExtractor = {
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
     // `new URL(…, import.meta.url)`; ERROR-region recovery.
-    rev: 6,
+    rev: 7,
     declarations,
     uses,
 };
 const SFC_EXTENSIONS = new Set(['.vue', '.svelte']);
-const SCRIPT_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/**
+ * The `<script>` elements of a component, in document order. An HTML comment
+ * (`<!-- … -->`) is skipped whole, so an element inside it is no element; inside an
+ * element's body `<!--` is text, as the browser reads it.
+ */
+function scriptElements(content) {
+    const elements = [];
+    const token = /<!--|<script\b([^>]*)>/gi;
+    const closeTag = /<\/script\s*>/gi;
+    let m;
+    while ((m = token.exec(content)) !== null) {
+        if (m[1] === undefined) {
+            // `<!-->` and `<!--->` end the comment at once, as HTML reads them.
+            const end = content.indexOf('-->', m.index + 2);
+            if (end === -1)
+                break;
+            token.lastIndex = end + 3;
+            continue;
+        }
+        const bodyStart = token.lastIndex;
+        closeTag.lastIndex = bodyStart;
+        const close = closeTag.exec(content);
+        if (close === null)
+            break;
+        elements.push({ attributes: m[1], bodyStart, bodyEnd: close.index });
+        token.lastIndex = close.index + close[0].length;
+    }
+    return elements;
+}
 /**
  * Vue and Svelte single-file components carry their imports in `<script>` blocks
  * (`<script>`, `<script setup lang="ts">`, `<script context="module">`). No shipped
@@ -493,32 +521,29 @@ const SCRIPT_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
  * byte outside a script body becomes a space (newlines are kept, so every line
  * number is the component's own), and the view is parsed with the TS, TSX or JS
  * grammar the blocks' `lang` names (`ts`/`typescript` → TS, `tsx` → TSX, otherwise
- * JS). Returns null for any other file, or a component with no script block.
+ * JS). Returns null for any other file, or a component with no script block outside
+ * its HTML comments.
  */
 export function sfcScriptView(filePath, content) {
     if (!SFC_EXTENSIONS.has(path.posix.extname(filePath).toLowerCase()))
         return null;
-    const keep = [];
+    const elements = scriptElements(content);
+    if (elements.length === 0)
+        return null;
     let language = 'javascript';
-    SCRIPT_BLOCK.lastIndex = 0;
-    let m;
-    while ((m = SCRIPT_BLOCK.exec(content)) !== null) {
-        const lang = /\blang\s*=\s*["']?([\w-]+)/i.exec(m[1])?.[1]?.toLowerCase();
+    for (const element of elements) {
+        const lang = /\blang\s*=\s*["']?([\w-]+)/i.exec(element.attributes)?.[1]?.toLowerCase();
         if (lang === 'tsx')
             language = 'tsx';
         else if ((lang === 'ts' || lang === 'typescript') && language !== 'tsx')
             language = 'typescript';
-        const bodyStart = m.index + m[0].indexOf('>') + 1;
-        keep.push([bodyStart, bodyStart + m[2].length]);
     }
-    if (keep.length === 0)
-        return null;
     let view = '';
     let cursor = 0;
     const blank = (s) => s.replace(/[^\n]/g, ' ');
-    for (const [start, end] of keep) {
-        view += blank(content.slice(cursor, start)) + content.slice(start, end);
-        cursor = end;
+    for (const element of elements) {
+        view += blank(content.slice(cursor, element.bodyStart)) + content.slice(element.bodyStart, element.bodyEnd);
+        cursor = element.bodyEnd;
     }
     view += blank(content.slice(cursor));
     const ext = language === 'typescript' ? '.ts' : language === 'tsx' ? '.tsx' : '.js';
