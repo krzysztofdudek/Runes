@@ -29,8 +29,12 @@ const NAMES_NOTHING = 'it holds a path that names nothing its crate has, which t
 const NOT_A_TARGET = 'Cargo builds no crate from it under this manifest, which is what the case checks';
 const MODULE_OF_NO_TARGET = 'a module of a file Cargo builds no crate from, which is what the case checks';
 const DECOY = 'a decoy no `mod` declares: the case checks that no path binds it';
-// A file whose `mod` stands in a branch under `cfg(unix)` or `cfg(windows)`, or in the `else` of one, is read on some platforms and not on others, so the check takes it as read or not, whichever the platform it runs on decides.
-const PLATFORM_CFG = 'its `mod` stands in a branch that `cfg(unix)` or `cfg(windows)` decides, so rustc reads it on some platforms only; the case reads every branch';
+// A file whose `mod` stands in a branch that `cfg(unix)` decides is read on one side of it only: on Linux and macOS, or on Windows. Each such entry says which, and the check requires it unread where its branch is off and read where it is on. A file no platform the tests run on reads keeps a reason of its own.
+const READ_ON_UNIX = 'its `mod` stands in a branch that holds on Linux and macOS and not on Windows, where rustc does not read it; the case reads every branch';
+const READ_OFF_UNIX = 'its `mod` stands in a branch that holds on Windows and not on Linux or macOS, where rustc does not read it; the case reads every branch';
+const ON_UNIX = process.platform !== 'win32';
+/** Whether rustc leaves a file with this reason unread on the platform the test runs on. */
+const unreadHere = (why) => (why === READ_ON_UNIX ? !ON_UNIX : why === READ_OFF_UNIX ? ON_UNIX : true);
 const PATCH_NOT_APPLIED = 'the crate a `[patch]` names but does not apply here, so no build compiles it, which is what the case checks';
 const REFUSED_PATH = 'it holds a path rustc refuses, as the case says, so no `mod` declares it and rustc never compiles it';
 const PROBE_NOT_COMPILED = 'no `mod` declares it, so rustc never compiles the probe it holds: a fixture to complete';
@@ -55,7 +59,7 @@ const KEPT_OUT_OF_THE_BUILD = new Map([
   ['rust-crate-path-root-name-in-comment-silence', new Map([['src/api/mod.rs', PROBE_NOT_COMPILED]])],
   ['rust-crate-path-root-name-in-string-or-nested-fn-silence', new Map([['src/api/mod.rs', PROBE_NOT_COMPILED]])],
   ['rust-crate-root-glob-module-without-name-silence', new Map([['app/src/orders.rs', REFUSED_PATH]])],
-  ['rust-crate-root-globs-under-opposite-cfgs-edge', new Map([['kit/src/unix.rs', PLATFORM_CFG], ['kit/src/windows.rs', PLATFORM_CFG]])],
+  ['rust-crate-root-globs-under-opposite-cfgs-edge', new Map([['kit/src/unix.rs', READ_ON_UNIX], ['kit/src/windows.rs', READ_OFF_UNIX]])],
   ['rust-crate-root-two-globs-same-name-silence', new Map([['app/src/orders.rs', REFUSED_PATH]])],
   ['rust-edition-2015-autobins-true-shared-name-inferred-bins-edge', new Map([['src/bin/cli.rs', NOT_A_TARGET], ['src/bin/cli/inner.rs', MODULE_OF_NO_TARGET], ['src/bin/cli/main.rs', NOT_A_TARGET], ['src/bin/util/mod.rs', MODULE_OF_NO_TARGET]])],
   ['rust-edition-2015-autolib-off-legacy-bin-path-edge', new Map([['src/lib.rs', NOT_A_TARGET], ['src/other.rs', MODULE_OF_NO_TARGET]])],
@@ -93,13 +97,13 @@ const KEPT_OUT_OF_THE_BUILD = new Map([
   ['rust-lib-path-below-bin-dir-edge', new Map([['app/lib/jobs/run.rs', PROBE_NOT_COMPILED], ['app/util.rs', DECOY]])],
   ['rust-lib-path-outside-src-main-module-edge', new Map([['src/cli/run.rs', NAMES_NOTHING]])],
   ['rust-macro-export-silence', new Map([['src/app/mod.rs', PROBE_NOT_COMPILED], ['src/macros/mod.rs', PROBE_NOT_COMPILED]])],
-  ['rust-mod-decl-inside-cfg-if-edge', new Map([['src/other/mod.rs', PLATFORM_CFG], ['src/unix/mod.rs', PLATFORM_CFG]])],
-  ['rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge', new Map([['src/deep/leaf.rs', PLATFORM_CFG], ['src/imp/net.rs', PLATFORM_CFG], ['src/inner.rs', DECOY], ['src/net/mod.rs', DECOY], ['src/other/mod.rs', PLATFORM_CFG], ['src/sys/inner.rs', PLATFORM_CFG], ['src/windows/mod.rs', PLATFORM_CFG]])],
+  ['rust-mod-decl-inside-cfg-if-edge', new Map([['src/other/mod.rs', READ_OFF_UNIX], ['src/unix/mod.rs', READ_ON_UNIX]])],
+  ['rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge', new Map([['src/deep/leaf.rs', READ_ON_UNIX], ['src/imp/net.rs', READ_ON_UNIX], ['src/inner.rs', DECOY], ['src/net/mod.rs', DECOY], ['src/other/mod.rs', 'its `mod` stands in the `else` of `cfg(windows)` inside the `else` of `cfg(unix)`, which holds on none of Linux, macOS and Windows, so rustc reads it on no platform the tests run on; the case reads every branch'], ['src/sys/inner.rs', READ_ON_UNIX], ['src/windows/mod.rs', READ_OFF_UNIX]])],
   ['rust-mod-decl-inside-inline-mod-edge', new Map([['src/app/inner/mod.rs', DECOY]])],
   ['rust-mod-path-attribute-before-doc-comment-silence', new Map([['src/net/mod.rs', DECOY], ['src/sys/mod.rs', DECOY]])],
   ['rust-mod-path-attribute-relative-to-declaring-file-edge', new Map([['src/ui/f/dd.rs', DECOY], ['src/ui/via_attr.rs', DECOY]])],
-  ['rust-module-declared-in-cfg-if-and-stale-root-file-edge', new Map([['src/legacy.rs', DECOY], ['src/unix/mod.rs', PLATFORM_CFG]])],
-  ['rust-module-in-cfg-if-of-lib-root-item-edge', new Map([['src/other/mod.rs', PLATFORM_CFG], ['src/unix/mod.rs', PLATFORM_CFG]])],
+  ['rust-module-declared-in-cfg-if-and-stale-root-file-edge', new Map([['src/legacy.rs', DECOY], ['src/unix/mod.rs', READ_ON_UNIX]])],
+  ['rust-module-in-cfg-if-of-lib-root-item-edge', new Map([['src/other/mod.rs', READ_OFF_UNIX], ['src/unix/mod.rs', READ_ON_UNIX]])],
   ['rust-module-no-root-declares-root-item-edge', new Map([['src/orphan/mod.rs', 'declared by no root, which is what the case checks: nothing is concluded from that']])],
   ['rust-multiline-string-path-dependency-edge', new Map([['crates/app/src/cmd/run.rs', PROBE_NOT_COMPILED]])],
   ['rust-patch-crates-io-git-dependency-silence', new Map([['vendor/kit/src/lib.rs', PATCH_NOT_APPLIED]])],
@@ -185,8 +189,8 @@ test('every Rust case of the catalogue builds under the pinned toolchain, except
   const broken = built.filter((r) => !r.ok);
   assert.deepEqual(broken.map((b) => `${b.id}: ${b.output.split('\n').filter((l) => /^error/.test(l)).slice(0, 2).join(' | ')}`), []);
   const kept = (id) => KEPT_OUT_OF_THE_BUILD.get(id) ?? new Map();
-  assert.deepEqual(built.flatMap((r) => r.unread.filter((f) => !kept(r.id).has(f)).map((f) => `${r.id}: ${f}`)), [], 'rustc read none of these files: declare them where the case means them to be compiled, or name them in KEPT_OUT_OF_THE_BUILD with the reason');
-  assert.deepEqual(built.flatMap((r) => [...kept(r.id)].filter(([f, why]) => why !== PLATFORM_CFG && !r.unread.includes(f)).map(([f]) => `${r.id}: ${f}`)), [], 'rustc reads these files now: take them out of KEPT_OUT_OF_THE_BUILD');
+  assert.deepEqual(built.flatMap((r) => r.unread.filter((f) => !(kept(r.id).has(f) && unreadHere(kept(r.id).get(f)))).map((f) => `${r.id}: ${f}`)), [], 'rustc read none of these files here: declare them where the case means them to be compiled, or name them in KEPT_OUT_OF_THE_BUILD with the reason');
+  assert.deepEqual(built.flatMap((r) => [...kept(r.id)].filter(([f, why]) => unreadHere(why) && !r.unread.includes(f)).map(([f]) => `${r.id}: ${f}`)), [], 'rustc reads these files here now: take them out of KEPT_OUT_OF_THE_BUILD, or say on which side of cfg(unix) they are read');
 });
 
 test('a Rust case that keeps a file out of the build names a file of its own, and builds', () => {
