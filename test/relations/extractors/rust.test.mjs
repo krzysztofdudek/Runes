@@ -479,6 +479,23 @@ describe('rust extractor — a path written outside a use whose first name nothi
     const { uses } = await run(code);
     expect(at(uses)).toEqual(['self::local@1', 'self@3', 'in::local::f@7', 'extern::foo@8', 'a::b@10', 'a::c@10', 'in::datacrate::dc@10', 'in::tokio::main@14']);
   });
+
+  it('emits no use for an attribute of the built-in diagnostic namespace or of a tool, rust-analyzer included', async () => {
+    const code = [
+      '#[diagnostic::on_unimplemented(message = "no T for {Self}")]',
+      'trait T {}',
+      '#[diagnostic::do_not_recommend]',
+      'impl T for u8 {}',
+      '#[rust_analyzer::skip]',
+      'fn f() {}',
+      '#[rustfmt::skip]',
+      'fn g() {}',
+      '#[tokio::main]',
+      'async fn m() {}',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(at(uses)).toEqual(['in::tokio::main@9']);
+  });
 });
 
 describe('rust extractor — mod declarations inside cfg_if!', () => {
