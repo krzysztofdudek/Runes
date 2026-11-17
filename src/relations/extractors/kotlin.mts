@@ -466,6 +466,22 @@ function facadeName(file: ParsedFile, view: KotlinView): string | undefined {
 }
 
 /**
+ * The row of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file, and not on the declaration itself (the same text splits after exactly one declaration and not after none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)` and `@Suppress("x") run()` are real statements, and the grammar reads them so at every depth.
+ */
+function splitAnnotationsRow(node: Node): number | undefined {
+  const prev = node.previousSibling;
+  if (node.parent?.type !== 'source_file' || prev?.type !== 'annotated_expression' || !onlyAnnotations(prev)) return undefined;
+  return prev.startPosition.row;
+}
+
+/** The grammar nests one annotation per `annotated_expression`: `@A @B(x)` is `@A` over `@B` over `(x)`. */
+function onlyAnnotations(node: Node): boolean {
+  const [annotation, operand] = node.namedChildren;
+  if (operand?.type === 'annotated_expression') return onlyAnnotations(operand);
+  return operand?.type === 'parenthesized_expression' && !annotation?.namedChildren.some((c) => c?.type === 'constructor_invocation');
+}
+
+/**
  * The FULLY-QUALIFIED symbol keys this file DEFINES. Reads the file's `package_header`
  * (the package FQN, possibly empty for a root-package / `.kts` file), then for each
  * declaration (top-level AND nested) emits `<package>.<TypeKey>`, or just `<TypeKey>` when
@@ -486,22 +502,6 @@ function facadeName(file: ParsedFile, view: KotlinView): string | undefined {
  *
  * These keys feed the shared SymbolTable; a use's import FQN resolves against them.
  */
-/**
- * The row of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file (one declaration, but not none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)` and `@Suppress("x") run()` are real statements, and the grammar reads them so at every depth.
- */
-function splitAnnotationsRow(node: Node): number | undefined {
-  const prev = node.previousSibling;
-  if (node.parent?.type !== 'source_file' || prev?.type !== 'annotated_expression' || !onlyAnnotations(prev)) return undefined;
-  return prev.startPosition.row;
-}
-
-/** The grammar nests one annotation per `annotated_expression`: `@A @B(x)` is `@A` over `@B` over `(x)`. */
-function onlyAnnotations(node: Node): boolean {
-  const [annotation, operand] = node.namedChildren;
-  if (operand?.type === 'annotated_expression') return onlyAnnotations(operand);
-  return operand?.type === 'parenthesized_expression' && !annotation?.namedChildren.some((c) => c?.type === 'constructor_invocation');
-}
-
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   return withView(file, (view) => declarationsOf(file, view));
 }
