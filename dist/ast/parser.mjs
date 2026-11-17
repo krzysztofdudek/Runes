@@ -56,19 +56,31 @@ export function createParserHost(options) {
     let abortedOn;
     const isAbort = (error) => error instanceof Error && error.message.startsWith('Aborted(');
     const abortedError = (filePath) => {
-        const { filePath: first, error } = abortedOn;
-        const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}${filePath === undefined ? '' : `, so ${filePath} was not parsed`}`;
+        const { filePath: first, doing, error } = abortedOn;
+        const what = first === filePath ? `while ${doing} ${filePath}` : `earlier, while ${doing} ${first}${filePath === undefined ? '' : `, so ${filePath} was not parsed`}`;
         return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${error.message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
     };
     const failIfAborted = (filePath) => {
         if (abortedOn !== undefined)
             throw abortedError(filePath);
     };
-    const failOnAbort = (filePath, error) => {
+    const failOnAbort = (filePath, error, doing = 'parsing') => {
         if (!isAbort(error))
             return;
-        abortedOn ??= { filePath, error };
+        abortedOn ??= { filePath, doing, error };
         throw abortedError(filePath);
+    };
+    // Freeing takes a little of the runtime's memory too, so it can abort like a parse. After an abort nothing is freed: the damaged runtime can fail on anything, and what is left unfreed is lost only with a runtime nobody uses again.
+    const free = (filePath, doing, freed) => {
+        if (abortedOn !== undefined)
+            return;
+        try {
+            freed.delete();
+        }
+        catch (error) {
+            failOnAbort(filePath, error, doing);
+            throw error;
+        }
     };
     const loadLanguage = (wasmFile) => {
         let langP = langCache.get(wasmFile);
@@ -163,7 +175,7 @@ export function createParserHost(options) {
                     throw retryError;
                 }
                 finally {
-                    fresh.delete();
+                    free(filePath, 'parsing', fresh);
                 }
             }
         }
@@ -226,7 +238,7 @@ export function createParserHost(options) {
                 return await fn(tree);
             }
             finally {
-                tree.delete();
+                free(filePath, 'freeing the tree of', tree);
             }
         },
         grammarWasmHash,

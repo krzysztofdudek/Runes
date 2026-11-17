@@ -453,7 +453,7 @@ describe('freeing and resetting around a runtime abort', () => {
     const events = [];
     const h = hostOver(events, { trapFirst: true });
     await assert.rejects(h.parseFile('a.rb', 'abort'), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.rb/.test(error.message));
-    assert.deepEqual(events.filter((e) => e.startsWith('parse')), ['parse abort', 'parse abort'], 'the trap was retried once, and the retry aborted');
+    assert.deepEqual(events.filter((e) => e.startsWith('parse ')), ['parse abort', 'parse abort'], 'the trap was retried once, and the retry aborted');
     assert.deepEqual(after(events, 'ABORT'), []);
     await refusesLaterCalls(h, events, 'while parsing a.rb');
   });
@@ -462,7 +462,7 @@ describe('freeing and resetting around a runtime abort', () => {
     const events = [];
     const h = hostOver(events, { trapFirst: true, aborts: 'parser delete' });
     await assert.rejects(h.parseFile('a.rb', 'x'), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.rb/.test(error.message) && error.cause instanceof WebAssembly.RuntimeError);
-    assert.deepEqual(events.filter((e) => e.startsWith('parse')), ['parse x', 'parse x']);
+    assert.deepEqual(events.filter((e) => e.startsWith('parse ')), ['parse x', 'parse x']);
     assert.deepEqual(after(events, 'ABORT'), []);
     await refusesLaterCalls(h, events, 'while parsing a.rb');
   });

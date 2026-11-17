@@ -43,7 +43,7 @@ export interface ParserHost {
   newParser(): Parser;
   /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. When the runtime aborts, the call rejects with `code` `ERUNTIMEABORTED`, and so does every call on this host from then on, those already waiting included. */
   parseFile(filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree>;
-  /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. A stopped parse never calls `fn`. */
+  /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does, unless the runtime has aborted by then: after an abort the host frees nothing. A stopped parse never calls `fn`. */
   withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string, options?: ParseFileOptions): Promise<T>;
   /** sha256 of the grammar WASM of `extension`. Reads the file, never loads it. */
   grammarWasmHash(extension: string): string;
@@ -103,20 +103,30 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
   };
 
   // The runtime aborts (at its 2 GiB memory limit, for one) by throwing a RuntimeError whose message starts with `Aborted(`, and stays damaged for the rest of the process: a grammar load, a parser or a parse made afterwards can fail on anything. So an abort is not retried, and from then on the host makes no call into the runtime and hands out no parser: each place that does checks first, with no wait between the check and the call.
-  let abortedOn: { filePath: string; error: unknown } | undefined;
+  let abortedOn: { filePath: string; doing: string; error: unknown } | undefined;
   const isAbort = (error: unknown): boolean => error instanceof Error && error.message.startsWith('Aborted(');
   const abortedError = (filePath?: string): Error => {
-    const { filePath: first, error } = abortedOn!;
-    const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}${filePath === undefined ? '' : `, so ${filePath} was not parsed`}`;
+    const { filePath: first, doing, error } = abortedOn!;
+    const what = first === filePath ? `while ${doing} ${filePath}` : `earlier, while ${doing} ${first}${filePath === undefined ? '' : `, so ${filePath} was not parsed`}`;
     return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${(error as Error).message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
   };
   const failIfAborted = (filePath?: string): void => {
     if (abortedOn !== undefined) throw abortedError(filePath);
   };
-  const failOnAbort = (filePath: string, error: unknown): void => {
+  const failOnAbort = (filePath: string, error: unknown, doing = 'parsing'): void => {
     if (!isAbort(error)) return;
-    abortedOn ??= { filePath, error };
+    abortedOn ??= { filePath, doing, error };
     throw abortedError(filePath);
+  };
+  // Freeing takes a little of the runtime's memory too, so it can abort like a parse. After an abort nothing is freed: the damaged runtime can fail on anything, and what is left unfreed is lost only with a runtime nobody uses again.
+  const free = (filePath: string, doing: string, freed: { delete(): void }): void => {
+    if (abortedOn !== undefined) return;
+    try {
+      freed.delete();
+    } catch (error) {
+      failOnAbort(filePath, error, doing);
+      throw error;
+    }
   };
 
   const loadLanguage = (wasmFile: string): Promise<Language> => {
@@ -201,7 +211,7 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
           failOnAbort(filePath, retryError);
           throw retryError;
         } finally {
-          fresh.delete();
+          free(filePath, 'parsing', fresh);
         }
       }
     } catch (error) {
@@ -258,7 +268,7 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
       try {
         return await fn(tree);
       } finally {
-        tree.delete();
+        free(filePath, 'freeing the tree of', tree);
       }
     },
     grammarWasmHash,
