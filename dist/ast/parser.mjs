@@ -102,12 +102,16 @@ export function createParserHost(options) {
     const failOnAbort = (filePath, error) => {
         if (!isAbort(error))
             return;
-        abortedOn = { filePath, error };
+        abortedOn ??= { filePath, error };
         throw abortedError(filePath);
     };
-    const parseFile = async (filePath, content, language, options) => {
+    // Checked again after every wait, right before the runtime is called: another call's parse may have aborted meanwhile.
+    const failIfAborted = (filePath) => {
         if (abortedOn !== undefined)
             throw abortedError(filePath);
+    };
+    const parseFile = async (filePath, content, language, options) => {
+        failIfAborted(filePath);
         if (language !== undefined && typeof language !== 'string')
             throw new TypeError(`parseFile of ${filePath}: the language is a string or undefined, and the options go after it`);
         const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
@@ -138,6 +142,7 @@ export function createParserHost(options) {
         // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a heredoc delimiter of 256+ characters). The trap leaves that parser unusable while a fresh parser over the same language parses normally, so a throwing parse drops its parser from the cache and retries once on a private fresh parser. The poisoned parser is not freed: a concurrent caller may still hold it and would hit freed memory instead of a clean throw.
         let tree;
         const first = await getParser(ext);
+        failIfAborted(filePath);
         try {
             tree = run(first);
         }
@@ -148,6 +153,7 @@ export function createParserHost(options) {
                     parserCache.delete(key);
             const fresh = await freshParser(ext);
             try {
+                failIfAborted(filePath);
                 tree = run(fresh);
             }
             catch (retryError) {
