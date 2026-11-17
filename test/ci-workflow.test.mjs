@@ -100,8 +100,11 @@ test('the release builds and verifies every pinned grammar and checks the packed
     return i;
   };
   const install = at('- run: npm ci');
-  const build = at('run: npm run grammars:package');
+  const artifact = at('          name: grammar-cache\n          path: ${{ runner.temp }}/grammar-cache\n');
+  const build = at('        env:\n          RUNES_GRAMMAR_CACHE: ${{ runner.temp }}/grammar-cache\n          RUNES_GRAMMAR_OFFLINE: \'1\'\n        run: npm run grammars:package\n');
   const check = at('npm pack --dry-run --json');
   const publishing = at('run: npm publish ');
-  assert.ok(install < build && build < check && check < publishing, 'install, build the grammars, check the pack, then publish');
+  assert.ok(install < artifact && artifact < build && build < check && check < publishing, 'install, take this run\'s grammar artifact, build the grammars offline from it, check the pack, then publish');
+  assert.doesNotMatch(publish, /actions\/cache/, 'the job that holds id-token: write restores no cache');
+  assert.match(publish.slice(publish.lastIndexOf('- ', artifact), artifact), /uses: actions\/download-artifact@/);
 });

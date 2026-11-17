@@ -72,7 +72,7 @@ jobs:
       # build-grammars runs from the committed dist/, so no build step is needed here.
       - name: Grammars
         run: npm run grammars
-      # Every pin, as the release builds them into the package: the test that packs the package (test/packed-grammars.test.mjs) runs on every platform, and the Windows and macOS jobs read offline from this job's cache, so the cache must also hold the pins the language table does not parse with. It also proves on every push that the package's grammar files build and verify.
+      # Every pin, as the release builds them into the package: the test that packs the package (test/packed-grammars.test.mjs) runs on every platform, and the Windows and macOS jobs read offline from this job's cache, so the cache must also hold the pins the language table does not parse with; on a tag the release's publish job builds the package's grammar files offline from this artifact, since it restores no cache. It also proves on every push that the package's grammar files build and verify.
       - name: Every pinned grammar, as the package ships them
         run: npm run grammars:package
       - uses: actions/upload-artifact@v4
