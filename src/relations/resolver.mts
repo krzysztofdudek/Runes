@@ -1,6 +1,6 @@
 import { declarationCount, nestedTailFiles, type SymbolTable } from './symbol-table.mjs';
 import type { CsharpCondition, DetectedDep, TargetHint } from './extractors/types.mjs';
-import { isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
+import { isRubyCoreConstant, isRubyExternalConstant } from './extractors/ruby-resolve.mjs';
 import type { Reachability } from './extractors/csharp-reach.mjs';
 import { IMPLICIT_PROGRAM_KEY, internalKey, referencedTypeKey, shapeTakes } from './extractors/csharp.mjs';
 import { jvmSourceSetVisible } from './extractors/java-resolve.mjs';
@@ -877,14 +877,14 @@ export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick
   };
 
   /**
-   * What a Ruby constant reading that bound nothing says, `written` the key of the group's reading of the name as written (the top-level one, read after the namespaces around the reference): a reading in an enclosing namespace reads on, as Ruby's lookup goes outward. The name as written leaves the repository when it is rooted at a core class or a framework namespace (`isRubyExternalConstant`) or at a constant the repository does not declare (`JSON`, `Nokogiri::XML`, a compact reopening of a gem's namespace), as the edge walk reads them; it is the repository's when its root is a constant the repository declares (`Shop::Missing`), or when a namespace of the repository nests a constant of its first name, which the reference may inherit.
+   * What a Ruby constant reading that bound nothing says, `written` the key of the group's reading of the name as written (the top-level one, read after the namespaces around the reference): a reading in an enclosing namespace reads on, as Ruby's lookup goes outward. The name as written is the repository's when the repository declares its root (`Shop::Missing`; also `Rack::Utils` inside the rack repository, though the edge walk takes a framework namespace for external and binds nothing there), or when a namespace of the repository nests a constant of its first name, which the reference may inherit. It leaves the repository when it is rooted at a core class or module, which only a reopening declares, or at a constant the repository does not declare (`JSON`, `Nokogiri::XML`, a compact reopening of a gem's namespace).
    */
   const rubyReason = (hint: Extract<TargetHint, { kind: 'symbol' }>, written: string | undefined): 'outside' | 'unfollowed' | 'pass' => {
     if (hint.symbolKey !== written) return 'pass';
-    if (isRubyExternalConstant(hint.symbolKey)) return 'outside';
+    if (isRubyCoreConstant(hint.symbolKey)) return 'outside';
+    if (deps.symbolTable.has('ruby', hint.symbolKey.split('::')[0])) return 'unfollowed';
     if (hint.rubyInheritGuard !== undefined && deps.symbolTable.hasNestedTail('ruby', hint.rubyInheritGuard)) return 'unfollowed';
-    const root = hint.symbolKey.split('::')[0];
-    return root !== hint.symbolKey && deps.symbolTable.has('ruby', root) ? 'unfollowed' : 'outside';
+    return 'outside';
   };
 
   /** What the on-demand imports of a Java or Kotlin file say of a simple name its package does not declare (`TargetHint.onDemand`), read after the package and before Kotlin's default imports: a starred package or type of the repository that declares the name makes the use the repository's, though the readers bind it through the package alone; else a starred package from elsewhere can give it, and the use leaves the repository. */

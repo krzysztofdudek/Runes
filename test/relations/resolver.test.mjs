@@ -827,6 +827,14 @@ describe('resolver.classifyUse — C, C++ and Ruby say whether a use leaves the 
     expect(use(sym('String'))).toEqual({ kind: 'absent', reason: 'outside' });
     expect(use(sym('ActiveRecord::Base'))).toEqual({ kind: 'absent', reason: 'outside' });
     expect(use(sym('Rackup::Handler'))).toEqual({ kind: 'absent', reason: 'outside' });
+    // Inside the framework's own repository its namespace is the repository's: the edge walk binds nothing there, and the answer says the readers could not follow it. A core class stays Ruby's, whatever the repository reopens.
+    const rack = resolverFor(new Map([['lib/rack.rb', '']]), [['Rack', 'lib/rack.rb'], ['Rack::Utils', 'lib/rack/utils.rb'], ['String', 'lib/core_ext/string.rb']]);
+    const inRack = (...candidates) => rack.classifyUse(candidates, 'lib/rack/content_length.rb', 'ruby');
+    expect(inRack(sym('Rack::Utils'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('Rack::Gone'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('Rack'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('Rack::ContentLength::Utils'), sym('Rack::Utils'), sym('Utils', { rubyInheritGuard: 'Utils' }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('String'))).toEqual({ kind: 'absent', reason: 'outside' });
   });
 });
 

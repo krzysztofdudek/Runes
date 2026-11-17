@@ -112,7 +112,7 @@ function toPosix(p: string): string {
  * root-anchoring guard, and a nested reopening of an unlisted gem namespace remains a known
  * residual gap.
  */
-const RUBY_EXTERNAL_ROOTS: ReadonlySet<string> = new Set([
+const RUBY_CORE_ROOTS: ReadonlySet<string> = new Set([
   // core classes and modules
   'BasicObject', 'Object', 'Kernel', 'Module', 'Class', 'Comparable', 'Enumerable', 'Enumerator',
   'String', 'Symbol', 'Integer', 'Float', 'Numeric', 'Rational', 'Complex', 'Array', 'Hash', 'Range',
@@ -129,11 +129,22 @@ const RUBY_EXTERNAL_ROOTS: ReadonlySet<string> = new Set([
   'Interrupt', 'SystemCallError', 'EncodingError', 'FiberError', 'ThreadError', 'LocalJumpError',
   'RegexpError', 'UncaughtThrowError', 'NoMatchingPatternError', 'NoMatchingPatternKeyError',
   'NoMemoryError', 'SystemStackError',
-  // ubiquitous frameworks and tools
+]);
+
+/** The namespaces of the ubiquitous frameworks and tools, external to an application, but the repository's own inside the framework's repository (see RUBY_EXTERNAL_ROOTS). */
+const RUBY_FRAMEWORK_ROOTS: ReadonlySet<string> = new Set([
   'Rails', 'ActiveRecord', 'ActiveSupport', 'ActiveModel', 'ActiveJob', 'ActiveStorage',
   'ActionController', 'ActionDispatch', 'ActionView', 'ActionMailer', 'ActionCable', 'ActionMailbox',
   'ActionText', 'Arel', 'Rack', 'RSpec', 'Minitest', 'Sinatra', 'Rake', 'Bundler', 'Gem',
 ]);
+
+const RUBY_EXTERNAL_ROOTS: ReadonlySet<string> = new Set([...RUBY_CORE_ROOTS, ...RUBY_FRAMEWORK_ROOTS]);
+
+/** True when a Ruby constant key is rooted at one of Ruby's core classes or modules, which no repository declares (a reopening is not a definition). */
+export function isRubyCoreConstant(symbolKey: string): boolean {
+  const idx = symbolKey.indexOf('::');
+  return RUBY_CORE_ROOTS.has(idx === -1 ? symbolKey : symbolKey.slice(0, idx));
+}
 
 /** True when a Ruby constant key (`A::B::C`, leading `::` already stripped) is rooted at a
  *  constant that is always external (see RUBY_EXTERNAL_ROOTS). */
