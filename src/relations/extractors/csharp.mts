@@ -1606,6 +1606,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   const emitted = { has: (id: number): boolean => !capturing && emittedIds.has(id), add: (id: number): void => void (capturing || emittedIds.add(id)) };
   // The member accesses a pattern has read whole as the dotted type they spell: the walk reads nothing more in them.
   const readAsType = new Set<number>();
+  // A simple name the file declares as a value and not only as a type: where an expression could name a constant or a type, the file's own value is what such a name finds.
+  const namesValue = (name: string): boolean => declaredNames.has(name) && !typeOnlyNames.has(name);
   // The member paths of extended property patterns (`{ Order.Id: 3 }`): names of members of the value tested, which the walk never reads as a receiver.
   const memberPaths = new Set<number>();
 
@@ -1995,6 +1997,19 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return true;
   }
 
+  /** The subpatterns of a positional pattern the grammar reads as a tuple expression (see the constant pattern). A subpattern after a name (`(Item1: Order, _)`) is the argument's last child. */
+  function readPositionalElements(tuple: Node): void {
+    for (const arg of tuple.namedChildren) {
+      if (arg!.type !== 'argument') continue;
+      const e = arg!.namedChild(arg!.namedChildCount - 1)!;
+      if (e.type === 'tuple_expression') readPositionalElements(e);
+      else if (e.type === 'identifier') {
+        if (e.text !== '_' && !namesValue(e.text)) emitTypeNode(e);
+      } else if (e.type === 'generic_name' || e.type === 'qualified_name' || e.type === 'alias_qualified_name') emitTypeNode(e);
+      else if (e.type === 'member_access_expression' && emitMemberAccessType(e, true)) readAsType.add(e.id);
+    }
+  }
+
   /** A qualified name's plain dotted name, its type-argument lists stripped (`Shop.Core.Repository<int>` → `Shop.Core.Repository`, because declaration keys carry no arity), the using alias that leads it (`S::Core.Order` → `S`, with the tail `Core.Order`; a `global::` qualifier is not an alias and is stripped), and its generic segments, whose type arguments are references of their own. */
   function qualifiedNameParts(q: Node): { name: string; alias: string | undefined; generics: Node[] } {
     const segs: string[] = [];
@@ -2203,6 +2218,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace). At the head of a chain (`x is Models.Order || b`) it is read the same way, and the rest of the chain as it stands.
       // A constant pattern names a constant, so a first name the file also declares as a value (`var Status = Make(); x is Status.Active`) is the type there: C# reads it so when the value has the type of that name (spec §12.8.7.2), and in no other case does the pattern compile.
       else if (expr !== null && expr.type === 'member_access_expression' && emitMemberAccessType(expr, true)) readAsType.add(expr.id);
+      // A positional pattern of subpatterns that are all type or constant patterns (`x is (Order, _)`, `x is (Models.Order, 1)`, `(Models.Order, _) =>`) is a constant pattern over a tuple to the grammar. Each element is a subpattern (spec §11.2.5): a type is a type pattern (C# 9), read as a lone pattern's type is, and a name the file declares as a value is the constant it names.
+      else if (expr !== null && expr.type === 'tuple_expression') readPositionalElements(expr);
       return undefined;
     }
     // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
@@ -3067,7 +3084,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 45,
+  rev: 46,
   declarations,
   uses,
 };
