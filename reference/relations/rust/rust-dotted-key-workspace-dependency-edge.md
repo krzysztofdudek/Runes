@@ -8,7 +8,7 @@ cites: "The Cargo Book — Specifying dependencies (inheriting a dependency from
 
 ## Rule
 
-TOML lets a dependency entry be written with dotted keys instead of an inline table, and the Cargo Book's own workspace inheritance example uses that form: `shop-core.workspace = true` is the same entry as `shop-core = { workspace = true }`, and `shop-core.path = "crates/core"` the same as `shop-core = { path = "crates/core" }`. So the dotted form resolves exactly as the inline form does. `crates/app/Cargo.toml` inherits `shop-core` with `shop-core.workspace = true`; the root `[workspace.dependencies]` gives its path with `shop-core.path = "crates/core"`; code names the crate `shop_core`, and `shop_core::Order` binds `crates/core/src/lib.rs` (node `src`). In `[dev-dependencies]`, `util.path = "../util"` is a direct path dependency, and `util::text::slug` binds `crates/util/src/text/mod.rs` (node `text`). A registry dependency written dotted (`serde.version = "1"`) stays external and silent (line 3).
+TOML lets a dependency entry be written with dotted keys instead of an inline table, and the Cargo Book's own workspace inheritance example uses that form: `shop-core.workspace = true` is the same entry as `shop-core = { workspace = true }`, and `shop-core.path = "crates/core"` the same as `shop-core = { path = "crates/core" }`. So the dotted form resolves exactly as the inline form does. `crates/app/Cargo.toml` inherits `shop-core` with `shop-core.workspace = true`; the root `[workspace.dependencies]` gives its path with `shop-core.path = "crates/core"`; code names the crate `shop_core`, and `shop_core::Order` binds `crates/core/src/lib.rs` (node `src`). In `[dev-dependencies]`, `util.path = "../util"` is a direct path dependency, and `util::text::slug` binds `crates/util/src/text/mod.rs` (node `text`); the library imports it under `#[cfg(test)]`, since a dev-dependency is linked only into the test build. A registry dependency written dotted (`serde.version = "1"`) stays external and silent (line 3).
 
 ## Files
 
@@ -53,7 +53,7 @@ pub fn slug() {}
 
 ```rust path=crates/app/src/cmd/run.rs
 use shop_core::Order;
-use util::text::slug;
+#[cfg(test)] use util::text::slug;
 use serde::Serialize;
 ```
 
