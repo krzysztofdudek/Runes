@@ -385,3 +385,108 @@ describe('a parse the runtime aborts', () => {
     assert.deepEqual(parses, ['x']);
   });
 });
+
+describe('freeing and resetting around a runtime abort', () => {
+  // Freeing a tree or a parser, and resetting a parser, take a little of the runtime's memory too, so each can abort as a parse does. A stub runtime logs every call made into it: a parse of 'abort' aborts, `aborts` names one more call that aborts ('reset', 'parser delete' or 'tree delete'), and with `trapFirst` the first parse traps, so the host retries on a fresh parser.
+  const freeingRuntime = (events, { aborts, trapFirst = false } = {}) => {
+    let parses = 0;
+    const call = (kind, label = kind) => {
+      events.push(label);
+      if (kind === aborts) {
+        events.push('ABORT');
+        throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.');
+      }
+    };
+    class FreeingParser {
+      static init() { return Promise.resolve(); }
+      constructor() { events.push('new Parser'); }
+      setLanguage() {}
+      parse(content, _old, options) {
+        events.push(`parse ${content}`);
+        if (trapFirst && parses++ === 0) throw new WebAssembly.RuntimeError('unreachable');
+        if (content === 'abort') {
+          events.push('ABORT');
+          throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.');
+        }
+        if (options?.progressCallback?.({ currentOffset: 2, hasError: false }) === true) return null;
+        return { rootNode: { type: 'program' }, delete: () => call('tree delete', `tree delete ${content}`) };
+      }
+      reset() { call('reset'); }
+      delete() { call('parser delete'); }
+    }
+    return { Parser: FreeingParser, Language: { load: async () => ({}) } };
+  };
+  const hostOver = (events, script) => createParserHost({ runtime: freeingRuntime(events, script), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+  const after = (events, mark) => events.slice(events.indexOf(mark) + 1);
+  const STOP = { progressCallback: () => true };
+  const refusesLaterCalls = async (h, events, first) => {
+    const mark = events.length;
+    await assert.rejects(h.parseFile('later.cs', 'y'), (error) => error.code === 'ERUNTIMEABORTED' && error.message.includes(first));
+    await assert.rejects(h.withParsedFile('later.rb', 'z', () => 'unreached'), (error) => error.code === 'ERUNTIMEABORTED');
+    assert.deepEqual(events.slice(mark), [], 'a later call does not reach the runtime');
+  };
+
+  it('a tree whose delete aborts in withParsedFile: the call rejects with ERUNTIMEABORTED instead of the function\'s result, and later calls are refused without reaching the runtime', async () => {
+    const events = [];
+    const h = hostOver(events, { aborts: 'tree delete' });
+    await assert.rejects(h.withParsedFile('a.cs', 'x', (tree) => tree.rootNode.type), (error) => error.code === 'ERUNTIMEABORTED' && /while freeing the tree of a\.cs/.test(error.message) && error.cause instanceof WebAssembly.RuntimeError);
+    assert.deepEqual(after(events, 'ABORT'), []);
+    await refusesLaterCalls(h, events, 'while freeing the tree of a.cs');
+  });
+
+  it('a tree held by withParsedFile when another call aborts is not freed, and the function\'s result stands', async () => {
+    const events = [];
+    const h = hostOver(events);
+    await h.getParser('.cs');
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const holding = h.withParsedFile('b.cs', 'one', async (tree) => { await gate; return tree.rootNode.type; });
+    await assert.rejects(h.parseFile('a.cs', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
+    release();
+    assert.equal(await holding, 'program');
+    assert.ok(events.includes('parse one'));
+    assert.deepEqual(after(events, 'ABORT'), [], 'the tree of b.cs was not freed on the damaged runtime');
+    await refusesLaterCalls(h, events, 'while parsing a.cs');
+  });
+
+  it('an abort on the retry after a scanner trap leaves the retry parser unfreed', async () => {
+    const events = [];
+    const h = hostOver(events, { trapFirst: true });
+    await assert.rejects(h.parseFile('a.rb', 'abort'), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.rb/.test(error.message));
+    assert.deepEqual(events.filter((e) => e.startsWith('parse')), ['parse abort', 'parse abort'], 'the trap was retried once, and the retry aborted');
+    assert.deepEqual(after(events, 'ABORT'), []);
+    await refusesLaterCalls(h, events, 'while parsing a.rb');
+  });
+
+  it('a retry parser whose delete aborts: the call rejects with ERUNTIMEABORTED, the retry\'s tree is not freed, and later calls are refused without reaching the runtime', async () => {
+    const events = [];
+    const h = hostOver(events, { trapFirst: true, aborts: 'parser delete' });
+    await assert.rejects(h.parseFile('a.rb', 'x'), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.rb/.test(error.message) && error.cause instanceof WebAssembly.RuntimeError);
+    assert.deepEqual(events.filter((e) => e.startsWith('parse')), ['parse x', 'parse x']);
+    assert.deepEqual(after(events, 'ABORT'), []);
+    await refusesLaterCalls(h, events, 'while parsing a.rb');
+  });
+
+  it('a reset that aborts after a stopped parse rejects with ERUNTIMEABORTED, not EPARSESTOPPED, and later calls are refused without reaching the runtime', async () => {
+    const events = [];
+    const h = hostOver(events, { aborts: 'reset' });
+    await assert.rejects(h.parseFile('a.cs', 'x', undefined, STOP), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.cs/.test(error.message));
+    assert.deepEqual(after(events, 'ABORT'), []);
+    await refusesLaterCalls(h, events, 'while parsing a.cs');
+  });
+
+  it('a reset that aborts on the retry parser after a scanner trap leaves that parser unfreed', async () => {
+    const events = [];
+    const h = hostOver(events, { trapFirst: true, aborts: 'reset' });
+    await assert.rejects(h.withParsedFile('a.rb', 'x', () => 'unreached', undefined, STOP), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.rb/.test(error.message));
+    assert.deepEqual(after(events, 'ABORT'), []);
+    await refusesLaterCalls(h, events, 'while parsing a.rb');
+  });
+
+  it('without an abort the host still frees the retry parser and the tree withParsedFile parsed', async () => {
+    const events = [];
+    const h = hostOver(events, { trapFirst: true });
+    assert.equal(await h.withParsedFile('a.rb', 'x', (tree) => tree.rootNode.type), 'program');
+    assert.deepEqual(events, ['new Parser', 'parse x', 'new Parser', 'parse x', 'parser delete', 'tree delete x']);
+  });
+});
