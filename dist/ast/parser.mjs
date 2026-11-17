@@ -148,6 +148,9 @@ export function createParserHost(options) {
             }
             catch (error) {
                 failOnAbort(filePath, error);
+                // After an abort the runtime is damaged, so the host makes no fresh parser on it.
+                if (abortedOn !== undefined)
+                    throw error;
                 for (const [key, cached] of parserCache)
                     if (cached === first)
                         parserCache.delete(key);

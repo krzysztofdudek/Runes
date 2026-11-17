@@ -191,6 +191,8 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
         tree = run(first);
       } catch (error) {
         failOnAbort(filePath, error);
+        // After an abort the runtime is damaged, so the host makes no fresh parser on it.
+        if (abortedOn !== undefined) throw error;
         for (const [key, cached] of parserCache) if (cached === first) parserCache.delete(key);
         const fresh = makeParser(loadedLanguages.get(grammarFor(ext)!)!);
         try {
