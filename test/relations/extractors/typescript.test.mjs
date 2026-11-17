@@ -371,6 +371,31 @@ describe('sfcScriptView', () => {
     const view = sfcScriptView('c/H.svelte', "<p>{@html '<script>'}</p>\n<script>import a from './a'</script>");
     expect(view.content).toBe(`${' '.repeat(19)}'}</p>\n<script>import a from './a'${' '.repeat(9)}`);
   });
+  it('gives a use of the file a src names at the line of its script element, in Vue and Svelte', async () => {
+    const vue = sfcScriptView('c/s.vue', '<template><b/></template>\n<script src="../data/d.ts"></script>\n');
+    expect(vue.content.split('\n')[1].trim()).toBe('import "../data/d.ts";');
+    const svelte = sfcScriptView('c/s.svelte', '<p>x</p>\n<script lang="ts" src="../data/d.ts"></script>');
+    expect(svelte.language).toBe('typescript');
+    for (const view of [vue, svelte]) {
+      const { uses } = await run(view.content, view.language === 'typescript' ? '.ts' : '.js', view.language);
+      expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/d.ts', 2]]);
+    }
+  });
+  it('reads a src in each quoting, one per line, and keeps every line of the view', async () => {
+    const view = sfcScriptView('c/m.vue', '<script src="../data/a.ts"></script>\n<script src=\'../data/b.ts\'></script>\n<script src=../data/c.ts></script>');
+    expect(view.content.split('\n')).toHaveLength(3);
+    const { uses } = await run(view.content, '.js', 'javascript');
+    expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/a.ts', 1], ['../data/b.ts', 2], ['../data/c.ts', 3]]);
+  });
+  it('gives no use for a src element with a body, a tag too long for its first line, or a src that names no file', async () => {
+    const bodied = sfcScriptView('c/b.vue', '<script src="../data/d.ts">import x from "./x"</script>');
+    expect((await run(bodied.content, '.js', 'javascript')).uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['./x', 1]]);
+    const tall = sfcScriptView('c/t.vue', '<script\n  src="../data/d.ts"></script>');
+    expect((await run(tall.content, '.js', 'javascript')).uses).toEqual([]);
+    for (const tag of ['<script src="https://cdn.example.com/d.js"></script>', '<script src=""></script>', '<script data-src="../data/d.ts"></script>', '<script :src="file"></script>']) {
+      expect((await run(sfcScriptView('c/n.vue', tag).content, '.js', 'javascript')).uses).toEqual([]);
+    }
+  });
 });
 
 describe('typescript extractor — declarations()', () => {

@@ -480,7 +480,7 @@ export const typescriptExtractor = {
     // import(), `import type = require`) and a module augmentation names its module.
     // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
     // `new URL(…, import.meta.url)`; ERROR-region recovery.
-    rev: 7,
+    rev: 8,
     declarations,
     uses,
 };
@@ -509,10 +509,28 @@ function scriptElements(content) {
         const close = closeTag.exec(content);
         if (close === null)
             break;
-        elements.push({ attributes: m[1], bodyStart, bodyEnd: close.index });
+        elements.push({ attributes: m[1], tagStart: m.index, bodyStart, bodyEnd: close.index });
         token.lastIndex = close.index + close[0].length;
     }
     return elements;
+}
+const SRC_ATTRIBUTE = /(?<=\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
+/**
+ * The import an element with a `src` and no body stands for, as `import "<src>";`.
+ * It is written over the element's own tag, and only where it fits on the line the tag
+ * starts on: the view must keep every line of the component where it was.
+ */
+function srcImport(element, content) {
+    if (content.slice(element.bodyStart, element.bodyEnd).trim() !== '')
+        return undefined;
+    const m = SRC_ATTRIBUTE.exec(element.attributes);
+    const src = m?.[1] ?? m?.[2] ?? m?.[3];
+    if (src === undefined || src === '')
+        return undefined;
+    const text = `import "${src}";`;
+    const lineEnd = content.indexOf('\n', element.tagStart);
+    const roomEnd = Math.min(element.bodyStart, lineEnd === -1 ? content.length : lineEnd);
+    return element.tagStart + text.length <= roomEnd ? text : undefined;
 }
 /**
  * Vue and Svelte single-file components carry their imports in `<script>` blocks
@@ -522,7 +540,8 @@ function scriptElements(content) {
  * number is the component's own), and the view is parsed with the TS, TSX or JS
  * grammar the blocks' `lang` names (`ts`/`typescript` → TS, `tsx` → TSX, otherwise
  * JS). Returns null for any other file, or a component with no script block outside
- * its HTML comments.
+ * its HTML comments. A script element with a `src` and no body stands for the file it
+ * names, as an import written over its own tag.
  */
 export function sfcScriptView(filePath, content) {
     if (!SFC_EXTENSIONS.has(path.posix.extname(filePath).toLowerCase()))
@@ -542,7 +561,11 @@ export function sfcScriptView(filePath, content) {
     let cursor = 0;
     const blank = (s) => s.replace(/[^\n]/g, ' ');
     for (const element of elements) {
-        view += blank(content.slice(cursor, element.bodyStart)) + content.slice(element.bodyStart, element.bodyEnd);
+        const injected = srcImport(element, content);
+        const head = injected === undefined
+            ? blank(content.slice(cursor, element.bodyStart))
+            : blank(content.slice(cursor, element.tagStart)) + injected + blank(content.slice(element.tagStart + injected.length, element.bodyStart));
+        view += head + content.slice(element.bodyStart, element.bodyEnd);
         cursor = element.bodyEnd;
     }
     view += blank(content.slice(cursor));
