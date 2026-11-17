@@ -3,12 +3,12 @@ id: javascript-babel-module-resolver-alias-edge
 language: javascript
 category: import
 expectation: edge
-cites: "babel-plugin-module-resolver `alias`: a key matches the specifier itself or the specifier followed by `/` (`^` keys are regular expressions), and a relative value is read from the working directory, the configuration's"
+cites: "babel-plugin-module-resolver `alias`: a key matches the specifier itself or the specifier followed by `/` (`^` keys are regular expressions), and a relative value is read from the working directory (`cwd`, by default the directory Babel runs in), which the reader takes to be the configuration's directory"
 ---
 
 ## Rule
 
-An alias that only a Babel configuration defines is read from the options of `module-resolver` in `.babelrc`, `.babelrc.json` or `babel.config.*`: a string value that starts with `./` or `../` names a place relative to the configuration's directory. `@d/d` binds the file under `src/data`; an installed package stays outside.
+An alias that only a Babel configuration defines is read from the options of `module-resolver` in `.babelrc`, `.babelrc.json` or `babel.config.*`: a string value that starts with `./` or `../` names a place relative to module-resolver's working directory, which the reader takes to be the configuration's directory, where Babel runs. `@d/d` binds the file under `src/data`; an installed package stays outside.
 
 ## Files
 

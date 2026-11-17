@@ -159,6 +159,9 @@ describe('readBundlerAliases — where an alias stands', () => {
     expect(read("module.exports = { module: { rules: [{ test: /x/, resolve: { alias: { a: path.resolve(__dirname, 'x') } } }] } };", 'webpack')).toBe('unknown');
     expect(read("export default { environments: { client: { resolve: { alias: { a: '/x' } } } } };")).toBe('unknown');
     expect(read("export default defineConfig(({ mode }) => { const x = 1; return { resolve: { alias: { a: '/x' } } }; });")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+    expect(read("let c;\nif (prod) { c = 1; } else { c = { resolve: { alias: { a: '/x' } } }; }\nexport default c;")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+    expect(read("{ resolve: { alias: { a: '/x' } } }")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+    expect(read("call(x, { resolve: { alias: { a: '/x' } } }, { resolve: { alias: { a: '/x' } }.alias });")).toBe('unknown');
     expect(read("module.exports = [{ resolve: { alias: { a: '/x' } } }, { resolve: { alias: { a: '/x' } } }];", 'vite')).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }], [{ find: 'a', exact: false, replacement: PATH('x') }]]);
   });
   it('Vite\'s array form reads a string find and a replacement; a regular expression, another property or another element is an unknown key', () => {
@@ -229,6 +232,8 @@ describe('readBundlerAliases — the replacement forms', () => {
       "import path from 'path';\nconst make = (__dirname) => 1;\n",
       "import path from 'path';\nfunction make(a, __dirname) {}\n",
       "import path from 'path';\nimport { here as __dirname } from './here';\n",
+      "import path from 'path';\nconst { __dirname } = paths;\n",
+      "import path from 'path';\nconst make = function (__dirname) {};\n",
     ]) expect(one("path.resolve(__dirname, 'src')", 'vite', prelude)).toEqual(UNKNOWN);
     expect(one("path.resolve(__dirname, 'src')", 'vite', "import path from 'path';\nconst dts = path.resolve(__dirname, 'types');\nif (__dirname === x) {}\n")).toEqual(PATH('src'));
   });

@@ -4,7 +4,7 @@ import { diskFileView } from '../file-view.mjs';
 import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING } from '../diagnostics.mjs';
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
-import { BUNDLER_CONFIG_FILES, applyBundlerAliases, combineAliasAnswers, readBundlerAliases } from './bundler-alias.mjs';
+import { BUNDLER_CONFIG_FILES, makeAliasTable, readBundlerAliases } from './bundler-alias.mjs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
@@ -1536,7 +1536,7 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         }
         return undefined;
     };
-    // The aliases of the bundler configurations a directory holds, one list per `alias` property read; undefined when it holds none. An excluded configuration is never read.
+    // The aliases of the bundler configurations a directory holds, read once and indexed; undefined when it holds none. An excluded configuration is never read.
     const aliasesIn = new Map();
     const aliasesAt = (dir) => {
         if (aliasesIn.has(dir))
@@ -1549,14 +1549,15 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
             const read = readBundlerAliases(files.read(file) ?? '', kind, dir);
             found = [...(found ?? []), ...(read === 'unknown' ? ['unknown'] : read)];
         }
-        aliasesIn.set(dir, found);
-        return found;
+        const table = found === undefined ? undefined : makeAliasTable(found);
+        aliasesIn.set(dir, table);
+        return table;
     };
     const bundlerAlias = (spec, fromFile) => {
         for (const dir of ancestors(fromFile)) {
-            const lists = aliasesAt(dir);
-            if (lists !== undefined)
-                return combineAliasAnswers(lists.map((list) => (list === 'unknown' ? { kind: 'unknown' } : applyBundlerAliases(spec, list))));
+            const table = aliasesAt(dir);
+            if (table !== undefined)
+                return table.lookup(spec);
         }
         return undefined;
     };

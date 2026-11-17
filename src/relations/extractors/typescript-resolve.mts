@@ -4,7 +4,7 @@ import { diskFileView, type FileSource } from '../file-view.mjs';
 import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING, type DiagnosticSink, type Failure } from '../diagnostics.mjs';
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
-import { BUNDLER_CONFIG_FILES, applyBundlerAliases, combineAliasAnswers, readBundlerAliases, type AliasAnswer, type AliasEntry } from './bundler-alias.mjs';
+import { BUNDLER_CONFIG_FILES, makeAliasTable, readBundlerAliases, type AliasAnswer, type AliasEntry, type AliasTable } from './bundler-alias.mjs';
 
 /** How a specifier was written when its form decides the condition: `require('x')` and `import x = require('x')` read the `require` condition, a dynamic `import('x')` the `import` condition, whatever the format of the file that holds them. A type-only import or an import type whose `resolution-mode` attribute names `require` reads as a `require` does; one that names `import` is `'esm'`, the `import` condition wherever it stands, which a dynamic `import()` is not (the compiler may emit that as a `require`). */
 export type TsCallForm = 'require' | 'import' | 'esm';
@@ -1507,9 +1507,9 @@ export function makeTsResolveDeps(
     }
     return undefined;
   };
-  // The aliases of the bundler configurations a directory holds, one list per `alias` property read; undefined when it holds none. An excluded configuration is never read.
-  const aliasesIn = new Map<string, Array<AliasEntry[] | 'unknown'> | undefined>();
-  const aliasesAt = (dir: string): Array<AliasEntry[] | 'unknown'> | undefined => {
+  // The aliases of the bundler configurations a directory holds, read once and indexed; undefined when it holds none. An excluded configuration is never read.
+  const aliasesIn = new Map<string, AliasTable | undefined>();
+  const aliasesAt = (dir: string): AliasTable | undefined => {
     if (aliasesIn.has(dir)) return aliasesIn.get(dir);
     let found: Array<AliasEntry[] | 'unknown'> | undefined;
     for (const [name, kind] of BUNDLER_CONFIG_FILES) {
@@ -1518,13 +1518,14 @@ export function makeTsResolveDeps(
       const read = readBundlerAliases(files.read(file) ?? '', kind, dir);
       found = [...(found ?? []), ...(read === 'unknown' ? ['unknown' as const] : read)];
     }
-    aliasesIn.set(dir, found);
-    return found;
+    const table = found === undefined ? undefined : makeAliasTable(found);
+    aliasesIn.set(dir, table);
+    return table;
   };
   const bundlerAlias = (spec: string, fromFile: string): AliasAnswer | undefined => {
     for (const dir of ancestors(fromFile)) {
-      const lists = aliasesAt(dir);
-      if (lists !== undefined) return combineAliasAnswers(lists.map((list) => (list === 'unknown' ? { kind: 'unknown' } : applyBundlerAliases(spec, list))));
+      const table = aliasesAt(dir);
+      if (table !== undefined) return table.lookup(spec);
     }
     return undefined;
   };

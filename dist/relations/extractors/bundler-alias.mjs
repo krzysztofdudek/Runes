@@ -8,11 +8,11 @@ export const BUNDLER_CONFIG_FILES = [
     ['.babelrc.json', 'babel'],
 ];
 /**
- * The aliases a bundler configuration defines, read from its text without running it: one list per `alias` property found, each in the order the bundler tries its keys. `'unknown'` when the text holds an alias the reader cannot follow, so any bare specifier may be mapped: an `alias` anywhere but as a literal object (or, for Vite, a literal array of `{ find, replacement }`) under `resolve` (Vite also `test`) or in the options of module-resolver; module-resolver referenced in any other way or with a `root`, `cwd` or `resolvePath` option; or text the token reader cannot balance.
+ * The aliases a bundler configuration defines, read from its text without running it: one list per `alias` property found, each in the order the bundler tries its keys. `'unknown'` when the text holds an alias the reader cannot follow, so any bare specifier may be mapped: an `alias` anywhere but as a literal object (or, for Vite, a literal array of `{ find, replacement }`) under `resolve` (Vite also `test`) of a configuration object that no other object holds, or in the options of module-resolver in the `plugins` of such an object; module-resolver referenced in any other way, with a `root`, `cwd` or `resolvePath` option, or with options it cannot read; or text the token reader cannot balance. A list is one unknown entry when the alias object, the `resolve` (or `test`) object or the configuration object holds a member that may replace a key the lookup reads: a spread, a computed or escaped key, a method or accessor, a key written twice, or a shorthand of the name the lookup reads.
  *
  * A replacement counts only in these forms; any other is an alias whose key is known and whose target is not:
- * - `path.resolve(__dirname, '<p>', …)` and `path.join(__dirname, '<p>', …)`, with `path` imported from Node's `path`, and `fileURLToPath(new URL('<p>', import.meta.url))`: `<p>` from the configuration's directory;
- * - a string: for Vite one starting with `/` from the project root, the configuration's directory (unless the file sets a `root`); for Babel one starting with `./` or `../` from the configuration's directory, module-resolver's working directory; for all three a bare string is another request, as the bundler reads it. Vite and webpack resolve a relative string from the importing file, so it is not read.
+ * - `path.resolve(__dirname, '<p>', …)` and `path.join(__dirname, '<p>', …)`, with `path` imported from Node's `path` and no `__dirname` declared by the file, and `fileURLToPath(new URL('<p>', import.meta.url))`: `<p>` from the configuration's directory;
+ * - a string: for Vite one starting with `/` from the project root, the configuration's directory (unless the file sets a `root`); for Babel one starting with `./` or `../` from module-resolver's working directory, which the reader takes to be the configuration's directory, where Babel runs; for all three a bare string is another request, as the bundler reads it. Vite and webpack resolve a relative string from the importing file, so it is not read.
  */
 export function readBundlerAliases(text, kind, configDir) {
     const tokens = tokenize(text);
@@ -26,7 +26,24 @@ export function readBundlerAliases(text, kind, configDir) {
         configDir,
         pathImported: tokens.some((tok) => tok.t === 'str' && (tok.v === 'path' || tok.v === 'node:path')),
         rootSet: kind === 'vite' && tokens.some((tok, i) => tok.v === 'root' && isKey(i)),
+        dirnameDeclared: tokens.some((tok, i) => tok.t === 'id' && tok.v === '__dirname' && declares(tokens, close, parent, i)),
     };
+    // The members of each object read once: an object that many `alias` properties share is not read again for each.
+    const memberCache = new Map();
+    const members = (open) => {
+        if (!memberCache.has(open))
+            memberCache.set(open, membersOf(tokens, close, open));
+        return memberCache.get(open);
+    };
+    // An object no other object holds: a block (a function body) around it is no object.
+    const outermost = (open) => {
+        for (let k = parent[open]; k !== -1; k = parent[k])
+            if (tokens[k].v === '{' && !isBlock(tokens, k))
+                return false;
+        return tokens[open].v === '{' && !isBlock(tokens, open);
+    };
+    // Whether the object holds every member as a key it can read, none of them a shorthand of a name the lookup reads.
+    const readable = (open, names) => members(open)?.every((m) => !(m.shorthand && names.includes(m.key))) === true;
     // The options objects of module-resolver, written `['module-resolver', { … }]`.
     const resolverOptions = new Set();
     for (let i = 0; i < tokens.length; i++) {
@@ -45,10 +62,14 @@ export function readBundlerAliases(text, kind, configDir) {
             continue;
         if (next?.v !== '{' || tokens[close[i + 2] + 1]?.v !== ']')
             return 'unknown';
-        for (const [start] of segments(tokens, close, i + 2)) {
-            if (!isKey(start) || ['root', 'cwd', 'resolvePath'].includes(tokens[start].v))
-                return 'unknown';
-        }
+        const options = members(i + 2);
+        if (options === undefined || options.some((m) => m.shorthand || ['root', 'cwd', 'resolvePath'].includes(m.key)))
+            return 'unknown';
+        // The pair stands in the `plugins` of the configuration itself: `overrides` and `env` apply theirs to some files only.
+        const list = parent[i - 1];
+        const config = list === -1 ? -1 : parent[list];
+        if (list === -1 || tokens[list].v !== '[' || keyOf(list) !== 'plugins' || config === -1 || !outermost(config) || !readable(config, ['plugins']))
+            return 'unknown';
         resolverOptions.add(i + 2);
     }
     const lists = [];
@@ -62,6 +83,13 @@ export function readBundlerAliases(text, kind, configDir) {
         const placed = kind === 'babel' ? resolverOptions.has(owner) : ownerKey === 'resolve' || (kind === 'vite' && ownerKey === 'test');
         if (!placed)
             return 'unknown';
+        const config = parent[owner];
+        if (kind !== 'babel' && (config === -1 || !outermost(config)))
+            return 'unknown';
+        if (!readable(owner, ['alias']) || (kind !== 'babel' && !readable(config, ['resolve', 'test']))) {
+            lists.push([UNKNOWN_KEY]);
+            continue;
+        }
         const open = i + 2;
         const value = tokens[open];
         const ends = (at) => tokens[at]?.v === ',' || tokens[at]?.v === '}';
@@ -92,6 +120,49 @@ export function applyBundlerAliases(spec, entries) {
     }
     return undefined;
 }
+/** More alias lists than any configuration writes by hand: a file with more is not read, so a crafted one cannot make each import slow. */
+export const MAX_ALIAS_LISTS = 64;
+/** The {@link AliasTable} of alias lists that all apply, one list `'unknown'` where a configuration cannot be read; above {@link MAX_ALIAS_LISTS} lists it answers unknown for every specifier. */
+export function makeAliasTable(lists) {
+    const unknown = { kind: 'unknown' };
+    if (lists.length > MAX_ALIAS_LISTS || lists.includes('unknown'))
+        return { lookup: () => unknown };
+    // For each list: the first entry of each key (exact or not), the first that matches a longer specifier too, and the first unreadable key.
+    const indexed = lists.map((entries) => {
+        const any = new Map();
+        const loose = new Map();
+        let firstUnknown = Infinity;
+        entries.forEach((entry, k) => {
+            if (entry.find === undefined)
+                firstUnknown = Math.min(firstUnknown, k);
+            else {
+                if (!any.has(entry.find))
+                    any.set(entry.find, k);
+                if (!entry.exact && !loose.has(entry.find))
+                    loose.set(entry.find, k);
+            }
+        });
+        return { entries, any, loose, firstUnknown };
+    });
+    const answers = new Map();
+    return {
+        lookup(spec) {
+            if (answers.has(spec))
+                return answers.get(spec);
+            const found = [];
+            for (const list of indexed) {
+                let best = list.any.get(spec) ?? Infinity;
+                for (let at = spec.indexOf('/'); at !== -1; at = spec.indexOf('/', at + 1))
+                    best = Math.min(best, list.loose.get(spec.slice(0, at)) ?? Infinity);
+                const first = Math.min(best, list.firstUnknown);
+                found.push(first === Infinity ? undefined : applyBundlerAliases(spec, [list.entries[first]]));
+            }
+            const answer = combineAliasAnswers(found);
+            answers.set(spec, answer);
+            return answer;
+        },
+    };
+}
 /** One answer from several alias lists that may all apply: none matching is no match, matches that agree are the answer, matches that differ are unknown. */
 export function combineAliasAnswers(answers) {
     const found = answers.filter((a) => a !== undefined);
@@ -100,24 +171,57 @@ export function combineAliasAnswers(answers) {
     const first = JSON.stringify(found[0]);
     return found.every((a) => JSON.stringify(a) === first) ? found[0] : { kind: 'unknown' };
 }
-const UNKNOWN_KEY = { exact: false, replacement: { kind: 'unknown' } };
-/** The entries of an object literal `{ key: value, … }`, in order. */
-function objectEntries(tokens, close, open, env) {
+/** The members of an object literal, or undefined when one of them may stand for any key, so a key it reads may be replaced: a spread, a computed, numeric or escaped key, a method or accessor, or a key written twice (which keeps its first place and takes its last value). */
+function membersOf(tokens, close, open) {
     const out = [];
     const seen = new Set();
     for (const [start, end] of segments(tokens, close, open)) {
         const key = tokens[start];
-        if (!((key.t === 'id' || key.t === 'str') && tokens[start + 1]?.v === ':' && tokens[start + 1].t === 'punct')) {
-            out.push(UNKNOWN_KEY);
-            continue;
-        }
-        // A key written twice keeps its first place and its last value.
-        if (seen.has(key.v))
-            return [UNKNOWN_KEY];
+        const named = key.t === 'id' || (key.t === 'str' && !key.v.includes('\\'));
+        const keyed = named && tokens[start + 1]?.v === ':' && tokens[start + 1].t === 'punct';
+        const shorthand = key.t === 'id' && end === start + 1;
+        if ((!keyed && !shorthand) || seen.has(key.v))
+            return undefined;
         seen.add(key.v);
-        out.push(entryOf(key, replacementOf(tokens, close, start + 2, end, env), env));
+        out.push({ key: key.v, shorthand, value: start + 2, end });
     }
     return out;
+}
+/** Whether the brace at `open` opens a block (a function body, an `else`) rather than an object literal. */
+function isBlock(tokens, open) {
+    const before = tokens[open - 1];
+    if (before === undefined)
+        return false;
+    if (before.t === 'punct')
+        return before.v === ')' || (before.v === '>' && tokens[open - 2]?.v === '=');
+    return before.t === 'id' && ['else', 'try', 'finally', 'do'].includes(before.v);
+}
+/** Whether the `__dirname` at `i` declares a name of the file's own: a variable, a function or class, an import or destructured binding, an assignment, or a parameter. */
+function declares(tokens, close, parent, i) {
+    const before = tokens[i - 1];
+    const after = tokens[i + 1];
+    if (before?.t === 'id' && ['const', 'let', 'var', 'function', 'class', 'as'].includes(before.v))
+        return true;
+    if (after?.v === '=' && tokens[i + 2]?.v !== '=' && tokens[i + 2]?.v !== '>')
+        return true;
+    const around = parent[i];
+    if (around === -1 || (before?.v !== '(' && before?.v !== ',' && before?.v !== '{'))
+        return false;
+    const opener = tokens[around - 1];
+    if (tokens[around].v === '{')
+        return opener?.t === 'id' && ['const', 'let', 'var', 'import'].includes(opener.v);
+    if (tokens[around].v !== '(')
+        return false;
+    const arrow = tokens[close[around] + 1]?.v === '=' && tokens[close[around] + 2]?.v === '>';
+    return arrow || opener?.v === 'function' || (opener?.t === 'id' && tokens[around - 2]?.v === 'function');
+}
+const UNKNOWN_KEY = { exact: false, replacement: { kind: 'unknown' } };
+/** The entries of an object literal `{ key: value, … }`, in order. */
+function objectEntries(tokens, close, open, env) {
+    const members = membersOf(tokens, close, open);
+    if (members === undefined)
+        return [UNKNOWN_KEY];
+    return members.map((m) => entryOf(m.key, m.shorthand ? { kind: 'unknown' } : replacementOf(tokens, close, m.value, m.end, env), env));
 }
 /** The entries of Vite's array form `[{ find: '<key>', replacement: <value> }, …]`, in order; a `find` that is no string (a regular expression) or any other property makes an entry with an unreadable key. */
 function arrayEntries(tokens, close, open, env) {
@@ -140,19 +244,21 @@ function arrayEntries(tokens, close, open, env) {
             else
                 readable = false;
         }
-        out.push(readable && find !== undefined && replacement !== undefined ? entryOf(find, replacement, env) : UNKNOWN_KEY);
+        out.push(readable && find !== undefined && replacement !== undefined ? entryOf(find.v, replacement, env) : UNKNOWN_KEY);
     }
     return out;
 }
-/** An entry from its key as written: webpack's `name$` matches the name alone, a Babel key opening with `^` or closing with `$` is a regular expression, and an empty key or one ending in `/` is not read. */
+/** An entry from its key as written: webpack's `name$` matches the name alone and a webpack key with a `*` is a pattern, a Babel key opening with `^` or closing with `$` is a regular expression, and an empty key or one ending in `/` is not read. */
 function entryOf(key, replacement, env) {
-    let find = key.v;
+    let find = key;
     let exact = false;
     if (env.kind === 'webpack' && find.endsWith('$')) {
         find = find.slice(0, -1);
         exact = true;
     }
     if (env.kind === 'babel' && (find.startsWith('^') || find.endsWith('$')))
+        return UNKNOWN_KEY;
+    if (env.kind === 'webpack' && find.includes('*'))
         return UNKNOWN_KEY;
     if (find === '' || find.endsWith('/') || find.includes('\\'))
         return UNKNOWN_KEY;
@@ -174,7 +280,7 @@ function replacementOf(tokens, close, start, end, env) {
         return value.startsWith('.') || value.startsWith('/') || /^[A-Za-z]:/.test(value) ? unknown : { kind: 'request', request: value };
     }
     // path.resolve(__dirname, '<p>', …) and path.join(__dirname, '<p>', …)
-    if (env.pathImported && is(0, 'path', 'id') && is(1, '.') && (is(2, 'resolve', 'id') || is(2, 'join', 'id')) && is(3, '(') && close[start + 3] === end - 1 && is(4, '__dirname', 'id')) {
+    if (env.pathImported && !env.dirnameDeclared && is(0, 'path', 'id') && is(1, '.') && (is(2, 'resolve', 'id') || is(2, 'join', 'id')) && is(3, '(') && close[start + 3] === end - 1 && is(4, '__dirname', 'id')) {
         const parts = [];
         let k = 5;
         while (is(k, ',') && at(k + 1)?.t === 'str') {
