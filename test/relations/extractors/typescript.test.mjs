@@ -415,6 +415,8 @@ describe('sfcScriptView', () => {
   it('reads a script past a `<!--` in a Svelte expression or in a script body, when a `-->` follows', async () => {
     expect(await importsOf(sfcScriptView('c/e.svelte', "<p>{'<!--'}</p>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
     expect(await importsOf(sfcScriptView('c/h.svelte', "<p>{@html '<!--'}</p>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/n.svelte', "<p>{ {a: 1}.a + '<!--' }</p>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/t.svelte', "<div title={'<!--'}>x</div>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
     expect(await importsOf(sfcScriptView('c/b.vue', "<script>const s = '<!--';</script>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
     expect(await importsOf(sfcScriptView('c/d.vue', '<template><div title="<!--">x</div></template>\n<script>let i = 2;\nwhile (i-->0) {}\nimport { d } from "../data/d"</script>\n'))).toEqual([['../data/d', 4]]);
   });
