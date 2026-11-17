@@ -229,6 +229,8 @@ tests/test_appctx.py:5	src/flask/__init__.py
 tests/test_appctx.py:6	src/flask/globals.py
 tests/test_appctx.py:7	src/flask/testing.py
 tests/test_apps/blueprintapp/__init__.py:1	src/flask/__init__.py
+tests/test_apps/blueprintapp/__init__.py:5	tests/test_apps/blueprintapp/apps/admin/__init__.py
+tests/test_apps/blueprintapp/__init__.py:6	tests/test_apps/blueprintapp/apps/frontend/__init__.py
 tests/test_apps/blueprintapp/apps/admin/__init__.py:1	src/flask/__init__.py
 tests/test_apps/blueprintapp/apps/admin/__init__.py:2	src/flask/__init__.py
 tests/test_apps/blueprintapp/apps/frontend/__init__.py:1	src/flask/__init__.py

@@ -82,6 +82,7 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
     };
     const below = new Map();
     const belowPackage = new Map();
+    const belowSource = new Map();
     const fromTool = new Map();
     const underDiscovered = new Map();
     const ctx = {
@@ -96,6 +97,14 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
                 // Inside a project: strictly below a source root or a project's directory, without being a project's directory or a source root itself.
                 isBelow = !projectDirs.has(dir) && !all.has(dir) && ancestors.some((ancestor) => all.has(ancestor) || projectDirs.has(ancestor));
                 below.set(dir, isBelow);
+            }
+            return isBelow;
+        },
+        belowSourceRoot: (dir) => {
+            let isBelow = belowSource.get(dir);
+            if (isBelow === undefined) {
+                isBelow = properAncestors(dir).some((ancestor) => discovered().all.has(ancestor));
+                belowSource.set(dir, isBelow);
             }
             return isBelow;
         },
@@ -146,8 +155,9 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
         const holds = (root) => ctx.exists(joinUnder(root, `${top}/__init__.py`)) || ctx.exists(joinUnder(root, `${top}.py`)) || namesIn(root)?.has(top.normalize('NFC')) === true;
         const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(top);
         const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+        const runRoots = runtimeRoots(top, fromFile, ownDir, stdlibName, ctx);
         for (const dir of ancestorDirs(ownDir)) {
-            if (ancestorIsRoot(dir, ownDir, stdlibName, ctx) && !ctx.insideRegularPackage(dir) && holds(dir))
+            if (ancestorIsRoot(dir, ownDir, stdlibName, ctx, runRoots) && !ctx.insideRegularPackage(dir) && holds(dir))
                 return 'unfollowed';
         }
         return !stdlibName && [...discovered().usable, ...fixtureRootsFor(ownDir)].some(holds) ? 'unfollowed' : 'outside';
@@ -200,9 +210,10 @@ function absoluteMatches(specifier, fromFile, ctx) {
     // Probe EVERY ancestor source root and collect the DISTINCT files that match. The importing file's own dir and the intermediate dirs are NOT genuine absolute-import roots, so a same-named module sitting in the importer's own package must not shadow the real source root. Resolving the same dotted module to 2+ distinct LIVE files means we cannot tell which root is genuine — silence (undefined) per the zero-false-positive rule. A single distinct live file is an unambiguous resolution and is returned.
     const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(segments[0]);
     const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+    const runRoots = runtimeRoots(segments[0], fromFile, ownDir, stdlibName, ctx);
     const found = emptyMatches();
     for (const dir of ancestorDirs(ownDir)) {
-        if (ancestorIsRoot(dir, ownDir, stdlibName, ctx) && !ctx.insideRegularPackage(dir))
+        if (ancestorIsRoot(dir, ownDir, stdlibName, ctx, runRoots) && !ctx.insideRegularPackage(dir))
             probeRoot(dir, modulePath, parentPath, ctx, found);
     }
     if (!stdlibName) {
@@ -215,10 +226,39 @@ function absoluteMatches(specifier, fromFile, ctx) {
     return new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
 }
 /** Whether the ancestor directory `dir` of an importing file in `ownDir` is searched as a root (see absoluteMatches). The importer's own directory is one unless it is a package directory below a discovered root that is not its project's own directory (a `src/` child or a configured root), which is imported through that root and never run from, and no tool runs from it. Any other ancestor is one, for a standard-library name, only when it is the repository root; for any other name, when it is not a directory inside a project (strictly below a discovered root) or when pytest or Django runs from it. */
-function ancestorIsRoot(dir, ownDir, stdlibName, ctx) {
+function ancestorIsRoot(dir, ownDir, stdlibName, ctx, runRoots) {
     if (dir === ownDir)
-        return !ctx.belowPackageRoot(dir) || ctx.toolRoot(dir);
-    return stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir);
+        return !ctx.belowPackageRoot(dir) || ctx.toolRoot(dir) || dir === runRoots.basedir;
+    if (stdlibName)
+        return dir === '';
+    return !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir) || dir === runRoots.basedir || dir === runRoots.selfParent;
+}
+/** pytest's default test module names, and its `conftest.py`. */
+const PYTEST_FILE = /^(?:test_.*|.*_test|conftest)\.py$/;
+/**
+ * Two directories above an importing file are on `sys.path` whenever the file runs at all, inside a project as anywhere else:
+ *
+ * - `basedir`: for a pytest test module (`test_*.py`, `*_test.py`) or a `conftest.py`, the first directory upward that holds no `__init__.py`, which pytest's prepend import mode inserts (`tests/` for `tests/unit/test_a.py` beside `src/` when `tests/unit/` is a package and `tests/` is not).
+ * - `selfParent`: for an import whose first name is the importing file's own top-most regular package (`myext.util` inside `docs/_ext/myext/`), the directory above that package, since the file can only run as part of the package with that directory on `sys.path`. Taken only where that directory is not below a source root, where the package is a sub-package of the installed one, and never for a name the standard library owns.
+ */
+function runtimeRoots(top, fromFile, ownDir, stdlibName, ctx) {
+    let basedir;
+    if (PYTEST_FILE.test(path.posix.basename(toPosix(fromFile)))) {
+        let dir = ownDir;
+        while (dir !== undefined && ctx.exists(joinUnder(dir, '__init__.py')))
+            dir = dir === '' ? undefined : normalizeDir(path.posix.dirname(dir));
+        basedir = dir;
+    }
+    let selfParent;
+    if (!stdlibName && ownDir !== '' && ctx.exists(joinUnder(ownDir, '__init__.py'))) {
+        let pkg = ownDir;
+        while (pkg !== '' && ctx.exists(joinUnder(normalizeDir(path.posix.dirname(pkg)), '__init__.py')))
+            pkg = normalizeDir(path.posix.dirname(pkg));
+        const parent = normalizeDir(path.posix.dirname(pkg));
+        if (pkg !== '' && path.posix.basename(pkg) === top && !ctx.belowSourceRoot(parent))
+            selfParent = parent;
+    }
+    return { basedir, selfParent };
 }
 /** The one file of `matches`, or undefined when there is none or there are several (ambiguous: silence). */
 function soleMatch(matches) {
