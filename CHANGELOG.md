@@ -4,6 +4,10 @@ All notable changes to Runes are recorded here, one line per change. Runes follo
 
 ## [Unreleased]
 
+### Added
+- in Rust, a `mod` with a `#[path]` attribute among the items of its file (`#[path = "../data/orphan.rs"] pub mod via_attr;`) gives an edge to the file the attribute names, read from the directory of the file that writes it; in 1.1.0 it gave none. One inside an inline module, in a function body or in a `cfg_if!` branch still gives none. A consumer can see new edges, and new refusals, from a file to the modules it moves with the attribute; hints stored by 1.1.0 are stale by the Rust extractor's `rev`.
+- in Rust, a path written outside a `use` that starts at a path dependency (`datacrate::dc()` in a function body, `datacrate::Data` in a signature, with no `use`) gives an edge to that crate, as the same path in a `use` does; `std::`, `core::` and a registry crate leave the repository and `classifyUse` answers them `outside`, so a consumer that counts uses leaving the repository sees one for every such call. A name in scope (a module the file declares, a `use`, a type) is read first, so a local module never gives an edge to a crate of its name, and a path under a glob `use` gives none. A consumer can see new edges, and new refusals, from code that calls a path dependency through its name; hints stored earlier are stale by the Rust extractor's `rev`.
+
 ### Changed
 - `grammars`: the pinned web-tree-sitter runtime and tree-sitter-cli move to 0.27.2. The grammar bytes stay the same, and the relation pass finds and stops finding the same dependencies on the public repositories the corpus checks. A consumer still on web-tree-sitter 0.27.0 gets a new runtime pin report until it installs 0.27.2; no relation finding changes.
 
