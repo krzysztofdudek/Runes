@@ -536,7 +536,7 @@ describe('the corpus gate', () => {
     try {
       const r = corpus('oracles');
       assert.equal(r.code, 0, r.out);
-      assert.match(r.out, /ok {3}pylib .*checked: python 1; 0 disagreements/);
+      assert.match(r.out, /ok {3}pylib .*checked: python 2; 0 disagreements/);
     } finally {
       manifest([fixture()]);
     }
@@ -570,7 +570,7 @@ describe('the Python oracle\'s root list', () => {
       'web/src/w.py': '',
       'flat/setup.py': 'from setuptools import setup\nsetup()\n',
       'bad/pyproject.toml': 'this is not toml = = \n',
-      'escape/pyproject.toml': '[tool.setuptools.packages.find]\nwhere = ["../lib", "/abs", "gone"]\n',
+      'escape/pyproject.toml': '[tool.setuptools.packages.find]\nwhere = ["../hatch/hl/hp", "/abs", "gone"]\n',
     };
     for (const [rel, text] of Object.entries(files)) put(repo, rel, text);
     assert.deepEqual(pythonOracleRoots(repo, Object.keys(files)), [

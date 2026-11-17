@@ -675,14 +675,14 @@ for q in req:
 json.dump(res, sys.stdout)
 `;
 
-/** Python's PathFinder on every place the module could be imported from: each directory that holds a project manifest (and its src/), and each ancestor directory of the importing file, which covers a script's own directory and a test runner's root. A reference Runes resolves to a file that PathFinder finds from none of them is a false edge. A reference Runes leaves silent is not checked: the interpreter's real sys.path is an installation's, and silence is Runes' answer to ambiguity. */
+/** Python's PathFinder on every place the module could be imported from: each directory that holds a project manifest (and its src/, and the source roots its pyproject.toml or setup.cfg names), and each ancestor directory of the importing file, which covers a script's own directory and a test runner's root. A reference Runes resolves to a file that PathFinder finds from none of them is a false edge. A reference Runes leaves silent is not checked: the interpreter's real sys.path is an installation's, and silence is Runes' answer to ambiguity. */
 function pythonOracle(repoDir, result, findings) {
   const deps = result.references.filter((r) => r.language === 'python' && r.resolved !== undefined && r.candidates.every((c) => c.kind === 'path'));
   if (deps.length === 0) return { checked: 0 };
   const probe = spawnSync(PYTHON, ['-I', '-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
   if (probe.error || probe.status !== 0) return { skipped: `${PYTHON} is not available (${probe.error?.message ?? probe.stderr})` };
   const listed = new Set(result.tracked.map((f) => f.path));
-  const roots = pythonOracleRoots(repoDir, result.tracked.map((f) => f.path));
+  const roots = pythonOracleRoots(repoDir, result.tracked.map((f) => f.path), PYTHON);
   const abs = (rel) => (rel === '' ? repoDir : path.join(repoDir, rel));
   const queries = deps.map((r) => r.candidates.map((c) => {
     const spec = c.specifier;
