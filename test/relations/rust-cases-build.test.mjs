@@ -29,7 +29,8 @@ const NAMES_NOTHING = 'it holds a path that names nothing its crate has, which t
 const NOT_A_TARGET = 'Cargo builds no crate from it under this manifest, which is what the case checks';
 const MODULE_OF_NO_TARGET = 'a module of a file Cargo builds no crate from, which is what the case checks';
 const DECOY = 'a decoy no `mod` declares: the case checks that no path binds it';
-const CFG_OFF = 'its `mod` stands under a `cfg` that does not hold where the test builds; the case reads every branch';
+// A file whose `mod` stands in a branch under `cfg(unix)` or `cfg(windows)`, or in the `else` of one, is read on some platforms and not on others, so the check takes it as read or not, whichever the platform it runs on decides.
+const PLATFORM_CFG = 'its `mod` stands in a branch that `cfg(unix)` or `cfg(windows)` decides, so rustc reads it on some platforms only; the case reads every branch';
 const PATCH_NOT_APPLIED = 'the crate a `[patch]` names but does not apply here, so no build compiles it, which is what the case checks';
 const REFUSED_PATH = 'it holds a path rustc refuses, as the case says, so no `mod` declares it and rustc never compiles it';
 const PROBE_NOT_COMPILED = 'no `mod` declares it, so rustc never compiles the probe it holds: a fixture to complete';
@@ -54,7 +55,7 @@ const KEPT_OUT_OF_THE_BUILD = new Map([
   ['rust-crate-path-root-name-in-comment-silence', new Map([['src/api/mod.rs', PROBE_NOT_COMPILED]])],
   ['rust-crate-path-root-name-in-string-or-nested-fn-silence', new Map([['src/api/mod.rs', PROBE_NOT_COMPILED]])],
   ['rust-crate-root-glob-module-without-name-silence', new Map([['app/src/orders.rs', REFUSED_PATH]])],
-  ['rust-crate-root-globs-under-opposite-cfgs-edge', new Map([['kit/src/windows.rs', CFG_OFF]])],
+  ['rust-crate-root-globs-under-opposite-cfgs-edge', new Map([['kit/src/unix.rs', PLATFORM_CFG], ['kit/src/windows.rs', PLATFORM_CFG]])],
   ['rust-crate-root-two-globs-same-name-silence', new Map([['app/src/orders.rs', REFUSED_PATH]])],
   ['rust-edition-2015-autobins-true-shared-name-inferred-bins-edge', new Map([['src/bin/cli.rs', NOT_A_TARGET], ['src/bin/cli/inner.rs', MODULE_OF_NO_TARGET], ['src/bin/cli/main.rs', NOT_A_TARGET], ['src/bin/util/mod.rs', MODULE_OF_NO_TARGET]])],
   ['rust-edition-2015-autolib-off-legacy-bin-path-edge', new Map([['src/lib.rs', NOT_A_TARGET], ['src/other.rs', MODULE_OF_NO_TARGET]])],
@@ -71,7 +72,7 @@ const KEPT_OUT_OF_THE_BUILD = new Map([
   ['rust-edition-2015-path-dependency-without-extern-crate-silence', new Map([['src/api/a.rs', NAMES_NOTHING]])],
   ['rust-edition-2015-root-extern-crate-path-dependency-edge', new Map([['src/api/a.rs', PROBE_NOT_COMPILED], ['src/tools/mod.rs', PROBE_NOT_COMPILED]])],
   ['rust-edition-2015-use-crate-root-item-bitflags-edge', new Map([['src/api/client.rs', NAMES_NOTHING]])],
-  ['rust-edition-2015-use-crate-root-item-cfg-if-mod-edge', new Map([['src/api/client.rs', 'no `mod` declares it, so rustc never compiles the probe it holds, whose `use imp::Backend;` names a module a `cfg` that does not hold where the test builds removes'], ['src/imp/mod.rs', CFG_OFF]])],
+  ['rust-edition-2015-use-crate-root-item-cfg-if-mod-edge', new Map([['src/api/client.rs', 'no `mod` declares it, so rustc never compiles the probe it holds, whose `use imp::Backend;` names a module that a feature the build does not enable removes'], ['src/imp/mod.rs', 'its `mod` stands in a branch under `feature = "impl"`, a feature the build does not enable; the case reads every branch']])],
   ['rust-edition-2015-use-crate-root-item-const-block-silence', new Map([['src/api/client.rs', NAMES_NOTHING]])],
   ['rust-edition-2015-use-crate-root-item-edge', new Map([['src/api/client.rs', NAMES_NOTHING]])],
   ['rust-edition-2015-use-crate-root-item-extern-block-edge', new Map([['src/api/client.rs', PROBE_NOT_COMPILED]])],
@@ -88,16 +89,17 @@ const KEPT_OUT_OF_THE_BUILD = new Map([
   ['rust-file-module-children-under-own-directory-edge', new Map([['src/platform/epoll/mod.rs', DECOY]])],
   ['rust-function-named-like-undeclared-sibling-file-edge', new Map([['src/util/parse.rs', DECOY]])],
   ['rust-inline-module-over-stale-sibling-file-edge', new Map([['src/util/codec.rs', DECOY]])],
-  ['rust-inline-package-table-crate-name-edge', new Map([['crates/app/src/cmd/run.rs', 'in a package the build does not compile: the case has no root manifest, and the test builds the first manifest it writes, `crates/kit`, alone'], ['crates/kit/src/lib.rs', DECOY], ['crates/util/src/lib.rs', 'in a package the build does not compile: the case has no root manifest, and the test builds the first manifest it writes, `crates/kit`, alone'], ['crates/util/tests/it.rs', 'in a package the build does not compile: the case has no root manifest, and the test builds the first manifest it writes, `crates/kit`, alone']])],
+  ['rust-inline-package-table-crate-name-edge', new Map([['crates/app/src/cmd/run.rs', 'the package `app` has no crate root, no `src/lib.rs` or `src/main.rs`, and no `mod` declares this file, so rustc never compiles the probe it holds, nor would the build reach it, which compiles `crates/kit` alone in a case with no root manifest: a fixture to complete'], ['crates/kit/src/lib.rs', DECOY], ['crates/util/src/lib.rs', 'in a package the build does not compile: the case has no root manifest, and the test builds the first manifest it writes, `crates/kit`, alone'], ['crates/util/tests/it.rs', 'in a package the build does not compile: the case has no root manifest, and the test builds the first manifest it writes, `crates/kit`, alone']])],
   ['rust-lib-path-below-bin-dir-edge', new Map([['app/lib/jobs/run.rs', PROBE_NOT_COMPILED], ['app/util.rs', DECOY]])],
   ['rust-lib-path-outside-src-main-module-edge', new Map([['src/cli/run.rs', NAMES_NOTHING]])],
   ['rust-macro-export-silence', new Map([['src/app/mod.rs', PROBE_NOT_COMPILED], ['src/macros/mod.rs', PROBE_NOT_COMPILED]])],
-  ['rust-mod-decl-inside-cfg-if-edge', new Map([['src/other/mod.rs', CFG_OFF]])],
-  ['rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge', new Map([['src/inner.rs', DECOY], ['src/net/mod.rs', DECOY], ['src/other/mod.rs', CFG_OFF], ['src/windows/mod.rs', CFG_OFF]])],
+  ['rust-mod-decl-inside-cfg-if-edge', new Map([['src/other/mod.rs', PLATFORM_CFG], ['src/unix/mod.rs', PLATFORM_CFG]])],
+  ['rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge', new Map([['src/deep/leaf.rs', PLATFORM_CFG], ['src/imp/net.rs', PLATFORM_CFG], ['src/inner.rs', DECOY], ['src/net/mod.rs', DECOY], ['src/other/mod.rs', PLATFORM_CFG], ['src/sys/inner.rs', PLATFORM_CFG], ['src/windows/mod.rs', PLATFORM_CFG]])],
   ['rust-mod-decl-inside-inline-mod-edge', new Map([['src/app/inner/mod.rs', DECOY]])],
   ['rust-mod-path-attribute-before-doc-comment-silence', new Map([['src/net/mod.rs', DECOY], ['src/sys/mod.rs', DECOY]])],
   ['rust-mod-path-attribute-relative-to-declaring-file-edge', new Map([['src/ui/f/dd.rs', DECOY], ['src/ui/via_attr.rs', DECOY]])],
-  ['rust-module-declared-in-cfg-if-and-stale-root-file-edge', new Map([['src/legacy.rs', DECOY]])],
+  ['rust-module-declared-in-cfg-if-and-stale-root-file-edge', new Map([['src/legacy.rs', DECOY], ['src/unix/mod.rs', PLATFORM_CFG]])],
+  ['rust-module-in-cfg-if-of-lib-root-item-edge', new Map([['src/other/mod.rs', PLATFORM_CFG], ['src/unix/mod.rs', PLATFORM_CFG]])],
   ['rust-module-no-root-declares-root-item-edge', new Map([['src/orphan/mod.rs', 'declared by no root, which is what the case checks: nothing is concluded from that']])],
   ['rust-multiline-string-path-dependency-edge', new Map([['crates/app/src/cmd/run.rs', PROBE_NOT_COMPILED]])],
   ['rust-patch-crates-io-git-dependency-silence', new Map([['vendor/kit/src/lib.rs', PATCH_NOT_APPLIED]])],
@@ -184,7 +186,7 @@ test('every Rust case of the catalogue builds under the pinned toolchain, except
   assert.deepEqual(broken.map((b) => `${b.id}: ${b.output.split('\n').filter((l) => /^error/.test(l)).slice(0, 2).join(' | ')}`), []);
   const kept = (id) => KEPT_OUT_OF_THE_BUILD.get(id) ?? new Map();
   assert.deepEqual(built.flatMap((r) => r.unread.filter((f) => !kept(r.id).has(f)).map((f) => `${r.id}: ${f}`)), [], 'rustc read none of these files: declare them where the case means them to be compiled, or name them in KEPT_OUT_OF_THE_BUILD with the reason');
-  assert.deepEqual(built.flatMap((r) => [...kept(r.id).keys()].filter((f) => !r.unread.includes(f)).map((f) => `${r.id}: ${f}`)), [], 'rustc reads these files now: take them out of KEPT_OUT_OF_THE_BUILD');
+  assert.deepEqual(built.flatMap((r) => [...kept(r.id)].filter(([f, why]) => why !== PLATFORM_CFG && !r.unread.includes(f)).map(([f]) => `${r.id}: ${f}`)), [], 'rustc reads these files now: take them out of KEPT_OUT_OF_THE_BUILD');
 });
 
 test('a Rust case that keeps a file out of the build names a file of its own, and builds', () => {
