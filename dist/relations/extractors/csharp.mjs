@@ -1429,6 +1429,8 @@ export function extractCsharpRefs(file) {
         const size = Math.min(...inScope.map((e) => e.end - e.start));
         return inScope.filter((e) => e.end - e.start === size).every((e) => e.inferred === true || (e.type !== null && simpleTypeName(e.type) === name));
     };
+    // The node each negated pattern is the pattern of, through any `not` between them (see the constant pattern).
+    const negatedTests = new Map();
     // The member paths of extended property patterns (`{ Order.Id: 3 }`): names of members of the value tested, which the walk never reads as a receiver.
     const memberPaths = new Set();
     // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
@@ -2064,16 +2066,21 @@ export function extractCsharpRefs(file) {
                 memberPaths.add(path.id);
             return undefined;
         }
+        // The is test a negated pattern stands in, through any `not` between them, for the constant pattern under it (`x is not App`).
+        if (type === 'negated_pattern') {
+            const above = parentOf();
+            negatedTests.set(node.id, above.type === 'negated_pattern' ? negatedTests.get(above.id) : above);
+            return undefined;
+        }
         if (type === 'constant_pattern') {
             // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
             // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
             const whole = node.namedChild(0);
             // In a chain of tests the grammar may read `x is App.Models.Order || x is App.Models.Line` as `(x is App).Models.Order || (x is App).Models.Line`: member accesses on a test, which no C# expression is, since a member access binds tighter than `is`. Each test is of the whole dotted name, read as a lone `x is App.Models.Order` is.
             // `x is not App.Models.Order || x is not App.Models.Line` tears the same way, with the constant under the negated pattern: the test is the one around the `not`.
-            let test = parentOf();
-            while (test !== null && test.type === 'negated_pattern')
-                test = test.parent;
-            const accessed = test !== null && test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
+            const above = parentOf();
+            const test = above.type === 'negated_pattern' ? negatedTests.get(above.id) : above;
+            const accessed = test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
             if (accessed !== null && whole !== null) {
                 const tail = [];
                 for (let a = accessed; a !== null; a = a.outer)

@@ -18,6 +18,7 @@ class C {
   bool A(object x) => x is not App.Models.Order;
   bool O(object x) => x is not App.Models.Order || x is not App.Models.Line;
   bool N(object x) => x is not App.Models.Order && x is not App.Models.Line;
+  bool D(object x) => x is not not App.Models.Order || x is not App.Models.Line;
 }
 ```
 
@@ -38,6 +39,8 @@ public class Line {}
 - src/c/Use.cs:4 -> node:line       # the second
 - src/c/Use.cs:5 -> node:order      # the first of two negated tests joined by &&
 - src/c/Use.cs:5 -> node:line       # the second
+- src/c/Use.cs:6 -> node:order      # a test under two negations
+- src/c/Use.cs:6 -> node:line       # beside a negated one
 
 ## Why
 
