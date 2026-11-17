@@ -24,3 +24,7 @@ describe('MATRIX — C dead branches and non-includes (SILENCE)', () => {
   it('c-embed-silence', () => runCase('c-embed-silence'));
   it('c-unbound-include-outside-or-unfollowed-silence', () => runCase('c-unbound-include-outside-or-unfollowed-silence'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('c-lone-cr-line-ends-edge', () => runCase('c-lone-cr-line-ends-edge'));
+});

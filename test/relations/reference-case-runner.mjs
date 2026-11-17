@@ -3,6 +3,8 @@
 // The runner does not reimplement name resolution. It loads the case, builds an in-memory project from its `## Files`, and drives the real pipeline over the real extractor, symbol table and resolver: the universe symbol table from extractor.declarations(), the C# global-using pre-pass, then the per-reference ordered-candidate walk (resolved: edge and stop; a nearer ambiguous: silence the group; absent: continue). It then asserts every `## Expect` line and that no unexpected cross-owner edge appears, so a case cannot pass while emitting a spurious edge. A line `<file>:<line> answers <answer>` holds what the resolver's `classifyUse` answers for the uses written on that line: the answers listed for one line are exactly the distinct answers of its uses, each written as `resolved <file>`, `ambiguous <file>, <file>, ...`, or `absent`, followed by its reason (`outside`, `unfollowed`, or `unowned <file>`) when it has one.
 //
 // Ownership follows the catalogue's `node:<id>` convention: a file at `<root>/<id>/<...>` belongs to `<id>`, the basename of its parent directory, unless its fence names one: ```java path=src/test/java/com/a/OwnerTest.java owner=tests. The attribute is what lets two source roots of one package (`src/main/java/com/a`, `src/test/java/com/a`) be two owners. Only the case's source files are owned; any other file (a support file, or a file the resolver finds on disk) is unowned, exactly as an owner index built from one exact mapping per source file answers.
+//
+// A fence's code keeps the LF line ends of the case file, unless the fence ends with `eol=cr`, which ends every line with a lone CR, as old Mac files do: ```ts path=r/app/use.ts eol=cr. A line in `## Expect` is the line an editor shows, counted by LF, CRLF and lone CR alike.
 import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -59,6 +61,11 @@ function sectionBody(body, name) {
   return next ? rest.slice(0, next.index) : rest;
 }
 
+/** A fence's code with the line ends its `eol` attribute names: `cr` ends every line with a lone CR; without the attribute the code keeps the LF of the case file. */
+export function withLineEnds(code, eol) {
+  return eol === 'cr' ? code.replace(/\n/g, '\r') : code;
+}
+
 /** Reads and parses `reference/relations/<language>/<id>.md` into a structured case. */
 export function loadCaseDoc(id, mdPath) {
   const text = readFileSync(mdPath, 'utf-8');
@@ -73,17 +80,18 @@ export function loadCaseDoc(id, mdPath) {
 
   const files = [];
   const configFiles = [];
-  const fenceRe = /```[a-zA-Z+]*\s+path=([^\s`]+)(?:[ \t]+owner=([^\s`]+))?\n([\s\S]*?)```/g;
+  const fenceRe = /```[a-zA-Z+]*\s+path=([^\s`]+)(?:[ \t]+owner=([^\s`]+))?(?:[ \t]+eol=(cr))?\n([\s\S]*?)```/g;
   const filesSection = sectionBody(body, 'Files');
   let m;
   while ((m = fenceRe.exec(filesSection)) !== null) {
+    const code = withLineEnds(m[4], m[3]);
     const fpath = m[1].trim();
     const ext = path.extname(fpath);
     const base = path.posix.basename(fpath);
     // A Vue/Svelte component has no grammar of its own; relation extraction reads its `<script>` view (sfcScriptView), and so does this runner.
-    const lang = TS_CONFIG_BASENAME.test(base) || PYTHON_MANIFEST_BASENAMES.has(base) ? null : (getLanguageForExtension(ext) ?? sfcScriptView(fpath, m[3])?.language ?? null);
-    if (lang) files.push({ path: fpath, language: lang, code: m[3], owner: m[2] ?? ownerOfPath(fpath) });
-    else if (CONFIG_BASENAMES.has(base) || CONFIG_EXTENSIONS.has(ext) || TS_CONFIG_BASENAME.test(base) || PYTHON_MANIFEST_BASENAMES.has(base)) configFiles.push({ path: fpath, code: m[3] });
+    const lang = TS_CONFIG_BASENAME.test(base) || PYTHON_MANIFEST_BASENAMES.has(base) ? null : (getLanguageForExtension(ext) ?? sfcScriptView(fpath, code)?.language ?? null);
+    if (lang) files.push({ path: fpath, language: lang, code, owner: m[2] ?? ownerOfPath(fpath) });
+    else if (CONFIG_BASENAMES.has(base) || CONFIG_EXTENSIONS.has(ext) || TS_CONFIG_BASENAME.test(base) || PYTHON_MANIFEST_BASENAMES.has(base)) configFiles.push({ path: fpath, code });
     else throw new Error(`reference-case ${id}: no language for extension '${ext}' (${fpath})`);
   }
   if (files.length === 0) throw new Error(`reference-case ${id}: ## Files has no path-tagged code blocks`);

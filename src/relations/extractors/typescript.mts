@@ -1,6 +1,7 @@
 import type { Node } from 'web-tree-sitter';
 import path from 'node:path';
 import { walk } from '../../ast/walk.mjs';
+import { lineReader, type LineOf } from './lines.mjs';
 import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
@@ -246,7 +247,7 @@ function errorRows(root: Node): Set<number> {
  * a regex never second-guesses a statement the grammar parsed. Returns
  * (specifier, 1-based line of the statement keyword) pairs.
  */
-function recoverFromErrors(file: ParsedFile): Array<{ specifier: string; line: number; mode?: 'require' | 'esm' }> {
+function recoverFromErrors(file: ParsedFile, lineOf: LineOf): Array<{ specifier: string; line: number; mode?: 'require' | 'esm' }> {
   const rows = errorRows(file.tree.rootNode);
   if (rows.size === 0) return [];
   const out: Array<{ specifier: string; line: number; mode?: 'require' | 'esm' }> = [];
@@ -275,7 +276,8 @@ function recoverFromErrors(file: ParsedFile): Array<{ specifier: string; line: n
       for (let r = first; r <= last && !touched; r++) touched = rows.has(r);
       if (!touched) continue;
       const mode = m[6] !== undefined && /^\s*type\b/.test(m[1]) ? modeOf(m[6]) : undefined;
-      out.push(mode === undefined ? { specifier: m[3], line: first + 1 } : { specifier: m[3], line: first + 1, mode });
+      const line = lineOf({ startIndex: keywordOffset, startPosition: { row: first, column: keywordOffset - lineStarts[first] } });
+      out.push(mode === undefined ? { specifier: m[3], line } : { specifier: m[3], line, mode });
     }
   }
   return out;
@@ -373,6 +375,7 @@ function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
   const mockChains = new Map<number, boolean>();
+  const lineOf = lineReader(file.content);
 
   const emitAt = (specifier: string | undefined, line: number, callForm?: 'require' | 'import' | 'esm'): void => {
     if (specifier === undefined || !isCandidateSpecifier(specifier)) return;
@@ -382,7 +385,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     out.push(single(callForm === undefined ? { kind: 'path', specifier } : { kind: 'path', specifier, callForm }, 'import', line));
   };
   const emit = (specifier: string | undefined, node: Node, callForm?: 'require' | 'import' | 'esm'): void =>
-    emitAt(specifier, node.startPosition.row + 1, callForm);
+    emitAt(specifier, lineOf(node), callForm);
 
   const inModuleFile = isModuleFile(file.tree.rootNode);
 
@@ -460,7 +463,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     return inType || TYPE_POSITION_ANCESTORS.has(node.type) ? true : undefined;
   });
 
-  for (const { specifier, line, mode } of recoverFromErrors(file)) {
+  for (const { specifier, line, mode } of recoverFromErrors(file, lineOf)) {
     // The grammar reads a `with` clause that starts on the next line as a statement of its own, so the walk has read the declaration without its mode; the recovery reads it with the mode, and replaces that reading.
     if (mode !== undefined) {
       const bare = out.findIndex((d) => d.line === line && d.candidates.length === 1 && d.candidates[0].kind === 'path' && d.candidates[0].specifier === specifier && d.candidates[0].callForm === undefined);
@@ -485,10 +488,11 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
   const root = file.tree.rootNode;
   if (root.type !== 'program') return out;
+  const lineOf = lineReader(file.content);
   const declare = (node: Node): void => {
     if (!TOP_LEVEL_DECLARATION_TYPES.has(node.type)) return;
     const nameNode = node.childForFieldName('name');
-    if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+    if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: lineOf(node) });
   };
   for (const child of root.children) {
     if (child === null) continue;
@@ -507,8 +511,9 @@ export const typescriptExtractor: DependencyExtractor = {
   // import(), `import type = require`) and a module augmentation names its module.
   // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
   // `new URL(…, import.meta.url)`; ERROR-region recovery.
+  // rev 11: in a file with a line that ends with a lone CR, a use and a declaration carry the line an editor shows, counted by LF, CRLF and lone CR, and a component's script view keeps its lone CRs.
   // rev 10: the other calls of `vi` and `jest` that take a module's path, and a module call chained on a `jest` call that returns the `jest` object (`jest.mock('a').mock('b')`, `jest.resetModules().mock('b')`), give the use `vi.mock` gives.
-  rev: 10,
+  rev: 11,
   declarations,
   uses,
 };
@@ -519,7 +524,7 @@ export interface SfcScriptView {
   language: string;
   /** Path handed to the parser — the component's own path plus the grammar's extension. */
   parsePath: string;
-  /** The component with every byte outside its `<script>` bodies blanked (newlines kept). */
+  /** The component with every byte outside its `<script>` bodies blanked (line ends kept, a lone CR as well as an LF). */
   content: string;
 }
 
@@ -633,6 +638,8 @@ function scriptElements(content: string, svelte: boolean): ScriptElement[] {
 
 const SRC_ATTRIBUTE = /(?<=\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
 const SRC_RELATIVE = /^\.\.?\/[^"'\\\r\n]*$/;
+// An LF, or a CR that no LF follows: the end of a line, as an editor shows it.
+const LINE_END = /\n|\r(?!\n)/g;
 
 /**
  * The import an element with a relative `src` and no body stands for, as `import "<src>";`.
@@ -645,8 +652,9 @@ function srcImport(element: ScriptElement, content: string): string | undefined 
   const src = m?.[1] ?? m?.[2] ?? m?.[3];
   if (src === undefined || !SRC_RELATIVE.test(src)) return undefined;
   const text = `import "${src}";`;
-  const lineEnd = content.indexOf('\n', element.tagStart);
-  const roomEnd = Math.min(element.bodyStart, lineEnd === -1 ? content.length : lineEnd);
+  LINE_END.lastIndex = element.tagStart;
+  const lineEnd = LINE_END.exec(content)?.index ?? content.length;
+  const roomEnd = Math.min(element.bodyStart, lineEnd);
   return element.tagStart + text.length <= roomEnd ? text : undefined;
 }
 
@@ -654,8 +662,8 @@ function srcImport(element: ScriptElement, content: string): string | undefined 
  * Vue and Svelte single-file components carry their imports in `<script>` blocks
  * (`<script>`, `<script setup lang="ts">`, `<script context="module">`). No shipped
  * grammar parses a whole component, so the relation pass parses a VIEW of it: every
- * byte outside a script body becomes a space (newlines are kept, so every line
- * number is the component's own), and the view is parsed with the TS, TSX or JS
+ * byte outside a script body becomes a space (line ends are kept, a lone CR as
+ * well as an LF, so every line number is the component's own), and the view is parsed with the TS, TSX or JS
  * grammar the blocks' `lang` names (`ts`/`typescript` → TS, `tsx` → TSX, otherwise
  * JS). Returns null for any other file, or a component with no script block outside
  * its HTML comments. A script element with a `src` and no body stands for the file it
@@ -673,16 +681,16 @@ export function sfcScriptView(filePath: string, content: string): SfcScriptView 
   }
   let view = '';
   let cursor = 0;
-  const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
+  const blanked = content.replace(/[^\n\r]|\r(?=\n)/g, ' ');
   for (const element of elements) {
     const injected = srcImport(element, content);
     const head = injected === undefined
-      ? blank(content.slice(cursor, element.bodyStart))
-      : blank(content.slice(cursor, element.tagStart)) + injected + blank(content.slice(element.tagStart + injected.length, element.bodyStart));
+      ? blanked.slice(cursor, element.bodyStart)
+      : blanked.slice(cursor, element.tagStart) + injected + blanked.slice(element.tagStart + injected.length, element.bodyStart);
     view += head + content.slice(element.bodyStart, element.bodyEnd);
     cursor = element.bodyEnd;
   }
-  view += blank(content.slice(cursor));
+  view += blanked.slice(cursor);
   const ext = language === 'typescript' ? '.ts' : language === 'tsx' ? '.tsx' : '.js';
   return { language, parsePath: filePath + ext, content: view };
 }

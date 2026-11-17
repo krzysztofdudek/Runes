@@ -126,3 +126,7 @@ describe('MATRIX — newer import syntax and report shape', () => {
   it('python-from-import-single-report', () => runCase('python-from-import-single-report'));
   it('python-unresolved-outside-or-unfollowed-silence', () => runCase('python-unresolved-outside-or-unfollowed-silence'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('python-lone-cr-line-ends-edge', () => runCase('python-lone-cr-line-ends-edge'));
+});

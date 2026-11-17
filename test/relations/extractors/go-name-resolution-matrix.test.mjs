@@ -89,3 +89,7 @@ describe('MATRIX — coverage / granularity silences (uncovered package, intra-p
   it('go-package-split-owners-candidates-silence', () => runCase('go-package-split-owners-candidates-silence'));
   it('go-unresolved-outside-or-unfollowed-silence', () => runCase('go-unresolved-outside-or-unfollowed-silence'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('go-lone-cr-line-ends-edge', () => runCase('go-lone-cr-line-ends-edge'));
+});

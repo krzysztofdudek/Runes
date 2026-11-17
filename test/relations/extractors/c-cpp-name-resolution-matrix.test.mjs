@@ -120,3 +120,7 @@ describe('MATRIX — C++20 modules (name≠path + grammar-unsupported → SILENC
 describe('MATRIX — usage sites (call / inheritance / `ns::Type` / `using` bind by NAME → SILENCE)', () => {
   it('cpp-usage-site-silence', () => runCase('cpp-usage-site-silence'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('cpp-lone-cr-line-ends-edge', () => runCase('cpp-lone-cr-line-ends-edge'));
+});

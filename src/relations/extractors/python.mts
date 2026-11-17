@@ -1,6 +1,7 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
 import { walkScoped } from './scope-walk.mjs';
+import { lineReader } from './lines.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
 
@@ -60,12 +61,13 @@ function importedNames(fromStatement: Node): string[] {
 }
 
 function uses(file: ParsedFile): DetectedDep[] {
+  const lineOf = lineReader(file.content);
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
 
   const emit = (specifier: string | undefined, node: Node): void => {
     if (specifier === undefined || specifier === '') return;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     const dedupKey = `${specifier} ${line}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
@@ -136,13 +138,14 @@ const TOP_LEVEL_DECLARATION_TYPES = new Set(['class_definition', 'function_defin
 type Level = 'top' | 'inner';
 
 function declarations(file: ParsedFile): DeclaredSymbol[] {
+  const lineOf = lineReader(file.content);
   const out: DeclaredSymbol[] = [];
   walkScoped<Level>(file.tree.rootNode, 'inner', (node, level) => {
     if (node.type === 'module') return 'top';
     if (node.type === 'decorated_definition') return level;
     if (level === 'top' && TOP_LEVEL_DECLARATION_TYPES.has(node.type)) {
       const nameNode = node.childForFieldName('name');
-      if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+      if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: lineOf(node) });
     }
     return 'inner';
   });
@@ -151,7 +154,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const pythonExtractor: DependencyExtractor = {
   languages: new Set(['python']),
-  rev: 1,
+  rev: 2,
   declarations,
   uses,
 };

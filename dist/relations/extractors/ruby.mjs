@@ -1,4 +1,5 @@
 import { single } from './types.mjs';
+import { lineReader } from './lines.mjs';
 import { rubyUnderscore } from './ruby-resolve.mjs';
 /**
  * Ruby dependency extractor — the LAST language, and honestly the LOWEST-detectability
@@ -135,6 +136,7 @@ const REQUIRE = new Set(['require']);
  * descent, the walk handles each construct then prunes its constant children.
  */
 function uses(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     const seen = new Set();
     const emitPath = (specifier, line, loadPath = false) => {
@@ -171,14 +173,14 @@ function uses(file) {
     const visit = (node, nesting, parent) => {
         // (a) require_relative '<lit>' → PATH hint. Path links never shadow; nesting-agnostic.
         if (isBareCallTo(node, REQUIRE_RELATIVE)) {
-            emitPath(literalStringArg(node), node.startPosition.row + 1);
+            emitPath(literalStringArg(node), lineOf(node));
             return; // a string arg, no constant children to descend for symbols
         }
         // require '<lit>' → a PATH hint marked `callForm: 'require'`, resolved on the load path; a computed argument is read on for the constants it names.
         if (isBareCallTo(node, REQUIRE)) {
             const specifier = literalStringArg(node);
             if (specifier !== undefined) {
-                emitPath(specifier, node.startPosition.row + 1, true);
+                emitPath(specifier, lineOf(node), true);
                 return;
             }
         }
@@ -189,7 +191,7 @@ function uses(file) {
                 const sup = node.childForFieldName('superclass');
                 if (sup !== null) {
                     const expr = firstNamedChild(sup);
-                    emitConstant(expr, nesting, (expr ?? sup).startPosition.row + 1);
+                    emitConstant(expr, nesting, lineOf(expr ?? sup));
                 }
             }
             const body = node.childForFieldName('body');
@@ -212,7 +214,7 @@ function uses(file) {
             if (args !== null) {
                 for (const arg of args.namedChildren) {
                     if (arg !== null)
-                        emitConstant(arg, nesting, arg.startPosition.row + 1);
+                        emitConstant(arg, nesting, lineOf(arg));
                 }
             }
             return; // mixin-arg constants handled; do not descend (would re-emit)
@@ -230,7 +232,7 @@ function uses(file) {
                 if (parent.type === 'superclass')
                     return; // handled in (b)
             }
-            emitConstant(node, nesting, node.startPosition.row + 1);
+            emitConstant(node, nesting, lineOf(node));
             return; // do not descend into a scope_resolution's inner constants
         }
         // Generic descent (nesting unchanged for non-class/module containers).
@@ -278,6 +280,7 @@ function pathCorroborates(filePath, segments) {
  * `server_stub.rb`) anchors nothing.
  */
 function declarations(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     // Walk with an explicit namespace stack so nested class/module names get their FQN.
     const visit = (node, nsStack) => {
@@ -286,7 +289,7 @@ function declarations(file) {
             const name = constantKey(nameField);
             if (name !== undefined) {
                 const fqn = nsStack.length === 0 ? name : `${nsStack.join('::')}::${name}`;
-                const line = node.startPosition.row + 1;
+                const line = lineOf(node);
                 out.push({ symbolKey: fqn, line });
                 if (nameField !== null && nameField.type === 'scope_resolution') {
                     const segments = fqn.split('::');
@@ -319,7 +322,7 @@ function declarations(file) {
                 const name = left.text;
                 if (name !== '') {
                     const fqn = nsStack.length === 0 ? name : `${nsStack.join('::')}::${name}`;
-                    out.push({ symbolKey: fqn, line: node.startPosition.row + 1 });
+                    out.push({ symbolKey: fqn, line: lineOf(node) });
                 }
             }
             // An assignment's right-hand side is a USE, not a definition — do not recurse for defs.
@@ -338,7 +341,7 @@ function declarations(file) {
 }
 export const rubyExtractor = {
     languages: new Set(['ruby']),
-    rev: 3,
+    rev: 4,
     declarations,
     uses,
 };

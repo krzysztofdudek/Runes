@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { withParsedFiles } from '../helpers/tree-sitter.mjs';
+import { withLineEnds } from './reference-case-runner.mjs';
 import {
   extractCsharpRefs, assembleCsharpCandidates,
 } from '@chrisdudek/runes/relations';
@@ -54,10 +55,10 @@ function loadCsharpSnippets() {
     const body = fmMatch ? text.slice(fmMatch[0].length) : text;
     const filesSection = sectionBody(body, 'Files');
     if (filesSection === undefined) continue;
-    const fenceRe = /```csharp\s+path=([^\s`]+)\n([\s\S]*?)```/g;
+    const fenceRe = /```csharp\s+path=([^\s`]+)(?:[ \t]+eol=(cr))?\n([\s\S]*?)```/g;
     let m;
     while ((m = fenceRe.exec(filesSection)) !== null) {
-      out.push({ caseId, filePath: m[1].trim(), code: m[2] });
+      out.push({ caseId, filePath: m[1].trim(), code: withLineEnds(m[3], m[2]) });
     }
   }
   return out;

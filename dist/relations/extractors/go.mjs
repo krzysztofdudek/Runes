@@ -1,5 +1,6 @@
 import { walk } from '../../ast/walk.mjs';
 import { single } from './types.mjs';
+import { lineReader } from './lines.mjs';
 /**
  * Go dependency extractor.
  *
@@ -43,12 +44,13 @@ function importPathFromSpec(spec) {
     return text.slice(1, -1);
 }
 function uses(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     const seen = new Set();
     const emit = (specifier, node) => {
         if (specifier === undefined || specifier === '')
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${specifier} ${line}`;
         if (seen.has(dedupKey))
             return;
@@ -77,6 +79,7 @@ function uses(file) {
  * walk for the inner `type_spec`/`type_alias` rather than the declaration wrapper.
  */
 function declarations(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     walk(file.tree.rootNode, (node) => {
         if (node.type === 'function_declaration' ||
@@ -85,7 +88,7 @@ function declarations(file) {
             node.type === 'type_alias') {
             const nameNode = node.childForFieldName('name');
             if (nameNode !== null) {
-                out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+                out.push({ symbolKey: nameNode.text, line: lineOf(node) });
             }
         }
         return undefined;
@@ -94,7 +97,7 @@ function declarations(file) {
 }
 export const goExtractor = {
     languages: new Set(['go']),
-    rev: 1,
+    rev: 2,
     declarations,
     uses,
 };

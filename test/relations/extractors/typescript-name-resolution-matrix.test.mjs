@@ -212,3 +212,7 @@ describe('MATRIX — JavaScript (no type syntax): the same path forms resolve, n
   it('typescript-resolution-mode-clause-on-next-line-edge', () => runCase('typescript-resolution-mode-clause-on-next-line-edge'));
   it('typescript-resolution-mode-two-attributes-file-format-edge', () => runCase('typescript-resolution-mode-two-attributes-file-format-edge'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('typescript-lone-cr-line-ends-edge', () => runCase('typescript-lone-cr-line-ends-edge'));
+});

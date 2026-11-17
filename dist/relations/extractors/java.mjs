@@ -1,6 +1,7 @@
 import { walk } from '../../ast/walk.mjs';
 import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
+import { lineReader } from './lines.mjs';
 import { defaultImport, isCapitalised, samePackageGroup } from './jvm-same-package.mjs';
 /**
  * Java dependency extractor.
@@ -325,6 +326,7 @@ function isReceiver(n, p) {
     return false;
 }
 function uses(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     const seen = new Set();
     const scope = fileScope(file);
@@ -337,7 +339,7 @@ function uses(file) {
         const candidates = samePackageCandidates(scope, name, scopes.get(node.id));
         if (candidates === undefined)
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : '')).join('|')} ${line}`;
         if (seenGroups.has(dedupKey))
             return;
@@ -377,7 +379,7 @@ function uses(file) {
         // module` parse) is not a resolvable FQN — drop it rather than risk a phantom path.
         if (/\s/.test(specifier))
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${specifier} ${line}`;
         if (seen.has(dedupKey))
             return;
@@ -391,7 +393,7 @@ function uses(file) {
     const emitSymbol = (symbolKey, node) => {
         if (symbolKey === '' || /\s/.test(symbolKey))
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${symbolKey} ${line}`;
         if (seenSym.has(dedupKey))
             return;
@@ -407,7 +409,7 @@ function uses(file) {
         if (head === undefined)
             return false;
         const tail = names.slice(1).join('+');
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${node.text} ${line}`;
         if (seenSym.has(dedupKey))
             return true;
@@ -518,6 +520,7 @@ function packageFqn(file) {
  * declared `com.app.Outer` type to the `com.app.Outer+Inner` key.
  */
 function declarations(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     const pkg = packageFqn(file);
     // The scope is the enclosing-TYPE chain, outermost first, joined by the reflection separator `+` (Java's JVM binary name is `Outer$Inner`; the analyzer's canonical key is `Outer+Inner` — same boundary), DISJOINT from the package `.` so a nested key lives in a string space no dot-only candidate can collide with (separator isolation). It is empty for a top-level declaration, and carried down the walk: the `name` of every ancestor `class`/`interface`/`enum`/`record` declaration.
@@ -529,14 +532,14 @@ function declarations(file) {
             return undefined;
         const typeKey = enclosing === '' ? nameNode.text : `${enclosing}+${nameNode.text}`;
         const symbolKey = pkg === '' ? typeKey : `${pkg}.${typeKey}`;
-        out.push({ symbolKey, line: node.startPosition.row + 1 });
+        out.push({ symbolKey, line: lineOf(node) });
         return typeKey;
     });
     return out;
 }
 export const javaExtractor = {
     languages: new Set(['java']),
-    rev: 7,
+    rev: 8,
     declarations,
     uses,
 };

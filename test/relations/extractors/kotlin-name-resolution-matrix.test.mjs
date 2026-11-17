@@ -211,3 +211,7 @@ describe('MATRIX — ambiguity collapses to SILENCE (never an arbitrary edge)', 
     expect(r.classify({ kind: 'symbol', symbolKey: 'com.acme.Order' }, 'src/c/Use.kt', 'kotlin')).toEqual({ kind: 'absent' });
   });
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('kotlin-lone-cr-line-ends-edge', () => runCase('kotlin-lone-cr-line-ends-edge'));
+});

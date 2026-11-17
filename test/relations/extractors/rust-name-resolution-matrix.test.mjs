@@ -392,3 +392,7 @@ describe('RESOLVER — no-crate-root / malformed (no Cargo.toml ancestor or unre
   it('rust-path-attribute-in-inline-module-of-plain-module-file-edge', () => runCase('rust-path-attribute-in-inline-module-of-plain-module-file-edge'));
   it('rust-unresolved-outside-or-unfollowed-silence', () => runCase('rust-unresolved-outside-or-unfollowed-silence'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('rust-lone-cr-line-ends-edge', () => runCase('rust-lone-cr-line-ends-edge'));
+});

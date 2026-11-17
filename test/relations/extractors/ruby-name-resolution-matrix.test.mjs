@@ -113,3 +113,7 @@ describe('MATRIX — reopenings of core classes and framework namespaces stay ex
 describe('MATRIX — Ruby files without the .rb extension', () => {
   it('ruby-rake-file-edge', () => runCase('ruby-rake-file-edge'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('ruby-lone-cr-line-ends-edge', () => runCase('ruby-lone-cr-line-ends-edge'));
+});

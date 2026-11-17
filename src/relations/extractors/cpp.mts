@@ -1,6 +1,7 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
 import type { DependencyExtractor, DeclaredSymbol, ParsedFile } from './types.mjs';
+import { lineReader } from './lines.mjs';
 import { includeUses } from './c-cpp-shared.mjs';
 
 /**
@@ -40,9 +41,10 @@ const uses = includeUses;
  * Walks the whole tree so names nested inside a `namespace_definition` are still captured.
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
+  const lineOf = lineReader(file.content);
   const out: DeclaredSymbol[] = [];
   walk(file.tree.rootNode, (node) => {
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     if (node.type === 'function_definition') {
       const name = functionName(node);
       if (name !== undefined) out.push({ symbolKey: name, line });
@@ -84,7 +86,7 @@ function functionName(def: Node): string | undefined {
 
 export const cppExtractor: DependencyExtractor = {
   languages: new Set(['cpp']),
-  rev: 2,
+  rev: 3,
   declarations,
   uses,
 };

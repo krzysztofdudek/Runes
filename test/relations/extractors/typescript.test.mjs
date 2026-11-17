@@ -640,3 +640,58 @@ describe('sfcScriptView — a component of about 1 MB is read in linear time', (
     expect(closed.elapsed).toBeLessThan(BOUND_MS);
   });
 });
+
+describe('typescript extractor — the lines of a file whose lines end with a lone CR', () => {
+  const LINES = [
+    `const a = 1;`,
+    `// a comment`,
+    `import { b } from './b';`,
+    `const c = require('./c');`,
+    `const d = import('./d');`,
+    `export class K {}`,
+  ];
+  const linesOf = async (code, ext = '.ts', lang = 'typescript') => {
+    const { uses, declarations } = await run(code, ext, lang);
+    return { uses: uses.map((u) => [u.candidates[0].specifier, u.line]), declarations: declarations.map((d) => [d.symbolKey, d.line]) };
+  };
+  const real = { uses: [['./b', 3], ['./c', 4], ['./d', 5]], declarations: [['K', 6]] };
+
+  it('gives every use and declaration the line an editor shows, where a lone CR ends each line or some of them', async () => {
+    expect(await linesOf(LINES.join('\r'))).toEqual(real);
+    expect(await linesOf(`\uFEFF${LINES.join('\r')}`)).toEqual(real);
+    expect(await linesOf(`${LINES.slice(0, 2).join('\r')}\r\n${LINES.slice(2, 4).join('\n')}\n${LINES.slice(4).join('\r')}`)).toEqual(real);
+  });
+
+  it('gives a file with LF, CRLF or a BOM the lines it always had, and reads U+2028 as no line end', async () => {
+    expect(await linesOf(LINES.join('\n'))).toEqual(real);
+    expect(await linesOf(LINES.join('\r\n'))).toEqual(real);
+    expect(await linesOf(`\uFEFF${LINES.join('\n')}`)).toEqual(real);
+    const separated = await linesOf(['const a = 1;', "const s = 'a\u2028b';", `import { b } from './b';`].join('\n'));
+    expect(separated.uses).toEqual([['./b', 3]]);
+  });
+
+  it('counts the lines of a code unit outside the basic plane once, before a lone CR as before an LF', async () => {
+    const code = [`const s = '\u{1F600}\u{1F600}'; const t = '\u00e9';`, `import { b } from './b';`].join('\r');
+    expect((await linesOf(code)).uses).toEqual([['./b', 2]]);
+  });
+
+  it('gives an import that the recovery re-reads from an ERROR region its own line', async () => {
+    const { uses } = await linesOf([`import { A } from './a';`, `export {`, `  B,`, `} from './b' with { type: 'json' };`, `export * from './star' with { type: 'json' };`].join('\r'));
+    expect(uses).toEqual(expect.arrayContaining([['./a', 1], ['./b', 2], ['./star', 5]]));
+    expect(uses).toHaveLength(3);
+  });
+
+  it('keeps the lone CR line ends of a component in its script view, so a use there has its line too', async () => {
+    const vue = sfcScriptView('c/P.vue', ['<template>', '  <a/>', '</template>', '<script setup lang="ts">', "import x from './x';", '</script>', ''].join('\r'));
+    expect(vue.content.split('\r')).toHaveLength(7);
+    expect((await linesOf(vue.content, '.ts', vue.language)).uses).toEqual([['./x', 5]]);
+    const src = sfcScriptView('c/s.vue', ['<template><b/></template>', '<script src="../data/d.ts"></script>', ''].join('\r'));
+    expect((await linesOf(src.content, '.js', 'javascript')).uses).toEqual([['../data/d.ts', 2]]);
+  });
+
+  it('writes no src import over a lone CR that ends the line of its tag', async () => {
+    const view = sfcScriptView('c/t.vue', ['<b/>', '<script', 'src="../data/d.ts"></script>', '<i/>'].join('\r'));
+    expect(view.content.split('\r')).toHaveLength(4);
+    expect((await linesOf(view.content, '.js', 'javascript')).uses).toEqual([]);
+  });
+});
