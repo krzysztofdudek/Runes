@@ -469,6 +469,22 @@ describe('freeing and resetting around a runtime abort', () => {
     await refusesLaterCalls(h, events, 'while parsing a.cs');
   });
 
+  it('a function that was running when another call aborted, and then throws an abort of its own, is told its file was parsed', async () => {
+    const events = [];
+    const h = hostOver(events);
+    await h.getParser('.cs');
+    let release;
+    let started;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const running = new Promise((resolve) => { started = resolve; });
+    const holding = h.withParsedFile('b.cs', 'one', async () => { started(); await gate; throw abortError(); });
+    await running;
+    await assert.rejects(h.parseFile('a.cs', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
+    release();
+    await assert.rejects(holding, (error) => error.code === 'ERUNTIMEABORTED' && /earlier, while parsing a\.cs, so b\.cs was parsed, but its function failed on the damaged runtime/.test(error.message));
+    assert.deepEqual(after(events, 'ABORT'), [], 'the tree of b.cs was not freed on the damaged runtime');
+  });
+
   it('an abort on the retry after a scanner trap leaves the retry parser unfreed', async () => {
     const events = [];
     const h = hostOver(events, { trapFirst: true });
@@ -547,6 +563,21 @@ describe('making a parser, and the function of withParsedFile, around a runtime 
   };
   const recorded = (what) => (error) => error.code === 'ERUNTIMEABORTED' && error.message.includes(`aborted while ${what} (Aborted()`) && error.cause instanceof WebAssembly.RuntimeError;
 
+  it('an init that fails with an Aborted( error, as a runtime WebAssembly file that cannot be fetched or instantiated does, is not taken for an abort: a later call retries it', async () => {
+    let inits = 0;
+    class FailingInitParser {
+      static init() { return ++inits === 1 ? Promise.reject(new WebAssembly.RuntimeError('Aborted(both async and sync fetching of the wasm failed). Build with -sASSERTIONS for more info.')) : Promise.resolve(); }
+      setLanguage() {}
+      parse() { return { rootNode: { type: 'program' }, delete() {} }; }
+      delete() {}
+    }
+    const h = createParserHost({ runtime: { Parser: FailingInitParser, Language: { load: async () => ({}) } }, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    await assert.rejects(h.parseFile('a.cs', 'x'), (error) => error.code === undefined && error.message.startsWith('Aborted(both async'));
+    assert.equal((await h.parseFile('b.cs', 'y')).rootNode.type, 'program', 'the init was retried');
+    assert.equal(inits, 2);
+    await assert.rejects(createParserHost({ runtime: { Parser: class extends FailingInitParser { static init() { return Promise.reject(new WebAssembly.RuntimeError('Aborted(no wasm)')); } }, Language: { load: async () => ({}) } }, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] }).getParser('.cs'), (error) => error.code === undefined && error.message === 'Aborted(no wasm)');
+  });
+
   it('newParser that aborts throws ERUNTIMEABORTED and is recorded, so a later file is not named for it', async () => {
     const events = [];
     const h = hostOver(events, { aborts: 'new Parser', nth: 2 });
@@ -605,7 +636,7 @@ describe('making a parser, and the function of withParsedFile, around a runtime 
 });
 
 describe('what the host leaves after a runtime abort, and the runtime freeing on collection', () => {
-  // web-tree-sitter 0.27.2 frees a parser or a tree it made once JavaScript collects it, unless it was deleted first; after an abort that free runs on the damaged runtime, outside every handler, where an abort ends the process. So what the host leaves unfreed after an abort must stay referenced. The stub runtime of the tests above, with `collects`, logs each such free; each case below drops every reference it holds, the host's too, and forces collections until an object nobody holds was freed.
+  // web-tree-sitter 0.27.2 frees a parser or a tree it made once JavaScript collects it, unless it was deleted first; after an abort that free runs on the damaged runtime, outside every handler, where it can fail and end the process. So what the host leaves unfreed after an abort must stay referenced. The stub runtime of the tests above, with `collects`, logs each such free; each case below drops every reference it holds, the host's too, and forces collections until an object nobody holds was freed.
   v8.setFlagsFromString('--expose-gc');
   const gc = vm.runInNewContext('gc');
   const collect = async (runtime, events) => {
@@ -655,4 +686,34 @@ describe('what the host leaves after a runtime abort, and the runtime freeing on
       assert.deepEqual(after(events, 'ABORT'), ['finalize witness'], 'nothing the host left was freed by the runtime after the abort');
     });
   }
+
+  it('stays referenced as long as the runtime, also when the host was given a subclass of the runtime\'s Parser of its own', async () => {
+    const events = [];
+    const runtime = freeingRuntime(events, { collects: true });
+    await (async () => {
+      const h = hostOn({ Parser: class extends runtime.Parser {}, Language: runtime.Language });
+      await h.getParser('.cs');
+      await assert.rejects(h.parseFile('a.cs', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
+    })();
+    await collect(runtime, events);
+    assert.deepEqual(after(events, 'ABORT'), ['finalize witness']);
+  });
+
+  it('is kept no longer than its runtime: once the host and the runtime are let go, the runtime is collected with what the host kept', async () => {
+    // A consumer that replaces a runtime that aborted with a fresh copy, in the same process, lets the old copy go with its memory, some 2 GiB after an abort at the limit.
+    const events = [];
+    let runtimeRef;
+    await (async () => {
+      const runtime = freeingRuntime(events, { trapFirst: true, collects: true });
+      runtimeRef = new WeakRef(runtime.Parser);
+      const h = hostOn(runtime);
+      await h.getParser('.cs');
+      await assert.rejects(h.parseFile('a.rb', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
+    })();
+    for (let i = 0; i < 100 && runtimeRef.deref() !== undefined; i++) {
+      gc();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(runtimeRef.deref(), undefined, 'the runtime was collected');
+  });
 });
