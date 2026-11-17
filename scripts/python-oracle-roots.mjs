@@ -28,10 +28,12 @@ def pyproject(p):
         if isinstance(e, dict) and 'to' not in e and isinstance(e.get('from', '.'), str):
             roots.append(e.get('from', '.'))
     roots += [os.path.dirname(x.rstrip('/')) or '.' for x in strings(get(tool, 'hatch', 'build', 'targets', 'wheel', 'packages'))]
-    for sources in (get(tool, 'hatch', 'build', 'sources'), get(tool, 'hatch', 'build', 'targets', 'wheel', 'sources')):
-        roots += strings(sources)
-        if isinstance(sources, dict):
-            roots += [k for k, v in sources.items() if v == '']
+    # hatchling reads the wheel target's sources alone whenever the target sets them.
+    wheel = get(tool, 'hatch', 'build', 'targets', 'wheel')
+    sources = wheel['sources'] if isinstance(wheel, dict) and 'sources' in wheel else get(tool, 'hatch', 'build', 'sources')
+    roots += strings(sources)
+    if isinstance(sources, dict):
+        roots += [k for k, v in sources.items() if v == '']
     for v in (get(tool, 'maturin', 'python-source'), get(tool, 'pdm', 'build', 'package-dir')):
         if isinstance(v, str):
             roots.append(v)
