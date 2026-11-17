@@ -534,7 +534,7 @@ function declarationsOf(file, view) {
     for (const d of view.lexical) {
         if (d.kind === 'callable')
             topLevelCallable = true;
-        add(qualify(d.name), lineOf({ startPosition: d.at }));
+        add(qualify(d.name), lineOf(d.at));
     }
     for (const typeName of view.incompleteTypes)
         add(qualify(`${typeName}+*`), 1);

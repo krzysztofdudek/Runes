@@ -276,7 +276,7 @@ function recoverFromErrors(file: ParsedFile, lineOf: LineOf): Array<{ specifier:
       for (let r = first; r <= last && !touched; r++) touched = rows.has(r);
       if (!touched) continue;
       const mode = m[6] !== undefined && /^\s*type\b/.test(m[1]) ? modeOf(m[6]) : undefined;
-      const line = lineOf({ startPosition: { row: first, column: keywordOffset - lineStarts[first] } });
+      const line = lineOf({ startIndex: keywordOffset, startPosition: { row: first, column: keywordOffset - lineStarts[first] } });
       out.push(mode === undefined ? { specifier: m[3], line } : { specifier: m[3], line, mode });
     }
   }

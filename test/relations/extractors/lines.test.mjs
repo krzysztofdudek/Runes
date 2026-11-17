@@ -3,12 +3,12 @@ import { runExtractor, withParsedFile, host } from '../../helpers/tree-sitter.mj
 import { extractorForLanguage } from '@chrisdudek/runes/relations';
 import { lineReader, rowLine, kotlinView } from '../../helpers/internal/relations.mjs';
 
-const at = (row, column) => ({ startPosition: { row, column } });
+const at = (startIndex, row, column) => ({ startIndex, startPosition: { row, column } });
 
 describe('lineReader', () => {
   it('reads the row plus one where no CR stands alone, whatever else the file holds', () => {
     for (const content of ['', 'a\nb', 'a\r\nb\r\n', '\uFEFFa\nb', 'a\u2028b\u2029c\u0085d\nf']) expect(lineReader(content)).toBe(rowLine);
-    expect(rowLine(at(4, 7))).toBe(5);
+    expect(rowLine(at(40, 4, 7))).toBe(5);
   });
 
   it('counts LF, CRLF and a lone CR as one line end each, and U+2028, U+2029 and U+0085 as none', () => {
@@ -16,15 +16,14 @@ describe('lineReader', () => {
     const lineOf = lineReader(content);
     const lineAt = (index) => {
       const before = content.slice(0, index);
-      const row = before.split('\n').length - 1;
-      return lineOf(at(row, index - (before.lastIndexOf('\n') + 1)));
+      return lineOf(at(index, before.split('\n').length - 1, index - (before.lastIndexOf('\n') + 1)));
     };
     expect(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((c) => lineAt(content.indexOf(c)))).toEqual([1, 2, 3, 4, 4, 4, 4, 5]);
     expect(lineAt(content.indexOf('\r'))).toBe(1);
     expect(lineAt(content.indexOf('\r\n') + 1)).toBe(2);
   });
 
-  it('reads a column in UTF-16 code units, as the runtime gives it and a JavaScript string counts', async () => {
+  it('reads an index in UTF-16 code units, as the runtime gives it and a JavaScript string counts', async () => {
     const content = "const s = '\u{1F600}\u{1F600}';\rimport x from './x';";
     await withParsedFile('a.ts', content, (tree) => {
       const statement = tree.rootNode.namedChildren.find((c) => c.type === 'import_statement');
@@ -69,15 +68,16 @@ describe('every extractor gives a file whose lines end with a lone CR the lines 
 describe('kotlin recovery gives the lines an editor shows in a file that mixes lone CR and LF line ends', () => {
   const readKotlin = (code) => read('kotlin', 'a.kt', code);
 
-  it('a declaration re-parsed on its own, and one read from its leading tokens, take their lines from their row and column', async () => {
+  it('a declaration re-parsed on its own, and one read from its leading tokens, take their lines from their index in the file', async () => {
     const code = 'package p\npublic %% class Thing\nclass Other {\r  val r: com.acme.data.Repo? = null\r}\n@Ann\rclass Box {\r  public %% fun hidden() {}\r}\n';
     await withParsedFile('a.kt', code, (tree) => {
       const view = kotlinView(tree, code, host.newParser);
       try {
         const reparsed = view.roots.find((r) => r.tree !== tree);
         expect(reparsed.text.startsWith('class Other')).toBe(true);
-        expect(reparsed.startIndex).not.toBe(code.indexOf('class Other'));
-        expect(view.lexical).toEqual([{ name: 'Box', kind: 'type', at: { row: 3, column: 5 } }]);
+        expect(reparsed.startIndex).toBe(code.indexOf('class Other'));
+        expect(reparsed.startPosition).toEqual({ row: 2, column: 0 });
+        expect(view.lexical).toEqual([{ name: 'Box', kind: 'type', at: { startIndex: code.indexOf('class Box'), startPosition: { row: 3, column: 5 } } }]);
       } finally {
         view.dispose();
       }

@@ -554,7 +554,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
   // what could not be read at all (see the file doc comment, PARSE RECOVERY).
   for (const d of view.lexical) {
     if (d.kind === 'callable') topLevelCallable = true;
-    add(qualify(d.name), lineOf({ startPosition: d.at }));
+    add(qualify(d.name), lineOf(d.at));
   }
   for (const typeName of view.incompleteTypes) add(qualify(`${typeName}+*`), 1);
   if (view.packageIncomplete) add(qualify('*'), 1);

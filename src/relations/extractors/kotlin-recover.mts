@@ -1,4 +1,5 @@
 import type { Edit, Node, Parser, Point, Range, Tree } from 'web-tree-sitter';
+import type { Start } from './lines.mjs';
 
 /**
  * Kotlin parse recovery for the relation extractor.
@@ -49,8 +50,8 @@ export interface LexicalDecl {
   /** `type`: class / interface / object (may own nested members); `callable`: fun / val /
    *  var / typealias (a top-level callable owns no importable members). */
   kind: 'type' | 'callable';
-  /** Where its keyword stands in the file: the row and column a parse would give it. */
-  at: Point;
+  /** Where its keyword stands: its index in the file and its row and column in the text the view read. */
+  at: Start;
 }
 
 export interface KotlinView {
@@ -461,7 +462,7 @@ function readHeader(chunk: Chunk): LexicalDecl | null | undefined {
   if (i === undefined) return undefined;
   const kw = toks[i];
   if (kw === undefined || kw.kind !== 'id') return undefined;
-  const at = { row: kw.line, column: kw.col };
+  const at = { startIndex: kw.start, startPosition: { row: kw.line, column: kw.col } };
   const nameAt = (j: number): string | undefined => (toks[j]?.kind === 'id' ? toks[j].text.replace(/`/g, '') : undefined);
 
   if (kw.text === 'class' || kw.text === 'interface' || kw.text === 'object') {
@@ -538,7 +539,7 @@ const MISREAD_TYPES = new Set(['annotated_expression', 'assignment']);
 function misreadDeclaration(node: Node): LexicalDecl | null | undefined {
   if (!MISREAD_TYPES.has(node.type)) return undefined;
   const { row, column } = node.startPosition;
-  const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row, col: t.line === 0 ? t.col + column : t.col }));
+  const toks = tokenize(node.text).toks.map((t) => ({ ...t, start: t.start + node.startIndex, end: t.end + node.startIndex, line: t.line + row, col: t.line === 0 ? t.col + column : t.col }));
   return readHeader({ start: node.startIndex, end: node.endIndex, toks });
 }
 
@@ -631,7 +632,7 @@ function pointAt(starts: number[], index: number): Point {
  */
 export function parseAt(parser: Parser, text: string, starts: number[], start: number, end: number): Tree | null {
   const at = pointAt(starts, start);
-  const pad = at.row + at.column;
+  const pad = start;
   const length = end - start;
   const read = (i: number): string => {
     if (i < length) return text.slice(start + i, Math.min(end, start + i + READ_SLICE));

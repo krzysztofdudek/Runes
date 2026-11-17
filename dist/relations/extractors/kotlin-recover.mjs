@@ -491,7 +491,7 @@ function readHeader(chunk) {
     const kw = toks[i];
     if (kw === undefined || kw.kind !== 'id')
         return undefined;
-    const at = { row: kw.line, column: kw.col };
+    const at = { startIndex: kw.start, startPosition: { row: kw.line, column: kw.col } };
     const nameAt = (j) => (toks[j]?.kind === 'id' ? toks[j].text.replace(/`/g, '') : undefined);
     if (kw.text === 'class' || kw.text === 'interface' || kw.text === 'object') {
         const name = nameAt(i + 1);
@@ -586,7 +586,7 @@ function misreadDeclaration(node) {
     if (!MISREAD_TYPES.has(node.type))
         return undefined;
     const { row, column } = node.startPosition;
-    const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row, col: t.line === 0 ? t.col + column : t.col }));
+    const toks = tokenize(node.text).toks.map((t) => ({ ...t, start: t.start + node.startIndex, end: t.end + node.startIndex, line: t.line + row, col: t.line === 0 ? t.col + column : t.col }));
     return readHeader({ start: node.startIndex, end: node.endIndex, toks });
 }
 /** Members a class body ends a class with: a class that has one of them is complete when the next member begins. */
@@ -681,7 +681,7 @@ function pointAt(starts, index) {
  */
 export function parseAt(parser, text, starts, start, end) {
     const at = pointAt(starts, start);
-    const pad = at.row + at.column;
+    const pad = start;
     const length = end - start;
     const read = (i) => {
         if (i < length)
