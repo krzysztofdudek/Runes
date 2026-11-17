@@ -362,9 +362,10 @@ describe('sfcScriptView', () => {
     const { uses } = await run(beside.content, '.js', 'javascript');
     expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/e', 3]]);
   });
-  it('reads a comment that closes at once, and gives nothing for a comment or a script that never closes', () => {
+  it('reads a comment that closes at once, and reads a `<!--` that never closes as text', () => {
     expect(sfcScriptView('c/A.vue', '<!--><script>import a from "./a"</script>').content.trim()).toBe('import a from "./a"');
-    expect(sfcScriptView('c/U.vue', '<!-- <script>import a from "./a"</script>')).toBeNull();
+    expect(sfcScriptView('c/U.vue', '<!-- <script>import a from "./a"</script>').content.trim()).toBe('import a from "./a"');
+    expect(sfcScriptView('c/T.vue', '<template><div title="<!--">x</div></template>\n<script>import a from "./a"</script>').content.split('\n')[1].trim()).toBe('import a from "./a"');
     expect(sfcScriptView('c/O.vue', '<script>import a from "./a"')).toBeNull();
   });
   it('keeps the body that an html string names as it was read before comments were skipped', () => {

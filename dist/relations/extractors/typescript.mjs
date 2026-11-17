@@ -498,8 +498,8 @@ export const typescriptExtractor = {
 const SFC_EXTENSIONS = new Set(['.vue', '.svelte']);
 /**
  * The `<script>` elements of a component, in document order. An HTML comment
- * (`<!-- … -->`) is skipped whole, so an element inside it is no element; inside an
- * element's body `<!--` is text, as the browser reads it.
+ * (`<!-- … -->`) is skipped whole, so an element inside it is no element; a `<!--` with
+ * no `-->` after it, and a `<!--` inside an element's body, are text.
  */
 function scriptElements(content) {
     const elements = [];
@@ -510,9 +510,8 @@ function scriptElements(content) {
         if (m[1] === undefined) {
             // `<!-->` and `<!--->` end the comment at once, as HTML reads them.
             const end = content.indexOf('-->', m.index + 2);
-            if (end === -1)
-                break;
-            token.lastIndex = end + 3;
+            if (end !== -1)
+                token.lastIndex = end + 3;
             continue;
         }
         const bodyStart = token.lastIndex;
