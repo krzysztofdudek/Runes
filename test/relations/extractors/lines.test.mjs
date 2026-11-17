@@ -94,4 +94,22 @@ describe('kotlin recovery gives the lines an editor shows in a file that mixes l
     expect(mixed).toEqual(await readKotlin(code.replace(/\r/g, '\n')));
     expect(mixed.declarations).toEqual(expect.arrayContaining([['a.aLongNameThatPushesTheLineEndOut', 2], ['a.X', 3]]));
   });
+
+  it('a nested class joined to the constructor on its next line keeps the lines of the file, wherever the lone CR stands', async () => {
+    const joined = 'package a\nclass Outer {\n  class Options\n  private constructor(val s: Other)\n}\n';
+    const after = await readKotlin(`${joined}val z = 1\rval w = 2\n`);
+    expect(after.uses).toEqual([['[{"kind":"symbol","symbolKey":"a.Other","samePackage":true}]', 4]]);
+    expect(after).toEqual(await readKotlin(`${joined}val z = 1\nval w = 2\n`));
+    const before = 'package a\n\nclass Outer {\r  val q: Other? = null\n  class Options\n  private constructor(val s: Other)\n}\n';
+    const read = await readKotlin(before);
+    expect(read.uses.map(([, line]) => line)).toEqual([4, 6]);
+    expect(read).toEqual(await readKotlin(before.replace(/\r/g, '\n')));
+  });
+
+  it('a damaged file whose recovery joins a nested class to its constructor keeps the lines of the file', async () => {
+    const code = 'package a\n\nclass Outer {\r  val q: x.Other? = null\n  class Options\n  private constructor(val s: x.O)\n}\npublic %% class Thing\nclass After {\r  val r: x.Other? = null\r}\n';
+    const read = await readKotlin(code);
+    expect(read).toEqual(await readKotlin(code.replace(/\r/g, '\n')));
+    expect(read.uses.map(([, line]) => line)).toEqual([4, 6, 10]);
+  });
 });
