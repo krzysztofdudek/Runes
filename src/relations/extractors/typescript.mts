@@ -552,8 +552,10 @@ function scriptElements(content: string, svelte: boolean): ScriptElement[] {
   let stringQuote = '';
   // A search that finds no `-->` settles it for the rest of the component: no later `<!--` has one either.
   let noClose = false;
+  // An opening tag needs a `>` after it, and its attributes reach to the first one, so none can start after the last `>`; trying one there would read to the end of the component every time.
+  const lastClose = content.lastIndexOf('>');
   while (i < content.length) {
-    if (content[i] === '<') {
+    if (content[i] === '<' && i < lastClose) {
       scriptOpen.lastIndex = i;
       const open = scriptOpen.exec(content);
       if (open !== null) {

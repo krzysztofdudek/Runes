@@ -622,5 +622,9 @@ describe('sfcScriptView — a component of about 1 MB is read in linear time', (
       expect(view).toBeNull();
       expect(elapsed).toBeLessThan(BOUND_MS);
     }
+    // A `>` after the run closes the first opening, whose body never ends: nothing is read, at once.
+    const closed = timedView('c/closed.vue', `${'<script a="'.repeat(Math.floor(MB / 11))}>\nimport a from "./a"`);
+    expect(closed.view).toBeNull();
+    expect(closed.elapsed).toBeLessThan(BOUND_MS);
   });
 });
