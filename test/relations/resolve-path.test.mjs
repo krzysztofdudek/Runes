@@ -683,6 +683,41 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(makeResolvePathToFile(root)('helper_tool', 'tools/bin/run.py', 'python')).toBe('tools/bin/helper_tool.py');
   });
 
+  it('whether a directory is a root is judged against each project\'s directory as well as its source roots', () => {
+    for (const manifest of ['[project]\nname = "app"\n', '[tool.setuptools.packages.find]\nwhere = ["lib"]\n']) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('pyproject.toml', manifest);
+      write('src/app/__init__.py');
+      write('lib/app/__init__.py');
+      write('scripts/util.py');
+      write('scripts/run.py', 'import util\n');
+      write('scripts/sub/run.py', 'import util\n');
+      const resolve = makeResolvePathToFile(root);
+      // python scripts/sub/run.py puts scripts/sub on sys.path, never scripts/.
+      expect(resolve('util', 'scripts/sub/run.py', 'python'), manifest).toBeUndefined();
+      expect(resolve.explainMiss('util', 'scripts/sub/run.py', 'python'), manifest).toBe('outside');
+      expect(resolve('util', 'scripts/run.py', 'python'), manifest).toBe('scripts/util.py');
+    }
+    // Below a root manifest, a member's tests package beside its src/ or configured root keeps tests.helpers: pytest inserts the member's directory, the first one up without __init__.py.
+    for (const [member, layout] of [['[project]\nname = "member"\n', 'src'], ['[tool.setuptools.packages.find]\nwhere = ["lib"]\n', 'lib']]) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('pyproject.toml', '[tool.uv.workspace]\nmembers = ["member"]\n');
+      write('member/pyproject.toml', member);
+      write(`member/${layout}/mpkg/__init__.py`);
+      write(`member/${layout}/mpkg/core.py`);
+      write('member/tests/__init__.py');
+      write('member/tests/helpers.py');
+      write('member/tests/unit/__init__.py');
+      write('member/tests/unit/test_core.py', 'from tests.helpers import make\nfrom mpkg.core import run\n');
+      const resolve = makeResolvePathToFile(root);
+      expect(resolve('tests.helpers', 'member/tests/unit/test_core.py', 'python'), layout).toBe('member/tests/helpers.py');
+      expect(resolve('tests.helpers.make', 'member/tests/unit/test_core.py', 'python'), layout).toBe('member/tests/helpers.py');
+      expect(resolve('mpkg.core', 'member/tests/unit/test_core.py', 'python'), layout).toBe(`member/${layout}/mpkg/core.py`);
+    }
+  });
+
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {
     // 60 src-layout projects; every module imports three external libraries, its own package and the first project's.
     const projects = 60;
