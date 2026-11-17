@@ -121,12 +121,13 @@ function argumentAt(call: Node, index: number): Node | null {
 // The calls of Vitest's `vi` and Jest's `jest` whose first argument is the path of a module they replace, load or restore.
 const MODULE_CALLS = new Map<string, ReadonlySet<string>>([
   ['vi', new Set(['mock', 'doMock', 'unmock', 'doUnmock', 'importActual', 'importMock'])],
-  ['jest', new Set(['mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'requireActual', 'requireMock', 'createMockFromModule'])],
+  ['jest', new Set(['mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'requireActual', 'requireMock', 'createMockFromModule', 'unstable_mockModule', 'unstable_unmockModule'])],
 ]);
 // The calls of `jest` that return the `jest` object, so another call can be chained on them (Jest's API reference: "Returns the jest object for chaining"); Vitest's module calls return nothing to chain on, and `requireActual` returns the module.
 const JEST_CHAINED = new Set([
   'mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'resetModules', 'disableAutomock', 'enableAutomock',
   'clearAllMocks', 'resetAllMocks', 'restoreAllMocks', 'useFakeTimers', 'useRealTimers', 'retryTimes', 'setTimeout',
+  'isolateModules', 'autoMockOff', 'autoMockOn', 'onGenerateMock', 'setTimerTickMode',
 ]);
 
 /** The callee of a call that names a module by its path: `vi.mock(…)`, `jest.requireActual(…)` and the other {@link MODULE_CALLS}, also on a chain of Jest's (`jest.mock('a').mock('b')`). `chains` remembers, by node id, which calls of the file are such a Jest chain, so a long chain is read once. */
