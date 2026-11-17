@@ -16,8 +16,8 @@ import {
   csharpUses, collectGlobalUsings, collectGlobalUsingAliases, collectGlobalUsingStatics,
 } from '../helpers/internal/relations.mjs';
 
-/** Support-file basenames the path resolvers read but never parse as source. A `## Files` block whose extension has no grammar language is accepted only when its basename is one of these (anything else is a typo and throws). Go reads go.mod (and go.work), PHP reads composer.json, C/C++ reads compile_commands.json, Rust reads Cargo.toml, C# reads Directory.Build.*, and the TS resolver reads .npmrc and the lockfiles to know the package manager; the lock and sum files are harmless to materialize. */
-const CONFIG_BASENAMES = new Set(['.npmrc', 'yarn.lock', 'compile_commands.json', 'go.mod', 'go.work', 'go.sum', 'composer.json', 'Cargo.toml', 'Cargo.lock', 'Directory.Build.props', 'Directory.Build.targets']);
+/** Support-file basenames the path resolvers read but never parse as source. A `## Files` block whose extension has no grammar language is accepted only when its basename is one of these (anything else is a typo and throws). Go reads go.mod (and go.work), PHP reads composer.json, C/C++ reads compile_commands.json, Rust reads Cargo.toml, C# reads Directory.Build.*, the TS resolver reads .npmrc and the lockfiles to know the package manager and .babelrc for its module-resolver aliases; the lock and sum files are harmless to materialize. */
+const CONFIG_BASENAMES = new Set(['.npmrc', '.babelrc', 'yarn.lock', 'compile_commands.json', 'go.mod', 'go.work', 'go.sum', 'composer.json', 'Cargo.toml', 'Cargo.lock', 'Directory.Build.props', 'Directory.Build.targets']);
 
 /** Python project manifests the Python resolver reads for its source roots. `pyproject.toml` has a grammar (TOML), so like the TS project files below these are recognised by basename before the language lookup: materialized for the resolver, never parsed, never owned. */
 const PYTHON_MANIFEST_BASENAMES = new Set(['pyproject.toml', 'setup.cfg']);

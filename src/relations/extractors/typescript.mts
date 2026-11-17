@@ -12,7 +12,9 @@ import { single } from './types.mjs';
  * ONLY by a module-specifier-bearing construct: a static import, a re-export
  * with a source, `import x = require(...)`, a `require(...)` call, an
  * `import(...)` with a string-literal specifier (in a value or a type position),
- * `vi.mock('<lit>')` and `jest.mock('<lit>')` with a string-literal path,
+ * `vi.mock('<lit>')` and `jest.mock('<lit>')` with a string-literal path, and the
+ * other calls of `vi` and `jest` that take a module's path (`jest.requireActual`,
+ * `vi.importActual`, `vi.doMock`, `jest.unmock`, a chained `jest.mock('a').mock('b')`),
  * a module augmentation `declare module '<spec>' { … }`,
  * or `new URL('<lit>', import.meta.url)`. Usage-site nodes (extends, implements, calls,
  * JSX, type references) would only REFINE the relation type of an
@@ -116,13 +118,51 @@ function argumentAt(call: Node, index: number): Node | null {
   return null;
 }
 
-/** The callee of `vi.mock(…)` (Vitest) or `jest.mock(…)`: a call that replaces the module its first argument names. */
-function isMockCallee(fn: Node): boolean {
+// The calls of Vitest's `vi` and Jest's `jest` whose first argument is the path of a module they replace, load or restore.
+const MODULE_CALLS = new Map<string, ReadonlySet<string>>([
+  ['vi', new Set(['mock', 'doMock', 'unmock', 'doUnmock', 'importActual', 'importMock'])],
+  ['jest', new Set(['mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'requireActual', 'requireMock', 'createMockFromModule', 'unstable_mockModule', 'unstable_unmockModule'])],
+]);
+// The calls of `jest` that return the `jest` object, so another call can be chained on them (Jest's API reference: "Returns the jest object for chaining"); Vitest's module calls return nothing to chain on, and `requireActual` returns the module.
+const JEST_CHAINED = new Set([
+  'mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'resetModules', 'disableAutomock', 'enableAutomock',
+  'clearAllMocks', 'resetAllMocks', 'restoreAllMocks', 'useFakeTimers', 'useRealTimers', 'retryTimes', 'setTimeout',
+  'isolateModules', 'autoMockOff', 'autoMockOn', 'onGenerateMock', 'setTimerTickMode', 'unstable_mockModule', 'unstable_unmockModule',
+]);
+
+/** The callee of a call that names a module by its path: `vi.mock(…)`, `jest.requireActual(…)` and the other {@link MODULE_CALLS}, also on a chain of Jest's (`jest.mock('a').mock('b')`). `chains` remembers, by node id, which calls of the file are such a Jest chain, so a long chain is read once. */
+function isMockCallee(fn: Node, chains: Map<number, boolean>): boolean {
   if (fn.type !== 'member_expression') return false;
   const object = fn.childForFieldName('object');
   const property = fn.childForFieldName('property');
-  return object !== null && object.type === 'identifier' && (object.text === 'vi' || object.text === 'jest')
-    && property !== null && property.text === 'mock';
+  if (object === null || property === null) return false;
+  const mocker = object.type === 'identifier' ? object.text : isJestChain(object, chains) ? 'jest' : undefined;
+  return mocker !== undefined && MODULE_CALLS.get(mocker)?.has(property.text) === true;
+}
+
+/** Whether a node is a call of a {@link JEST_CHAINED} method on `jest` or on such a call, which returns the `jest` object. The chain is walked down without recursion, so a long one cannot exhaust the stack. */
+function isJestChain(node: Node, chains: Map<number, boolean>): boolean {
+  const pending: Node[] = [];
+  let answer: boolean | undefined;
+  let at: Node | null = node;
+  while (answer === undefined) {
+    if (at === null || at.type !== 'call_expression') {
+      answer = false;
+      break;
+    }
+    answer = chains.get(at.id);
+    if (answer !== undefined) break;
+    const fn: Node | null = at.childForFieldName('function');
+    const object: Node | null = fn?.type === 'member_expression' ? fn.childForFieldName('object') : null;
+    const property = fn?.type === 'member_expression' ? fn.childForFieldName('property') : null;
+    pending.push(at);
+    if (object === null || property === null || !JEST_CHAINED.has(property.text)) answer = false;
+    else if (object.type === 'identifier') answer = object.text === 'jest';
+    else at = object;
+  }
+  // Every call on the way down is a chain exactly when the innermost one is: a link that is no chained call ended the walk with false.
+  for (const call of pending) chains.set(call.id, answer);
+  return answer;
 }
 
 /** True for the expression `import.meta.url`. */
@@ -332,6 +372,7 @@ function misreadImportTypes(node: Node): Node[] {
 function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
+  const mockChains = new Map<number, boolean>();
 
   const emitAt = (specifier: string | undefined, line: number, callForm?: 'require' | 'import' | 'esm'): void => {
     if (specifier === undefined || !isCandidateSpecifier(specifier)) return;
@@ -381,7 +422,7 @@ function uses(file: ParsedFile): DetectedDep[] {
         // Require: callee is an identifier whose text is `require`.
         const isDynamicImport = fn.type === 'import';
         const isRequire = fn.type === 'identifier' && fn.text === 'require';
-        const isMock = isMockCallee(fn);
+        const isMock = isMockCallee(fn, mockChains);
         if (!isDynamicImport && !isRequire && !isMock) break;
         // An import type (`typeof import('./x')`, `let v: import('./x').T`) is a
         // dependency like a value-position import() and gives the same edge.
@@ -466,7 +507,8 @@ export const typescriptExtractor: DependencyExtractor = {
   // import(), `import type = require`) and a module augmentation names its module.
   // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
   // `new URL(…, import.meta.url)`; ERROR-region recovery.
-  rev: 9,
+  // rev 10: the other calls of `vi` and `jest` that take a module's path, and a module call chained on a `jest` call that returns the `jest` object (`jest.mock('a').mock('b')`, `jest.resetModules().mock('b')`), give the use `vi.mock` gives.
+  rev: 10,
   declarations,
   uses,
 };
@@ -514,8 +556,10 @@ function scriptElements(content: string, svelte: boolean): ScriptElement[] {
   let stringQuote = '';
   // A search that finds no `-->` settles it for the rest of the component: no later `<!--` has one either.
   let noClose = false;
+  // An opening tag needs a `>` after it, and its attributes reach to the first one, so none can start after the last `>`; trying one there would read to the end of the component every time.
+  const lastClose = content.lastIndexOf('>');
   while (i < content.length) {
-    if (content[i] === '<') {
+    if (content[i] === '<' && i < lastClose) {
       scriptOpen.lastIndex = i;
       const open = scriptOpen.exec(content);
       if (open !== null) {

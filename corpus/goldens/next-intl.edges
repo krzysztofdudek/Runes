@@ -457,8 +457,10 @@ packages/next-intl/src/navigation/createNavigation.test.tsx:12	packages/next-int
 packages/next-intl/src/navigation/createNavigation.test.tsx:13	packages/next-intl/src/navigation/react-server/getServerLocale.tsx
 packages/next-intl/src/navigation/createNavigation.test.tsx:21	packages/next-intl/src/navigation/react-server/getServerLocale.tsx
 packages/next-intl/src/navigation/createNavigation.test.tsx:22	packages/use-intl/src/index.tsx
+packages/next-intl/src/navigation/createNavigation.test.tsx:23	packages/use-intl/src/index.tsx
 packages/next-intl/src/navigation/createNavigation.test.tsx:8	packages/use-intl/src/index.tsx
 packages/next-intl/src/navigation/react-client/createNavigation.test.tsx:12	packages/use-intl/src/index.tsx
+packages/next-intl/src/navigation/react-client/createNavigation.test.tsx:13	packages/use-intl/src/index.tsx
 packages/next-intl/src/navigation/react-client/createNavigation.test.tsx:6	packages/use-intl/src/index.tsx
 packages/next-intl/src/navigation/react-client/createNavigation.test.tsx:8	packages/next-intl/src/routing.tsx
 packages/next-intl/src/navigation/react-client/createNavigation.test.tsx:9	packages/next-intl/src/navigation/react-client/createNavigation.tsx
@@ -471,6 +473,7 @@ packages/next-intl/src/navigation/react-client/createNavigation.tsx:4	packages/n
 packages/next-intl/src/navigation/react-client/createNavigation.tsx:8	packages/next-intl/src/routing/types.tsx
 packages/next-intl/src/navigation/react-client/index.tsx:1	packages/next-intl/src/navigation/react-client/createNavigation.tsx
 packages/next-intl/src/navigation/react-client/index.tsx:2	packages/next-intl/src/navigation/shared/utils.tsx
+packages/next-intl/src/navigation/react-client/useBasePathname.test.tsx:10	packages/use-intl/src/index.tsx
 packages/next-intl/src/navigation/react-client/useBasePathname.test.tsx:3	packages/use-intl/src/index.tsx
 packages/next-intl/src/navigation/react-client/useBasePathname.test.tsx:5	packages/next-intl/src/index.react-client.tsx
 packages/next-intl/src/navigation/react-client/useBasePathname.test.tsx:6	packages/next-intl/src/navigation/react-client/useBasePathname.tsx
@@ -641,6 +644,7 @@ packages/next-intl/src/server/react-server/getExtracted.tsx:3	packages/next-intl
 packages/next-intl/src/server/react-server/getExtracted.tsx:4	packages/next-intl/src/server/react-server/getServerExtractor.tsx
 packages/next-intl/src/server/react-server/getFormats.tsx:2	packages/next-intl/src/server/react-server/getConfig.tsx
 packages/next-intl/src/server/react-server/getFormatter.test.tsx:10	packages/next-intl/src/config.tsx
+packages/next-intl/src/server/react-server/getFormatter.test.tsx:13	packages/next-intl/src/server/react-server/index.tsx
 packages/next-intl/src/server/react-server/getFormatter.test.tsx:2	packages/next-intl/src/server/react-server/getDefaultNow.tsx
 packages/next-intl/src/server/react-server/getFormatter.test.tsx:3	packages/next-intl/src/server/react-server/getFormatter.tsx
 packages/next-intl/src/server/react-server/getFormatter.test.tsx:6	packages/next-intl/src/server/react-server/getDefaultNow.tsx
@@ -664,6 +668,7 @@ packages/next-intl/src/server/react-server/getServerTranslator.tsx:2	packages/us
 packages/next-intl/src/server/react-server/getTimeZone.tsx:2	packages/use-intl/src/index.tsx
 packages/next-intl/src/server/react-server/getTimeZone.tsx:3	packages/next-intl/src/server/react-server/getConfig.tsx
 packages/next-intl/src/server/react-server/getTranslations.test.tsx:1	packages/use-intl/src/core.tsx
+packages/next-intl/src/server/react-server/getTranslations.test.tsx:11	packages/next-intl/src/server/react-server/index.tsx
 packages/next-intl/src/server/react-server/getTranslations.test.tsx:3	packages/next-intl/src/server/react-server/getTranslations.tsx
 packages/next-intl/src/server/react-server/getTranslations.test.tsx:6	packages/use-intl/src/core.tsx
 packages/next-intl/src/server/react-server/getTranslations.test.tsx:8	packages/next-intl/src/config.tsx
@@ -671,6 +676,7 @@ packages/next-intl/src/server/react-server/getTranslations.tsx:10	packages/next-
 packages/next-intl/src/server/react-server/getTranslations.tsx:2	packages/use-intl/src/core.tsx
 packages/next-intl/src/server/react-server/getTranslations.tsx:9	packages/next-intl/src/server/react-server/getConfig.tsx
 packages/next-intl/src/server/react-server/index.test.tsx:13	packages/next-intl/src/config.tsx
+packages/next-intl/src/server/react-server/index.test.tsx:16	packages/next-intl/src/server/react-server/index.tsx
 packages/next-intl/src/server/react-server/index.test.tsx:4	packages/next-intl/src/shared/constants.tsx
 packages/next-intl/src/server/react-server/index.test.tsx:5	packages/next-intl/src/server/react-server/index.tsx
 packages/next-intl/src/server/react-server/index.tsx:10	packages/next-intl/src/server/react-server/getFormatter.tsx

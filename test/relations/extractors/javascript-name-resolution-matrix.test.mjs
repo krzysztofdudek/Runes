@@ -15,4 +15,6 @@ describe('MATRIX — JavaScript sources', () => {
   it('javascript-jest-mock-literal-edge', () => runCase('javascript-jest-mock-literal-edge'));
   it('javascript-vue-sfc-jsconfig-paths-edge', () => runCase('javascript-vue-sfc-jsconfig-paths-edge'));
   it('javascript-svelte-jsconfig-paths-edge', () => runCase('javascript-svelte-jsconfig-paths-edge'));
+  it('javascript-webpack-resolve-alias-edge', () => runCase('javascript-webpack-resolve-alias-edge'));
+  it('javascript-babel-module-resolver-alias-edge', () => runCase('javascript-babel-module-resolver-alias-edge'));
 });

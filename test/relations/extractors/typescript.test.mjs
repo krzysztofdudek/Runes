@@ -458,6 +458,70 @@ describe('typescript extractor — test mocks and the bundler forms that stay un
       ['../data/t', 'import', 3],
     ]);
   });
+  it('gives the companion forms of a mock with a literal path the same use, and the second path of a chained jest.mock', async () => {
+    const { uses } = await run(
+      [
+        `const real = jest.requireActual('../data/a');`,
+        `const fake = jest.requireMock('../data/b');`,
+        `const actual = await vi.importActual('../data/c');`,
+        `jest.doMock('../data/d', () => ({}));`,
+        `vi.doMock('../data/e');`,
+        `jest.unmock('../data/f');`,
+        `jest.mock('../data/g').mock('../data/h');`,
+        `jest.requireActual(name);`,
+        `jest.requireActual('../data/i').mock('../data/j');`,
+        `vi.mock('../data/k').mock('../data/l');`,
+        `other.requireActual('../data/m');`,
+        `jest.fn('../data/n');`,
+        `jest.dontMock('../data/o'); jest.deepUnmock('../data/p'); jest.setMock('../data/q', {}); jest.createMockFromModule('../data/r');`,
+        `vi.unmock('../data/s'); vi.doUnmock('../data/t'); await vi.importMock('../data/u');`,
+        `jest.resetModules().mock('../data/v'); jest.doMock('../data/w').unmock('../data/x').setMock('../data/y', {}); a.b.mock('../data/z');`,
+        `jest.mock('../data/aa')['mock']('../data/ab'); (0, jest.mock)('../data/ac');`,
+        `toString.mock('../data/ad'); constructor.has('../data/ae'); Object.prototype.toString.call(x);`,
+        `jest`,
+        `  .mock('../data/af')`,
+        `  .unmock('../data/ag');`,
+        `jest.useFakeTimers().clearAllMocks().doMock('../data/ah'); jest.isolateModules(f).mock('../data/ai'); jest.fn().mock('../data/aj');`,
+        `jest.autoMockOff().autoMockOn().onGenerateMock(f).setTimerTickMode('manual').mock('../data/ak'); jest.unstable_mockModule('../data/al', () => ({})); jest.unstable_unmockModule('../data/am');`,
+        `jest.unstable_mockModule('../data/an', () => ({})).unstable_unmockModule('../data/ao').mock('../data/ap');`,
+      ].join('\n'),
+    );
+    // A chain is read from its outer call in: the last path of `jest.mock('g').mock('h')` comes first. Every link of a chain gives its use on the line the chain starts, as the call does.
+    expect(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm, u.line])).toEqual([
+      ['../data/a', 'import', 1],
+      ['../data/b', 'import', 2],
+      ['../data/c', 'import', 3],
+      ['../data/d', 'import', 4],
+      ['../data/e', 'import', 5],
+      ['../data/f', 'import', 6],
+      ['../data/h', 'import', 7],
+      ['../data/g', 'import', 7],
+      ['../data/i', 'import', 9],
+      ['../data/k', 'import', 10],
+      ['../data/o', 'import', 13],
+      ['../data/p', 'import', 13],
+      ['../data/q', 'import', 13],
+      ['../data/r', 'import', 13],
+      ['../data/s', 'import', 14],
+      ['../data/t', 'import', 14],
+      ['../data/u', 'import', 14],
+      ['../data/v', 'import', 15],
+      ['../data/y', 'import', 15],
+      ['../data/x', 'import', 15],
+      ['../data/w', 'import', 15],
+      ['../data/aa', 'import', 16],
+      ['../data/ag', 'import', 18],
+      ['../data/af', 'import', 18],
+      ['../data/ah', 'import', 21],
+      ['../data/ai', 'import', 21],
+      ['../data/ak', 'import', 22],
+      ['../data/al', 'import', 22],
+      ['../data/am', 'import', 22],
+      ['../data/ap', 'import', 23],
+      ['../data/ao', 'import', 23],
+      ['../data/an', 'import', 23],
+    ]);
+  });
   it('reads no use from import.meta.glob or require.context', async () => {
     const { uses } = await run(
       [
@@ -529,6 +593,15 @@ describe('typescript extractor — about 1 MB of source is read in linear time (
     expect(uses.map((u) => u.candidates[0].specifier)).toEqual(['./kept']);
     expect(elapsed).toBeLessThan(BOUND_MS);
   });
+
+  it('a chain of Jest module calls of about 1 MB, each link read once', async () => {
+    const link = ".mock('./m')";
+    const n = Math.floor(MB / link.length);
+    const { uses, elapsed } = await timed(`jest${link.repeat(n)};\n`);
+    expect(uses.length).toBe(1);
+    expect(uses[0].candidates[0].specifier).toBe('./m');
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
 });
 
 describe('sfcScriptView — a component of about 1 MB is read in linear time', () => {
@@ -552,5 +625,18 @@ describe('sfcScriptView — a component of about 1 MB is read in linear time', (
     const { view, elapsed } = timedView('c/tags.vue', '<script'.repeat(Math.floor(MB / 7)));
     expect(view).toBeNull();
     expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+
+  it('a run of script openings with attributes and no closing angle bracket is read in linear time', () => {
+    // Each opening tries the tag to the end of the component; once one finds no `>`, none after it can.
+    for (const [file, opening] of [['c/spaced.vue', '<script '], ['c/quoted.svelte', '<script a="'], ['c/quoted.vue', '<script a="'], ['c/spaced.svelte', '<script ']]) {
+      const { view, elapsed } = timedView(file, opening.repeat(Math.floor(MB / opening.length)));
+      expect(view).toBeNull();
+      expect(elapsed).toBeLessThan(BOUND_MS);
+    }
+    // A `>` after the run closes the first opening, whose body never ends: nothing is read, at once.
+    const closed = timedView('c/closed.vue', `${'<script a="'.repeat(Math.floor(MB / 11))}>\nimport a from "./a"`);
+    expect(closed.view).toBeNull();
+    expect(closed.elapsed).toBeLessThan(BOUND_MS);
   });
 });

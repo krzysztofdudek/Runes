@@ -81,6 +81,7 @@ describe('MATRIX — dynamic references (string literal resolves, a mock registr
   it('typescript-template-no-substitution-dynamic-import-edge', () => runCase('typescript-template-no-substitution-dynamic-import-edge'));
   it('typescript-new-url-import-meta-edge', () => runCase('typescript-new-url-import-meta-edge'));
   it('typescript-vi-and-jest-mock-literal-edge', () => runCase('typescript-vi-and-jest-mock-literal-edge'));
+  it('typescript-test-mock-companion-forms-edge', () => runCase('typescript-test-mock-companion-forms-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,6 +177,9 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-package-subpath-imports-silence', () => runCase('typescript-package-subpath-imports-silence'));
   it('typescript-bare-specifier-silence', () => runCase('typescript-bare-specifier-silence'));
   it('typescript-unresolved-outside-or-unfollowed-silence', () => runCase('typescript-unresolved-outside-or-unfollowed-silence'));
+  it('typescript-vite-resolve-alias-edge', () => runCase('typescript-vite-resolve-alias-edge'));
+  it('typescript-bundler-alias-unreadable-unfollowed-silence', () => runCase('typescript-bundler-alias-unreadable-unfollowed-silence'));
+  it('typescript-bundler-config-composed-unfollowed-silence', () => runCase('typescript-bundler-config-composed-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

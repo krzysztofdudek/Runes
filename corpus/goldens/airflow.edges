@@ -4223,6 +4223,7 @@ airflow-core/src/airflow/ui/src/components/TaskTrySelect.test.tsx:28	airflow-cor
 airflow-core/src/airflow/ui/src/components/TaskTrySelect.test.tsx:35	airflow-core/src/airflow/ui/src/components/TaskTrySelect.tsx
 airflow-core/src/airflow/ui/src/components/TaskTrySelect.test.tsx:37	airflow-core/src/airflow/ui/src/components/StateBadge.tsx
 airflow-core/src/airflow/ui/src/components/TaskTrySelect.test.tsx:43	airflow-core/src/airflow/ui/src/utils/index.ts
+airflow-core/src/airflow/ui/src/components/TaskTrySelect.test.tsx:44	airflow-core/src/airflow/ui/src/utils/index.ts
 airflow-core/src/airflow/ui/src/components/TaskTrySelect.tsx:22	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
 airflow-core/src/airflow/ui/src/components/TaskTrySelect.tsx:23	airflow-core/src/airflow/ui/openapi-gen/requests/types.gen.ts
 airflow-core/src/airflow/ui/src/components/TaskTrySelect.tsx:25	airflow-core/src/airflow/ui/src/system-components/index.ts
@@ -4499,6 +4500,7 @@ airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:22	airflow-
 airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:24	airflow-core/src/airflow/ui/src/queries/useGridTISummaries.ts
 airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:25	airflow-core/src/airflow/ui/src/utils/Wrapper.tsx
 airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:27	airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.tsx
+airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:31	airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.tsx
 airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:45	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
 airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:50	airflow-core/src/airflow/ui/src/queries/useDependencyGraph.ts
 airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.test.tsx:54	airflow-core/src/airflow/ui/src/components/Graph/useGraphLayout.ts
@@ -5291,6 +5293,7 @@ airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.test.tsx:29	airflow-core/
 airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.test.tsx:31	airflow-core/src/airflow/ui/src/i18n/config.ts
 airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.test.tsx:32	airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.tsx
 airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.test.tsx:35	airflow-core/src/airflow/ui/src/context/timezone/index.ts
+airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.test.tsx:36	airflow-core/src/airflow/ui/src/context/timezone/index.ts
 airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.tsx:22	airflow-core/src/airflow/ui/openapi-gen/requests/types.gen.ts
 airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.tsx:24	airflow-core/src/airflow/ui/src/system-components/index.ts
 airflow-core/src/airflow/ui/src/pages/DagsList/DagCard.tsx:26	airflow-core/src/airflow/ui/src/components/DagRunInfo.tsx
@@ -5883,7 +5886,9 @@ airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:36	airflow-c
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:37	airflow-core/src/airflow/ui/src/components/TeamName.tsx
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:38	airflow-core/src/airflow/ui/src/hooks/useShowTeam.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:43	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
+airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:44	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:53	airflow-core/src/airflow/ui/src/utils/index.ts
+airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.test.tsx:54	airflow-core/src/airflow/ui/src/utils/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.tsx:25	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.tsx:30	airflow-core/src/airflow/ui/src/system-components/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Details.tsx:32	airflow-core/src/airflow/ui/src/components/DagVersionDetails.tsx
@@ -5968,6 +5973,7 @@ airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:3
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:34	airflow-core/src/airflow/ui/src/queries/useConfig.tsx
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:35	airflow-core/src/airflow/ui/src/hooks/useShortcut.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:36	airflow-core/src/airflow/ui/src/utils/index.ts
+airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:37	airflow-core/src/airflow/ui/src/utils/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:40	airflow-core/src/airflow/ui/src/queries/useLogs.tsx
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:46	airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/TaskLogContent.tsx
 airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/LogsTryNumber.test.tsx:47	airflow-core/src/airflow/ui/src/pages/TaskInstance/Logs/TaskLogHeader.tsx
@@ -6027,6 +6033,7 @@ airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.test.tsx:43	airf
 airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.test.tsx:46	airflow-core/src/airflow/ui/src/layouts/Details/DetailsLayout.tsx
 airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.test.tsx:54	airflow-core/src/airflow/ui/src/queries/useGridTISummaries.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.test.tsx:57	airflow-core/src/airflow/ui/src/utils/index.ts
+airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.test.tsx:58	airflow-core/src/airflow/ui/src/utils/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.test.tsx:66	airflow-core/src/airflow/ui/src/pages/TaskInstance/Header.tsx
 airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.tsx:27	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
 airflow-core/src/airflow/ui/src/pages/TaskInstance/TaskInstance.tsx:29	airflow-core/src/airflow/ui/src/layouts/Details/DetailsLayout.tsx
@@ -6376,6 +6383,7 @@ airflow-core/src/airflow/ui/src/queries/useGridTISummaries.test.tsx:30	airflow-c
 airflow-core/src/airflow/ui/src/queries/useGridTISummaries.test.tsx:32	airflow-core/src/airflow/ui/src/utils/index.ts
 airflow-core/src/airflow/ui/src/queries/useGridTISummaries.test.tsx:34	airflow-core/src/airflow/ui/src/queries/useGridTISummaries.ts
 airflow-core/src/airflow/ui/src/queries/useGridTISummaries.test.tsx:37	airflow-core/src/airflow/ui/src/utils/index.ts
+airflow-core/src/airflow/ui/src/queries/useGridTISummaries.test.tsx:38	airflow-core/src/airflow/ui/src/utils/index.ts
 airflow-core/src/airflow/ui/src/queries/useGridTISummaries.ts:23	airflow-core/src/airflow/ui/openapi-gen/queries/index.ts
 airflow-core/src/airflow/ui/src/queries/useGridTISummaries.ts:28	airflow-core/src/airflow/ui/openapi-gen/requests/index.ts
 airflow-core/src/airflow/ui/src/queries/useGridTISummaries.ts:29	airflow-core/src/airflow/ui/openapi-gen/requests/core/OpenAPI.ts
@@ -6821,6 +6829,10 @@ airflow-core/src/airflow/ui/tests/e2e/utils/api/hitl.ts:24	airflow-core/src/airf
 airflow-core/src/airflow/ui/tests/e2e/utils/api/hitl.ts:25	airflow-core/src/airflow/ui/tests/e2e/utils/api/dag-runs.ts
 airflow-core/src/airflow/ui/tests/e2e/utils/api/variables.ts:24	airflow-core/src/airflow/ui/tests/e2e/utils/shared.ts
 airflow-core/src/airflow/ui/tests/e2e/utils/shared.ts:24	airflow-core/src/airflow/ui/playwright.config.ts
+airflow-core/src/airflow/ui/testsSetup.ts:25	airflow-core/src/airflow/ui/src/mocks/handlers/index.ts
+airflow-core/src/airflow/ui/testsSetup.ts:30	airflow-core/src/airflow/ui/src/components/Graph/useGraphLayout.ts
+airflow-core/src/airflow/ui/testsSetup.ts:36	airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.tsx
+airflow-core/src/airflow/ui/testsSetup.ts:37	airflow-core/src/airflow/ui/src/pages/Asset/AssetGraph.tsx
 airflow-core/src/airflow/utils/__init__.py:21	airflow-core/src/airflow/utils/deprecation_tools.py
 airflow-core/src/airflow/utils/cli.py:108	airflow-core/src/airflow/configuration.py
 airflow-core/src/airflow/utils/cli.py:109	airflow-core/src/airflow/utils/db.py

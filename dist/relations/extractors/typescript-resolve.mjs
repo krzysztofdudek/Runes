@@ -1,8 +1,10 @@
 import path from 'node:path';
+import { isBuiltin } from 'node:module';
 import { diskFileView } from '../file-view.mjs';
 import { failureOffset, lineColumnAt, reportUnreadable, PACKAGE_ENTRY_MISSING } from '../diagnostics.mjs';
 import { satisfiesRange } from './semver-range.mjs';
 import { typeScriptSatisfies } from './typescript-version-range.mjs';
+import { BUNDLER_CONFIG_FILES, makeAliasTable, readBundlerAliases } from './bundler-alias.mjs';
 /**
  * Resolve a TS/JS module specifier to a repo-relative POSIX source file, or undefined.
  *
@@ -26,6 +28,7 @@ import { typeScriptSatisfies } from './typescript-version-range.mjs';
  *   4. Bare ('@/x', 'src/x', '@acme/b', '@acme/b/sub'):
  *      a. tsconfig `paths` of the nearest tsconfig.json (jsconfig.json for JS and for a Vue or Svelte component), with its `extends` chain; when that config is solution-style (`references`, and its own `files`/`include`/`exclude` do not hold the file), the referenced config that holds it (the first in the order of `references` when several do). The exact key, else the longest-prefix `*` pattern; each substitution is probed like a relative path. Exactly one substitution naming a file → that file. Two or more naming DIFFERENT files → undefined (ambiguous). A matched pattern with no hit falls through to (c), as the compiler does.
  *      b. tsconfig `baseUrl` (only when no `paths` pattern matched): joined onto baseUrl.
+ *      b'. A bundler alias (see {@link TsResolveDeps.bundlerAlias}), applied before packages as the bundler applies it: a key that maps the specifier to a path of the repository binds the file that path names or nothing; one that hands on another bare request resolves that request by (c).
  *      c. An in-repo package bound to the specifier's package name: the importer's own package when its nearest package.json has that `name` and `exports` (self-reference); else the one the importer's own package.json (the nearest that names a package, declares dependencies or declares a workspace; a `{"type": ...}` marker is passed over) declares under that name with a local spec (`file:`, `link:`, `portal:` or a `workspace:` path, joined onto that package's directory; a `workspace:<name>@<range>` alias names a member); else, inside a declared workspace (the nearest ancestor whose pnpm-workspace.yaml lists `packages`, or whose package.json has `workspaces`), the workspace member with that `name` (the root and the directories its globs match; a fixture outside them is never linked under its name), and while the declaring directory is itself a member of an enclosing workspace, that one's members too (a member the importer's package declares by a version range or a tag binds only where the workspace's package manager, read from the root's `packageManager` or its lockfile, links it instead of installing from the registry; an unknown manager links it, as before); with no workspace declared above the importer, any in-repo package.json with that `name`. Then `exports` (exact subpath, else longest `*` pattern; the target chosen by the conditions, see {@link exportConditions}), else for the root `types`/`typings`, `module`, `main` and `index.*`, for a subpath the path inside the package. An `exports` target or an entry field that names no file is mapped back to the source it is compiled from, through the package's tsconfig (`outDir` to `rootDir`, see `sourceOfOutput` in {@link makeTsResolveDeps}); one that maps to nothing binds nothing and is reported. Two candidates with the same name → undefined.
  *      Anything else is an external package or a Node built-in → undefined.
  *   A candidate path is probed as: an explicit JS-family extension (.js/.jsx/.mjs/.cjs)
@@ -62,12 +65,12 @@ export function resolveTsPath(specifier, fromFile, existsAny, deps, callForm) {
             ? probeTarget(joinUnder(pkg.dir, target), exists)
             : target.startsWith('#') || target.startsWith('/') || target.startsWith('.')
                 ? undefined
-                : resolveBare(target, from, exists, deps, callForm));
+                : resolveBare(target, from, exists, deps, callForm, false));
     }
-    return resolveBare(spec, from, exists, deps, callForm);
+    return resolveBare(spec, from, exists, deps, callForm, true);
 }
 /**
- * Why a specifier `resolveTsPath` bound no file came to nothing: `outside` when it names what lies outside the repository (a Node built-in, a package no workspace of the repository holds, which resolution takes from `node_modules`); `unfollowed` when it names a place of the repository (a relative or root-absolute path, a `#` import of the package, a `paths` alias the tsconfig sets, a path under `baseUrl` whose first name the repository holds, a package of the repository); undefined when the project configuration cannot be read or no `deps` are given. A `#` import whose target is a bare specifier is told by that target.
+ * Why a specifier `resolveTsPath` bound no file came to nothing: `outside` when it names what lies outside the repository (a Node built-in, a package no workspace of the repository holds, which resolution takes from `node_modules`); `unfollowed` when it names a place of the repository (a relative or root-absolute path, a `#` import of the package, a `paths` alias the tsconfig sets, a path under `baseUrl` whose first name the repository holds, a package of the repository, a bundler alias to a path) or may name one (a bare specifier that names no declared dependency and no built-in, under a bundler configuration whose alias for it cannot be read); undefined when the project configuration cannot be read or no `deps` are given. A `#` import whose target is a bare specifier is told by that target.
  */
 export function explainTsMiss(specifier, fromFile, deps) {
     const spec = stripQuery(specifier);
@@ -83,11 +86,11 @@ export function explainTsMiss(specifier, fromFile, deps) {
         const match = pkg === undefined ? undefined : matchSubpathKey(pkg.manifest.imports, spec);
         const targets = collectTargets(match?.value, match?.captured) ?? [];
         const bare = targets.every((t) => !t.startsWith('.') && !t.startsWith('/') && !t.startsWith('#'));
-        return targets.length > 0 && bare && targets.every((t) => explainBare(t, from, deps) === 'outside') ? 'outside' : 'unfollowed';
+        return targets.length > 0 && bare && targets.every((t) => explainBare(t, from, deps, false) === 'outside') ? 'outside' : 'unfollowed';
     }
-    return explainBare(spec, from, deps);
+    return explainBare(spec, from, deps, true);
 }
-function explainBare(spec, from, deps) {
+function explainBare(spec, from, deps, aliases) {
     if (spec.startsWith('node:'))
         return 'outside';
     const config = deps.tsconfigFor(from);
@@ -104,11 +107,30 @@ function explainBare(spec, from, deps) {
         if (first !== undefined && (deps.isDirectory?.(first) === true || fileCandidates(first).some((cand) => deps.isFile?.(cand) === true)))
             return 'unfollowed';
     }
+    const aliased = aliases ? deps.bundlerAlias?.(spec, from) : undefined;
+    if (aliased?.kind === 'path')
+        return 'unfollowed';
+    if (aliased?.kind === 'request') {
+        const target = splitPackageSpecifier(aliased.request);
+        return target !== undefined && deps.packageNamed(target[0], from) !== undefined ? 'unfollowed' : 'outside';
+    }
+    // An alias the reader cannot follow may map the specifier into the repository; a declared dependency or a built-in is taken to be what it names.
+    if (aliased?.kind === 'unknown')
+        return isBuiltin(spec) || (split !== undefined && deps.declaresDependency?.(split[0], from) === true) ? 'outside' : 'unfollowed';
     return 'outside';
 }
 /** What {@link TsResolveDeps.sourceOfOutput} answers when the tsconfigs of a package map an entry to different sources. */
 export const SOURCES_DISAGREE = Symbol('sources disagree');
-function resolveBare(spec, from, exists, deps, callForm) {
+function resolveBare(spec, from, exists, deps, callForm, aliases) {
+    // A bundler applies its aliases to the specifier as written, not to the target a `#` import maps it to.
+    const packages = () => {
+        const aliased = aliases ? deps.bundlerAlias?.(spec, from) : undefined;
+        if (aliased?.kind === 'path')
+            return probe(aliased.path, exists, deps);
+        if (aliased?.kind === 'request')
+            return resolveWorkspacePackage(aliased.request, from, exists, deps, callForm);
+        return resolveWorkspacePackage(spec, from, exists, deps, callForm);
+    };
     const config = deps.tsconfigFor(from);
     // A tsconfig that exists but cannot be read may remap this very specifier: resolving it
     // any other way could name a file the compiler would not. Stay silent.
@@ -128,7 +150,7 @@ function resolveBare(spec, from, exists, deps, callForm) {
             if (hits.size === 1)
                 return [...hits][0];
             // A matched pattern with no hit: the compiler moves on to package lookup.
-            return resolveWorkspacePackage(spec, from, exists, deps, callForm);
+            return packages();
         }
     }
     if (config?.baseUrl !== undefined) {
@@ -136,7 +158,7 @@ function resolveBare(spec, from, exists, deps, callForm) {
         if (hit !== undefined)
             return hit;
     }
-    return resolveWorkspacePackage(spec, from, exists, deps, callForm);
+    return packages();
 }
 /** `@scope/name/sub/path` → ['@scope/name', './sub/path']; `name` → ['name', '.']. */
 function splitPackageSpecifier(spec) {
@@ -1514,6 +1536,35 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         }
         return undefined;
     };
+    // The aliases of the bundler configurations a directory holds, read once and indexed; undefined when it holds none. An excluded configuration is never read.
+    const aliasesIn = new Map();
+    const aliasesAt = (dir) => {
+        if (aliasesIn.has(dir))
+            return aliasesIn.get(dir);
+        let found;
+        for (const [name, kind] of BUNDLER_CONFIG_FILES) {
+            const file = dir === '' ? name : `${dir}/${name}`;
+            if (!isFile(file))
+                continue;
+            const read = readBundlerAliases(files.read(file) ?? '', kind, dir);
+            found = [...(found ?? []), ...(read === 'unknown' ? ['unknown'] : read)];
+        }
+        const table = found === undefined ? undefined : makeAliasTable(found);
+        aliasesIn.set(dir, table);
+        return table;
+    };
+    const bundlerAlias = (spec, fromFile) => {
+        for (const dir of ancestors(fromFile)) {
+            const table = aliasesAt(dir);
+            if (table !== undefined)
+                return table.lookup(spec);
+        }
+        return undefined;
+    };
+    const declaresDependency = (name, fromFile) => ancestors(fromFile).some((dir) => {
+        const manifest = packageAt(dir)?.manifest;
+        return manifest !== undefined && DEPENDENCY_FIELDS.some((f) => isRecord(manifest[f]) && Object.hasOwn(manifest[f], name));
+    });
     const entryMissing = (pkg, target, sourcesDisagree) => {
         if (report === undefined)
             return;
@@ -1528,6 +1579,8 @@ export function makeTsResolveDeps(projectRoot, isExcluded, source, report) {
         packageAt,
         sourceOfOutput,
         entryMissing,
+        bundlerAlias,
+        declaresDependency,
         isDirectory: (repoRel) => files.isDirectory(repoRel),
         isFile,
         ...(isExcluded !== undefined ? { isExcluded } : {}),
