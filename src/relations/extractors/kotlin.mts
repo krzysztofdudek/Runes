@@ -465,6 +465,29 @@ function facadeName(file: ParsedFile, view: KotlinView): string | undefined {
   return `${safe[0].toUpperCase()}${safe.slice(1)}Kt`;
 }
 
+const COMMENT_TYPES = new Set(['line_comment', 'block_comment']);
+
+/**
+ * The row of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file, and not on the declaration itself (the same text splits after exactly one declaration and not after none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR; stacked annotation lines can each become such a statement, with comments between them and the declaration. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)`, `@Suppress("x") run()`, `@Suppress("x") { y }` and `lbl@ (y)` are real statements, and the grammar reads them so at every depth.
+ */
+function splitAnnotationsRow(node: Node): number | undefined {
+  if (node.parent?.type !== 'source_file') return undefined;
+  let row: number | undefined;
+  for (let prev = node.previousSibling; prev !== null; prev = prev.previousSibling) {
+    if (COMMENT_TYPES.has(prev.type)) continue;
+    if (prev.type !== 'annotated_expression' || !onlyAnnotations(prev)) break;
+    row = prev.startPosition.row;
+  }
+  return row;
+}
+
+/** The grammar nests one annotation per `annotated_expression`, a comment after it included: `@A // c` over `@B(x)` is `@A` over `@B` over `(x)`. */
+function onlyAnnotations(node: Node): boolean {
+  const [annotation, operand] = node.namedChildren.filter((c) => c !== null && !COMMENT_TYPES.has(c.type));
+  if (operand?.type === 'annotated_expression') return onlyAnnotations(operand);
+  return operand?.type === 'parenthesized_expression' && !annotation?.namedChildren.some((c) => c?.type === 'constructor_invocation');
+}
+
 /**
  * The FULLY-QUALIFIED symbol keys this file DEFINES. Reads the file's `package_header`
  * (the package FQN, possibly empty for a root-package / `.kts` file), then for each
@@ -521,7 +544,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
     if (enclosing.chain === '' && (node.type === 'function_declaration' || node.type === 'property_declaration')) {
       topLevelCallable = true;
     }
-    add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), node.startPosition.row + 1);
+    add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), (splitAnnotationsRow(node) ?? node.startPosition.row) + 1);
     return below;
   });
 
@@ -543,7 +566,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
 
 export const kotlinExtractor: DependencyExtractor = {
   languages: new Set(['kotlin']),
-  rev: 10,
+  rev: 11,
   declarations,
   uses,
 };
