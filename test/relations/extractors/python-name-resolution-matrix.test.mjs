@@ -102,11 +102,22 @@ describe('MATRIX — source roots (ancestor packages are not roots; discovered p
   it('python-src-layout-tests-edge', () => runCase('python-src-layout-tests-edge'));
   it('python-config-root-pyproject-where-edge', () => runCase('python-config-root-pyproject-where-edge'));
   it('python-config-root-setup-cfg-package-dir-edge', () => runCase('python-config-root-setup-cfg-package-dir-edge'));
+  it('python-config-root-maturin-python-source-edge', () => runCase('python-config-root-maturin-python-source-edge'));
+  it('python-config-root-pdm-package-dir-edge', () => runCase('python-config-root-pdm-package-dir-edge'));
+  it('python-config-root-hatch-sources-edge', () => runCase('python-config-root-hatch-sources-edge'));
+  it('python-config-root-hatch-wheel-sources-alone-silence', () => runCase('python-config-root-hatch-wheel-sources-alone-silence'));
   it('python-module-under-two-roots-ambiguous-silence', () => runCase('python-module-under-two-roots-ambiguous-silence'));
   it('python-workspace-member-edge', () => runCase('python-workspace-member-edge'));
   it('python-workspace-stdlib-name-silence', () => runCase('python-workspace-stdlib-name-silence'));
   it('python-namespace-package-not-a-root-edge', () => runCase('python-namespace-package-not-a-root-edge'));
   it('python-pkgutil-namespace-across-distributions-edge', () => runCase('python-pkgutil-namespace-across-distributions-edge'));
+  it('python-test-fixture-project-roots-only-itself-edge', () => runCase('python-test-fixture-project-roots-only-itself-edge'));
+  it('python-own-namespace-dir-under-root-not-a-root-edge', () => runCase('python-own-namespace-dir-under-root-not-a-root-edge'));
+  it('python-script-subdir-beside-src-not-a-root-silence', () => runCase('python-script-subdir-beside-src-not-a-root-silence'));
+  it('python-workspace-member-tests-package-edge', () => runCase('python-workspace-member-tests-package-edge'));
+  it('python-package-self-import-beside-src-edge', () => runCase('python-package-self-import-beside-src-edge'));
+  it('python-pytest-basedir-beside-src-edge', () => runCase('python-pytest-basedir-beside-src-edge'));
+  it('python-pytest-basedir-namespace-under-src-edge', () => runCase('python-pytest-basedir-namespace-under-src-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

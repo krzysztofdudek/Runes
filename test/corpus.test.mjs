@@ -8,6 +8,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'corpus.mjs');
+const hasPython311 = spawnSync('python3', ['-I', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)']).status === 0;
+const { pythonOracleRoots } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'python-oracle-roots.mjs')).href);
 const tmp = mkdtempSync(join(tmpdir(), 'runes-corpus-'));
 const EMPTY_GITCONFIG = join(tmp, 'gitconfig-empty');
 writeFileSync(EMPTY_GITCONFIG, '');
@@ -517,5 +519,67 @@ describe('the corpus gate', () => {
     assert.equal(strict.status, 1, strict.stdout + strict.stderr);
     assert.match(strict.stdout, /--strict: a skipped oracle fails the run/);
     manifest([fixture()]);
+  });
+
+  // A test beside lib/ imports the package that where = ["lib"] puts on sys.path; Runes resolves it there since 1.2.0, and so must PathFinder searching the oracle's roots.
+  test('the Python oracle searches a source root pyproject.toml names, so a test import into lib/ is no false edge', { skip: !hasPython311 && 'python3 3.11 or later is not installed' }, () => {
+    const libRepo = join(tmp, 'pylib');
+    mkdirSync(libRepo);
+    git(libRepo, 'init', '-q');
+    put(libRepo, 'pyproject.toml', '[project]\nname = "pkg"\n\n[tool.setuptools.packages.find]\nwhere = ["lib"]\n');
+    put(libRepo, 'lib/pkg/__init__.py', '');
+    put(libRepo, 'lib/pkg/data.py', 'X = 1\n');
+    put(libRepo, 'tests/test_data.py', 'from pkg.data import X\n');
+    git(libRepo, 'add', '.');
+    git(libRepo, 'commit', '-q', '-m', 'pylib');
+    manifest([{ id: 'pylib', url: pathToFileURL(libRepo).href, commit: git(libRepo, 'rev-parse', 'HEAD'), tier: 'routine' }]);
+    try {
+      const r = corpus('oracles');
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /ok {3}pylib .*checked: python 2; 0 disagreements/);
+    } finally {
+      manifest([fixture()]);
+    }
+  });
+});
+
+// The roots the Python oracle searches besides the importing file's ancestors: each manifest's directory and its src/, and the source roots the manifests name, read by Python's own tomllib and configparser rather than by Runes' reader.
+describe('the Python oracle\'s root list', () => {
+  test('holds each manifest directory, its src/, and every source root pyproject.toml and setup.cfg name', { skip: !hasPython311 && 'python3 3.11 or later is not installed' }, () => {
+    const repo = mkdtempSync(join(tmp, 'roots-'));
+    const files = {
+      'pyproject.toml': '[tool.setuptools.packages.find]\nwhere = ["lib"]\n',
+      'lib/pkg/__init__.py': '',
+      'app/setup.cfg': '[options]\npackage_dir =\n    = code\n',
+      'app/code/m.py': '',
+      'cfgfind/setup.cfg': '[options.packages.find]\nwhere = py\n',
+      'cfgfind/py/m.py': '',
+      'rs/pyproject.toml': '[tool.maturin]\npython-source = "python"\n',
+      'rs/python/x/__init__.py': '',
+      'pdm/pyproject.toml': '[tool.pdm.build]\npackage-dir = "pkgs"\n',
+      'pdm/pkgs/y.py': '',
+      'hatch/pyproject.toml': '[tool.hatch.build.targets.wheel]\npackages = ["hl/hp"]\n[tool.hatch.build]\nsources = ["hs"]\n',
+      'hatch/hl/hp/__init__.py': '',
+      'hatch/hs/z.py': '',
+      'hatch2/pyproject.toml': '[tool.hatch.build]\nsources = ["x1"]\n[tool.hatch.build.targets.wheel]\nsources = ["x2"]\n',
+      'hatch2/x1/yaml.py': '',
+      'hatch2/x2/p/__init__.py': '',
+      'hatch3/pyproject.toml': '[tool.hatch.build]\nsources = ["x1"]\n[tool.hatch.build.targets.wheel]\nsources = []\n',
+      'hatch3/x1/yaml.py': '',
+      'poe/pyproject.toml': '[tool.poetry]\npackages = [{ include = "a", from = "pl" }, { include = "b" }]\n',
+      'poe/pl/a/__init__.py': '',
+      'poe/b/__init__.py': '',
+      'setuptools/pyproject.toml': '[tool.setuptools]\npackage-dir = { "" = "sd" }\n',
+      'setuptools/sd/q.py': '',
+      'web/pyproject.toml': '[project]\nname = "web"\n',
+      'web/src/w.py': '',
+      'flat/setup.py': 'from setuptools import setup\nsetup()\n',
+      'bad/pyproject.toml': 'this is not toml = = \n',
+      'escape/pyproject.toml': '[tool.setuptools.packages.find]\nwhere = ["../hatch/hl/hp", "/abs", "gone"]\n',
+    };
+    for (const [rel, text] of Object.entries(files)) put(repo, rel, text);
+    assert.deepEqual(pythonOracleRoots(repo, Object.keys(files)), [
+      '', 'app', 'app/code', 'bad', 'cfgfind', 'cfgfind/py', 'escape', 'flat', 'hatch', 'hatch/hl', 'hatch/hs', 'hatch2', 'hatch2/x2', 'hatch3', 'lib', 'pdm', 'pdm/pkgs', 'poe', 'poe/pl', 'rs', 'rs/python', 'setuptools', 'setuptools/sd', 'web', 'web/src',
+    ]);
   });
 });
