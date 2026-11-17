@@ -571,6 +571,9 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
       ['setup.cfg', '[other]\nwhere = lib\n'],
       ['setup.cfg', '[options]\npackage_dir = =lib\npackage_dir = =lib\n'],
       ['setup.cfg', '[options]\npackage_dir =\n    =lib\n    pkg\n'],
+      ['setup.cfg', '[options]\nPackage_Dir = =lib\n'],
+      ['setup.cfg', '[options.packages.find]\nWHERE = lib\n'],
+      ['pyproject.toml', '[tool.poetry]\npackages = [{ include = "pkg", from = "lib", to = "target" }]\n'],
       ['setup.py', 'from setuptools import setup\nsetup(package_dir={"": "lib"})\n'],
     ];
     for (const [manifest, body] of unread) expect(tree(manifest, body)('pkg.data.d.x'), `${manifest}: ${body}`).toBeUndefined();
@@ -584,6 +587,8 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(pythonManifestRoots('pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib", "./py/", "a/../b", "."]\n[tool.hatch.build.targets.wheel]\npackages = ["pkg", "src/x/"]\n')).toEqual(['lib', 'py', 'b', '.', '.', 'src']);
     expect(pythonManifestRoots('pyproject.toml', '[tool.poetry]\npackages = [{ include = "a" }, { include = "b", from = "lib" }]\n')).toEqual(['.', 'lib']);
     expect(pythonManifestRoots('pyproject.toml', '[tool.poetry]\npackages = [{ include = "a" }, "b"]\n')).toEqual([]);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.poetry]\npackages = [{ include = "a", from = "lib" }, { include = "b", from = "lib", to = "c" }]\n')).toEqual([]);
+    expect(pythonManifestRoots('setup.cfg', '[options]\nPACKAGE_DIR = =lib\npackage_dir = =src\n')).toEqual(['src']);
     expect(pythonManifestRoots('pyproject.toml', '[tool.setuptools]\npackage-dir = { "" = "lib", "x" = "y" }\n')).toEqual(['lib']);
     expect(pythonManifestRoots('setup.cfg', '[options]\npackage_dir = =lib, x = y\n[options.packages.find]\nwhere = py, other\n')).toEqual(['lib', 'py']);
     expect(pythonManifestRoots('setup.cfg', '[Options]\nPACKAGE_DIR: =lib\n  ; a comment\n\n[options]\npackage_dir = =lib\n')).toEqual(['lib']);

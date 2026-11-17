@@ -1153,7 +1153,7 @@ const PYTHON_ROOT_SCAN_SKIP = new Set(['node_modules', '__pycache__', 'site-pack
 /**
  * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
  *
- * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
+ * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself, and one with `to` makes the whole key name nothing), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
  * - `setup.cfg`: the empty key of `[options] package_dir`, and the first directory of `[options.packages.find] where`, read as setuptools reads them (a list of lines, or of comma-separated items on one line).
  *
  * Any other key or form gives nothing, and a key with a value it cannot read whole (an element that is not a string, a mapping of a named package) gives nothing for that key: a misread root moves every absolute import of a project, so the reader refuses rather than guesses. A path that is absolute, holds a backslash or climbs above the manifest's directory names no root, so a root never leaves the project.
@@ -1201,7 +1201,10 @@ function pyprojectRoots(text: string): string[] {
       const froms = (inlineArrayItems(value) ?? []).map((item) => {
         const members = inlineTableMembers(item)?.map((member) => KEY_VALUE.exec(member));
         if (members === undefined || members.some((m) => m === null)) return undefined;
-        const from = (members as RegExpExecArray[]).find((m) => keySegments(m[1]).join('.') === 'from');
+        const keys = (members as RegExpExecArray[]).map((m) => keySegments(m[1]).join('.'));
+        // `to` installs the package under another name, which no root can express.
+        if (keys.includes('to')) return undefined;
+        const from = (members as RegExpExecArray[]).find((_, i) => keys[i] === 'from');
         return from === undefined ? '.' : tomlString(from[2]);
       });
       if (!froms.some((from) => from === undefined)) roots.push(...(froms as string[]));
@@ -1212,7 +1215,7 @@ function pyprojectRoots(text: string): string[] {
   return roots;
 }
 
-/** The roots `pythonManifestRoots` reads from a `setup.cfg`, an INI file as `configparser` reads it: a `[section]` header, `key = value` or `key: value` with the key in any case, a value continued on the indented lines below it, and whole-line comments led by `#` or `;`. */
+/** The roots `pythonManifestRoots` reads from a `setup.cfg`, an INI file as setuptools reads it: a `[section]` header, `key = value` or `key: value`, a value continued on the indented lines below it, and whole-line comments led by `#` or `;`. Setuptools keeps the case of the `[options]` keys (it lowercases only `[metadata]`), so `Package_Dir` is not `package_dir`. */
 function setupCfgRoots(text: string): string[] {
   const values = new Map<string, string>();
   // A key written twice in one section, which configparser refuses: neither value is read.
@@ -1233,7 +1236,7 @@ function setupCfgRoots(text: string): string[] {
       continue;
     }
     const kv = /^([^=:]+?)\s*[=:]\s*(.*)$/.exec(line);
-    current = kv ? `${section}\0${kv[1].trim().toLowerCase()}` : undefined;
+    current = kv ? `${section}\0${kv[1].trim()}` : undefined;
     if (current === undefined) continue;
     if (values.has(current)) {
       repeated.add(current);
