@@ -47,7 +47,7 @@ const DO_NOT_BUILD_YET = new Set([
   'rust-mod-decl-inside-cfg-if-edge',
   'rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge',
   'rust-mod-decl-inside-inline-mod-edge',
-  'rust-mod-path-attribute-override-silence',
+  'rust-mod-path-attribute-override-edge',
   'rust-module-declared-in-cfg-if-and-stale-root-file-edge',
   'rust-module-extern-crate-alias-own-module-only-edge',
   'rust-module-in-cfg-if-of-lib-root-item-edge',

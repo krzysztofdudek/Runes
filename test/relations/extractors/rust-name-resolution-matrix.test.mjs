@@ -27,8 +27,8 @@ import {
  *
  * The catalogue covers the research enumeration (.plans/2026-06-15-rust-name-resolution-
  * research.md): every `use` shape that resolves (single / renamed / grouped / glob / pub use),
- * the file-backed `mod foo;` structural edge, the crate/self/super inline TYPE- and
- * EXPRESSION-position edges, and the silence forms (`#[path]` override, inline `mod` body,
+ * the file-backed `mod foo;` structural edge and the one a `#[path]` attribute moves, the
+ * crate/self/super inline TYPE- and EXPRESSION-position edges, and the silence forms (inline `mod` body,
  * bare-identifier-rooted inline, external crate incl. the `serde` collision trap, macro
  * token tree). Each catalogue case asserts the SPEC-CORRECT, zero-FP outcome (an edge to the
  * right node, or silence) end-to-end through the real pass.
@@ -184,12 +184,13 @@ describe('MATRIX — mod declarations & inline crate-relative paths (file-backed
   it('rust-inline-crate-expression-position-edge', () =>
     runCase('rust-inline-crate-expression-position-edge'));
   it('rust-inline-self-super-relative-edge', () => runCase('rust-inline-self-super-relative-edge'));
+  it('rust-inline-path-dependency-crate-edge', () => runCase('rust-inline-path-dependency-crate-edge'));
+  it('rust-mod-path-attribute-override-edge', () => runCase('rust-mod-path-attribute-override-edge'));
+  it('rust-mod-path-attribute-relative-to-declaring-file-edge', () => runCase('rust-mod-path-attribute-relative-to-declaring-file-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('MATRIX — silence forms (#[path] override / inline mod body / bare root / external crate / macro token tree)', () => {
-  it('rust-mod-path-attribute-override-silence', () =>
-    runCase('rust-mod-path-attribute-override-silence'));
+describe('MATRIX — silence forms (inline mod body / bare root / external crate / macro token tree)', () => {
   it('rust-inline-mod-body-silence', () => runCase('rust-inline-mod-body-silence'));
   it('rust-inline-bare-root-silence', () => runCase('rust-inline-bare-root-silence'));
   it('rust-use-external-crate-silence', () => runCase('rust-use-external-crate-silence'));

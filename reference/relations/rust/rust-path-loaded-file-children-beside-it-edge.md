@@ -38,6 +38,7 @@ pub fn decoy() {}
 
 ## Expect
 
+- src/lib.rs:2 -> node:platform   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/platform/linux.rs:1 -> node:epoll      # beside the file, as for a mod.rs
 - src/platform/linux.rs:2 -> node:epoll
 

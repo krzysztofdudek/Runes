@@ -39,5 +39,6 @@ use crate::Opts;
 
 ## Expect
 
+- src/lib.rs:2 -> node:imp   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/main.rs:1 -> node:imp
 - src/imp/thing.rs:1 -> node:root

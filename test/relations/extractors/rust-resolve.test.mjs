@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, makeResolver, SymbolTable, listedFileView } from '@chrisdudek/runes/relations';
 import { parseCargoManifest, rustFileDeclares, rustExtractor, topLevelItemNames, topLevelExternCrates, rustTopLevelItemKey, rustExternNameKey, rustExternBindingKey, plainModuleFiles, rustModuleFileKey, declaredModules, rustModuleKey, RUST_MODULES_KNOWN_KEY, pathModules } from '../../helpers/internal/relations.mjs';
-import { resolveRustPath } from '../../helpers/internal/relations.mjs';
+import { resolveRustPath, explainRustMiss } from '../../helpers/internal/relations.mjs';
 import { withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 
 // The Rust resolver maps a `::`-path → a `.rs` file through the crate module tree.
@@ -2047,5 +2047,57 @@ describe('resolveRustPath — a file loaded through a path attribute (injected d
   it('changes nothing for a mod.rs or a crate root', () => {
     expect(resolveRustPath('self::epoll', 'src/platform/mod.rs', exists, deps(true))).toBe('src/platform/epoll.rs');
     expect(resolveRustPath('self::other', 'src/lib.rs', exists, deps(true))).toBe('src/other.rs');
+  });
+});
+
+describe('resolveRustPath — the file a path attribute on a mod among the items of its file names', () => {
+  const known = new Set(['src/lib.rs', 'src/ui/mod.rs', 'src/data/orphan.rs', 'lib.rs', 'top.rs']);
+  const exists = (p) => known.has(p);
+  const deps = { crateRootFor: (f) => (f.startsWith('loose/') ? undefined : { srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: false }) };
+
+  it('binds the file relative to the directory of the file that writes the mod, where it exists in a Cargo package', () => {
+    expect(resolveRustPath('mod::../data/orphan.rs', 'src/ui/mod.rs', exists, deps)).toBe('src/data/orphan.rs');
+    expect(resolveRustPath('mod::top.rs', 'lib.rs', exists, deps)).toBe('top.rs');
+    for (const missing of ['mod::../data/gone.rs', 'mod::../../../out.rs', 'mod', 'mod::']) expect(resolveRustPath(missing, 'src/ui/mod.rs', exists, deps)).toBeUndefined();
+    expect(resolveRustPath('mod::../top.rs', 'loose/a.rs', exists, deps)).toBeUndefined();
+  });
+
+  it('says a file it could not find was not followed, as for a relative path', () => {
+    const files = new Map([['Cargo.toml', '[package]\nname = "app"\nedition = "2021"\n'], ['src/lib.rs', 'mod ui;\n'], ['src/ui/mod.rs', '#[path = "../data/gone.rs"]\nmod gone;\n']]);
+    const resolve = makeResolvePathToFile('/absent', undefined, undefined, { files: listedFileView(files.keys(), (p) => files.get(p)) });
+    expect(resolve('mod::../data/gone.rs', 'src/ui/mod.rs', 'rust')).toBeUndefined();
+    expect(resolve.explainMiss('mod::../data/gone.rs', 'src/ui/mod.rs', 'rust')).toBe('unfollowed');
+  });
+});
+
+describe('resolveRustPath — a path written outside a use that starts at a crate of the extern prelude', () => {
+  const known = new Set(['src/lib.rs', 'src/a.rs', 'src/datacrate.rs', 'datacrate/src/lib.rs', 'other/src/lib.rs']);
+  const exists = (p) => known.has(p);
+  const deps = (crateRelativeUses) => ({
+    crateRootFor: (f) => (f.startsWith('loose/') ? undefined : { srcDir: 'src', crateName: 'app', rootFiles: ['src/lib.rs'], fileIsRoot: f === 'src/lib.rs', lib: { srcDir: 'src', rootFiles: ['src/lib.rs'] }, crateRelativeUses }),
+    dependencyFor: (f, name) => (name === 'datacrate' ? { srcDir: 'datacrate/src', rootFiles: ['datacrate/src/lib.rs'] } : undefined),
+    externCrateFor: (f, file, name) => (file === 'src/lib.rs' && name === 'alias' ? { srcDir: 'other/src', rootFiles: ['other/src/lib.rs'] } : undefined),
+    rootDeclares: () => true,
+  });
+
+  it('binds a path dependency, a crate the crate root binds with extern crate, and the package\'s own library, in every edition', () => {
+    for (const edition2015 of [false, true]) {
+      expect(resolveRustPath('in::datacrate::dc', 'src/a.rs', exists, deps(edition2015))).toBe('datacrate/src/lib.rs');
+      expect(resolveRustPath('in::alias::f', 'src/a.rs', exists, deps(edition2015))).toBe('other/src/lib.rs');
+      expect(resolveRustPath('in::app::Thing', 'src/a.rs', exists, deps(edition2015))).toBe('src/lib.rs');
+    }
+    // A `use` path of the same words in edition 2015 starts at the crate root, where `src/datacrate.rs` is the module of that name.
+    expect(resolveRustPath('datacrate::dc', 'src/a.rs', exists, deps(true))).toBe('src/datacrate.rs');
+  });
+
+  it('binds nothing for std or a registry crate and says the path leaves the repository, and nothing for a form it cannot read', () => {
+    for (const outside of ['in::std::mem::swap', 'in::serde::Serialize']) {
+      expect(resolveRustPath(outside, 'src/a.rs', exists, deps(false))).toBeUndefined();
+      expect(explainRustMiss(outside, 'src/a.rs', exists, deps(false))).toBe('outside');
+      expect(explainRustMiss(outside, 'src/a.rs', exists, deps(true))).toBe('outside');
+    }
+    expect(resolveRustPath('in', 'src/a.rs', exists, deps(false))).toBeUndefined();
+    expect(explainRustMiss('in', 'src/a.rs', exists, deps(false))).toBeUndefined();
+    expect(resolveRustPath('in::datacrate::dc', 'loose/a.rs', exists, deps(false))).toBeUndefined();
   });
 });
