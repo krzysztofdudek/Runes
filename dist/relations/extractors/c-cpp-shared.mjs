@@ -1,3 +1,4 @@
+import { lineReader } from './lines.mjs';
 import { walkScoped } from './scope-walk.mjs';
 import { single } from './types.mjs';
 /**
@@ -355,12 +356,14 @@ function blankCommentsAndStrings(src) {
 export function includeUses(file) {
     const out = [];
     const seen = new Set();
+    const lineOf = lineReader(file.content);
     let textDead;
-    const deadByText = (line) => {
+    // The text scan counts lines by LF alone, as the tree's rows are counted.
+    const deadByText = (row) => {
         if (!file.tree.rootNode.hasError)
             return false;
         textDead ??= deadPreprocessorLines(file.content);
-        return textDead.has(line);
+        return textDead.has(row + 1);
     };
     // The scope is the conditional the node sits directly under (null for any other parent), so a group is known dead from the node that enters it and nothing below it is visited.
     walkScoped(file.tree.rootNode, null, (node, cond) => {
@@ -372,9 +375,9 @@ export function includeUses(file) {
         }
         if (node.type !== 'preproc_include')
             return cond === null ? undefined : null;
-        const line = node.startPosition.row + 1;
-        if (deadByText(line))
+        if (deadByText(node.startPosition.row))
             return false;
+        const line = lineOf(node);
         const header = includeHeaderName(node);
         if (header === undefined || header.name === '')
             return false;

@@ -6,15 +6,15 @@ export interface SfcScriptView {
     language: string;
     /** Path handed to the parser — the component's own path plus the grammar's extension. */
     parsePath: string;
-    /** The component with every byte outside its `<script>` bodies blanked (newlines kept). */
+    /** The component with every byte outside its `<script>` bodies blanked (line ends kept, a lone CR as well as an LF). */
     content: string;
 }
 /**
  * Vue and Svelte single-file components carry their imports in `<script>` blocks
  * (`<script>`, `<script setup lang="ts">`, `<script context="module">`). No shipped
  * grammar parses a whole component, so the relation pass parses a VIEW of it: every
- * byte outside a script body becomes a space (newlines are kept, so every line
- * number is the component's own), and the view is parsed with the TS, TSX or JS
+ * byte outside a script body becomes a space (line ends are kept, a lone CR as
+ * well as an LF, so every line number is the component's own), and the view is parsed with the TS, TSX or JS
  * grammar the blocks' `lang` names (`ts`/`typescript` → TS, `tsx` → TSX, otherwise
  * JS). Returns null for any other file, or a component with no script block outside
  * its HTML comments. A script element with a `src` and no body stands for the file it

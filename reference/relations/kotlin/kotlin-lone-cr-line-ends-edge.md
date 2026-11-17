@@ -22,14 +22,14 @@ package com.acme.app
 
 import com.acme.audit.Audited
 
-@Audited
+@com.acme.audit.Audited
 fun f() {}
 ```
 
 ## Expect
 
 - src/c/Use.kt:3 -> node:audit      # the import on the third line reports line 3, never line 1
-- src/c/Use.kt:5 -> node:audit      # the annotation on the fifth line reports line 5
+- src/c/Use.kt:5 -> node:audit      # the annotation written as a full name on the fifth line reports line 5
 
 ## Why
 

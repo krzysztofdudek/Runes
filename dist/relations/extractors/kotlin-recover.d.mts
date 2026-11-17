@@ -1,4 +1,4 @@
-import type { Node, Parser, Tree } from 'web-tree-sitter';
+import type { Node, Parser, Point, Tree } from 'web-tree-sitter';
 /**
  * Kotlin parse recovery for the relation extractor.
  *
@@ -47,7 +47,8 @@ export interface LexicalDecl {
     /** `type`: class / interface / object (may own nested members); `callable`: fun / val /
      *  var / typealias (a top-level callable owns no importable members). */
     kind: 'type' | 'callable';
-    line: number;
+    /** Where its keyword stands in the file: the row and column a parse would give it. */
+    at: Point;
 }
 export interface KotlinView {
     /** Parse nodes whose subtrees parsed without error (walkers still skip any `ERROR`). */

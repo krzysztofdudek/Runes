@@ -1,5 +1,6 @@
 import { walk } from '../../ast/walk.mjs';
 import { walkScoped } from './scope-walk.mjs';
+import { lineReader } from './lines.mjs';
 import { single } from './types.mjs';
 /**
  * Python dependency extractor.
@@ -58,12 +59,13 @@ function importedNames(fromStatement) {
     return out;
 }
 function uses(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     const seen = new Set();
     const emit = (specifier, node) => {
         if (specifier === undefined || specifier === '')
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${specifier} ${line}`;
         if (seen.has(dedupKey))
             return;
@@ -134,6 +136,7 @@ function uses(file) {
 }
 const TOP_LEVEL_DECLARATION_TYPES = new Set(['class_definition', 'function_definition']);
 function declarations(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     walkScoped(file.tree.rootNode, 'inner', (node, level) => {
         if (node.type === 'module')
@@ -143,7 +146,7 @@ function declarations(file) {
         if (level === 'top' && TOP_LEVEL_DECLARATION_TYPES.has(node.type)) {
             const nameNode = node.childForFieldName('name');
             if (nameNode !== null)
-                out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+                out.push({ symbolKey: nameNode.text, line: lineOf(node) });
         }
         return 'inner';
     });
@@ -151,7 +154,7 @@ function declarations(file) {
 }
 export const pythonExtractor = {
     languages: new Set(['python']),
-    rev: 1,
+    rev: 2,
     declarations,
     uses,
 };

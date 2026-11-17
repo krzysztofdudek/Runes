@@ -1,4 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
+import { lineReader } from './lines.mjs';
 import { indexScopes, walkScoped, walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
 import { kotlinView } from './kotlin-recover.mjs';
@@ -142,7 +143,7 @@ function withView(file, fn) {
     }
 }
 function uses(file) {
-    return withView(file, (view) => usesOf(view));
+    return withView(file, (view) => usesOf(view, lineReader(file.content)));
 }
 /** The package of a file: its first `package_header`'s qualified identifier, or '' for the root package. */
 function packageOf(view) {
@@ -284,7 +285,7 @@ function aroundScopes(view) {
         return { typeParameters: inherited.typeParameters, supertypes, entering: null };
     }, (node) => node.type === 'ERROR');
 }
-function usesOf(view) {
+function usesOf(view, lineOf) {
     const out = [];
     const seen = new Set();
     const scope = kotlinScope(view);
@@ -297,7 +298,7 @@ function usesOf(view) {
         const candidates = samePackageCandidates(scope, name, scopes.get(node.id));
         if (candidates === undefined)
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : '')).join('|')} ${line}`;
         if (seenGroups.has(dedupKey))
             return;
@@ -307,7 +308,7 @@ function usesOf(view) {
     const emit = (symbolKey, node, kind = 'import') => {
         if (symbolKey === undefined || symbolKey === '')
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${symbolKey} ${line}`;
         if (seen.has(dedupKey))
             return;
@@ -445,20 +446,20 @@ function facadeName(file, view) {
 }
 const COMMENT_TYPES = new Set(['line_comment', 'block_comment']);
 /**
- * The row of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file, and not on the declaration itself (the same text splits after exactly one declaration and not after none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR; stacked annotation lines can each become such a statement, with comments between them and the declaration. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)`, `@Suppress("x") run()`, `@Suppress("x") { y }` and `lbl@ (y)` are real statements, and the grammar reads them so at every depth.
+ * The first of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file, and not on the declaration itself (the same text splits after exactly one declaration and not after none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR; stacked annotation lines can each become such a statement, with comments between them and the declaration. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)`, `@Suppress("x") run()`, `@Suppress("x") { y }` and `lbl@ (y)` are real statements, and the grammar reads them so at every depth.
  */
-function splitAnnotationsRow(node) {
+function splitAnnotations(node) {
     if (node.parent?.type !== 'source_file')
         return undefined;
-    let row;
+    let first;
     for (let prev = node.previousSibling; prev !== null; prev = prev.previousSibling) {
         if (COMMENT_TYPES.has(prev.type))
             continue;
         if (prev.type !== 'annotated_expression' || !onlyAnnotations(prev))
             break;
-        row = prev.startPosition.row;
+        first = prev;
     }
-    return row;
+    return first;
 }
 /** The grammar nests one annotation per `annotated_expression`, a comment after it included: `@A // c` over `@B(x)` is `@A` over `@B` over `(x)`. */
 function onlyAnnotations(node) {
@@ -494,6 +495,7 @@ function declarations(file) {
 function declarationsOf(file, view) {
     const out = [];
     const seen = new Set();
+    const lineOf = lineReader(file.content);
     const add = (symbolKey, line) => {
         if (seen.has(symbolKey))
             return;
@@ -524,7 +526,7 @@ function declarationsOf(file, view) {
         if (enclosing.chain === '' && (node.type === 'function_declaration' || node.type === 'property_declaration')) {
             topLevelCallable = true;
         }
-        add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), (splitAnnotationsRow(node) ?? node.startPosition.row) + 1);
+        add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), lineOf(splitAnnotations(node) ?? node));
         return below;
     });
     // Declarations read only from a damaged declaration's leading tokens, and the markers for
@@ -532,7 +534,7 @@ function declarationsOf(file, view) {
     for (const d of view.lexical) {
         if (d.kind === 'callable')
             topLevelCallable = true;
-        add(qualify(d.name), d.line);
+        add(qualify(d.name), lineOf({ startPosition: d.at }));
     }
     for (const typeName of view.incompleteTypes)
         add(qualify(`${typeName}+*`), 1);
@@ -547,7 +549,7 @@ function declarationsOf(file, view) {
 }
 export const kotlinExtractor = {
     languages: new Set(['kotlin']),
-    rev: 11,
+    rev: 12,
     declarations,
     uses,
 };

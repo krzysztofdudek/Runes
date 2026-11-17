@@ -1,4 +1,5 @@
 import type { Node } from 'web-tree-sitter';
+import { lineReader, rowLine, type LineOf } from './lines.mjs';
 import { walkScoped } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
@@ -267,6 +268,7 @@ function modHasPathOverride(modItem: Node): boolean {
 function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
+  const lineOf = lineReader(file.content);
 
   // The inline modules around the node being visited, carried down the walk.
   let mods: ModScope | null = null;
@@ -378,7 +380,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     const root = specifier.split('::', 1)[0]!;
     // A `use` path that starts with an item its own block declares names that item from edition 2018 on, and in edition 2015 starts at the crate root whatever a block declares: the path is emitted as `use::1::<block>::<the path as written>`, which the resolver reads as written in 2015 and as no file from 2018 on.
     if (useDecl !== null && !useFromRoot && blockItemNamed(root, lexical)) {
-      const line = node.startPosition.row + 1;
+      const line = lineOf(node);
       const dedupKey = `${written} block ${line}`;
       if (seen.has(dedupKey)) return;
       seen.add(dedupKey);
@@ -403,7 +405,7 @@ function uses(file: ParsedFile): DetectedDep[] {
       const lead = specifier.split('::').length - (written.split('::').length - 1);
       specifier = `use::${lead}::${specifier.split('::').slice(0, lead).join('::')}::${written}`;
     }
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     const dedupKey = `${specifier} ${line}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
@@ -425,7 +427,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     if (node.text.startsWith('::') || !/^[a-z_]/.test(first) || PRIMITIVE_TYPES.has(first) || (inAttribute && TOOL_ATTRIBUTES.has(first))) return;
     if (boundInScope(first, lexical)) return;
     const specifierIn = `in::${unrawPath(specifier)}`;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     if (seen.has(`${specifierIn} ${line}`)) return;
     seen.add(`${specifierIn} ${line}`);
     out.push(single({ kind: 'path', specifier: specifierIn }, 'import', line));
@@ -520,7 +522,7 @@ function uses(file: ParsedFile): DetectedDep[] {
         const name = node.childForFieldName('name');
         if (name !== null) emit(`self::${name.text}`, node);
       } else if (body === null && parent()?.type === 'source_file') {
-        for (const file of pathAttributeFiles(node, [])) out.push(single({ kind: 'path', specifier: `mod::${file}` }, 'import', node.startPosition.row + 1));
+        for (const file of pathAttributeFiles(node, [])) out.push(single({ kind: 'path', specifier: `mod::${file}` }, 'import', lineOf(node)));
       }
       if (body === null) return undefined;
       // An inline module: what sits inside it is read relative to it.
@@ -715,6 +717,7 @@ function join(prefix: string, tail: string | undefined): string | undefined {
 function declarations(file: ParsedFile): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
   const root = file.tree.rootNode;
+  const lineOf = lineReader(file.content);
   for (const node of root.namedChildren) {
     if (node === null) continue;
     if (
@@ -726,25 +729,25 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     ) {
       const nameNode = node.childForFieldName('name');
       if (nameNode !== null) {
-        out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+        out.push({ symbolKey: nameNode.text, line: lineOf(node) });
       }
     }
   }
-  for (const { name, line } of topLevelItemNames(root)) out.push({ symbolKey: rustTopLevelItemKey(name), line });
-  for (const { name, crate, line } of topLevelExternCrates(root)) {
+  for (const { name, line } of topLevelItemNames(root, lineOf)) out.push({ symbolKey: rustTopLevelItemKey(name), line });
+  for (const { name, crate, line } of topLevelExternCrates(root, lineOf)) {
     out.push({ symbolKey: rustExternNameKey(name), line });
     if (crate !== undefined) out.push({ symbolKey: rustExternBindingKey(name, crate), line });
   }
-  for (const { path, line, conditional } of topLevelGlobs(root)) {
+  for (const { path, line, conditional } of topLevelGlobs(root, lineOf)) {
     out.push({ symbolKey: rustGlobKey(path), line });
     if (conditional) out.push({ symbolKey: rustConditionalGlobKey(path), line });
   }
-  for (const { path, line, conditional } of plainModuleFiles(root)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
-  const modules = declaredModules(root);
+  for (const { path, line, conditional } of plainModuleFiles(root, lineOf)) out.push({ symbolKey: rustModuleFileKey(path, conditional), line });
+  const modules = declaredModules(root, lineOf);
   for (const { path, line } of modules.declared) out.push({ symbolKey: rustModuleKey(path), line });
   if (modules.known) out.push({ symbolKey: RUST_MODULES_KNOWN_KEY, line: 1 });
   // A `mod` inside an inline module lies in a directory only the reader of the table can place (see `rustInlinePathModuleKey`).
-  for (const { path, line, inline } of pathModules(root)) {
+  for (const { path, line, inline } of pathModules(root, [], lineOf)) {
     out.push({ symbolKey: inline ? rustInlinePathModuleKey(path) : rustPathModuleKey(path), line });
     out.push({ symbolKey: rustPathModuleNameKey(path.slice(path.lastIndexOf('/') + 1)), line });
   }
@@ -767,7 +770,7 @@ const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy', 'rust_analyzer', 'diagnost
  *
  * Only what the tree proves is listed, so a module missing here is not known to be absent. Left out: a `mod` with an attribute in front of it other than the compiler's own inert ones (a `path`, a `cfg_attr`, an attribute macro), or inside an inline module with one; every `mod` of a file or an inline module whose head holds an inner attribute that is not one of the compiler's or that names a `path`; a `mod` inside a function body, a block or a macro's tokens; and every `mod` of a file the grammar could not parse to the end, where the nesting itself is a guess.
  */
-export function plainModuleFiles(root: Node): Array<{ path: string; line: number; conditional: boolean }> {
+export function plainModuleFiles(root: Node, lineOf: LineOf = rowLine): Array<{ path: string; line: number; conditional: boolean }> {
   const out: Array<{ path: string; line: number; conditional: boolean }> = [];
   if (root.hasError) return out;
   const visit = (items: readonly (Node | null)[], prefix: readonly string[], removable: boolean): void => {
@@ -782,7 +785,7 @@ export function plainModuleFiles(root: Node): Array<{ path: string; line: number
       if (name === '') continue;
       const conditional = here || attributes.some(attributeIsCfg);
       const body = node.childForFieldName('body');
-      if (body === null) out.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1, conditional });
+      if (body === null) out.push({ path: [...prefix, name].join('/'), line: lineOf(node), conditional });
       else visit(body.namedChildren, [...prefix, name], conditional);
     }
   };
@@ -795,7 +798,7 @@ export function plainModuleFiles(root: Node): Array<{ path: string; line: number
  *
  * `known` says that the list holds every such module of the file. It is false where a `mod` may exist that the tree does not show: in a file the grammar could not parse to the end, in one whose head holds an inner attribute that is not one of the compiler's, and in one that invokes, among those items or in a `cfg_if!` branch, a macro other than the item macros Runes reads (`ITEM_MACROS`, `cfg_if!`), since a macro can expand to a `mod` or include a file that holds one.
  */
-export function declaredModules(root: Node): { declared: Array<{ path: string; line: number }>; known: boolean } {
+export function declaredModules(root: Node, lineOf: LineOf = rowLine): { declared: Array<{ path: string; line: number }>; known: boolean } {
   const declared: Array<{ path: string; line: number }> = [];
   let known = !root.hasError;
   const visit = (items: readonly (Node | null)[], prefix: readonly string[]): void => {
@@ -807,7 +810,7 @@ export function declaredModules(root: Node): { declared: Array<{ path: string; l
         const name = unraw(node.childForFieldName('name')?.text ?? '');
         const body = node.childForFieldName('body');
         if (name === '') known = false;
-        else if (body === null) declared.push({ path: [...prefix, name].join('/'), line: node.startPosition.row + 1 });
+        else if (body === null) declared.push({ path: [...prefix, name].join('/'), line: lineOf(node) });
         else visit(body.namedChildren, [...prefix, name]);
       } else {
         const call = node.type === 'expression_statement' ? node.namedChild(0) : node;
@@ -816,7 +819,7 @@ export function declaredModules(root: Node): { declared: Array<{ path: string; l
         const macroName = macro?.type === 'scoped_identifier' ? macro.childForFieldName('name')?.text : macro?.text;
         const body = call.namedChildren.find((c) => c?.type === 'token_tree') ?? null;
         if (macroName === 'cfg_if' && body !== null) {
-          for (const mod of cfgIfModules(body)) declared.push({ path: [...prefix, ...mod.names].join('/'), line: mod.at.startPosition.row + 1 });
+          for (const mod of cfgIfModules(body)) declared.push({ path: [...prefix, ...mod.names].join('/'), line: lineOf(mod.at) });
           if (cfgIfInvokesMacro(body)) known = false;
         } else if (macroName === undefined || !ITEM_MACROS.has(macroName)) known = false;
       }
@@ -850,7 +853,7 @@ function cfgIfInvokesMacro(body: Node): boolean {
 /**
  * The files a Rust file loads through a `path` attribute on a `mod` without a body that is an item of the file itself, outside every inline module, and the same for a `mod` inside an inline module that carries no `path` attribute of its own, with the names of the inline modules in front of the path (`inline` is true for those, whose directory the reader of the table places): the attribute's string, read as a path with `/` between its parts and normalized (`./imp/../platform/linux.rs` → `platform/linux.rs`; a leading `..` stays). Rust reads it relative to the directory of the file that writes it, and treats the file it names as a mod-rs file, whose own `mod x;` lies beside it. Left out: a `mod` inside an inline module, where the path starts from another directory; one in a macro's tokens; a `cfg_attr` that applies a `path`; and a path that is absolute, empty, or written with an escape or a `\`.
  */
-export function pathModules(root: Node, directory: readonly string[] = []): Array<{ path: string; line: number; inline: boolean }> {
+export function pathModules(root: Node, directory: readonly string[] = [], lineOf: LineOf = rowLine): Array<{ path: string; line: number; inline: boolean }> {
   const out: Array<{ path: string; line: number; inline: boolean }> = [];
   for (const node of root.namedChildren) {
     if (node === null || node.type !== 'mod_item') continue;
@@ -858,10 +861,10 @@ export function pathModules(root: Node, directory: readonly string[] = []): Arra
     const body = node.childForFieldName('body');
     if (body !== null) {
       const name = unraw(node.childForFieldName('name')?.text ?? '');
-      if (name !== '' && !modHasPathOverride(node)) out.push(...pathModules(body, [...directory, name]));
+      if (name !== '' && !modHasPathOverride(node)) out.push(...pathModules(body, [...directory, name], lineOf));
       continue;
     }
-    for (const path of pathAttributeFiles(node, directory)) out.push({ path, line: node.startPosition.row + 1, inline: directory.length > 0 });
+    for (const path of pathAttributeFiles(node, directory)) out.push({ path, line: lineOf(node), inline: directory.length > 0 });
   }
   return out;
 }
@@ -996,12 +999,12 @@ const ITEM_KEYWORDS = new Set(['struct', 'enum', 'union', 'trait', 'type', 'fn',
 /**
  * Every name the top level of a Rust file binds as an item, read from its parse tree (the `source_file`'s own children, never anything below an item's body): the name of each item it defines (struct, enum, union, trait, type, fn, const, static, mod, `macro_rules!`; for a function with `#[proc_macro_derive(Name, …)]` in front of it the derive `Name` as well as the function), of each item an `extern` block there declares, each name a top-level `use` brings in (the last segment of a path, each member of a group, the alias of an `as`, the module a `self` member names; never a glob), and the items of the known item macros (`ITEM_MACROS`, and `cfg_if!`). A crate bound with `extern crate` is no item a `use` path names and is left out; so is `_`. `r#` is stripped. A part of the file the grammar cannot parse yields nothing.
  */
-export function topLevelItemNames(root: Node): Array<{ name: string; line: number }> {
+export function topLevelItemNames(root: Node, lineOf: LineOf = rowLine): Array<{ name: string; line: number }> {
   const out: Array<{ name: string; line: number }> = [];
   const add = (name: string | undefined, node: Node): void => {
     if (name === undefined) return;
     const plain = unraw(name);
-    if (plain !== '_' && plain !== '') out.push({ name: plain, line: node.startPosition.row + 1 });
+    if (plain !== '_' && plain !== '') out.push({ name: plain, line: lineOf(node) });
   };
   for (const node of root.namedChildren) {
     if (node === null) continue;
@@ -1044,27 +1047,27 @@ function deriveMacroName(fn: Node): string | undefined {
 }
 
 /** The crates the top level of a Rust file binds with `extern crate`, read from its parse tree: `name` is the name the declaration binds in the file's module (the alias of `extern crate a as name;`, else the crate) and `crate` the crate it stands for, both with `r#` stripped; `crate` is undefined for `extern crate self as name;`, which names the crate that writes it. `extern crate a as _;` binds none. */
-export function topLevelExternCrates(root: Node): Array<{ name: string; crate: string | undefined; line: number }> {
-  return externCratesIn(root);
+export function topLevelExternCrates(root: Node, lineOf: LineOf = rowLine): Array<{ name: string; crate: string | undefined; line: number }> {
+  return externCratesIn(root, lineOf);
 }
 
 /** The `extern crate` declarations among the items of `scope` itself (a file, the body of an inline module, a block), as `topLevelExternCrates` gives them for a file, those in the branches of a `cfg_if!` among the items of a module included. */
-function externCratesIn(scope: Node): Array<{ name: string; crate: string | undefined; line: number }> {
+function externCratesIn(scope: Node, lineOf: LineOf = rowLine): Array<{ name: string; crate: string | undefined; line: number }> {
   const out: Array<{ name: string; crate: string | undefined; line: number }> = [];
   for (const node of scope.namedChildren) {
     const call = node?.type === 'expression_statement' ? node.namedChild(0) : node;
     const body = node !== null && call?.type === 'macro_invocation' ? cfgIfBody(call, call === node ? scope : node) : null;
-    if (body !== null) out.push(...cfgIfExternCrates(body));
+    if (body !== null) out.push(...cfgIfExternCrates(body, lineOf));
     if (node === null || node.type !== 'extern_crate_declaration') continue;
     const crate = node.childForFieldName('name');
     const bound = unraw((node.childForFieldName('alias') ?? crate)?.text ?? '');
-    if (bound !== '' && bound !== '_' && bound !== 'self') out.push({ name: bound, crate: crate === null || crate.type !== 'identifier' || crate.text === 'self' ? undefined : unraw(crate.text), line: node.startPosition.row + 1 });
+    if (bound !== '' && bound !== '_' && bound !== 'self') out.push({ name: bound, crate: crate === null || crate.type !== 'identifier' || crate.text === 'self' ? undefined : unraw(crate.text), line: lineOf(node) });
   }
   return out;
 }
 
 /** The paths of the globs among the top-level `use` declarations of a Rust file, as written and with `r#` stripped (`types` for `pub use types::*;`, `self::a::b` for `use self::a::{b::*, C};`): the modules whose names each glob brings into the file's own module. A `use` that starts with `::` names a crate and is left out. `conditional` is true when a `cfg` in front of the `use`, or a `cfg_attr` there that applies one, may remove it; whether its predicate holds is not read. */
-export function topLevelGlobs(root: Node): Array<{ path: string; line: number; conditional: boolean }> {
+export function topLevelGlobs(root: Node, lineOf: LineOf = rowLine): Array<{ path: string; line: number; conditional: boolean }> {
   const out: Array<{ path: string; line: number; conditional: boolean }> = [];
   const visit = (arg: Node, prefix: string, line: number, conditional: boolean): void => {
     if (arg.type === 'use_wildcard') {
@@ -1083,7 +1086,7 @@ export function topLevelGlobs(root: Node): Array<{ path: string; line: number; c
   for (const node of root.namedChildren) {
     if (node === null || node.type !== 'use_declaration') continue;
     const arg = node.childForFieldName('argument');
-    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', node.startPosition.row + 1, attributesBefore(node).some(attributeIsCfg));
+    if (arg !== null && !arg.text.startsWith('::')) visit(arg, '', lineOf(node), attributesBefore(node).some(attributeIsCfg));
   }
   return out;
 }
@@ -1167,7 +1170,7 @@ export function cfgIfModules(body: Node): Array<{ names: string[]; at: Node; mov
 }
 
 /** The `extern crate` declarations of a `cfg_if!` body: each in a braced branch or in a `cfg_if!` nested in one, never one inside an inline `mod` or a function body written there, as `topLevelExternCrates` gives them (the name bound, the crate, `r#` stripped, none for `as _` or `self` alone), with `at`, the `extern` token. Every branch is listed, since each is the module's on some target. */
-export function cfgIfExternCrates(body: Node): Array<{ name: string; crate: string | undefined; line: number; at: Node }> {
+export function cfgIfExternCrates(body: Node, lineOf: LineOf = rowLine): Array<{ name: string; crate: string | undefined; line: number; at: Node }> {
   const out: Array<{ name: string; crate: string | undefined; line: number; at: Node }> = [];
   const braced = (tree: Node | undefined): tree is Node => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
   const branches = (tree: Node): void => {
@@ -1187,7 +1190,7 @@ export function cfgIfExternCrates(body: Node): Array<{ name: string; crate: stri
         if (tokens[end]?.type !== ';' || (target?.type !== 'identifier' && target?.type !== 'self') || (alias !== undefined && alias.type !== 'identifier' && alias.type !== '_')) continue;
         const crate = target.type === 'identifier' ? unraw(target.text) : undefined;
         const bound = alias === undefined ? (crate ?? '') : alias.type === 'identifier' ? unraw(alias.text) : '';
-        if (bound !== '' && bound !== 'self') out.push({ name: bound, crate, line: t.startPosition.row + 1, at: t });
+        if (bound !== '' && bound !== 'self') out.push({ name: bound, crate, line: lineOf(t), at: t });
         i = end;
       }
     }
@@ -1323,7 +1326,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 30,
+  rev: 31,
   declarations,
   uses,
 };

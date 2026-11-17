@@ -3,6 +3,7 @@ import { walk } from '../../ast/walk.mjs';
 import { walkWithParent } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
+import { lineReader } from './lines.mjs';
 
 /**
  * PHP dependency extractor.
@@ -381,6 +382,7 @@ const INCLUDE_TYPES = new Set([
 ]);
 
 function uses(file: ParsedFile): DetectedDep[] {
+  const lineOf = lineReader(file.content);
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
 
@@ -388,7 +390,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     if (specifier === undefined || specifier === '') return;
     const cleaned = stripLeadingBackslash(specifier);
     if (cleaned === '') return;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     const dedupKey = `${cleaned} ${line}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
@@ -474,12 +476,13 @@ const DECLARATION_TYPES = new Set([
  * declarations (field `name`).
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
+  const lineOf = lineReader(file.content);
   const out: DeclaredSymbol[] = [];
   walk(file.tree.rootNode, (node) => {
     if (!DECLARATION_TYPES.has(node.type)) return undefined;
     const nameNode = node.childForFieldName('name');
     if (nameNode !== null) {
-      out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+      out.push({ symbolKey: nameNode.text, line: lineOf(node) });
     }
     return undefined;
   });
@@ -488,7 +491,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const phpExtractor: DependencyExtractor = {
   languages: new Set(['php']),
-  rev: 2,
+  rev: 3,
   declarations,
   uses,
 };

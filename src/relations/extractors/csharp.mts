@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import { walkScoped, walkWithParent, type ParentOf } from './scope-walk.mjs';
+import { lineReader } from './lines.mjs';
 import type {
   DependencyExtractor,
   DetectedDep,
@@ -838,6 +839,7 @@ function declaredTypeKey(node: Node, scope: CsScope, fileNs: string): string | u
  * A file with top-level statements also declares the class the compiler synthesizes for them, the global `Program`, under a fallback key that an explicit global `Program` always outranks (IMPLICIT_PROGRAM_KEY).
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
+  const lineOf = lineReader(file.content);
   const out: DeclaredSymbol[] = [];
   const fileNs = fileScopedNamespace(file.tree.rootNode);
   // The instance methods of each type of the file, by type key (see `methodsKey`).
@@ -846,7 +848,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   const listedMembers = new Map<string, { line: number; entries: Set<string> }>();
   const listMember = (typeKey: string, owner: Node, entry: string): void => {
     let listed = listedMembers.get(typeKey);
-    if (listed === undefined) listedMembers.set(typeKey, (listed = { line: owner.startPosition.row + 1, entries: new Set() }));
+    if (listed === undefined) listedMembers.set(typeKey, (listed = { line: lineOf(owner), entries: new Set() }));
     listed.entries.add(entry);
   };
   // The shapes of the extension methods of the file, by extension key (see `extensionShapesKey`).
@@ -865,7 +867,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     // The node's type is read once: the visitor compares it many times, for every node of the file.
     const type = node.type;
     const owner = scope.typeDecl;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     // The members of a type other files can name, declared directly in its body: each name that is no type (see `membersKey`), and each instance method (see `methodsKey`).
     // Such a declaration stands in the body of a type and nowhere else, so the nearest type around it is its own.
     if (owner !== null && MEMBER_DECLARATION_TYPES.has(type) && !owner.fileLocal && owner.node.type !== 'enum_declaration') {
@@ -884,7 +886,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
           const reach = methodReach(node, owner.node);
           if (reach !== 'private' || accessModifiers(owner.node).has('partial')) {
             let listed = methods.get(typeKey);
-            if (listed === undefined) methods.set(typeKey, (listed = { line: owner.node.startPosition.row + 1, entries: new Set() }));
+            if (listed === undefined) methods.set(typeKey, (listed = { line: lineOf(owner.node), entries: new Set() }));
             const types = parameterTypes(node, scope);
             if (types.includes(':')) written = true;
             listed.entries.add(`${METHOD_REACH_MARKS[reach]}${name}:${methodShape(node)}${types}`);
@@ -906,13 +908,13 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     if (type === 'conversion_operator_declaration' && owner !== null && !owner.fileLocal && hasTokenChild(node, 'implicit')) {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
       const symbolKey = convertsKey(ns === '' ? scope.chain : `${ns}.${scope.chain}`);
-      if (!out.some((d) => d.symbolKey === symbolKey)) out.push({ symbolKey, line: owner.node.startPosition.row + 1 });
+      if (!out.some((d) => d.symbolKey === symbolKey)) out.push({ symbolKey, line: lineOf(owner.node) });
       return undefined;
     }
     const extName = extensionMethodName(node, scope, type);
     if (extName !== undefined) {
       const ns = [fileNs, blockNamespace(scope)].filter((p) => p !== '').join('.');
-      const line = node.startPosition.row + 1;
+      const line = lineOf(node);
       const assemblyOnly = assemblyOnlyExtension(node, scope.typeDecl!);
       const hidden = privateExtension(node);
       // The key of the method in its namespace (`extensionKey`), and the key it has in its class: `using static T;` imports the extension methods of T alone.
@@ -938,12 +940,12 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     const fileLocal = isFileLocalType(node, scope);
     if (fileLocal) {
       fileLocalTypes.push(symbolKey);
-      if (type === 'interface_declaration') out.push({ symbolKey: fileInterfaceKey(symbolKey), line: node.startPosition.row + 1 });
+      if (type === 'interface_declaration') out.push({ symbolKey: fileInterfaceKey(symbolKey), line: lineOf(node) });
     } else {
-      out.push({ symbolKey, line: node.startPosition.row + 1 });
-      if (typeSeen(node, scope.typeDecl) === 'assembly') out.push({ symbolKey: internalKey(symbolKey), line: node.startPosition.row + 1 });
-      if (type === 'interface_declaration') out.push({ symbolKey: interfaceKey(symbolKey), line: node.startPosition.row + 1 });
-      if (type === 'enum_declaration') out.push({ symbolKey: enumKey(symbolKey), line: node.startPosition.row + 1 });
+      out.push({ symbolKey, line: lineOf(node) });
+      if (typeSeen(node, scope.typeDecl) === 'assembly') out.push({ symbolKey: internalKey(symbolKey), line: lineOf(node) });
+      if (type === 'interface_declaration') out.push({ symbolKey: interfaceKey(symbolKey), line: lineOf(node) });
+      if (type === 'enum_declaration') out.push({ symbolKey: enumKey(symbolKey), line: lineOf(node) });
     }
     // The base list (see `baseListKey`): `class C(int x) : Base(x)` writes the base's type first and its arguments after it.
     const list = BASE_LIST_OWNERS.has(type) ? node.namedChildren.find((c) => c!.type === 'base_list') : undefined;
@@ -961,7 +963,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
   // Top-level statements compile into a class named `Program` in the global namespace, which the source never declares; `WebApplicationFactory<Program>` names it. Publish it at the first statement under the fallback key (see IMPLICIT_PROGRAM_KEY), unless the file declares a global `Program` itself (`public partial class Program { }`), whose own key already covers it.
   const firstStatement = firstTopLevelStatement(file.tree.rootNode);
   if (firstStatement && !out.some((d) => d.symbolKey === 'Program')) {
-    out.push({ symbolKey: IMPLICIT_PROGRAM_KEY, line: firstStatement.startPosition.row + 1 });
+    out.push({ symbolKey: IMPLICIT_PROGRAM_KEY, line: lineOf(firstStatement) });
   }
 
   return out;
@@ -1130,6 +1132,7 @@ function declaredTypeName(decl: Node): string {
  *  prefixes, the alias map (file-local + project-wide global aliases tracked apart), and the
  *  fully-resolved target type of each `using static` / `global using static` directive. */
 function buildUsingScope(file: ParsedFile, info: FileNsInfo = fileNsInfo(file.tree.rootNode)): UsingScope {
+  const lineOf = lineReader(file.content);
   const prefixes: string[] = [];
   const globalPrefixes: string[] = [];
   const aliases = new Map<string, string>();
@@ -1151,7 +1154,7 @@ function buildUsingScope(file: ParsedFile, info: FileNsInfo = fileNsInfo(file.tr
     if (hasTokenChild(node, 'static')) {
       const target = directiveNamespaceText(node);
       if (target !== undefined && target !== '') {
-        staticTargets.push({ fqn: target, line: node.startPosition.row + 1 });
+        staticTargets.push({ fqn: target, line: lineOf(node) });
         const block = directiveBlock(file, node, scope, info);
         const fqn = withArity(target);
         staticDecls.push({ fqn, rooted: isRootedDirective(node), body: directiveBodyChain(info, node, scope), start: block.start, end: block.end });
@@ -1571,6 +1574,7 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
  * type-position walk — is preserved exactly; `assembleCsharpCandidates` replays it in order.
  */
 export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
+  const lineOf = lineReader(file.content);
   const info = fileNsInfo(file.tree.rootNode);
   const scope = buildUsingScope(file, info);
   const fileNs = info.fileNs;
@@ -1711,7 +1715,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     const scope = scopeOf(expr);
     const memoKey = `${ref}\0${scope.ns?.decl.startIndex ?? -1}\0${scope.bodyChain}`;
     let place = memberTypePlaces.get(memoKey);
-    if (place === undefined) memberTypePlaces.set(memoKey, (place = receiverTypes.push({ kind: 'plain', ref, line: expr.startPosition.row + 1, rooted: false, enclosingNs: nsChain(expr), at: expr.startIndex, ...enclosingTypes(expr) }) - 1));
+    if (place === undefined) memberTypePlaces.set(memoKey, (place = receiverTypes.push({ kind: 'plain', ref, line: lineOf(expr), rooted: false, enclosingNs: nsChain(expr), at: expr.startIndex, ...enclosingTypes(expr) }) - 1));
     const holders = membersAround(expr).members;
     return holders === undefined ? [place] : [place, holders];
   };
@@ -1858,7 +1862,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         if (emitted.has(typeNode.id)) return;
         emitted.add(typeNode.id);
         if (isTypeParameterInScope(typeNode.text, scopeOf(typeNode))) return; // `T x;`, `GetRequiredService<T>()` inside `M<T>()` name the type parameter
-        pushRef(typeNode.text, typeNode, typeNode.startPosition.row + 1);
+        pushRef(typeNode.text, typeNode, lineOf(typeNode));
         return;
       }
       case 'qualified_name': {
@@ -1876,7 +1880,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           // `global::Settings` / `global::Box<T>`: the one name is looked up in the global namespace only, never in an enclosing namespace or a using, and no type parameter shadows it, so it is a rooted reference; the type arguments are ordinary references.
           const nameField = typeNode.childForFieldName('name')!; // an alias-qualified name always has its name
           const generic = nameField.type === 'generic_name';
-          pushRef(generic ? genericKey(nameField) : nameField.text, typeNode, typeNode.startPosition.row + 1, true);
+          pushRef(generic ? genericKey(nameField) : nameField.text, typeNode, lineOf(typeNode), true);
           if (generic) emitTypeArguments(nameField);
           return;
         }
@@ -1895,7 +1899,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
               kind: 'alias',
               aliasName: aliasField.text,
               tail: generic !== null ? genericKey(generic) : stripTypeArguments(stripGlobalQualifier(nameField.text)),
-              line: typeNode.startPosition.row + 1,
+              line: lineOf(typeNode),
               enclosingNs: nsChain(typeNode),
               at: typeNode.startIndex,
             });
@@ -1911,7 +1915,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         // silent by the ordinary fail-to-silence rule. The type arguments are descended as before.
         if (emitted.has(typeNode.id)) return;
         emitted.add(typeNode.id);
-        pushRef(genericKey(typeNode), typeNode, typeNode.startPosition.row + 1);
+        pushRef(genericKey(typeNode), typeNode, lineOf(typeNode));
         emitTypeArguments(typeNode);
         return;
       }
@@ -1956,7 +1960,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
    * Without the strip the written text, `<…>` included, could never match a declaration key.
    */
   function emitQualified(q: Node): void {
-    const line = q.startPosition.row + 1;
+    const line = lineOf(q);
     const rooted = q.text.startsWith('global::');
     const parts = qualifiedNameParts(q);
     if (parts.alias !== undefined) {
@@ -1999,7 +2003,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       }
     };
     if (!collect(access) || !tail.every(collect) || (!rooted && alias === undefined && isTypeParameterInScope(segs[0], scopeOf(access)))) return false;
-    const line = access.startPosition.row + 1;
+    const line = lineOf(access);
     if (alias !== undefined) refs.push({ kind: 'alias', aliasName: alias, tail: segs.join('.'), line, enclosingNs: nsChain(access), at: access.startIndex });
     else if (asReceiver) {
       if (namesOwnProgram(segs[0])) return true;
@@ -2013,7 +2017,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   function emitPatternName(name: Node): void {
     emitted.add(name.id);
     if (isTypeParameterInScope(name.text, scopeOf(name))) return;
-    pushRef(name.text, name, name.startPosition.row + 1, false, membersAround(name));
+    pushRef(name.text, name, lineOf(name), false, membersAround(name));
   }
 
   /** The subpatterns of a positional pattern the grammar reads as a tuple expression (see the constant pattern). A subpattern after a name (`(Item1: Order, _)`) is the argument's last child. */
@@ -2089,7 +2093,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
    * Emit every named type of a type written in a using directive's target, each read where the directive reads its target (C# spec §14.5.2): a bare, qualified or generic name is one `target` reference, a generic's type arguments are references of their own read the same way, and an array, pointer or nullable type and each tuple element are descended to their named types (C# 12 lets an alias name any type; the tuple element labels are not types). A name written after `global::` is rooted. A name written after a using alias (`S::A.B`) gives nothing: an alias of the same body never applies to a directive, and an alias of an outer body or an extern alias is not read (a silence); its type arguments still give theirs.
    */
   function emitDirectiveType(typeNode: Node, directive: Node): void {
-    const line = typeNode.startPosition.row + 1;
+    const line = lineOf(typeNode);
     switch (typeNode.type) {
       case 'identifier':
         pushTarget(typeNode.text, directive, line);
@@ -2299,7 +2303,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         const [base, arity] = tick > written.lastIndexOf('.') ? [written.slice(0, tick), written.slice(tick)] : [written, ''];
         const last = base.split('.').pop() ?? base;
         const suffixed = last.endsWith('Attribute') ? undefined : `${base}Attribute${arity}`;
-        pushAttribute(written, suffixed, at, at.startPosition.row + 1, rooted, via);
+        pushAttribute(written, suffixed, at, lineOf(at), rooted, via);
       };
       if (named !== null && named.type === 'identifier') emitAttribute(named.text, nameField);
       else if (named !== null && named.type === 'qualified_name') {
@@ -2387,7 +2391,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         if (!namesOwnProgram(chain[0])) refs.push({
           kind: 'receiver',
           chain,
-          line: expr.startPosition.row + 1,
+          line: lineOf(expr),
           enclosingNs: nsChain(node),
           at: node.startIndex,
           rooted,
@@ -2410,7 +2414,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         refs.push({
           kind: 'ext',
           name: call.name,
-          line: node.startPosition.row + 1,
+          line: lineOf(node),
           enclosingNs: nsChain(node),
           at: node.startIndex,
           ...extensionReceiver(node, call),
@@ -2455,7 +2459,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
         const emitHolder = (name: Node): void => {
           if (emitted.has(name.id)) return;
           emitted.add(name.id);
-          if (!isTypeParameterInScope(name.text, scopeOf(name))) pushRef(`${name.text}\`1`, name, name.startPosition.row + 1);
+          if (!isTypeParameterInScope(name.text, scopeOf(name))) pushRef(`${name.text}\`1`, name, lineOf(name));
         };
         let generic = node.childForFieldName('left')!;
         for (let level = 1; shift !== undefined && level < shift.childForFieldName('operator')!.type.length; level++) {
@@ -2487,7 +2491,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
           refs.push({
             kind: 'receiver',
             chain: chainText.split('.'),
-            line: arg.startPosition.row + 1,
+            line: lineOf(arg),
             enclosingNs: nsChain(arg),
             at: arg.startIndex,
             rooted: false,
@@ -3132,7 +3136,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 49,
+  rev: 50,
   declarations,
   uses,
 };

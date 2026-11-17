@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
+import { lineReader, type LineOf } from './lines.mjs';
 import { indexScopes, walkScoped, walkWithParent, type ParentOf } from './scope-walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile, TargetHint } from './types.mjs';
 import { single } from './types.mjs';
@@ -151,7 +152,7 @@ function withView<T>(file: ParsedFile, fn: (view: KotlinView) => T): T {
 }
 
 function uses(file: ParsedFile): DetectedDep[] {
-  return withView(file, (view) => usesOf(view));
+  return withView(file, (view) => usesOf(view, lineReader(file.content)));
 }
 
 /** The package of a file: its first `package_header`'s qualified identifier, or '' for the root package. */
@@ -307,7 +308,7 @@ function aroundScopes(view: KotlinView): Map<number, AroundScope> {
   );
 }
 
-function usesOf(view: KotlinView): DetectedDep[] {
+function usesOf(view: KotlinView, lineOf: LineOf): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
   const scope = kotlinScope(view);
@@ -319,7 +320,7 @@ function usesOf(view: KotlinView): DetectedDep[] {
     if (scope === undefined || name === '') return;
     const candidates = samePackageCandidates(scope, name, scopes.get(node.id)!);
     if (candidates === undefined) return;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     const dedupKey = `${candidates.map((c) => (c.kind === 'symbol' ? c.symbolKey : '')).join('|')} ${line}`;
     if (seenGroups.has(dedupKey)) return;
     seenGroups.add(dedupKey);
@@ -328,7 +329,7 @@ function usesOf(view: KotlinView): DetectedDep[] {
 
   const emit = (symbolKey: string | undefined, node: Node, kind: 'import' | 'type-ref' = 'import'): void => {
     if (symbolKey === undefined || symbolKey === '') return;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     const dedupKey = `${symbolKey} ${line}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
@@ -468,17 +469,17 @@ function facadeName(file: ParsedFile, view: KotlinView): string | undefined {
 const COMMENT_TYPES = new Set(['line_comment', 'block_comment']);
 
 /**
- * The row of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file, and not on the declaration itself (the same text splits after exactly one declaration and not after none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR; stacked annotation lines can each become such a statement, with comments between them and the declaration. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)`, `@Suppress("x") run()`, `@Suppress("x") { y }` and `lbl@ (y)` are real statements, and the grammar reads them so at every depth.
+ * The first of the annotations the grammar split off a top-level declaration, undefined when it split none. Depending on what precedes it in the file, and not on the declaration itself (the same text splits after exactly one declaration and not after none or two), the shipped grammar reads `@OptIn(X::class)` on the line above a declaration as a script statement, `@OptIn` annotating the parenthesized `(X::class)`, and the declaration as starting on the line below, with no ERROR; stacked annotation lines can each become such a statement, with comments between them and the declaration. Everywhere else it reads one annotated declaration starting at its first annotation, as Kotlin does. Only parentheses that can be the arguments of the annotation before them count: `@Suppress("x") (y)`, `@Suppress("x") run()`, `@Suppress("x") { y }` and `lbl@ (y)` are real statements, and the grammar reads them so at every depth.
  */
-function splitAnnotationsRow(node: Node): number | undefined {
+function splitAnnotations(node: Node): Node | undefined {
   if (node.parent?.type !== 'source_file') return undefined;
-  let row: number | undefined;
+  let first: Node | undefined;
   for (let prev = node.previousSibling; prev !== null; prev = prev.previousSibling) {
     if (COMMENT_TYPES.has(prev.type)) continue;
     if (prev.type !== 'annotated_expression' || !onlyAnnotations(prev)) break;
-    row = prev.startPosition.row;
+    first = prev;
   }
-  return row;
+  return first;
 }
 
 /** The grammar nests one annotation per `annotated_expression`, a comment after it included: `@A // c` over `@B(x)` is `@A` over `@B` over `(x)`. */
@@ -516,6 +517,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
   const out: DeclaredSymbol[] = [];
   const seen = new Set<string>();
+  const lineOf = lineReader(file.content);
   const add = (symbolKey: string, line: number): void => {
     if (seen.has(symbolKey)) return;
     seen.add(symbolKey);
@@ -544,7 +546,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
     if (enclosing.chain === '' && (node.type === 'function_declaration' || node.type === 'property_declaration')) {
       topLevelCallable = true;
     }
-    add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), (splitAnnotationsRow(node) ?? node.startPosition.row) + 1);
+    add(qualify(enclosing.chain === '' ? name : `${enclosing.chain}+${name}`), lineOf(splitAnnotations(node) ?? node));
     return below;
   });
 
@@ -552,7 +554,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
   // what could not be read at all (see the file doc comment, PARSE RECOVERY).
   for (const d of view.lexical) {
     if (d.kind === 'callable') topLevelCallable = true;
-    add(qualify(d.name), d.line);
+    add(qualify(d.name), lineOf({ startPosition: d.at }));
   }
   for (const typeName of view.incompleteTypes) add(qualify(`${typeName}+*`), 1);
   if (view.packageIncomplete) add(qualify('*'), 1);
@@ -566,7 +568,7 @@ function declarationsOf(file: ParsedFile, view: KotlinView): DeclaredSymbol[] {
 
 export const kotlinExtractor: DependencyExtractor = {
   languages: new Set(['kotlin']),
-  rev: 11,
+  rev: 12,
   declarations,
   uses,
 };

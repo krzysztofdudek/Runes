@@ -2,6 +2,7 @@ import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
 import type { DependencyExtractor, DetectedDep, DeclaredSymbol, ParsedFile } from './types.mjs';
 import { single } from './types.mjs';
+import { lineReader } from './lines.mjs';
 
 /**
  * Go dependency extractor.
@@ -46,12 +47,13 @@ function importPathFromSpec(spec: Node): string | undefined {
 }
 
 function uses(file: ParsedFile): DetectedDep[] {
+  const lineOf = lineReader(file.content);
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
 
   const emit = (specifier: string | undefined, node: Node): void => {
     if (specifier === undefined || specifier === '') return;
-    const line = node.startPosition.row + 1;
+    const line = lineOf(node);
     const dedupKey = `${specifier} ${line}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
@@ -82,6 +84,7 @@ function uses(file: ParsedFile): DetectedDep[] {
  * walk for the inner `type_spec`/`type_alias` rather than the declaration wrapper.
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
+  const lineOf = lineReader(file.content);
   const out: DeclaredSymbol[] = [];
   walk(file.tree.rootNode, (node) => {
     if (
@@ -92,7 +95,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
     ) {
       const nameNode = node.childForFieldName('name');
       if (nameNode !== null) {
-        out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+        out.push({ symbolKey: nameNode.text, line: lineOf(node) });
       }
     }
     return undefined;
@@ -102,7 +105,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const goExtractor: DependencyExtractor = {
   languages: new Set(['go']),
-  rev: 1,
+  rev: 2,
   declarations,
   uses,
 };

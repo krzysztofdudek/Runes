@@ -1,6 +1,7 @@
 import { walk } from '../../ast/walk.mjs';
 import { walkWithParent } from './scope-walk.mjs';
 import { single } from './types.mjs';
+import { lineReader } from './lines.mjs';
 /**
  * PHP dependency extractor.
  *
@@ -397,6 +398,7 @@ const INCLUDE_TYPES = new Set([
     'require_once_expression',
 ]);
 function uses(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     const seen = new Set();
     const emit = (specifier, node) => {
@@ -405,7 +407,7 @@ function uses(file) {
         const cleaned = stripLeadingBackslash(specifier);
         if (cleaned === '')
             return;
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         const dedupKey = `${cleaned} ${line}`;
         if (seen.has(dedupKey))
             return;
@@ -488,13 +490,14 @@ const DECLARATION_TYPES = new Set([
  * declarations (field `name`).
  */
 function declarations(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     walk(file.tree.rootNode, (node) => {
         if (!DECLARATION_TYPES.has(node.type))
             return undefined;
         const nameNode = node.childForFieldName('name');
         if (nameNode !== null) {
-            out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+            out.push({ symbolKey: nameNode.text, line: lineOf(node) });
         }
         return undefined;
     });
@@ -502,7 +505,7 @@ function declarations(file) {
 }
 export const phpExtractor = {
     languages: new Set(['php']),
-    rev: 2,
+    rev: 3,
     declarations,
     uses,
 };

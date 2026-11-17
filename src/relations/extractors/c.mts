@@ -1,6 +1,7 @@
 import type { Node } from 'web-tree-sitter';
 import { walk } from '../../ast/walk.mjs';
 import type { DependencyExtractor, DeclaredSymbol, ParsedFile } from './types.mjs';
+import { lineReader } from './lines.mjs';
 import { includeUses } from './c-cpp-shared.mjs';
 
 /**
@@ -38,23 +39,24 @@ const uses = includeUses;
  *   - `type_definition`      (typedef; the declared `type_identifier`)
  */
 function declarations(file: ParsedFile): DeclaredSymbol[] {
+  const lineOf = lineReader(file.content);
   const out: DeclaredSymbol[] = [];
   walk(file.tree.rootNode, (node) => {
     if (node.type === 'function_definition') {
       const name = functionName(node);
-      if (name !== undefined) out.push({ symbolKey: name, line: node.startPosition.row + 1 });
+      if (name !== undefined) out.push({ symbolKey: name, line: lineOf(node) });
       return undefined;
     }
     if (node.type === 'struct_specifier') {
       const nameNode = node.childForFieldName('name');
-      if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: node.startPosition.row + 1 });
+      if (nameNode !== null) out.push({ symbolKey: nameNode.text, line: lineOf(node) });
       return undefined;
     }
     if (node.type === 'type_definition') {
       // A typedef may declare one or more type_identifiers; emit each.
       for (const child of node.namedChildren) {
         if (child !== null && child.type === 'type_identifier') {
-          out.push({ symbolKey: child.text, line: node.startPosition.row + 1 });
+          out.push({ symbolKey: child.text, line: lineOf(node) });
         }
       }
       return undefined;
@@ -78,7 +80,7 @@ function functionName(def: Node): string | undefined {
 
 export const cExtractor: DependencyExtractor = {
   languages: new Set(['c']),
-  rev: 2,
+  rev: 3,
   declarations,
   uses,
 };

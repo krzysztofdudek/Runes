@@ -1,4 +1,5 @@
 import { walk } from '../../ast/walk.mjs';
+import { lineReader } from './lines.mjs';
 import { includeUses } from './c-cpp-shared.mjs';
 /**
  * C++ dependency extractor.
@@ -35,9 +36,10 @@ const uses = includeUses;
  * Walks the whole tree so names nested inside a `namespace_definition` are still captured.
  */
 function declarations(file) {
+    const lineOf = lineReader(file.content);
     const out = [];
     walk(file.tree.rootNode, (node) => {
-        const line = node.startPosition.row + 1;
+        const line = lineOf(node);
         if (node.type === 'function_definition') {
             const name = functionName(node);
             if (name !== undefined)
@@ -78,7 +80,7 @@ function functionName(def) {
 }
 export const cppExtractor = {
     languages: new Set(['cpp']),
-    rev: 2,
+    rev: 3,
     declarations,
     uses,
 };

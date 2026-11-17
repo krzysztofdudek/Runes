@@ -491,19 +491,19 @@ function readHeader(chunk) {
     const kw = toks[i];
     if (kw === undefined || kw.kind !== 'id')
         return undefined;
-    const line = kw.line + 1;
+    const at = { row: kw.line, column: kw.col };
     const nameAt = (j) => (toks[j]?.kind === 'id' ? toks[j].text.replace(/`/g, '') : undefined);
     if (kw.text === 'class' || kw.text === 'interface' || kw.text === 'object') {
         const name = nameAt(i + 1);
-        return name === undefined ? undefined : { name, kind: 'type', line };
+        return name === undefined ? undefined : { name, kind: 'type', at };
     }
     if (kw.text === 'typealias') {
         const name = nameAt(i + 1);
-        return name === undefined ? undefined : { name, kind: 'callable', line };
+        return name === undefined ? undefined : { name, kind: 'callable', at };
     }
     if (kw.text === 'fun' && toks[i + 1]?.kind === 'id' && toks[i + 1].text === 'interface') {
         const name = nameAt(i + 2);
-        return name === undefined ? undefined : { name, kind: 'type', line };
+        return name === undefined ? undefined : { name, kind: 'type', at };
     }
     if (kw.text === 'fun' || kw.text === 'val' || kw.text === 'var') {
         let j = i + 1;
@@ -541,7 +541,7 @@ function readHeader(chunk) {
             else if (!(t.kind === 'p' && (t.text === '.' || t.text === '?' || t.text === ',')))
                 return undefined;
         }
-        return last === undefined ? undefined : { name: last, kind: 'callable', line };
+        return last === undefined ? undefined : { name: last, kind: 'callable', at };
     }
     return undefined;
 }
@@ -585,8 +585,8 @@ const MISREAD_TYPES = new Set(['annotated_expression', 'assignment']);
 function misreadDeclaration(node) {
     if (!MISREAD_TYPES.has(node.type))
         return undefined;
-    const row = node.startPosition.row;
-    const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row }));
+    const { row, column } = node.startPosition;
+    const toks = tokenize(node.text).toks.map((t) => ({ ...t, line: t.line + row, col: t.line === 0 ? t.col + column : t.col }));
     return readHeader({ start: node.startIndex, end: node.endIndex, toks });
 }
 /** Members a class body ends a class with: a class that has one of them is complete when the next member begins. */

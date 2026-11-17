@@ -3,7 +3,8 @@ import type { Point } from 'web-tree-sitter';
 /** The 1-based line a node starts on, as an editor shows the file. */
 export type LineOf = (node: { readonly startPosition: Point }) => number;
 
-const rowLine: LineOf = (node) => node.startPosition.row + 1;
+/** The row plus one: the line where every line ends with an LF or a CRLF. */
+export const rowLine: LineOf = (node) => node.startPosition.row + 1;
 
 /**
  * How the extractors tell the line of a node of `content`. Tree-sitter counts rows by LF alone, so in a file whose lines end with a CR that no LF follows (old Mac line ends, or a file that mixes them in) a row is not the line an editor shows. For content with no such CR the line is the row plus one, as it always was; otherwise it is one more than the count of LF, CRLF and lone CR line ends before the node's start. U+2028, U+2029 and U+0085 end no line, as tree-sitter reads them.

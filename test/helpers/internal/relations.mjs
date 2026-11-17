@@ -31,3 +31,4 @@ export * from '../../../dist/relations/extractors/ruby.mjs';
 export * from '../../../dist/relations/extractors/c.mjs';
 export * from '../../../dist/relations/extractors/cpp.mjs';
 export * from '../../../dist/relations/extractors/csharp-resolve.mjs';
+export * from '../../../dist/relations/extractors/lines.mjs';
