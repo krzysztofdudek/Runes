@@ -178,3 +178,37 @@ describe('a parse stopped by its progress callback', () => {
     assert.equal(typeof seen[2][2]?.progressCallback, 'function');
   });
 });
+
+describe('a parse the runtime aborts', () => {
+  // The runtime aborts at its 2 GiB memory limit (a C# file of `int x = f(a < b, a < b, …` at 32 KiB on web-tree-sitter 0.27.2) with a RuntimeError whose message starts `Aborted(`; afterwards the runtime is damaged for the whole process. A stub runtime aborts on every parse, so the abort is seen without spending 2 GiB.
+  const abortingRuntime = (parses) => {
+    class AbortingParser {
+      static init() { return Promise.resolve(); }
+      setLanguage() {}
+      parse(content, _old, options) {
+        parses.push(content);
+        options?.progressCallback?.({ currentOffset: 2, hasError: false });
+        throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.');
+      }
+      reset() {}
+      delete() {}
+    }
+    return { Parser: AbortingParser, Language: { load: async () => ({}) } };
+  };
+
+  it('is not retried as a scanner trap: the call rejects with ERUNTIMEABORTED, and every later parse on the host rejects the same way without reaching the runtime', async () => {
+    const parses = [];
+    const h = createParserHost({ runtime: abortingRuntime(parses), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    await assert.rejects(h.withParsedFile('a.cs', 'x', () => {}), (error) => error.code === 'ERUNTIMEABORTED' && error.message.includes('a.cs'));
+    assert.deepEqual(parses, ['x'], 'parsed once, never retried');
+    await assert.rejects(h.parseFile('b.ts', 'y'), (error) => error.code === 'ERUNTIMEABORTED');
+    assert.deepEqual(parses, ['x'], 'the spent host does not reach the runtime again');
+  });
+
+  it('with a progress callback that asks to stop, an abort still rejects with ERUNTIMEABORTED, not EPARSESTOPPED', async () => {
+    const parses = [];
+    const h = createParserHost({ runtime: abortingRuntime(parses), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    await assert.rejects(h.parseFile('a.cs', 'x', undefined, { progressCallback: () => true }), (error) => error.code === 'ERUNTIMEABORTED');
+    assert.deepEqual(parses, ['x']);
+  });
+});
