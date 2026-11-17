@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -53,69 +53,89 @@ function untar(bytes, dest) {
   }
 }
 
-// The package as npm publishes it: its own files (the list npm packs from this checkout), the grammar files built into it as the release builds them, packed by npm and unpacked into a fresh folder. A consumer then materializes every pin from it with an empty cache, offline, with no grammar package installed where it resolves from: every file must come from the package, with the pinned sha256, and nothing may be compiled or fetched.
-test('the packed package carries every pinned grammar, and buildGrammars installs all of them from it offline', { timeout: 900_000 }, async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'runes-packed-'));
-  try {
+// The npm grammar packages as grammars:package installs them: in a folder of their own, from its lockfile, with no install script.
+function installGrammarPackages(npm, dest) {
+  mkdirSync(dest, { recursive: true });
+  for (const file of ['package.json', 'package-lock.json', '.npmrc']) cpSync(path.join(root, 'grammars', 'npm', file), path.join(dest, file));
+  run(npm, ['ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], dest);
+  return dest;
+}
+
+// The package as npm publishes it: its own files (the list npm packs from this checkout), the grammar files built into it as the release builds them, packed by npm and unpacked into a fresh folder. Built once for the tests below.
+const work = mkdtempSync(path.join(tmpdir(), 'runes-packed-'));
+after(() => rmSync(work, { recursive: true, force: true }));
+let packing;
+function packedPackage() {
+  packing ??= (async () => {
     const npm = npmCli();
+    const grammarPackages = installGrammarPackages(npm, path.join(work, 'grammar-packages'));
     const listing = JSON.parse(run(npm, ['pack', '--dry-run', '--json'], root))[0].files.map((f) => f.path.replace(/\\/g, '/'));
-    const pkgDir = path.join(dir, 'source');
+    const pkgDir = path.join(work, 'source');
     for (const file of listing.filter((p) => !p.startsWith('grammars/built/'))) cpSync(path.join(root, file), path.join(pkgDir, file));
     for (const ignore of ['.gitignore', '.npmignore']) if (existsSync(path.join(root, ignore))) cpSync(path.join(root, ignore), path.join(pkgDir, ignore));
-
-    run(path.join(root, 'scripts', 'build-grammars.mjs'), ['--package', '--out', path.join(pkgDir, 'grammars', 'built')], root);
-
-    const tarballs = path.join(dir, 'tarballs');
+    cpSync(path.join(root, 'grammars', 'npm'), path.join(pkgDir, 'grammars', 'npm'), { recursive: true, filter: (src) => path.basename(src) !== 'node_modules' });
+    run(path.join(root, 'scripts', 'build-grammars.mjs'), ['--package', '--out', path.join(pkgDir, 'grammars', 'built'), '--resolve-from', grammarPackages], root);
+    const tarballs = path.join(work, 'tarballs');
     mkdirSync(tarballs);
     const packed = JSON.parse(run(npm, ['pack', '--json', '--pack-destination', tarballs], pkgDir))[0];
-    const shipped = packed.files.map((f) => f.path.replace(/\\/g, '/')).filter((p) => p.startsWith('grammars/built/')).sort();
-    assert.deepEqual(shipped, manifest.grammars.flatMap((g) => [`grammars/built/${g.wasmFile}`, `grammars/built/${nodeTypesFile(g.wasmFile)}`]).sort(), 'the tarball holds exactly the two files of each pin');
-
-    const unpacked = path.join(dir, 'unpacked');
+    const unpacked = path.join(work, 'unpacked');
     untar(gunzipSync(readFileSync(path.join(tarballs, packed.filename))), unpacked);
-    const installed = await import(pathToFileURL(path.join(unpacked, 'package', 'dist', 'grammars', 'index.mjs')).href);
+    return { npm, grammarPackages, files: packed.files.map((f) => f.path.replace(/\\/g, '/')), pkg: path.join(unpacked, 'package') };
+  })();
+  return packing;
+}
 
-    const cacheDir = path.join(dir, 'empty-cache');
-    const resolveFrom = path.join(dir, 'empty-project');
-    const outDir = path.join(dir, 'consumer-grammars');
-    mkdirSync(cacheDir);
-    mkdirSync(resolveFrom);
-    const built = await installed.buildGrammars({ outDir, cacheDir, resolveFrom, offline: true });
-    assert.deepEqual(built.map((b) => [b.language, b.from]), manifest.grammars.map((g) => [g.language, 'shipped']));
-    for (const g of manifest.grammars) {
-      assert.equal(sha(readFileSync(path.join(outDir, g.wasmFile))), g.sha256.wasm, `${g.language} wasm`);
-      assert.equal(sha(readFileSync(path.join(outDir, nodeTypesFile(g.wasmFile)))), g.sha256.nodeTypes, `${g.language} node-types.json`);
-    }
-    assert.deepEqual(installed.verifyGrammarFiles(outDir), []);
-    assert.deepEqual(readdirSync(cacheDir), [], 'nothing was fetched or built into the cache');
-    assert.deepEqual(readdirSync(resolveFrom), []);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+// A consumer materializes every pin from the unpacked package with an empty cache, offline, with no grammar package installed where it resolves from: every file must come from the package, with the pinned sha256, and nothing may be compiled or fetched.
+test('the packed package carries every pinned grammar, and buildGrammars installs all of them from it offline', { timeout: 900_000 }, async () => {
+  const { files, pkg } = await packedPackage();
+  const shipped = files.filter((p) => p.startsWith('grammars/built/')).sort();
+  assert.deepEqual(shipped, manifest.grammars.flatMap((g) => [`grammars/built/${g.wasmFile}`, `grammars/built/${nodeTypesFile(g.wasmFile)}`]).sort(), 'the tarball holds exactly the two files of each pin');
+  assert.deepEqual(files.filter((p) => p.startsWith('grammars/npm/')), [], 'the grammar packages folder is not packed');
+  const installed = await import(pathToFileURL(path.join(pkg, 'dist', 'grammars', 'index.mjs')).href);
+  const dir = mkdtempSync(path.join(work, 'consumer-'));
+  const cacheDir = path.join(dir, 'empty-cache');
+  const resolveFrom = path.join(dir, 'empty-project');
+  const outDir = path.join(dir, 'consumer-grammars');
+  mkdirSync(cacheDir);
+  mkdirSync(resolveFrom);
+  const built = await installed.buildGrammars({ outDir, cacheDir, resolveFrom, offline: true });
+  assert.deepEqual(built.map((b) => [b.language, b.from]), manifest.grammars.map((g) => [g.language, 'shipped']));
+  for (const g of manifest.grammars) {
+    assert.equal(sha(readFileSync(path.join(outDir, g.wasmFile))), g.sha256.wasm, `${g.language} wasm`);
+    assert.equal(sha(readFileSync(path.join(outDir, nodeTypesFile(g.wasmFile)))), g.sha256.nodeTypes, `${g.language} node-types.json`);
   }
+  assert.deepEqual(installed.verifyGrammarFiles(outDir), []);
+  assert.deepEqual(readdirSync(cacheDir), [], 'nothing was fetched or built into the cache');
+  assert.deepEqual(readdirSync(resolveFrom), []);
 });
 
-test('the package build of the grammars refuses a folder that holds a file no pin names, and takes no language list', { timeout: 600_000 }, () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'runes-packed-'));
-  try {
-    const script = path.join(root, 'scripts', 'build-grammars.mjs');
-    const out = path.join(dir, 'built');
-    mkdirSync(out);
-    writeFileSync(path.join(out, 'tree-sitter-cobol.wasm'), 'stale');
-    const stray = spawnSync(process.execPath, [script, '--package', '--out', out], { cwd: root, encoding: 'utf8', timeout: 600_000 });
-    assert.equal(stray.status, 1, stray.stderr);
-    assert.match(stray.stderr, /must hold exactly the pinned grammar files, and does not:\n {2}tree-sitter-cobol\.wasm: no pin names it/);
-    assert.deepEqual(verifyGrammarFiles(out), [], 'every pin was still built and verified');
-    const listed = spawnSync(process.execPath, [script, '--package', '--only', 'go'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
-    assert.equal(listed.status, 2);
-    assert.match(listed.stderr, /--package builds every pin and takes no --only or --table/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+test('the package build of the grammars refuses a folder that holds a file no pin names, and takes no language list', { timeout: 900_000 }, async () => {
+  const { grammarPackages } = await packedPackage();
+  const script = path.join(root, 'scripts', 'build-grammars.mjs');
+  const out = path.join(mkdtempSync(path.join(work, 'stray-')), 'built');
+  mkdirSync(out);
+  writeFileSync(path.join(out, 'tree-sitter-cobol.wasm'), 'stale');
+  const stray = spawnSync(process.execPath, [script, '--package', '--out', out, '--resolve-from', grammarPackages], { cwd: root, encoding: 'utf8', timeout: 600_000 });
+  assert.equal(stray.status, 1, stray.stderr);
+  assert.match(stray.stderr, /must hold exactly the pinned grammar files, and does not:\n {2}tree-sitter-cobol\.wasm: no pin names it/);
+  assert.deepEqual(verifyGrammarFiles(out), [], 'every pin was still built and verified');
+  const listed = spawnSync(process.execPath, [script, '--package', '--only', 'go'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(listed.status, 2);
+  assert.match(listed.stderr, /--package builds every pin and takes no --only or --table/);
+  const alone = spawnSync(process.execPath, [script, '--resolve-from', grammarPackages], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(alone.status, 2);
+  assert.match(alone.stderr, /--resolve-from goes with --package/);
 });
 
-test('the grammar files are built when the package is published, never when it is installed', () => {
-  const { scripts } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert.equal(scripts.prepublishOnly, 'npm run grammars:package');
-  assert.equal(scripts['grammars:package'], 'node scripts/build-grammars.mjs --package');
-  for (const name of ['preinstall', 'install', 'postinstall', 'prepare', 'preprepare', 'postprepare', 'prepack', 'postpack']) assert.equal(scripts[name], undefined, `${name} runs on an install from git or on a pack`);
+test('the grammar files are built when the package is published, never when it is installed, and no install script of a grammar package runs', () => {
+  const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts.prepublishOnly, 'npm run grammars:package');
+  assert.equal(pkg.scripts['grammars:package'], 'npm ci --ignore-scripts --legacy-peer-deps --prefix grammars/npm && node scripts/build-grammars.mjs --package');
+  for (const name of ['preinstall', 'install', 'postinstall', 'prepare', 'preprepare', 'postprepare', 'prepack', 'postpack']) assert.equal(pkg.scripts[name], undefined, `${name} runs on an install from git or on a pack`);
+  assert.equal(existsSync(path.join(root, '.npmrc')), false, 'the root install keeps npm\'s defaults');
+  const grammarPackages = JSON.parse(readFileSync(path.join(root, 'grammars', 'npm', 'package.json'), 'utf8'));
+  assert.equal(grammarPackages.private, true);
+  assert.equal(grammarPackages.scripts, undefined);
+  assert.deepEqual(grammarPackages.dependencies, Object.fromEntries(manifest.grammars.filter((g) => g.source.kind === 'npm').map((g) => [g.source.package, g.source.version]).sort(([a], [b]) => (a < b ? -1 : 1))), 'the folder installs exactly the npm pins of the manifest');
+  assert.match(readFileSync(path.join(root, 'grammars', 'npm', '.npmrc'), 'utf8'), /^ignore-scripts=true$/m);
 });

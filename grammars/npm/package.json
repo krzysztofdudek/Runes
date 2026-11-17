@@ -1,0 +1,16 @@
+{
+  "name": "runes-npm-grammars",
+  "private": true,
+  "description": "The npm packages of the grammar manifest npm pins, installed only to build the grammar files the published package carries (npm run grammars:package). Never published; Runes reads two data files of each.",
+  "dependencies": {
+    "@tree-sitter-grammars/tree-sitter-zig": "1.1.2",
+    "tree-sitter-bash": "0.25.1",
+    "tree-sitter-go": "0.25.0",
+    "tree-sitter-groovy": "0.1.2",
+    "tree-sitter-javascript": "0.25.0",
+    "tree-sitter-properties": "0.3.0",
+    "tree-sitter-python": "0.25.0",
+    "tree-sitter-scala": "0.24.0",
+    "tree-sitter-solidity": "1.2.13"
+  }
+}

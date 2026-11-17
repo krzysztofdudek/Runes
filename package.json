@@ -44,7 +44,10 @@
   },
   "files": [
     "dist",
-    "grammars",
+    "grammars/manifest.json",
+    "grammars/manifest.schema.json",
+    "grammars/patches",
+    "grammars/built",
     "skills",
     "docs/api.md",
     "CHANGELOG.md"
@@ -59,7 +62,7 @@
     "check:compiler": "node scripts/check-compiler.mjs",
     "check": "npm run check:compiler && npm test && npm run check:dist",
     "grammars": "node scripts/build-grammars.mjs --table",
-    "grammars:package": "node scripts/build-grammars.mjs --package",
+    "grammars:package": "npm ci --ignore-scripts --legacy-peer-deps --prefix grammars/npm && node scripts/build-grammars.mjs --package",
     "prepublishOnly": "npm run grammars:package",
     "corpus": "node scripts/corpus.mjs gate",
     "corpus:edges": "node scripts/corpus.mjs verify",
@@ -75,17 +78,11 @@
     }
   },
   "devDependencies": {
-    "@tree-sitter-grammars/tree-sitter-zig": "1.1.2",
     "@types/node": "22.20.4",
-    "tree-sitter-bash": "0.25.1",
     "tree-sitter-cli": "0.27.2",
     "tree-sitter-go": "0.25.0",
-    "tree-sitter-groovy": "0.1.2",
     "tree-sitter-javascript": "0.25.0",
-    "tree-sitter-properties": "0.3.0",
     "tree-sitter-python": "0.25.0",
-    "tree-sitter-scala": "0.24.0",
-    "tree-sitter-solidity": "1.2.13",
     "typescript": "7.0.2",
     "typescript6": "npm:@typescript/typescript6@6.0.2",
     "web-tree-sitter": "0.27.2"
