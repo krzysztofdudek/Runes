@@ -8,7 +8,7 @@ cites: "Rust Reference — Use declarations, Glob imports (a glob brings in the 
 
 ## Rule
 
-The crate root of the path dependency `kit` writes `pub use types::*;`, and `kit/src/types/mod.rs` defines `Invoice` only. `Order` is defined in `kit/src/models/mod.rs`, which the root declares and does not re-export. `use kit::Order;` in `app` names nothing the root brings in, so the root file is not bound.
+The crate root of the path dependency `kit` writes `pub use types::*;`, and `kit/src/types/mod.rs` defines `Invoice` only. `Order` is defined in `kit/src/models/mod.rs`, which the root declares and does not re-export. `use kit::Order;` in `app` names nothing the root brings in, so the root file is not bound. rustc refuses that path, so it stands in `app/src/orders.rs`, a file no `mod` declares, which the crate does not compile, beside the crate root `app/src/lib.rs`.
 
 ## Files
 
@@ -42,6 +42,10 @@ pub struct Order;
 ```
 
 ```rust path=app/src/lib.rs owner=root
+pub struct App;
+```
+
+```rust path=app/src/orders.rs owner=root
 use kit::Order;
 ```
 
@@ -51,4 +55,4 @@ use kit::Order;
 
 ## Why
 
-A glob in the root is no licence to bind the root for every name: only a name the glob's module declares comes through it.
+A glob in the root is no licence to bind the root for every name: only a name the glob's module declares comes through it. A file in the middle of an edit can hold a path the compiler refuses, and it still gets no edge.

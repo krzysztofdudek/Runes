@@ -8,7 +8,7 @@ cites: "Rust Reference — Modules, Module source filenames, The path attribute;
 
 ## Rule
 
-Inside a `cfg_if!` branch a `mod` follows the rules it follows outside. A `mod inner;` inside the inline `mod sys { … }` lives under the directory named after `sys` (`src/sys/inner.rs`, node `sys`). A `mod` with a `#[path]` attribute is skipped, also behind a doc comment and a visibility, so the conventional `src/net/mod.rs` (node `net`) gets no edge. An inline `mod` gives no edge itself. A `cfg_if!` nested in a branch is read the same way: `mod windows;` and `mod other;` bind their files. The `cfg_if!` inside the inline module `deep` of the file declares `src/deep/leaf.rs` (node `deep`).
+Inside a `cfg_if!` branch a `mod` follows the rules it follows outside. A `mod inner;` inside the inline `mod sys { … }` lives under the directory named after `sys` (`src/sys/inner.rs`, node `sys`). A `mod` with a `#[path]` attribute is skipped, also behind a doc comment and a visibility, so the conventional `src/net/mod.rs` (node `net`) gets no edge. An inline `mod` gives no edge itself. A `cfg_if!` nested in a branch is read the same way: `mod windows;` and `mod other;` bind their files. The `cfg_if!` inside the inline module `deep` of the file declares `src/deep/leaf.rs` (node `deep`). The root takes `cfg_if!` from the registry crate `cfg-if` with `#[macro_use] extern crate`, after its last use, which keeps every line above in place.
 
 ## Files
 
@@ -16,6 +16,8 @@ Inside a `cfg_if!` branch a `mod` follows the rules it follows outside. A `mod i
 [package]
 name = "app"
 edition = "2021"
+[dependencies]
+cfg-if = "1"
 ```
 
 ```rust path=src/lib.rs owner=root
@@ -44,6 +46,8 @@ mod deep {
         }
     }
 }
+#[macro_use]
+extern crate cfg_if;
 ```
 
 ```rust path=src/sys/inner.rs

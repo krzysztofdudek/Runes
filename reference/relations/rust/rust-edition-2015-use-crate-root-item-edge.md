@@ -15,6 +15,8 @@ In edition 2015 `use Error;` and `use Error::NotFound;` are relative to the crat
 ```toml path=Cargo.toml
 [package]
 name = "app"
+[dependencies]
+serde = "1"
 ```
 
 ```rust path=src/lib.rs

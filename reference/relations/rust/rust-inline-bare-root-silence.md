@@ -8,13 +8,16 @@ cites: "Rust Reference — Paths (2018+ bare leading segment is local-first / ex
 
 ## Rule
 
-An inline path rooted at a bare identifier that nothing in scope binds, `external::thing::Foo::bar()` in `src/c/run.rs`, names a crate of the extern prelude, not a module of the crate root: a name the root declares is not in scope of another module. The package has no dependency `external`, so the path binds nothing, although `src/external/mod.rs` (node `external`) is a real mapped module whose name matches the leading segment.
+An inline path rooted at a bare identifier that nothing in scope binds, `external::thing::Foo::bar()` in `src/c/run.rs`, names a crate of the extern prelude, not a module of the crate root: a name the root declares is not in scope of another module. The package's dependency `external` is a registry crate, so the path binds nothing, although `src/external/mod.rs` (node `external`) is a real mapped module whose name matches the leading segment.
 
 ## Files
 
 ```toml path=Cargo.toml
 [package]
 name = "mycrate"
+
+[dependencies]
+external = "1"
 ```
 
 ```rust path=src/external/mod.rs

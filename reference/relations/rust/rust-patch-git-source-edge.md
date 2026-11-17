@@ -43,7 +43,7 @@ pub struct Engine;
 ```toml path=vendor/corp/Cargo.toml
 [package]
 name = "kit"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 ```
 

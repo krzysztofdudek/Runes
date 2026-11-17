@@ -16,6 +16,8 @@ cites: "Rust Reference — Modules; cfg-if crate (`cfg_if!` expands to the items
 [package]
 name = "app"
 edition = "2021"
+[dependencies]
+cfg-if = "1"
 ```
 
 ```rust path=src/lib.rs owner=root

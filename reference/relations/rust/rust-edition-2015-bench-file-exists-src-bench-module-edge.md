@@ -8,7 +8,7 @@ cites: "Cargo targets.rs normalize_benches, legacy_bench_path (src/bench.rs is t
 
 ## Rule
 
-Edition 2015, `[[bench]] name = "bench"` with no path, and `benches/bench.rs` exists, so Cargo roots the bench there and `src/bench.rs` is no bench root. It is a module of the library, whose `mod helpers;` is looked for under `src/bench/`, where nothing lies, so no edge reaches the decoy `src/helpers/mod.rs`.
+Edition 2015, `[[bench]] name = "bench"` with no path, and `benches/bench.rs` exists, so Cargo roots the bench there and `src/bench.rs` is no bench root. It is a module of the library, whose `mod helpers;` is looked for under `src/bench/`: it binds `src/bench/helpers.rs` (node `benchhelpers`), and no edge reaches the decoy `src/helpers/mod.rs`.
 
 ## Files
 
@@ -28,6 +28,10 @@ pub mod bench;
 mod helpers;
 ```
 
+```rust path=src/bench/helpers.rs owner=benchhelpers
+pub fn h() {}
+```
+
 ```rust path=src/helpers/mod.rs
 pub fn h() {}
 ```
@@ -39,3 +43,8 @@ fn main() {}
 ## Expect
 
 - src/lib.rs:1 -> node:benchmod
+- src/bench.rs:1 -> node:benchhelpers      # the module's file under src/bench/, never the decoy src/helpers/mod.rs
+
+## Why
+
+rustc refuses a `mod` whose file is missing, so the module's file is part of the case. A reader that took `src/bench.rs` for the bench's root would look for `helpers` beside it and bind the decoy.

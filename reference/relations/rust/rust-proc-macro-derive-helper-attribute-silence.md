@@ -8,7 +8,7 @@ cites: "Rust Reference — Procedural macros, Derive macros and Derive macro hel
 
 ## Rule
 
-`#[proc_macro_derive(Builder, attributes(setter, skip))]` gives the crate root one more item, the derive `Builder`. The helper attributes `setter` and `skip` are no items and cannot be imported. Neither `use` line binds `derive-kit/src/lib.rs` (node `macros`).
+`#[proc_macro_derive(Builder, attributes(setter, skip))]` gives the crate root one more item, the derive `Builder`. The helper attributes `setter` and `skip` are no items and cannot be imported. Neither `use` line binds `derive-kit/src/lib.rs` (node `macros`). rustc refuses both imports, so they stand in `app/src/builders.rs`, a file no `mod` declares, which the crate does not compile, beside the crate root `app/src/lib.rs`.
 
 ## Files
 
@@ -37,6 +37,10 @@ pub fn derive_builder(input: TokenStream) -> TokenStream { input }
 ```
 
 ```rust path=app/src/lib.rs owner=root
+pub struct App;
+```
+
+```rust path=app/src/builders.rs owner=root
 use derive_kit::setter;
 use derive_kit::skip;
 ```
@@ -47,4 +51,4 @@ use derive_kit::skip;
 
 ## Why
 
-Taking every name inside the attribute for an item would bind paths that name nothing.
+Taking every name inside the attribute for an item would bind paths that name nothing. A file in the middle of an edit can hold such a path, and it still gets no edge.
