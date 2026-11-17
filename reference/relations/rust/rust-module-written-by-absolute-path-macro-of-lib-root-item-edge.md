@@ -8,7 +8,7 @@ cites: "Rust Reference, Macros By Example (a macro invocation may expand to item
 
 ## Rule
 
-`src/lib.rs` invokes `::kit::decl_mods!(late);`, a macro of another crate named by a path that starts with `::`, which writes `mod late;`. `src/main.rs` is a second crate with an `Opts` of its own. No plain `mod late;` leads from a root to `src/late/mod.rs`, so which crate compiles it is not known: the roots are tried in their usual order, and `crate::Opts` binds `src/lib.rs` (owner root).
+`src/lib.rs` invokes `::kit::decl_mods!(late);`, a macro of another crate (the registry crate `kit` the package depends on) named by a path that starts with `::`, which writes `mod late;`. `src/main.rs` is a second crate with an `Opts` of its own. No plain `mod late;` leads from a root to `src/late/mod.rs`, so which crate compiles it is not known: the roots are tried in their usual order, and `crate::Opts` binds `src/lib.rs` (owner root).
 
 ## Files
 
@@ -16,6 +16,8 @@ cites: "Rust Reference, Macros By Example (a macro invocation may expand to item
 [package]
 name = "app"
 edition = "2021"
+[dependencies]
+kit = "1"
 ```
 
 ```rust path=src/lib.rs owner=root

@@ -8,7 +8,7 @@ cites: "The Cargo Book — Cargo Targets (each `[[bin]]` target's `path` names i
 
 ## Rule
 
-Two `[[bin]]` targets can share a directory: `tools/a.rs` and `tools/b.rs` root two binary crates. A module file beside them, `tools/cmd/run.rs`, belongs to whichever root declares `mod cmd;`, which a path-based reader cannot tell. So `crate::Opts` in it binds no crate root: `tools/a.rs` (node `tools`) declares an `Opts`, but the module may be `b`'s, whose crate has none. Each root file still resolves its own `crate::` paths, and a module path below the shared directory still resolves the same way in both crates.
+Two `[[bin]]` targets can share a directory: `tools/a.rs` and `tools/b.rs` root two binary crates. A module file beside them, `tools/cmd/run.rs`, belongs to whichever root declares `mod cmd;`, which a path-based reader cannot tell. Here `b` declares `mod cmd;`, and its `tools/cmd/mod.rs` does not declare `run`, since rustc refuses the `crate::Opts` of `run` in `b`: no `mod` declares the file, and the crate does not compile it. So `crate::Opts` in it binds no crate root: `tools/a.rs` (node `tools`) declares an `Opts`, but the module may be `b`'s, whose crate has none. Each root file still resolves its own `crate::` paths, and a module path below the shared directory still resolves the same way in both crates.
 
 ## Files
 
@@ -35,6 +35,10 @@ mod cmd;
 fn main() {}
 ```
 
+```rust path=tools/cmd/mod.rs
+pub struct Args;
+```
+
 ```rust path=tools/cmd/run.rs
 use crate::Opts;
 ```
@@ -42,6 +46,7 @@ use crate::Opts;
 ## Expect
 
 - silence      # crate::Opts from a module of one of two binaries in tools/ → no crate root to bind; never the first binary's tools/a.rs (node:tools)
+- tools/b.rs:1 -> node:cmd      # the module declaration of the completed crate
 
 ## Why
 

@@ -31,9 +31,14 @@ mod outer {
 }
 ```
 
+```rust path=src/lib.rs
+mod app;
+```
+
 ## Expect
 
 - src/app/mod.rs:2 -> node:outer      # `mod inner;` inside inline `mod outer` → src/app/outer/inner.rs; never the decoy node:inner
+- src/lib.rs:1 -> node:app      # the module declaration of the completed crate
 
 ## Why
 

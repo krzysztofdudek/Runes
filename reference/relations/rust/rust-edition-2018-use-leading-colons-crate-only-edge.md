@@ -3,12 +3,12 @@ id: rust-edition-2018-use-leading-colons-crate-only-edge
 language: rust
 category: trap
 expectation: edge
-cites: "Rust Reference — Paths, Path qualifiers (`::`: from the 2018 edition a path that starts with `::` names a crate of the extern prelude); rustc 1.x binds the fixture's line 1 to the dependency and refuses line 2 with E0432"
+cites: "Rust Reference — Paths, Path qualifiers (`::`: from the 2018 edition a path that starts with `::` names a crate of the extern prelude); rustc binds the fixture's line 1 to the path dependency and line 2 to the registry crate `shapes`"
 ---
 
 ## Rule
 
-Edition 2021. The package has a path dependency `kit`, and the root declares modules of its own called `kit` and `shapes`. In `src/lib.rs`, `use ::kit::Order;` starts with `::`, so `kit` is the crate, never the module the same file declares: it binds `kit/src/lib.rs` (node `dep`). `use ::shapes::Circle;` names a crate `shapes`, which the package does not have; the root's module `shapes` is not what it means, so the line binds nothing.
+Edition 2021. The package has a path dependency `kit`, and the root declares modules of its own called `kit` and `shapes`. In `src/lib.rs`, `use ::kit::Order;` starts with `::`, so `kit` is the crate, never the module the same file declares: it binds `kit/src/lib.rs` (node `dep`). `use ::shapes::Circle;` names the crate `shapes`, a registry crate the package depends on; the root's module `shapes` is not what it means, so the line binds nothing.
 
 ## Files
 
@@ -19,6 +19,7 @@ edition = "2021"
 
 [dependencies]
 kit = { path = "kit" }
+shapes = "1"
 ```
 
 ```toml path=kit/Cargo.toml
@@ -54,4 +55,4 @@ pub struct Circle;
 
 ## Why
 
-Reading `::shapes` as the root's module, as edition 2015 does, would give line 2 an edge the compiler refuses, and reading `::kit` as the name in scope would point line 1 at the wrong package.
+Reading `::shapes` as the root's module, as edition 2015 does, would give line 2 an edge into the root's module where the compiler reads the registry crate, and reading `::kit` as the name in scope would point line 1 at the wrong package.

@@ -15,6 +15,8 @@ A `bitflags!` invocation at the top level of `src/lib.rs` defines the struct it 
 ```toml path=Cargo.toml
 [package]
 name = "app"
+[dependencies]
+bitflags = "1"
 ```
 
 ```rust path=src/lib.rs

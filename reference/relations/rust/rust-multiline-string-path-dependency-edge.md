@@ -48,6 +48,10 @@ pub struct Motor;
 pub struct Circle;
 ```
 
+```rust path=crates/geo/src/lib.rs
+pub mod shapes;
+```
+
 ```rust path=crates/app/src/cmd/run.rs
 use engine::Motor;
 use geo::shapes::Circle;
@@ -57,6 +61,7 @@ use geo::shapes::Circle;
 
 - crates/app/src/cmd/run.rs:1 -> node:motor    # `path = """../engine"""` → crates/engine, never the importing package itself (crates/app/src/lib.rs, node:src)
 - crates/app/src/cmd/run.rs:2 -> node:shapes   # `path = '''` + newline + `../geo'''` → crates/geo/src/shapes/mod.rs
+- crates/geo/src/lib.rs:1 -> node:shapes      # the module declaration of the completed crate
 
 ## Why
 
