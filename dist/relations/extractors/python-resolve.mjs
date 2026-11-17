@@ -40,11 +40,19 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
     let roots;
     const discovered = () => {
         if (roots === undefined) {
-            const all = new Set(projectRoots?.() ?? []);
-            roots = { all, usable: [...all].filter((root) => !insidePackage(root)) };
+            const projects = (projectRoots?.() ?? []).map((p) => (typeof p === 'string' ? { dir: p, roots: [p], fixture: false } : p));
+            const all = new Set(projects.flatMap((p) => p.roots));
+            const usable = [...new Set(projects.filter((p) => !p.fixture).flatMap((p) => p.roots))].filter((root) => !insidePackage(root));
+            const fixtures = projects
+                .filter((p) => p.fixture)
+                .map((p) => ({ dir: p.dir, usable: p.roots.filter((root) => !usable.includes(root) && !insidePackage(root)) }));
+            const packageRoots = new Set(projects.flatMap((p) => p.roots.filter((root) => root !== p.dir)));
+            roots = { all, usable, fixtures, packageRoots, projectDirs: new Set(projects.map((p) => p.dir)) };
         }
         return roots;
     };
+    // The roots of the fixture projects whose directory holds `dir`, which serve its imports beside the usable roots.
+    const fixtureRootsFor = (dir) => discovered().fixtures.flatMap((f) => (dir === f.dir || dir.startsWith(`${f.dir}/`) ? f.usable : []));
     // A directory's entries, `x/` and `x.py` both as `x`, compared in NFC as the exact-case check compares names.
     const listings = new Map();
     const namesIn = (dir) => {
@@ -73,6 +81,8 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
         return found;
     };
     const below = new Map();
+    const belowPackage = new Map();
+    const belowSource = new Map();
     const fromTool = new Map();
     const underDiscovered = new Map();
     const ctx = {
@@ -82,8 +92,27 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
         belowDiscoveredRoot: (dir) => {
             let isBelow = below.get(dir);
             if (isBelow === undefined) {
-                isBelow = properAncestors(dir).some((ancestor) => discovered().all.has(ancestor));
+                const { all, projectDirs } = discovered();
+                const ancestors = properAncestors(dir);
+                // Inside a project: strictly below a source root or a project's directory, without being a project's directory or a source root itself.
+                isBelow = !projectDirs.has(dir) && !all.has(dir) && ancestors.some((ancestor) => all.has(ancestor) || projectDirs.has(ancestor));
                 below.set(dir, isBelow);
+            }
+            return isBelow;
+        },
+        belowSourceRoot: (dir) => {
+            let isBelow = belowSource.get(dir);
+            if (isBelow === undefined) {
+                isBelow = properAncestors(dir).some((ancestor) => discovered().all.has(ancestor));
+                belowSource.set(dir, isBelow);
+            }
+            return isBelow;
+        },
+        belowPackageRoot: (dir) => {
+            let isBelow = belowPackage.get(dir);
+            if (isBelow === undefined) {
+                isBelow = properAncestors(dir).some((ancestor) => discovered().packageRoots.has(ancestor));
+                belowPackage.set(dir, isBelow);
             }
             return isBelow;
         },
@@ -96,7 +125,7 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
             }
             return runs;
         },
-        matchesUnderDiscoveredRoots: (segments, modulePath, parentPath) => {
+        matchesUnderDiscoveredRoots: (segments, modulePath, parentPath, ownDir) => {
             let matches = underDiscovered.get(modulePath);
             if (matches === undefined) {
                 matches = emptyMatches();
@@ -105,7 +134,13 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
                     probeRoot(root, modulePath, parentPath, ctx, matches);
                 underDiscovered.set(modulePath, matches);
             }
-            return matches;
+            const fixtureRoots = fixtureRootsFor(ownDir);
+            if (fixtureRoots.length === 0)
+                return matches;
+            const scoped = { exact: new Set(matches.exact), parentPackages: new Set(matches.parentPackages), parentModules: new Set(matches.parentModules) };
+            for (const root of fixtureRoots)
+                probeRoot(root, modulePath, parentPath, ctx, scoped);
+            return scoped;
         },
     };
     const resolve = (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : soleMatch(absoluteMatches(specifier, fromFile, ctx));
@@ -120,12 +155,12 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
         const holds = (root) => ctx.exists(joinUnder(root, `${top}/__init__.py`)) || ctx.exists(joinUnder(root, `${top}.py`)) || namesIn(root)?.has(top.normalize('NFC')) === true;
         const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(top);
         const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+        const runRoots = runtimeRoots(top, fromFile, ownDir, stdlibName, ctx);
         for (const dir of ancestorDirs(ownDir)) {
-            const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
-            if (isRoot && !ctx.insideRegularPackage(dir) && holds(dir))
+            if (ancestorIsRoot(dir, ownDir, stdlibName, ctx, runRoots) && !ctx.insideRegularPackage(dir) && holds(dir))
                 return 'unfollowed';
         }
-        return !stdlibName && discovered().usable.some(holds) ? 'unfollowed' : 'outside';
+        return !stdlibName && [...discovered().usable, ...fixtureRootsFor(ownDir)].some(holds) ? 'unfollowed' : 'outside';
     };
     return Object.assign(resolve, { explain });
 }
@@ -158,11 +193,11 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  *
  * An ancestor directory INSIDE A REGULAR PACKAGE is never a root: one that holds an `__init__.py`, or whose parent does (a namespace sub-directory of a regular package). `sys.path` only ever holds directories outside packages, so `import logging` in `app/api/routes.py` loads the standard library even when the package `app/` has a `logging.py`, and must not bind to it.
  *
- * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every regular package, yet it is no more on `sys.path` than a package is: what Python puts there is an installed project's source root, the directory of the script it runs, or the current directory for `python -m`. So an ancestor directory lying strictly below a discovered project root is never a root, and for a top-level name the standard library owns (which precedes every installed project on `sys.path`) no ancestor is a root but the repository root. The importing file's own directory is exempt from both rules: it is `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging` and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/` when `acme/` is a namespace package.
+ * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every regular package, yet it is no more on `sys.path` than a package is: what Python puts there is an installed project's source root, the directory of the script it runs, or the current directory for `python -m`. So an ancestor directory inside a project is never a root: one lying strictly below a discovered source root or a project's directory while being neither a project's directory nor a source root itself (beside `src/`, `scripts/` is no root for `scripts/sub/run.py`, which Python runs with `scripts/sub/` on `sys.path`; a workspace member's directory below a root manifest stays one, as pytest inserts it for the member's `tests` package), and for a top-level name the standard library owns (which precedes every installed project on `sys.path`) no ancestor is a root but the repository root. The importing file's own directory is exempt from both rules: it is `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging` and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/` when `acme/` is a namespace package. A file in a package directory strictly below a discovered root that is not its project's directory (a `src/` child or a root the configuration names, which holds only the code the project installs) is imported through that root, not run as a script, so its own directory is no root unless a tool runs from it (below): `src/poetry/poetry.py` does not answer for `poetry.json` in `src/poetry/factory.py`. Below a flat project's directory, where script folders (`scripts/`, `tools/`) sit beside the packages, the importer's own directory stays a root.
  *
  * Two conventions put a directory below a project root first on `sys.path` without any configuration, so for a name outside the standard library such a directory stays a root: one holding `conftest.py` and no `__init__.py` (pytest's rootdir rule inserts it), and one holding `manage.py` (Django runs from it). A directory put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not seen and is not searched.
  *
- * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a test outside `src/` or one workspace member importing another resolves although the root is no ancestor of the importing file. A discovered root is on `sys.path` only because its project is installed, after the standard library, so a top-level name the standard library owns is never matched there. Discovered roots join the SAME distinct-match count, so a module found under two roots still stays silent.
+ * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a test outside `src/` or one workspace member importing another resolves although the root is no ancestor of the importing file. A discovered root is on `sys.path` only because its project is installed, after the standard library, so a top-level name the standard library owns is never matched there. Discovered roots join the SAME distinct-match count, so a module found under two roots still stays silent. A test fixture project's roots are searched only for a file inside the fixture's directory: from anywhere else a name it holds is an installed package's or the standard library's (`import build` is the PyPA package, not a fixture's `build.py`).
  *
  * An excluded match is dropped BEFORE that ambiguity count. It is told by the caller to not exist, so it can never be the genuine target and must not keep a real, surviving match silenced merely because it once shared a dotted module name with a file the caller no longer considers.
  */
@@ -175,21 +210,55 @@ function absoluteMatches(specifier, fromFile, ctx) {
     // Probe EVERY ancestor source root and collect the DISTINCT files that match. The importing file's own dir and the intermediate dirs are NOT genuine absolute-import roots, so a same-named module sitting in the importer's own package must not shadow the real source root. Resolving the same dotted module to 2+ distinct LIVE files means we cannot tell which root is genuine — silence (undefined) per the zero-false-positive rule. A single distinct live file is an unambiguous resolution and is returned.
     const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(segments[0]);
     const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
+    const runRoots = runtimeRoots(segments[0], fromFile, ownDir, stdlibName, ctx);
     const found = emptyMatches();
     for (const dir of ancestorDirs(ownDir)) {
-        // An ancestor other than the importer's own directory is a root, for a standard-library name, only when it is the repository root; for any other name, when it is not a directory inside a project (strictly below a discovered root) or when pytest or Django runs from it (see the doc comment above).
-        const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
-        if (isRoot && !ctx.insideRegularPackage(dir))
+        if (ancestorIsRoot(dir, ownDir, stdlibName, ctx, runRoots) && !ctx.insideRegularPackage(dir))
             probeRoot(dir, modulePath, parentPath, ctx, found);
     }
     if (!stdlibName) {
         // A discovered root that is also an ancestor root adds the same file of the same kind again: the sets keep one.
-        const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath);
+        const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath, ownDir);
         for (const kind of ['exact', 'parentPackages', 'parentModules'])
             for (const file of under[kind])
                 found[kind].add(file);
     }
     return new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
+}
+/** Whether the ancestor directory `dir` of an importing file in `ownDir` is searched as a root (see absoluteMatches). The importer's own directory is one unless it is a package directory below a discovered root that is not its project's own directory (a `src/` child or a configured root), which is imported through that root and never run from, and no tool runs from it. Any other ancestor is one, for a standard-library name, only when it is the repository root; for any other name, when it is not a directory inside a project (strictly below a discovered root) or when pytest or Django runs from it. */
+function ancestorIsRoot(dir, ownDir, stdlibName, ctx, runRoots) {
+    if (dir === ownDir)
+        return !ctx.belowPackageRoot(dir) || ctx.toolRoot(dir) || dir === runRoots.basedir;
+    if (stdlibName)
+        return dir === '';
+    return !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir) || dir === runRoots.basedir || dir === runRoots.selfParent;
+}
+/** pytest's default test module names, and its `conftest.py`. */
+const PYTEST_FILE = /^(?:test_.*|.*_test|conftest)\.py$/;
+/**
+ * Two directories above an importing file are on `sys.path` whenever the file runs at all, inside a project as anywhere else:
+ *
+ * - `basedir`: for a pytest test module (`test_*.py`, `*_test.py`) or a `conftest.py`, the first directory upward that holds no `__init__.py`, which pytest's prepend import mode inserts (`tests/` for `tests/unit/test_a.py` beside `src/` when `tests/unit/` is a package and `tests/` is not).
+ * - `selfParent`: for an import whose first name is the importing file's own top-most regular package (`myext.util` inside `docs/_ext/myext/`), the directory above that package, since the file can only run as part of the package with that directory on `sys.path`. Taken only where that directory is not below a source root, where the package is a sub-package of the installed one, and never for a name the standard library owns.
+ */
+function runtimeRoots(top, fromFile, ownDir, stdlibName, ctx) {
+    let basedir;
+    if (PYTEST_FILE.test(path.posix.basename(toPosix(fromFile)))) {
+        let dir = ownDir;
+        while (dir !== undefined && ctx.exists(joinUnder(dir, '__init__.py')))
+            dir = dir === '' ? undefined : normalizeDir(path.posix.dirname(dir));
+        basedir = dir;
+    }
+    let selfParent;
+    if (!stdlibName && ownDir !== '' && ctx.exists(joinUnder(ownDir, '__init__.py'))) {
+        let pkg = ownDir;
+        while (pkg !== '' && ctx.exists(joinUnder(normalizeDir(path.posix.dirname(pkg)), '__init__.py')))
+            pkg = normalizeDir(path.posix.dirname(pkg));
+        const parent = normalizeDir(path.posix.dirname(pkg));
+        if (pkg !== '' && path.posix.basename(pkg) === top && !ctx.belowSourceRoot(parent))
+            selfParent = parent;
+    }
+    return { basedir, selfParent };
 }
 /** The one file of `matches`, or undefined when there is none or there are several (ambiguous: silence). */
 function soleMatch(matches) {

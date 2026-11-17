@@ -68,6 +68,7 @@ describe('MATRIX — multi-module repositories (nested module, parent module, go
   it('go-go-work-workspace-edge', () => runCase('go-go-work-workspace-edge'));
   it('go-replace-sibling-module-edge', () => runCase('go-replace-sibling-module-edge'));
   it('go-replace-parent-module-root-edge', () => runCase('go-replace-parent-module-root-edge'));
+  it('go-work-use-root-trailing-slash-edge', () => runCase('go-work-use-root-trailing-slash-edge'));
   it('go-nested-module-parent-import-edge', () => runCase('go-nested-module-parent-import-edge'));
   it('go-nested-submodule-edge', () => runCase('go-nested-submodule-edge'));
   it('go-quoted-module-path-edge', () => runCase('go-quoted-module-path-edge'));
