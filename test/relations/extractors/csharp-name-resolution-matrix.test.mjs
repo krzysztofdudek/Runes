@@ -503,6 +503,13 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-public-and-internal-extension-method-one-file-internal-call-binds-other-edge', () => runCase('csharp-public-and-internal-extension-method-one-file-internal-call-binds-other-edge'));
   it('csharp-is-type-test-chain-or-edge', () => runCase('csharp-is-type-test-chain-or-edge'));
   it('csharp-is-type-test-chain-dotted-edge', () => runCase('csharp-is-type-test-chain-dotted-edge'));
+  it('csharp-is-not-type-test-chain-dotted-edge', () => runCase('csharp-is-not-type-test-chain-dotted-edge'));
+  it('csharp-pattern-positional-type-beside-discard-edge', () => runCase('csharp-pattern-positional-type-beside-discard-edge'));
+  it('csharp-pattern-positional-value-beside-discard-silence', () => runCase('csharp-pattern-positional-value-beside-discard-silence'));
+  it('csharp-color-color-receiver-edge', () => runCase('csharp-color-color-receiver-edge'));
+  it('csharp-color-color-receiver-other-type-silence', () => runCase('csharp-color-color-receiver-other-type-silence'));
+  it('csharp-pattern-constant-value-of-file-silence', () => runCase('csharp-pattern-constant-value-of-file-silence'));
+  it('csharp-is-type-test-beside-value-of-its-name-edge', () => runCase('csharp-is-type-test-beside-value-of-its-name-edge'));
   it('csharp-pattern-constant-led-by-same-named-property-edge', () => runCase('csharp-pattern-constant-led-by-same-named-property-edge'));
   it('csharp-pattern-constant-led-by-same-named-local-edge', () => runCase('csharp-pattern-constant-led-by-same-named-local-edge'));
   it('csharp-pattern-constant-led-by-same-named-lambda-parameter-edge', () => runCase('csharp-pattern-constant-led-by-same-named-lambda-parameter-edge'));
