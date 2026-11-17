@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,7 @@ test('Runes itself runs the pinned runtime, cli and relation grammar packages', 
 test('a consumer on another runtime or grammar version, or missing a package, is reported', () => {
   const dir = fakeConsumer({ 'web-tree-sitter': '0.25.10', 'tree-sitter-go': '0.25.0', 'tree-sitter-python': '0.23.6' }, readFileSync(realWasm));
   try {
-    const problems = checkRuntimePins({ resolveFrom: dir, languages: ['go', 'python', 'javascript'] });
+    const problems = checkRuntimePins({ resolveFrom: dir, languages: ['go', 'python', 'javascript'], shippedDir: path.join(dir, 'none-shipped') });
     assert.deepEqual(problems, [
       { package: 'web-tree-sitter', role: 'runtime', expected: '0.27.2', installed: '0.25.10' },
       { package: 'tree-sitter-javascript', role: 'javascript', expected: '0.25.0' },
@@ -74,6 +74,24 @@ test('a vendored runtime passes its recorded version and its copy of the WASM; l
     assert.equal(checkRuntimePins({ resolveFrom: dir, languages: [], versions: { 'web-tree-sitter': '0.27.2' } })[0].role, 'runtime wasm');
     assert.throws(() => checkRuntimePins({ resolveFrom: dir, languages: ['cobol'] }), /pins no grammar for: cobol/);
     assert.equal(formatRuntimePinReport([]), 'runtime pins: every package is the pinned version');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an npm grammar package that is not installed is not reported where the package ships its grammar with the pinned bytes; one at another version still is', () => {
+  const dir = fakeConsumer({ 'web-tree-sitter': '0.27.2', 'tree-sitter-python': '0.23.6' }, readFileSync(realWasm));
+  const shipped = path.join(dir, 'shipped');
+  try {
+    mkdirSync(shipped);
+    for (const file of ['tree-sitter-go.wasm', 'tree-sitter-go.node-types.json', 'tree-sitter-python.wasm', 'tree-sitter-python.node-types.json', 'tree-sitter-javascript.wasm']) cpSync(path.join(root, '.grammars', file), path.join(shipped, file));
+    const problems = checkRuntimePins({ resolveFrom: dir, languages: ['go', 'python', 'javascript'], shippedDir: shipped });
+    assert.deepEqual(problems, [
+      { package: 'tree-sitter-javascript', role: 'javascript', expected: '0.25.0' },
+      { package: 'tree-sitter-python', role: 'python', expected: '0.25.0', installed: '0.23.6' },
+    ], 'go is shipped; javascript ships without its node-types.json; python is installed at another version');
+    writeFileSync(path.join(shipped, 'tree-sitter-go.wasm'), 'damaged');
+    assert.deepEqual(checkRuntimePins({ resolveFrom: dir, languages: ['go'], shippedDir: shipped }), [{ package: 'tree-sitter-go', role: 'go', expected: '0.25.0' }], 'a shipped file that fails its pin does not stand in');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
