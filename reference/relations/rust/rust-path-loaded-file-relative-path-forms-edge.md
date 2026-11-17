@@ -63,6 +63,8 @@ compile_error!("no mod declares this file");
 
 ## Expect
 
+- src/lib.rs:2 -> node:bsd   # the `mod` its `#[path]` attribute moves names the file the attribute gives
+- src/net/mod.rs:2 -> node:sock   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/platform/bsd.rs:1 -> node:platform
 - src/platform/sock.rs:1 -> node:platform
 - src/platform/tty.rs:1 -> node:line      # the file loaded from inside the inline module `wrap` owns its directory

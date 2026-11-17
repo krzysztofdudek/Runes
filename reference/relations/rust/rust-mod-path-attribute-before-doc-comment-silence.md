@@ -8,7 +8,7 @@ cites: "Rust Reference — Modules, The path attribute; Attributes; Comments (do
 
 ## Rule
 
-`#[path = "imp/unix.rs"]`, then a doc comment, then `mod sys;`: the attribute still belongs to the `mod`, so the module's file is `src/imp/unix.rs`. The same holds for `mod net;`, whose `#[path]` is followed by a line comment, a block comment and another attribute. The files at the conventional places, `src/sys/mod.rs` (node `sys`) and `src/net/mod.rs` (node `net`), are no modules of the crate and get no edge. A `mod` with a `#[path]` attribute is skipped, so the expected outcome is silence.
+`#[path = "imp/unix.rs"]`, then a doc comment, then `mod sys;`: the attribute still belongs to the `mod`, so the module's file is `src/imp/unix.rs`. The same holds for `mod net;`, whose `#[path]` is followed by a line comment, a block comment and another attribute. The files at the conventional places, `src/sys/mod.rs` (node `sys`) and `src/net/mod.rs` (node `net`), are no modules of the crate and get no edge. Each `mod` names the file its attribute gives, `src/imp/unix.rs` and `src/imp/net.rs`, which lie in the node of `src/lib.rs`, so no edge crosses a node and the expected outcome is silence.
 
 ## Files
 
@@ -47,7 +47,7 @@ pub fn f() {}
 
 ## Expect
 
-- silence      # both mods carry a `#[path]` attribute; the conventional files are decoys
+- silence      # both mods name files of their own node through their `#[path]` attributes; the conventional files are decoys
 
 ## Why
 

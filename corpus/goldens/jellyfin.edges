@@ -12302,6 +12302,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:1140	MediaBrowser.Model/Library/Pla
 MediaBrowser.Controller/Entities/BaseItem.cs:1143	MediaBrowser.Model/Entities/MediaStream.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1145	MediaBrowser.Controller/Persistence/MediaStreamQuery.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1156	MediaBrowser.Model/Dto/MediaSourceInfo.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:1158	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:116	MediaBrowser.Model/Entities/MediaUrl.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1177	MediaBrowser.Model/Dto/MediaSourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1186	MediaBrowser.Model/Entities/VideoType.cs
@@ -12359,9 +12360,11 @@ MediaBrowser.Controller/Entities/BaseItem.cs:1679	src/Jellyfin.Extensions/GuidEx
 MediaBrowser.Controller/Entities/BaseItem.cs:1693	MediaBrowser.Controller/Entities/InternalItemsQuery.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1703	MediaBrowser.Controller/Library/DeleteOptions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1730	MediaBrowser.Controller/Entities/BaseItemExtensions.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:1737	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1749	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1751	MediaBrowser.Controller/Library/ItemUpdateType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1756	MediaBrowser.Controller/Library/ItemUpdateType.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:1848	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1865	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1916	MediaBrowser.Model/Entities/ParentalRatingScore.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1951	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -12377,6 +12380,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:1978	MediaBrowser.Controller/Entiti
 MediaBrowser.Controller/Entities/BaseItem.cs:1978	MediaBrowser.Controller/Entities/UserView.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:1988	src/Jellyfin.Extensions/StringExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2000	Jellyfin.Data/Enums/UnratedItem.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:2002	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2004	Jellyfin.Data/Enums/UnratedItem.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2007	Jellyfin.Data/Enums/UnratedItem.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2015	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -12386,8 +12390,10 @@ MediaBrowser.Controller/Entities/BaseItem.cs:2024	Jellyfin.Data/UserEntityExtens
 MediaBrowser.Controller/Entities/BaseItem.cs:2024	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/PreferenceKind.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2035	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2042	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:2044	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2046	MediaBrowser.Controller/Channels/Channel.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2054	MediaBrowser.Controller/Channels/Channel.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:2054	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2054	MediaBrowser.Controller/Entities/TV/Season.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2054	MediaBrowser.Controller/Entities/TV/Series.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:2062	Jellyfin.Data/Enums/BaseItemKind.cs
@@ -12506,8 +12512,10 @@ MediaBrowser.Controller/Entities/BaseItem.cs:3065	MediaBrowser.Controller/Entiti
 MediaBrowser.Controller/Entities/BaseItem.cs:3069	Jellyfin.Data/Enums/ItemSortBy.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:3069	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/SortOrder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:332	MediaBrowser.Model/Entities/LocationType.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:339	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:352	MediaBrowser.Model/MediaInfo/MediaProtocol.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:368	MediaBrowser.Model/MediaInfo/MediaProtocol.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:378	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:422	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:45	MediaBrowser.Controller/Providers/IHasLookupInfo.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:45	MediaBrowser.Controller/Providers/ItemLookupInfo.cs
@@ -12515,6 +12523,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:45	MediaBrowser.Model/Entities/IHas
 MediaBrowser.Controller/Entities/BaseItem.cs:451	MediaBrowser.Model/Entities/MetadataField.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:458	Jellyfin.Data/Enums/MediaType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:47	Jellyfin.Data/Enums/BaseItemKind.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:479	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:496	MediaBrowser.Controller/Library/ILibraryManager.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:498	MediaBrowser.Controller/Configuration/IServerConfigurationManager.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:500	MediaBrowser.Controller/Providers/IProviderManager.cs
@@ -12542,6 +12551,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:787	MediaBrowser.Controller/Entitie
 MediaBrowser.Controller/Entities/BaseItem.cs:812	MediaBrowser.Model/Entities/MediaUrl.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:82	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:84	MediaBrowser.Model/Entities/ExtraType.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:846	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:85	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:854	MediaBrowser.Controller/Entities/Folder.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:854	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
@@ -12550,6 +12560,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:856	src/Jellyfin.Database/Jellyfin.
 MediaBrowser.Controller/Entities/BaseItem.cs:86	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:861	Jellyfin.Data/UserEntityExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:861	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/PreferenceKind.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:863	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:87	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:88	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:884	src/Jellyfin.Extensions/GuidExtensions.cs
@@ -12565,6 +12576,7 @@ MediaBrowser.Controller/Entities/BaseItem.cs:906	src/Jellyfin.Database/Jellyfin.
 MediaBrowser.Controller/Entities/BaseItem.cs:909	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:91	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:92	MediaBrowser.Model/Entities/ExtraType.cs
+MediaBrowser.Controller/Entities/BaseItem.cs:929	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:968	MediaBrowser.Common/Extensions/BaseExtensions.cs
 MediaBrowser.Controller/Entities/BaseItem.cs:992	MediaBrowser.Model/Configuration/ServerConfiguration.cs
 MediaBrowser.Controller/Entities/BaseItemExtensions.cs:110	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -13584,7 +13596,10 @@ MediaBrowser.Controller/Entities/Video.cs:135	MediaBrowser.Model/Entities/IsoTyp
 MediaBrowser.Controller/Entities/Video.cs:141	MediaBrowser.Model/Entities/Video3DFormat.cs
 MediaBrowser.Controller/Entities/Video.cs:167	MediaBrowser.Controller/LiveTv/IRecordingsManager.cs
 MediaBrowser.Controller/Entities/Video.cs:170	MediaBrowser.Controller/Entities/SourceType.cs
+MediaBrowser.Controller/Entities/Video.cs:188	MediaBrowser.Controller/Entities/SourceType.cs
 MediaBrowser.Controller/Entities/Video.cs:190	src/Jellyfin.Extensions/EnumerableExtensions.cs
+MediaBrowser.Controller/Entities/Video.cs:212	MediaBrowser.Model/Entities/VideoType.cs
+MediaBrowser.Controller/Entities/Video.cs:229	MediaBrowser.Model/Entities/VideoType.cs
 MediaBrowser.Controller/Entities/Video.cs:253	Jellyfin.Data/Enums/MediaType.cs
 MediaBrowser.Controller/Entities/Video.cs:285	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/Video.cs:299	MediaBrowser.Model/Entities/ExtraType.cs
@@ -13606,6 +13621,7 @@ MediaBrowser.Controller/Entities/Video.cs:370	src/Jellyfin.Database/Jellyfin.Dat
 MediaBrowser.Controller/Entities/Video.cs:388	MediaBrowser.Model/Dto/UpdateUserItemDataDto.cs
 MediaBrowser.Controller/Entities/Video.cs:395	MediaBrowser.Model/Entities/UserDataSaveReason.cs
 MediaBrowser.Controller/Entities/Video.cs:406	MediaBrowser.Model/Entities/UserDataSaveReason.cs
+MediaBrowser.Controller/Entities/Video.cs:446	MediaBrowser.Model/Entities/VideoType.cs
 MediaBrowser.Controller/Entities/Video.cs:476	MediaBrowser.Model/Entities/ExtraType.cs
 MediaBrowser.Controller/Entities/Video.cs:492	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/User.cs
 MediaBrowser.Controller/Entities/Video.cs:500	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -14263,6 +14279,7 @@ MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:27	MediaBrowser.Controller/Entit
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:42	MediaBrowser.Model/LiveTv/ChannelType.cs
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:45	MediaBrowser.Model/Entities/LocationType.cs
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:48	Jellyfin.Data/Enums/MediaType.cs
+MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:48	MediaBrowser.Model/LiveTv/ChannelType.cs
 MediaBrowser.Controller/LiveTv/LiveTvChannel.cs:79	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:106	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:171	MediaBrowser.Model/Entities/MetadataProvider.cs
@@ -14286,6 +14303,7 @@ MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:85	src/Jellyfin.Extensions/Enume
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:92	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/LiveTvProgram.cs:99	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/ProgramInfo.cs:89	MediaBrowser.Model/LiveTv/ProgramAudio.cs
+MediaBrowser.Controller/LiveTv/SeriesTimerInfo.cs:17	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 MediaBrowser.Controller/LiveTv/SeriesTimerInfo.cs:75	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:126	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:128	src/Jellyfin.Extensions/EnumerableExtensions.cs
@@ -14293,6 +14311,7 @@ MediaBrowser.Controller/LiveTv/TimerInfo.cs:130	src/Jellyfin.Extensions/Enumerab
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:139	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:142	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:164	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
+MediaBrowser.Controller/LiveTv/TimerInfo.cs:18	MediaBrowser.Model/LiveTv/SeriesTimerInfoDto.cs
 MediaBrowser.Controller/LiveTv/TimerInfo.cs:79	MediaBrowser.Model/LiveTv/RecordingStatus.cs
 MediaBrowser.Controller/Lyrics/ILyricManager.cs:103	MediaBrowser.Controller/Entities/Audio/Audio.cs
 MediaBrowser.Controller/Lyrics/ILyricManager.cs:110	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -15437,6 +15456,7 @@ MediaBrowser.Controller/Providers/LocalImageInfo.cs:12	MediaBrowser.Model/IO/Fil
 MediaBrowser.Controller/Providers/LocalImageInfo.cs:14	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs:13	MediaBrowser.Controller/Providers/ImageRefreshOptions.cs
 MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs:15	MediaBrowser.Controller/Providers/IDirectoryService.cs
+MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs:18	MediaBrowser.Controller/Providers/MetadataRefreshMode.cs
 MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs:57	MediaBrowser.Controller/Providers/MetadataRefreshMode.cs
 MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs:59	MediaBrowser.Model/Providers/RemoteSearchResult.cs
 MediaBrowser.Controller/Providers/MetadataRefreshOptions.cs:67	MediaBrowser.Controller/Entities/BaseItem.cs
@@ -17238,6 +17258,12 @@ MediaBrowser.Model/Configuration/EncodingOptions.cs:22	MediaBrowser.Model/Entiti
 MediaBrowser.Model/Configuration/EncodingOptions.cs:221	MediaBrowser.Model/Entities/EncoderPreset.cs
 MediaBrowser.Model/Configuration/EncodingOptions.cs:231	MediaBrowser.Model/Entities/DeinterlaceMethod.cs
 MediaBrowser.Model/Configuration/EncodingOptions.cs:312	MediaBrowser.Model/Configuration/HlsAudioSeekStrategy.cs
+MediaBrowser.Model/Configuration/EncodingOptions.cs:36	MediaBrowser.Model/Entities/TonemappingAlgorithm.cs
+MediaBrowser.Model/Configuration/EncodingOptions.cs:37	MediaBrowser.Model/Entities/TonemappingMode.cs
+MediaBrowser.Model/Configuration/EncodingOptions.cs:38	MediaBrowser.Model/Entities/TonemappingRange.cs
+MediaBrowser.Model/Configuration/EncodingOptions.cs:46	MediaBrowser.Model/Entities/EncoderPreset.cs
+MediaBrowser.Model/Configuration/EncodingOptions.cs:48	MediaBrowser.Model/Entities/DeinterlaceMethod.cs
+MediaBrowser.Model/Configuration/EncodingOptions.cs:65	MediaBrowser.Model/Configuration/HlsAudioSeekStrategy.cs
 MediaBrowser.Model/Configuration/ImageOption.cs:18	MediaBrowser.Model/Entities/ImageType.cs
 MediaBrowser.Model/Configuration/LibraryOptions.cs:136	MediaBrowser.Model/Configuration/EmbeddedSubtitleOptions.cs
 MediaBrowser.Model/Configuration/LibraryOptions.cs:138	MediaBrowser.Model/Configuration/TypeOptions.cs
@@ -17900,6 +17926,9 @@ MediaBrowser.Model/Dlna/StreamBuilder.cs:963	MediaBrowser.Model/Session/Transcod
 MediaBrowser.Model/Dlna/StreamBuilder.cs:985	MediaBrowser.Model/Extensions/ContainerHelper.cs
 MediaBrowser.Model/Dlna/StreamBuilder.cs:99	MediaBrowser.Model/Session/PlayMethod.cs
 MediaBrowser.Model/Dlna/StreamBuilder.cs:994	Jellyfin.Data/Enums/MediaStreamProtocol.cs
+MediaBrowser.Model/Dlna/StreamInfo.cs:1077	MediaBrowser.Model/Dlna/TranscodeSeekInfo.cs
+MediaBrowser.Model/Dlna/StreamInfo.cs:1103	MediaBrowser.Model/Dlna/SubtitleDeliveryMethod.cs
+MediaBrowser.Model/Dlna/StreamInfo.cs:1109	MediaBrowser.Model/Dlna/SubtitleDeliveryMethod.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1124	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1153	MediaBrowser.Model/Dlna/ITranscoderSupport.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1153	MediaBrowser.Model/Dlna/SubtitleStreamInfo.cs
@@ -17907,6 +17936,7 @@ MediaBrowser.Model/Dlna/StreamInfo.cs:1167	MediaBrowser.Model/Dlna/ITranscoderSu
 MediaBrowser.Model/Dlna/StreamInfo.cs:1167	MediaBrowser.Model/Dlna/SubtitleStreamInfo.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1174	MediaBrowser.Model/Dlna/SubtitleStreamInfo.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1177	Jellyfin.Data/Enums/MediaStreamProtocol.cs
+MediaBrowser.Model/Dlna/StreamInfo.cs:1179	MediaBrowser.Model/Session/PlayMethod.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1186	MediaBrowser.Model/Entities/MediaStreamType.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1197	MediaBrowser.Model/Entities/MediaStreamType.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:1207	MediaBrowser.Model/Dlna/ITranscoderSupport.cs
@@ -17950,6 +17980,7 @@ MediaBrowser.Model/Dlna/StreamInfo.cs:802	MediaBrowser.Model/Entities/MediaStrea
 MediaBrowser.Model/Dlna/StreamInfo.cs:805	MediaBrowser.Model/Entities/MediaStreamType.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:885	MediaBrowser.Model/Dlna/DlnaProfileType.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:896	Jellyfin.Data/Enums/MediaStreamProtocol.cs
+MediaBrowser.Model/Dlna/StreamInfo.cs:955	MediaBrowser.Model/Dlna/SubtitleDeliveryMethod.cs
 MediaBrowser.Model/Dlna/StreamInfo.cs:997	Jellyfin.Data/Enums/MediaStreamProtocol.cs
 MediaBrowser.Model/Dlna/SubtitleProfile.cs:23	MediaBrowser.Model/Dlna/SubtitleDeliveryMethod.cs
 MediaBrowser.Model/Dlna/SubtitleProfile.cs:60	MediaBrowser.Model/Extensions/ContainerHelper.cs
@@ -18092,6 +18123,7 @@ MediaBrowser.Model/Entities/MediaStream.cs:288	MediaBrowser.Model/MediaInfo/Audi
 MediaBrowser.Model/Entities/MediaStream.cs:293	MediaBrowser.Model/Extensions/StringHelper.cs
 MediaBrowser.Model/Entities/MediaStream.cs:321	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Model/Entities/MediaStream.cs:333	MediaBrowser.Model/Entities/MediaStreamType.cs
+MediaBrowser.Model/Entities/MediaStream.cs:353	Jellyfin.Data/Enums/VideoRange.cs
 MediaBrowser.Model/Entities/MediaStream.cs:364	src/Jellyfin.Extensions/EnumerableExtensions.cs
 MediaBrowser.Model/Entities/MediaStream.cs:376	MediaBrowser.Model/Entities/MediaStreamType.cs
 MediaBrowser.Model/Entities/MediaStream.cs:383	MediaBrowser.Model/Extensions/StringHelper.cs
@@ -22611,6 +22643,8 @@ src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/BaseItemTrailer
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Chapter.cs:18	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/BaseItemEntity.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:121	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/ChromecastVersion.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:148	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/HomeSection.cs
+src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:29	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/ScrollDirection.cs
+src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:30	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/ChromecastVersion.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:32	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/HomeSection.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:92	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/ScrollDirection.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/DisplayPreferences.cs:97	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/IndexingKind.cs
@@ -22622,6 +22656,7 @@ src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Group.cs:53	src
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Group.cs:58	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/Preference.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/HomeSection.cs:42	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/HomeSectionType.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ItemDisplayPreferences.cs:111	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/SortOrder.cs
+src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ItemDisplayPreferences.cs:26	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/SortOrder.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ItemDisplayPreferences.cs:72	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/ViewType.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ItemDisplayPreferences.cs:85	src/Jellyfin.Database/Jellyfin.Database.Implementations/Enums/IndexingKind.cs
 src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ItemValue.cs:19	src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/ItemValueType.cs

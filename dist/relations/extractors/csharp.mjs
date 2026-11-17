@@ -1284,8 +1284,8 @@ function collectDeclaredNames(root, fileNs) {
     // The keys of the types of the file that can hold a member the file does not show (`takesMembers`).
     const openTypes = new Set();
     const typedNames = new Map();
-    const typed = (name, type, within, member = false, constant = false) => {
-        const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member, ...(constant ? { constant } : {}) };
+    const typed = (name, type, within, member = false, constant = false, inferred = type !== null && type.type === 'implicit_type') => {
+        const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member, ...(constant ? { constant } : {}), ...(inferred ? { inferred } : {}) };
         const list = typedNames.get(name);
         if (list === undefined)
             typedNames.set(name, [entry]);
@@ -1310,7 +1310,7 @@ function collectDeclaredNames(root, fileNs) {
         }
         if (type === 'implicit_parameter' || type === 'single_variable_designation') {
             declaredNames.add(node.text);
-            typed(node.text, null, around);
+            typed(node.text, null, around, false, false, type === 'implicit_parameter');
         }
         else if (type === 'foreach_statement') {
             const left = node.childForFieldName('left');
@@ -1340,7 +1340,9 @@ function collectDeclaredNames(root, fileNs) {
                     methodNames.add(name);
                 if (type === 'parameter') {
                     // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
-                    typed(name, node.childForFieldName('type'), inherited.listOf ?? around);
+                    // A parameter with no type is a lambda's, whose type C# infers: `(Status, i) => …`.
+                    const written = node.childForFieldName('type');
+                    typed(name, written, inherited.listOf ?? around, false, false, written === null);
                 }
                 else if (type === 'property_declaration') {
                     if (holderType !== null)
@@ -1417,6 +1419,18 @@ export function extractCsharpRefs(file) {
     const emitted = { has: (id) => !capturing && emittedIds.has(id), add: (id) => void (capturing || emittedIds.add(id)) };
     // The member accesses a pattern has read whole as the dotted type they spell: the walk reads nothing more in them.
     const readAsType = new Set();
+    // A simple name the file declares as a value and not only as a type: where an expression could name a constant or a type, the file's own value is what such a name finds.
+    const namesValue = (name) => declaredNames.has(name) && !typeOnlyNames.has(name);
+    /** True when the value `name` names at `at` may be of the type of its own name, which C# then lets the name read as too (spec §12.8.7.2, `Status == Status.Active` beside `public Status Status`): every declaration of it in the nearest scope around `at` writes a type of that very name, or has a type C# infers. A nullable `Status?` is not read so: of a value type it is `Nullable<Status>`, a type of another name. */
+    const mayBeOfItsType = (name, at) => {
+        const inScope = (typedNames.get(name) ?? []).filter((e) => at >= e.start && at < e.end);
+        if (inScope.length === 0)
+            return false;
+        const size = Math.min(...inScope.map((e) => e.end - e.start));
+        return inScope.filter((e) => e.end - e.start === size).every((e) => e.inferred === true || (e.type !== null && simpleTypeName(e.type) === name));
+    };
+    // The node each negated pattern is the pattern of, through any `not` between them (see the constant pattern).
+    const negatedTests = new Map();
     // The member paths of extended property patterns (`{ Order.Id: 3 }`): names of members of the value tested, which the walk never reads as a receiver.
     const memberPaths = new Set();
     // The lists and the receiver types the descriptors name by place (see `CsharpExtract.lists` and `receiverTypes`).
@@ -1829,6 +1843,24 @@ export function extractCsharpRefs(file) {
             emitTypeArguments(g);
         return true;
     }
+    /** The subpatterns of a positional pattern the grammar reads as a tuple expression (see the constant pattern). A subpattern after a name (`(Item1: Order, _)`) is the argument's last child. */
+    function readPositionalElements(tuple) {
+        for (const arg of tuple.namedChildren) {
+            if (arg.type !== 'argument')
+                continue;
+            const e = arg.namedChild(arg.namedChildCount - 1);
+            if (e.type === 'tuple_expression')
+                readPositionalElements(e);
+            else if (e.type === 'identifier') {
+                if (e.text !== '_' && !namesValue(e.text))
+                    emitTypeNode(e);
+            }
+            else if (e.type === 'generic_name' || e.type === 'qualified_name' || e.type === 'alias_qualified_name')
+                emitTypeNode(e);
+            else if (e.type === 'member_access_expression' && emitMemberAccessType(e, true))
+                readAsType.add(e.id);
+        }
+    }
     /** A qualified name's plain dotted name, its type-argument lists stripped (`Shop.Core.Repository<int>` → `Shop.Core.Repository`, because declaration keys carry no arity), the using alias that leads it (`S::Core.Order` → `S`, with the tail `Core.Order`; a `global::` qualifier is not an alias and is stripped), and its generic segments, whose type arguments are references of their own. */
     function qualifiedNameParts(q) {
         const segs = [];
@@ -1856,6 +1888,22 @@ export function extractCsharpRefs(file) {
         };
         collect(q);
         return { name: segs.join('.'), alias, generics };
+    }
+    /** True when `access` is compared with or assigned to the bare value `name` (`Status == Status.Active`, `Status = Status.Done`). Beside a value of the type of its own name, C# reads the member through the type when it is static and through the value when it is not (spec §12.8.7.2), which the file does not say. Compared with or assigned to the value itself, the member has the value's type, the shape of an enum member or a constant of that type; a member of that type read anywhere else may be an instance one (`Season.ProviderIds`, `Status.ToString()`), which names the value, so there the value hides the type. An instance member of the value's own type in this shape (`Node = Node.Next`) is the one false reading this allows. */
+    function besideItself(access, name, around) {
+        const op = around.type === 'binary_expression' || around.type === 'assignment_expression' ? around.childForFieldName('operator').type : '';
+        if (op !== '==' && op !== '!=' && op !== '=')
+            return false;
+        const left = around.childForFieldName('left');
+        const other = left.id === access.id ? around.childForFieldName('right') : left;
+        return other.type === 'identifier' && other.text === name;
+    }
+    /** The last simple name of a written type that names one non-generic type (`Status`, `Model.Status`, `global::Status`), or undefined. */
+    function simpleTypeName(type) {
+        if (type.type === 'identifier')
+            return type.text;
+        const last = type.type === 'qualified_name' || type.type === 'alias_qualified_name' ? type.childForFieldName('name') : null;
+        return last !== null && last.type === 'identifier' ? last.text : undefined;
     }
     /** The first child of the given type, or null. */
     function findChild(node, childType) {
@@ -2018,13 +2066,21 @@ export function extractCsharpRefs(file) {
                 memberPaths.add(path.id);
             return undefined;
         }
+        // The is test a negated pattern stands in, through any `not` between them, for the constant pattern under it (`x is not App`).
+        if (type === 'negated_pattern') {
+            const above = parentOf();
+            negatedTests.set(node.id, above.type === 'negated_pattern' ? negatedTests.get(above.id) : above);
+            return undefined;
+        }
         if (type === 'constant_pattern') {
             // `o is Z` — Z is an expression that, in a pattern position, names a type (or a constant).
             // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
             const whole = node.namedChild(0);
             // In a chain of tests the grammar may read `x is App.Models.Order || x is App.Models.Line` as `(x is App).Models.Order || (x is App).Models.Line`: member accesses on a test, which no C# expression is, since a member access binds tighter than `is`. Each test is of the whole dotted name, read as a lone `x is App.Models.Order` is.
-            const test = parentOf();
-            const accessed = test !== null && test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
+            // `x is not App.Models.Order || x is not App.Models.Line` tears the same way, with the constant under the negated pattern: the test is the one around the `not`.
+            const above = parentOf();
+            const test = above.type === 'negated_pattern' ? negatedTests.get(above.id) : above;
+            const accessed = test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
             if (accessed !== null && whole !== null) {
                 const tail = [];
                 for (let a = accessed; a !== null; a = a.outer)
@@ -2037,6 +2093,9 @@ export function extractCsharpRefs(file) {
             while (expr !== null && expr.type === 'binary_expression' && TESTS_END_BEFORE.has(expr.childForFieldName('operator').type)) {
                 expr = expr.childForFieldName('left');
             }
+            // A simple name straight after `is` is the is-type operator, which C# binds as a type first and as a constant only where no type of the name is found. Any other pattern (`Config =>`, `case Config:`, `not Config`, `Config or …`, `(Config)`) binds it as an expression first, so a value the file declares of that name is what it tests.
+            if (expr !== null && expr.type === 'identifier' && above.type !== 'is_pattern_expression' && namesValue(expr.text))
+                return undefined;
             if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name'))
                 emitTypeNode(expr);
             // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
@@ -2044,6 +2103,9 @@ export function extractCsharpRefs(file) {
             // A constant pattern names a constant, so a first name the file also declares as a value (`var Status = Make(); x is Status.Active`) is the type there: C# reads it so when the value has the type of that name (spec §12.8.7.2), and in no other case does the pattern compile.
             else if (expr !== null && expr.type === 'member_access_expression' && emitMemberAccessType(expr, true))
                 readAsType.add(expr.id);
+            // A positional pattern of subpatterns that are all type or constant patterns (`x is (Order, _)`, `x is (Models.Order, 1)`, `(Models.Order, _) =>`) is a constant pattern over a tuple to the grammar. Each element is a subpattern (spec §11.2.5): a type is a type pattern (C# 9), read as a lone pattern's type is, and a name the file declares as a value is the constant it names.
+            else if (expr !== null && expr.type === 'tuple_expression')
+                readPositionalElements(expr);
             return undefined;
         }
         // `o is Note[]`, `o is Note?`, `o is Pair<A, B>` after `is`: the grammar reads an array or nullable type as the operator's right operand, a type and not a pattern.
@@ -2155,7 +2217,7 @@ export function extractCsharpRefs(file) {
             if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
                 emitTypeNode(expr);
             }
-            else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && (!declaredNames.has(expr.text) || typeOnlyNames.has(expr.text)) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
+            else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && (!namesValue(expr.text) || (besideItself(node, expr.text, parentOf()) && mayBeOfItsType(expr.text, expr.startIndex))) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
                 const rooted = rootedName !== null;
                 const chain = [(rootedName ?? expr).text];
                 let cur = node;
@@ -2944,7 +3006,7 @@ export function csharpUses(file, options) {
 }
 export const csharpExtractor = {
     languages: new Set(['csharp']),
-    rev: 44,
+    rev: 48,
     declarations,
     uses,
 };

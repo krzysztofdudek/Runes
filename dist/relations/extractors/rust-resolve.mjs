@@ -12,6 +12,12 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     const crate = deps.crateRootFor(fromFile);
     if (crate === undefined)
         return undefined; // no Cargo.toml ancestor → not a crate path
+    // A `mod` with a `path` attribute among the items of its file (`mod::<path>`): the file the attribute names, relative to the directory of the file that writes it.
+    if (root === 'mod') {
+        const written = specifier.startsWith('mod::') ? specifier.slice('mod::'.length) : '';
+        const file = written === '' ? undefined : joinUnder(dirOfFile(toPosix(fromFile)), written);
+        return file !== undefined && exists(file) ? file : undefined;
+    }
     if (root === 'crate') {
         if (crate.unrooted === true)
             return undefined;
@@ -28,6 +34,9 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
         const named = crateNamed(name, fromFile, deps, crate);
         return named === undefined ? undefined : resolveFromModuleDir(named.srcDir, segments.slice(aliased ? 4 : 2), exists, rootContext(named.srcDir, named.rootFiles, declares), moduleCheckOf(deps));
     }
+    // A path written outside a `use` whose first name nothing in scope binds (`in::<the path>`): in every edition that name is a crate of the extern prelude, as a 2018 `use` path reads it.
+    if (root === 'in')
+        return resolveBare(segments.slice(1), fromFile, exists, deps, { ...crate, crateRelativeUses: false });
     // A `use` path whose first name is in scope where it is written (`use::<n>::<the n segments that name stands for>::<the path as written>`). From edition 2018 that name is what the path starts at; in edition 2015 a `use` path starts at the crate root whatever is in scope, so it is read as written.
     if (root === 'use') {
         const lead = Number(segments[1]);
@@ -44,14 +53,14 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
     return resolveBare(segments, fromFile, exists, deps, crate);
 }
 /**
- * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
+ * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, a file a `path` attribute names, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
  */
 export function explainRustMiss(specifier, fromFile, exists, deps) {
     const segments = specifier.split('::').filter((s) => s.length > 0);
     const root = segments[0];
     if (root === undefined)
         return undefined;
-    if (root === 'super' || root === 'self')
+    if (root === 'super' || root === 'self' || root === 'mod')
         return 'unfollowed';
     const crate = deps.crateRootFor(fromFile);
     if (crate === undefined)
@@ -66,6 +75,8 @@ export function explainRustMiss(specifier, fromFile, exists, deps) {
             return bareMiss(segments.slice(3), fromFile, exists, deps, crate);
         return crateNamed(name, fromFile, deps, crate) === undefined ? 'outside' : 'unfollowed';
     }
+    if (root === 'in')
+        return bareMiss(segments.slice(1), fromFile, exists, deps, { ...crate, crateRelativeUses: false });
     if (root === 'use') {
         const lead = Number(segments[1]);
         const written = segments.slice(2 + lead);
@@ -424,6 +435,11 @@ function joinUnder(dir, sub) {
     if (joined.startsWith('..'))
         return undefined;
     return joined;
+}
+/** The repository-relative directory of a file, '' at the repository root. */
+function dirOfFile(file) {
+    const dir = path.posix.dirname(file);
+    return dir === '.' ? '' : dir;
 }
 function toPosix(p) {
     return p.replace(/\\/g, '/');
