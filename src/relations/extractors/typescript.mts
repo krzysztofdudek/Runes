@@ -123,8 +123,11 @@ const MODULE_CALLS = new Map<string, ReadonlySet<string>>([
   ['vi', new Set(['mock', 'doMock', 'unmock', 'doUnmock', 'importActual', 'importMock'])],
   ['jest', new Set(['mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'requireActual', 'requireMock', 'createMockFromModule'])],
 ]);
-// Jest's module calls that return the `jest` object, so another call can be chained on them; Vitest's return nothing to chain on, and `requireActual` returns the module.
-const JEST_CHAINED = new Set(['mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock']);
+// The calls of `jest` that return the `jest` object, so another call can be chained on them (Jest's API reference: "Returns the jest object for chaining"); Vitest's module calls return nothing to chain on, and `requireActual` returns the module.
+const JEST_CHAINED = new Set([
+  'mock', 'doMock', 'unmock', 'dontMock', 'deepUnmock', 'setMock', 'resetModules', 'disableAutomock', 'enableAutomock',
+  'clearAllMocks', 'resetAllMocks', 'restoreAllMocks', 'useFakeTimers', 'useRealTimers', 'retryTimes', 'setTimeout',
+]);
 
 /** The callee of a call that names a module by its path: `vi.mock(…)`, `jest.requireActual(…)` and the other {@link MODULE_CALLS}, also on a chain of Jest's (`jest.mock('a').mock('b')`). `chains` remembers, by node id, which calls of the file are such a Jest chain, so a long chain is read once. */
 function isMockCallee(fn: Node, chains: Map<number, boolean>): boolean {
@@ -503,7 +506,7 @@ export const typescriptExtractor: DependencyExtractor = {
   // import(), `import type = require`) and a module augmentation names its module.
   // rev 2: bare/`#`/root-absolute specifiers emit (the resolver decides);
   // `new URL(…, import.meta.url)`; ERROR-region recovery.
-  // rev 10: the other calls of `vi` and `jest` that take a module's path, and a chained `jest.mock('a').mock('b')`, give the use `vi.mock` gives.
+  // rev 10: the other calls of `vi` and `jest` that take a module's path, and a module call chained on a `jest` call that returns the `jest` object (`jest.mock('a').mock('b')`, `jest.resetModules().mock('b')`), give the use `vi.mock` gives.
   rev: 10,
   declarations,
   uses,
