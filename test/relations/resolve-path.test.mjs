@@ -618,7 +618,6 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
       '[build-system]\nbuild-backend = "maturin"\n\n[tool.maturin]\npython-source = "python"\nmodule-name = "pkg._native"\n',
       '[tool]\nmaturin.python-source = \'python/\'\n',
       '[tool.pdm.build]\npackage-dir = "python"\n',
-      '[tool.pdm]\nbuild = { package-dir = "python" }\n',
       '[tool.hatch.build.targets.wheel]\nsources = ["python"]\n',
       '[tool.hatch.build]\nsources = ["python"]\n',
       '[tool.hatch.build.targets.wheel]\nsources = { "python" = "" }\n',
@@ -636,6 +635,7 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
       '[tool.maturin]\npython-packages = ["pkg"]\n',
       '[tool.pdm.build]\npackage-dir = 1\n',
       '[tool.pdm]\npackage-dir = "python"\n',
+      '[tool.pdm]\nbuild = { package-dir = "python" }\n',
       '[tool.hatch.build.targets.wheel]\nsources = ["python", 1]\n',
       '[tool.hatch.build.targets.wheel]\nsources = { "python" = "target" }\n',
       '[tool.hatch.build.targets.wheel]\nsources = { "python" = "", "other" = "x" }\n',
@@ -643,8 +643,13 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
       '[tool.hatch.build.targets.wheel.sources]\n"" = "pkg"\n',
       '[tool.hatch.build.targets.sdist]\nsources = ["python"]\n',
       '[tool.maturin]\npython-source = "../python"\n',
+      '[tool.hatch.build]\nsources = "python"\n',
+      '[tool.hatch.build]\nsources = { python }\n',
+      '[tool.hatch.build]\nsources = { a.b = "" }\n',
     ];
     for (const body of unread) expect(tree(body)('pkg.data.d.x'), body).toBeUndefined();
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a", "b/"]\n[tool.hatch.build.targets.wheel.sources]\n"c/d" = ""\n[tool.maturin]\npython-source = "py"\n[tool.pdm.build]\npackage-dir = "lib"\n')).toEqual(['py', 'lib', 'a', 'b', 'c/d']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = { "b" = "", "c" = "x" }\n')).toEqual(['a']);
   });
 
   it('a root from configuration never shadows the standard library, and the same tree under src/ answers as before', () => {

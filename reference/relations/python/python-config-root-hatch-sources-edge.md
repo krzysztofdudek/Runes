@@ -40,7 +40,7 @@ def load():
 ```
 
 ```python path=lib/shop/ui/view.py
-from shop.data import store
+from shop.data.store import load
 ```
 
 ## Expect

@@ -1153,6 +1153,7 @@ const PYTHON_FIXTURE_DIRS = new Set(['tests', 'test', 'fixtures']);
  * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
  *
  * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself, and one with `to` makes the whole key name nothing), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
+ * - `pyproject.toml`, from 1.2.0 also: maturin's `[tool.maturin] python-source` and the PDM backend's `[tool.pdm.build] package-dir` (each a string), and Hatch's `sources` under `[tool.hatch.build]` or `[tool.hatch.build.targets.wheel]`, as an array of strings (each a prefix the wheel drops) or a mapping, inline or as its own table, whose every member maps a prefix to `""`; a member that rewrites a prefix to another names nothing for the whole key.
  * - `setup.cfg`: the empty key of `[options] package_dir`, and the first directory of `[options.packages.find] where`, read as setuptools reads them (a list of lines, or of comma-separated items on one line).
  *
  * Any other key or form gives nothing, and a key with a value it cannot read whole (an element that is not a string, a mapping of a named package) gives nothing for that key: a misread root moves every absolute import of a project, so the reader refuses rather than guesses. A path that is absolute, holds a backslash or climbs above the manifest's directory names no root, so a root never leaves the project.
@@ -1174,6 +1175,12 @@ function pyprojectRoots(text) {
         const items = inlineArrayItems(value)?.map(tomlString);
         return items === undefined || items.some((item) => item === undefined) ? undefined : items;
     };
+    // Hatch's sources: each key's roots, or undefined once a member rewrites a prefix to another, which no root can express. The table form collects its members across lines.
+    const hatchSources = new Map();
+    const addHatchSource = (key, root, to) => {
+        const sofar = hatchSources.has(key) ? hatchSources.get(key) : [];
+        hatchSources.set(key, sofar === undefined || root === undefined || to !== '' ? undefined : [...sofar, root]);
+    };
     let section = [];
     let arrayTable = false;
     for (const logicalLine of tomlLogicalLines(text)) {
@@ -1189,8 +1196,15 @@ function pyprojectRoots(text) {
         const kv = KEY_VALUE.exec(line);
         if (!kv || arrayTable)
             continue;
-        const key = [...section, ...keySegments(kv[1])].join('.');
+        const segments = [...section, ...keySegments(kv[1])];
+        const key = segments.join('.');
         const value = kv[2].trim();
+        const tablePath = segments.slice(0, -1).join('.');
+        if (HATCH_SOURCES.has(tablePath)) {
+            // `[tool.hatch.build.targets.wheel.sources]` then `"lib" = ""`: one member of the mapping per line.
+            addHatchSource(tablePath, segments[segments.length - 1], tomlString(value));
+            continue;
+        }
         if (key === 'tool.setuptools.packages.find.where')
             roots.push(...(strings(value) ?? []));
         else if (key === 'tool.setuptools.package-dir.')
@@ -1220,9 +1234,35 @@ function pyprojectRoots(text) {
         else if (key === 'tool.hatch.build.targets.wheel.packages') {
             roots.push(...(strings(value) ?? []).map((pkg) => path.posix.dirname(pkg.replace(/\/+$/, ''))));
         }
+        else if (key === 'tool.maturin.python-source' || key === 'tool.pdm.build.package-dir') {
+            roots.push(...[tomlString(value)].filter((root) => root !== undefined));
+        }
+        else if (HATCH_SOURCES.has(key)) {
+            const list = inlineArrayItems(value);
+            const members = list === undefined ? inlineTableMembers(value) : undefined;
+            if (list !== undefined) {
+                const items = strings(value);
+                if (items === undefined)
+                    addHatchSource(key, undefined, undefined);
+                else
+                    for (const item of items)
+                        addHatchSource(key, item, '');
+            }
+            else if (members !== undefined) {
+                for (const member of members) {
+                    const entry = KEY_VALUE.exec(member);
+                    const memberKey = entry ? keySegments(entry[1]) : [];
+                    addHatchSource(key, memberKey.length === 1 ? memberKey[0] : undefined, entry ? tomlString(entry[2]) : undefined);
+                }
+            }
+        }
     }
+    for (const sources of hatchSources.values())
+        roots.push(...(sources ?? []));
     return roots;
 }
+/** The two places Hatch reads its `sources` option: for every target, and for the wheel. */
+const HATCH_SOURCES = new Set(['tool.hatch.build.sources', 'tool.hatch.build.targets.wheel.sources']);
 /** The roots `pythonManifestRoots` reads from a `setup.cfg`, an INI file as setuptools reads it: a `[section]` header, `key = value` or `key: value`, a value continued on the indented lines below it, and whole-line comments led by `#` or `;`. Setuptools keeps the case of the `[options]` keys (it lowercases only `[metadata]`), so `Package_Dir` is not `package_dir`. */
 function setupCfgRoots(text) {
     const values = new Map();
