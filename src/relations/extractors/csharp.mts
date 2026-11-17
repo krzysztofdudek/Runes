@@ -2246,6 +2246,8 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       while (expr !== null && expr.type === 'binary_expression' && TESTS_END_BEFORE.has(expr.childForFieldName('operator')!.type)) {
         expr = expr.childForFieldName('left');
       }
+      // A simple name straight after `is` is the is-type operator, which C# binds as a type first and as a constant only where no type of the name is found. Any other pattern (`Config =>`, `case Config:`, `not Config`, `Config or …`, `(Config)`) binds it as an expression first, so a value the file declares of that name is what it tests.
+      if (expr !== null && expr.type === 'identifier' && above.type !== 'is_pattern_expression' && namesValue(expr.text)) return undefined;
       if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name')) emitTypeNode(expr);
       // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
       // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace). At the head of a chain (`x is Models.Order || b`) it is read the same way, and the rest of the chain as it stands.
@@ -3117,7 +3119,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 47,
+  rev: 48,
   declarations,
   uses,
 };
