@@ -160,6 +160,14 @@ describe('a parse stopped by its progress callback', () => {
     for (const state of states) assert.equal(typeof state.currentOffset, 'number');
   });
 
+  it('options passed where the language goes are refused, not taken for a language', async () => {
+    const h = createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    const options = { progressCallback: () => true };
+    await assert.rejects(h.parseFile('shape.ts', PATHOLOGICAL, options), TypeError);
+    await assert.rejects(h.withParsedFile('shape.ts', PATHOLOGICAL, () => {}, options), TypeError);
+    await nextIsWhole(h);
+  });
+
   it('without the option no progress callback reaches the runtime; with it, one does', async () => {
     // A stub runtime records what each parse is given, so the default parse is seen to stay the runtime's plain parse.
     const seen = [];
@@ -173,7 +181,7 @@ describe('a parse stopped by its progress callback', () => {
     const h = createParserHost({ runtime: { Parser: StubParser, Language: { load: async () => ({}) } }, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
     assert.equal(await h.withParsedFile('a.ts', 'x', (tree) => tree.rootNode.type), 'program');
     (await h.parseFile('b.ts', 'y')).delete();
-    assert.deepEqual(seen.map((args) => args[2]?.progressCallback), [undefined, undefined]);
+    assert.deepEqual(seen, [['x'], ['y']], 'the runtime is called exactly as before');
     (await h.parseFile('c.ts', 'z', undefined, { progressCallback: () => false })).delete();
     assert.equal(typeof seen[2][2]?.progressCallback, 'function');
   });
