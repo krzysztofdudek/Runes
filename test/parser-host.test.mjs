@@ -119,11 +119,15 @@ describe('a parse stopped by its progress callback', () => {
   // a<a, repeated is TypeScript the grammar cannot settle: its parse grows its memory about fourfold per doubling (some 450 MiB at 16 KiB), so a consumer needs a way to stop it. Each test stops it at the runtime's first progress call.
   const PATHOLOGICAL = 'a<a,'.repeat(4096);
   const NEXT = 'const b: number = 2;\n';
-  const nextIsWhole = (h) => h.withParsedFile('next.ts', NEXT, (tree) => {
-    assert.equal(tree.rootNode.type, 'program');
-    assert.equal(tree.rootNode.hasError, false);
-    assert.equal(tree.rootNode.text, NEXT);
-  });
+  // A stopped parse left on its parser resumes on that parser's next call, whatever text it is given: the next file then gets the stopped file's tree. So the next tree is compared with the one a host that never stopped gives.
+  const nextIsWhole = async (h) => {
+    const expected = await createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] }).withParsedFile('next.ts', NEXT, (tree) => tree.rootNode.toString());
+    assert.match(expected, /^\(program \(lexical_declaration /);
+    await h.withParsedFile('next.ts', NEXT, (tree) => {
+      assert.equal(tree.rootNode.toString(), expected);
+      assert.equal(tree.rootNode.hasError, false);
+    });
+  };
 
   for (const call of ['withParsedFile', 'parseFile']) {
     it(`${call} rejects without a tree when the callback returns true, and the next parse on the same host is whole`, async () => {

@@ -91,13 +91,37 @@ export function createParserHost(options) {
         parser.setLanguage(lang);
         return parser;
     };
-    const parseFile = async (filePath, content, language) => {
+    const parseFile = async (filePath, content, language, options) => {
         const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
+        const progress = options?.progressCallback;
+        let stop;
+        const run = (parser) => {
+            if (progress === undefined)
+                return parser.parse(content);
+            stop = undefined;
+            // A throw inside the runtime's callback would unwind through the parser mid-parse, so it is caught here and turned into a stop.
+            const tree = parser.parse(content, null, {
+                progressCallback: (state) => {
+                    try {
+                        if (progress(state) === true)
+                            stop = { thrown: false, error: undefined };
+                    }
+                    catch (error) {
+                        stop = { thrown: true, error };
+                    }
+                    return stop !== undefined;
+                },
+            });
+            // A stopped parse resumes on the parser's next call unless the parser is reset.
+            if (tree === null)
+                parser.reset();
+            return tree;
+        };
         // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a heredoc delimiter of 256+ characters). The trap leaves that parser unusable while a fresh parser over the same language parses normally, so a throwing parse drops its parser from the cache and retries once on a private fresh parser. The poisoned parser is not freed: a concurrent caller may still hold it and would hit freed memory instead of a clean throw.
         let tree;
         const first = await getParser(ext);
         try {
-            tree = first.parse(content);
+            tree = run(first);
         }
         catch {
             for (const [key, cached] of parserCache)
@@ -105,11 +129,16 @@ export function createParserHost(options) {
                     parserCache.delete(key);
             const fresh = await freshParser(ext);
             try {
-                tree = fresh.parse(content);
+                tree = run(fresh);
             }
             finally {
                 fresh.delete();
             }
+        }
+        if (tree === null && stop !== undefined) {
+            if (stop.thrown)
+                throw stop.error;
+            throw Object.assign(new Error(`tree-sitter parse of ${filePath} stopped by its progress callback`), { code: 'EPARSESTOPPED' });
         }
         if (tree === null)
             throw new Error(`tree-sitter failed to parse file: ${filePath}`);
@@ -153,8 +182,8 @@ export function createParserHost(options) {
         },
         newParser,
         parseFile,
-        async withParsedFile(filePath, content, fn, language) {
-            const tree = await parseFile(filePath, content, language);
+        async withParsedFile(filePath, content, fn, language, options) {
+            const tree = await parseFile(filePath, content, language, options);
             try {
                 return await fn(tree);
             }

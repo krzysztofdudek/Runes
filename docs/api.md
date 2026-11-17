@@ -13,7 +13,7 @@ This is what `@chrisdudek/runes` promises under semantic versioning from 1.0.0 o
 
 - Every export of an internal module. The per-language extractors by name (all but `csharpExtractor`; `extractorForLanguage` is the promised way to one), the in-process MCP executor, the git test environment (`gitEnv`, `makeTempRepo`), the per-language resolution helpers, the table's helper functions, the command-line parser, the error document and the one-block `--json` rule, the usage-text reader, the guard's scanner and the git environment's constants stay in their modules for Runes' own code and tests; they may change in any release.
 - The file-system code under `dist/fs/` (the cross-process lock, atomic writes, the repository root). It ships and is tested, but no subpath exports it and no family tool uses it yet; it may change in any release until a 1.x minor exports it for a tool that adopts it.
-- Wording: error messages, tool and field descriptions, report lines. Codes (`code` in the error document, `ELOCKED`, `ELOCKBREAK`, `usage`, and `config-unreadable` and `package-entry-missing` of a relation diagnostic) are stable; sentences are not.
+- Wording: error messages, tool and field descriptions, report lines. Codes (`code` in the error document, `ELOCKED`, `ELOCKBREAK`, `EPARSESTOPPED`, `usage`, and `config-unreadable` and `package-entry-missing` of a relation diagnostic) are stable; sentences are not.
 - The shape of the per-language extract records: `CsharpExtract` with its `scope` and its descriptors (`CsharpRefDescriptor`), the C# project facts (`CsharpGlobalFacts`, `CsharpProjectScope`), and the per-file keys an extractor's `declarations()` writes (the C# `base:`, `members:` or `methods:` records, the Rust `mod:` or `glob:` keys, and the others below). They follow their extractor's `rev` and may change shape in a minor release, a field or a descriptor kind included, so a consumer that stores them extracts again when the `rev` changes. The functions that produce and read them keep their signatures.
 - The exact edges an extractor finds. An extractor fix changes what it reports for some source, in a minor or a patch release; the extractor's `rev` changes with it, so a consumer's cache keyed by `rev` drops what it computed before. The relation catalogue (`reference/relations/`) is the specification that fixes move towards.
 
@@ -138,9 +138,14 @@ To tell these, `ResolverDeps.resolvePathToFile` may carry the method `explainMis
 | `ParseCache` | type | Yggdrasil |
 | `createParserHost` | value | Yggdrasil |
 | `fileSha256` | value | Yggdrasil |
+| `ParseFileOptions` | type | — |
 | `ParserHost` | type | — |
 | `ParserHostOptions` | type | — |
 | `TreeSitterRuntime` | type | — |
+
+**Stopping a parse (added in 1.2.0).** `parseFile` and `withParsedFile` take an optional last argument, a `ParseFileOptions` with one optional field, `progressCallback`. The runtime calls it as the parse proceeds, with the runtime's own `ParseState` (in web-tree-sitter 0.27, `currentOffset`, the byte the parse has reached, and `hasError`). When it returns `true`, the parse stops: the call rejects with an error whose `code` is `EPARSESTOPPED`, no tree is made, and `withParsedFile` never calls its function. A callback that throws stops the parse the same way, and the call rejects with what it threw. Either way the host resets its parser, so the next parse on the same host gives the whole tree of its own file. Without the argument no callback reaches the runtime and every parse runs as in 1.1.
+
+What a consumer can rely on for time and memory: none of it is bounded by Runes. A file that is not source code in its language parses in time that grows with its size, and a short text repeated over and over parses in memory that grows about fourfold each time the file doubles. With web-tree-sitter 0.27.2 and the 1.2.0 grammar pins, random printable text with 5% newlines took up to 0.8 s for 250 000 characters and up to 8.6 s for 1 000 000 (JavaScript is the slowest of the five languages measured). A TypeScript file of `a<a,` repeated brought a fresh process to 460 MiB at 16 KiB and 1.5 GiB at 32 KiB. A C# file of `int x = f(a < b, …` reached 1.1 GiB at 16 KiB and made the runtime abort at its 2 GiB memory limit at 32 KiB, after which the runtime is not reliable for the rest of the process. A consumer that reads arbitrary files caps the size of the files it parses, skips binaries, and passes a `progressCallback` that stops a parse past its budget: stopped after its first 1 KiB, a 64 KiB parse of either shape ended in 6 ms with the process under 100 MiB. The README's host section gives every measured number.
 
 ## `@chrisdudek/runes/grammars`
 

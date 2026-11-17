@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { Language, Parser, Tree } from 'web-tree-sitter';
+import type { Language, Parser, ParseState, Tree } from 'web-tree-sitter';
 import { LANGUAGES, grammarExtensionForPath, type LanguageDef } from '../grammars/languages.mjs';
 
 /** The part of the `web-tree-sitter` module a parser host uses; `import * as TreeSitter from 'web-tree-sitter'` satisfies it. */
@@ -24,6 +24,12 @@ export interface ParserHostOptions {
   languages?: Readonly<Record<string, LanguageDef>>;
 }
 
+/** Options of one parse. */
+export interface ParseFileOptions {
+  /** Called by the runtime as the parse proceeds, with the runtime's `ParseState`. Returning `true` stops the parse: the parser is reset and the call rejects with an error whose `code` is `EPARSESTOPPED`. A callback that throws stops it the same way, and the call rejects with what it threw. */
+  progressCallback?: (state: ParseState) => boolean | void;
+}
+
 export interface ParserHost {
   /** The runtime identity this host folds into its digests. */
   runtimeIdentity(): string;
@@ -36,9 +42,9 @@ export interface ParserHost {
   /** A new parser with no language set, outside the cache; the caller deletes it. Needs the runtime initialized, which any earlier parse did. */
   newParser(): Parser;
   /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. */
-  parseFile(filePath: string, content: string, language?: string): Promise<Tree>;
-  /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. */
-  withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string): Promise<T>;
+  parseFile(filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree>;
+  /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. A stopped parse never calls `fn`. */
+  withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string, options?: ParseFileOptions): Promise<T>;
   /** sha256 of the grammar WASM of `extension`. Reads the file, never loads it. */
   grammarWasmHash(extension: string): string;
   /** Identity of the trees files with `extension` get: sha256 over the runtime identity and the grammar WASM hash. */
@@ -135,21 +141,45 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
     return parser;
   };
 
-  const parseFile = async (filePath: string, content: string, language?: string): Promise<Tree> => {
+  const parseFile = async (filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree> => {
     const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
+    const progress = options?.progressCallback;
+    let stop: { thrown: boolean; error: unknown } | undefined;
+    const run = (parser: Parser): Tree | null => {
+      if (progress === undefined) return parser.parse(content);
+      stop = undefined;
+      // A throw inside the runtime's callback would unwind through the parser mid-parse, so it is caught here and turned into a stop.
+      const tree = parser.parse(content, null, {
+        progressCallback: (state) => {
+          try {
+            if (progress(state) === true) stop = { thrown: false, error: undefined };
+          } catch (error) {
+            stop = { thrown: true, error };
+          }
+          return stop !== undefined;
+        },
+      });
+      // A stopped parse resumes on the parser's next call unless the parser is reset.
+      if (tree === null) parser.reset();
+      return tree;
+    };
     // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a heredoc delimiter of 256+ characters). The trap leaves that parser unusable while a fresh parser over the same language parses normally, so a throwing parse drops its parser from the cache and retries once on a private fresh parser. The poisoned parser is not freed: a concurrent caller may still hold it and would hit freed memory instead of a clean throw.
     let tree: Tree | null;
     const first = await getParser(ext);
     try {
-      tree = first.parse(content);
+      tree = run(first);
     } catch {
       for (const [key, cached] of parserCache) if (cached === first) parserCache.delete(key);
       const fresh = await freshParser(ext);
       try {
-        tree = fresh.parse(content);
+        tree = run(fresh);
       } finally {
         fresh.delete();
       }
+    }
+    if (tree === null && stop !== undefined) {
+      if (stop.thrown) throw stop.error;
+      throw Object.assign(new Error(`tree-sitter parse of ${filePath} stopped by its progress callback`), { code: 'EPARSESTOPPED' });
     }
     if (tree === null) throw new Error(`tree-sitter failed to parse file: ${filePath}`);
     return tree;
@@ -191,8 +221,8 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
     },
     newParser,
     parseFile,
-    async withParsedFile(filePath, content, fn, language) {
-      const tree = await parseFile(filePath, content, language);
+    async withParsedFile(filePath, content, fn, language, options) {
+      const tree = await parseFile(filePath, content, language, options);
       try {
         return await fn(tree);
       } finally {
