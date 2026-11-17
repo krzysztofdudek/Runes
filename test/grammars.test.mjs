@@ -32,7 +32,7 @@ describe('the shipped manifest', () => {
   });
 
   test('the runtime pin equals the web-tree-sitter peer and dev dependency, and the cli pin the tree-sitter-cli dev dependency', () => {
-    assert.equal(manifest.runtime.version, '0.27.0');
+    assert.equal(manifest.runtime.version, '0.27.2');
     assert.equal(manifest.runtime.version, pkg.peerDependencies['web-tree-sitter']);
     assert.equal(manifest.runtime.version, pkg.devDependencies['web-tree-sitter']);
     assert.equal(manifest.cli.version, pkg.devDependencies['tree-sitter-cli']);
@@ -251,9 +251,9 @@ describe('buildGrammars and verifyGrammarFiles', () => {
       assert.deepEqual(audit.map((b) => b.from), ['source']);
       // The stand-in at another version is refused before any build; no tree-sitter-cli at all is refused with what to install.
       writeFileSync(path.join(cliDir, 'tree-sitter'), '#!/bin/sh\necho "tree-sitter 0.1.0"\n', { mode: 0o755 });
-      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g4'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'proj'), cacheDir: path.join(out, 'cold') }), /pins tree-sitter-cli 0\.27\.0, but 0\.1\.0 is installed/);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g4'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'proj'), cacheDir: path.join(out, 'cold') }), /pins tree-sitter-cli 0\.27\.2, but 0\.1\.0 is installed/);
       mkdirSync(path.join(out, 'bare'));
-      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g5'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'bare'), cacheDir: path.join(out, 'cold') }), /needs tree-sitter-cli 0\.27\.0 installed/);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'g5'), manifest: m, patchesRoot: out, resolveFrom: path.join(out, 'bare'), cacheDir: path.join(out, 'cold') }), /needs tree-sitter-cli 0\.27\.2 installed/);
     } finally {
       grammar.cleanup(); dep.cleanup();
       rmSync(out, { recursive: true, force: true });
