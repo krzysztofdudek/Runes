@@ -145,6 +145,11 @@ export declare function pythonManifestRoots(name: string, text: string): string[
 /** The module path declared by go.mod text: `module x`, `module "x"`, ``module `x` ``, or
  *  the block form `module ( x )`. The first declaration wins; undefined when there is none. */
 export declare function parseGoModulePath(text: string): string | undefined;
+/** The modules go.mod text replaces with a local directory: each `replace <module> [<version>] => <dir>` (single-line and block form, quoted or bare) whose right side is one path beginning with `./` or `../`, as written, relative to the go.mod directory. A replacement by another module and version, an absolute directory, and a line it cannot split into those parts give nothing. */
+export declare function parseGoModReplaces(text: string): Array<{
+    modulePath: string;
+    dir: string;
+}>;
 /** The directories named by `use` directives in go.work text (single-line and block form,
  *  quoted or bare), as written — relative to the go.work directory. */
 export declare function parseGoWorkUses(text: string): string[];

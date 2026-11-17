@@ -8,13 +8,7 @@ cites: "go.dev/ref/mod — replace directive (redirects a module path to a local
 
 ## Rule
 
-A main-module `replace example.com/other => ./vendored/other` makes the go toolchain
-resolve `example.com/other/pkg` to the in-repo directory `vendored/other/pkg/`. The
-resolver reads ONLY the `module` line of go.mod (a line-oriented `module <path>`
-reader), never the `replace` directives, so the imported path is gated as external:
-it does not start with the repo's module prefix → silence. Missing this genuine
-in-tree edge is a tolerated false-NEGATIVE — it can never mis-bind to a wrong
-directory, because the redirect is simply not performed.
+A main-module `replace example.com/other => ./vendored/other` names a local directory as the root of the replacement module, and the go toolchain requires that directory to hold a `go.mod`. Here `vendored/other/` holds none, so the toolchain refuses the build and loads nothing from it. The resolver takes a directory replacement only when the directory's `go.mod` declares the replaced module (go-replace-sibling-module-edge), so this one is not taken: `example.com/other` is not under the module `example.com/m`, and the import gives no edge. It never binds a directory the toolchain would not load.
 
 ## Files
 
@@ -37,10 +31,8 @@ func main() { other.Helper() }
 
 ## Expect
 
-- silence      # `example.com/other` is not under module `example.com/m`; the `replace` redirect is unmodeled → no edge
+- silence      # `example.com/other` is not under module `example.com/m`, and the replacement directory holds no go.mod → no edge
 
 ## Why
 
-Modeling `replace` would require parsing the full replace graph; the line-oriented
-`module`-only reader deliberately does not, trading recall for the same zero-FP
-guarantee as every other unmodeled rewrite — silence over a guessed edge.
+A guessed redirect would bind files the build never loads; a replacement is taken only where it is a module of the repository.

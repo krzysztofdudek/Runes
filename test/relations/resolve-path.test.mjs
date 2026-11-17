@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, listedFileView, SymbolTable } from '@chrisdudek/runes/relations';
-import { pythonManifestRoots } from '../helpers/internal/relations.mjs';
+import { pythonManifestRoots, parseGoModReplaces } from '../helpers/internal/relations.mjs';
 
 // Unit coverage for the production resolvePathToFile dispatcher: it must route
 // TS-family languages through resolveTsPath against on-disk files, and return
@@ -375,6 +375,36 @@ describe('makeResolvePathToFile — a go.mod with no `module` directive (malform
 // Absent-manifest fail-to-silence: with no go.mod / composer.json / Cargo.toml anywhere,
 // each per-language resolver walks up to the repo root, finds no manifest, and returns
 // undefined rather than guessing a source root.
+describe('parseGoModReplaces — the directory replacements of a go.mod', () => {
+  it('reads each form of a replace to a relative directory and nothing else', () => {
+    const text = [
+      'module example.com/ui',
+      'replace example.com/a => ../a // a comment',
+      'replace example.com/b v1.2.3 => "./vendor/b"',
+      'replace (example.com/c => ../c)',
+      'replace (',
+      '\t`example.com/d` => ../d',
+      '\texample.com/e => example.com/e2 v1.0.0',
+      '\texample.com/f => /abs/f',
+      '\texample.com/g => ../g v1.0.0',
+      '\texample.com/h',
+      '\t => ../h',
+      '\ta b c => ../x',
+      '\t"" => ../y',
+      '\texample.com/i => ../i => ../j',
+      ')',
+      'replacement example.com/k => ../k',
+      'require example.com/a v0.0.0',
+    ].join('\n');
+    expect(parseGoModReplaces(text)).toEqual([
+      { modulePath: 'example.com/a', dir: '../a' },
+      { modulePath: 'example.com/b', dir: './vendor/b' },
+      { modulePath: 'example.com/c', dir: '../c' },
+      { modulePath: 'example.com/d', dir: '../d' },
+    ]);
+  });
+});
+
 describe('makeResolvePathToFile — absent manifests resolve to undefined', () => {
   let root;
 

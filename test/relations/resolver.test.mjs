@@ -800,6 +800,38 @@ describe('resolver.classifyUse — a Python module or a PHP class that several r
   });
 });
 
+// A Go module of the repository that the importing file's go.mod reaches only through `replace` with a relative directory binds there, as the toolchain loads it; a replacement by a version, by a directory outside the repository or by a directory whose go.mod declares another module stays outside.
+describe('resolver.classifyUse — a Go module wired with replace', () => {
+  const resolverOf = (files) => {
+    const contents = new Map(Object.entries(files));
+    const ownerOf = (f) => (f.endsWith('.go') && contents.has(f) ? f.split('/').at(-2) : undefined);
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const use = (r, specifier) => r.classifyUse([{ kind: 'path', specifier, isPackage: true }], 'ui/a.go', 'go');
+  const data = { 'data/go.mod': 'module example.com/data\n', 'data/d.go': 'package data', 'data/sub/s.go': 'package sub', 'ui/a.go': 'package ui' };
+
+  it('a replace to a sibling directory whose go.mod declares the module resolves into it, with no go.work', () => {
+    for (const replace of ['replace example.com/data => ../data', 'replace example.com/data v0.0.0 => "../data/" // local', 'replace (\n\texample.com/data => ../data\n)']) {
+      const r = resolverOf({ ...data, 'ui/go.mod': `module example.com/ui\n\nrequire example.com/data v0.0.0\n\n${replace}\n` });
+      expect(use(r, 'example.com/data'), replace).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+      expect(use(r, 'example.com/data/sub'), replace).toEqual({ kind: 'resolved', owner: 'sub', resolvedFile: 'data/sub/s.go' });
+      expect(use(r, 'example.com/data/gone'), replace).toEqual({ kind: 'absent', reason: 'unfollowed' });
+      expect(r.classify({ kind: 'path', specifier: 'example.com/data', isPackage: true }, 'ui/a.go', 'go')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+    }
+  });
+  it('a replace by a version, by a directory outside the repository, by one with no go.mod or another module stays outside', () => {
+    for (const replace of ['replace example.com/data => example.com/fork v1.0.0', 'replace example.com/data => ../../data', 'replace example.com/data => /abs/data', 'replace example.com/data => ../other', 'replace example.com/data => ../plain', 'replace example.com/data => ../data extra']) {
+      const r = resolverOf({ ...data, 'other/go.mod': 'module example.com/other\n', 'other/o.go': 'package other', 'plain/p.go': 'package plain', 'ui/go.mod': `module example.com/ui\n\n${replace}\n` });
+      expect(use(r, 'example.com/data'), replace).toEqual({ kind: 'absent', reason: 'outside' });
+    }
+  });
+  it('only the importing file\'s own go.mod replaces: a replace in another module\'s go.mod reaches nothing here', () => {
+    const r = resolverOf({ ...data, 'ui/go.mod': 'module example.com/ui\n', 'tool/go.mod': 'module example.com/tool\n\nreplace example.com/data => ../data\n', 'tool/t.go': 'package tool' });
+    expect(use(r, 'example.com/data')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(r.classifyUse([{ kind: 'path', specifier: 'example.com/data', isPackage: true }], 'tool/t.go', 'go')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'data/d.go' });
+  });
+});
+
 // Java reads a simple name of java.lang through the implicit on-demand import of java.lang (JLS §7.3), after the file's own package: its use leaves the repository, where a simple name of the package that no file declares was not followed.
 describe('resolver.classifyUse — a simple Java name of java.lang leaves the repository', () => {
   it('tells String from a name of the package that binds nothing, and binds the repository\'s own java.lang where it has one', () => {

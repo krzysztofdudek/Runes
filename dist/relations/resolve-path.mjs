@@ -1400,8 +1400,29 @@ function makeGoResolveDeps(plain, probe, ownerOf, isExcluded) {
         workMembersByDir.set(dir, members);
         return members;
     }
+    // Cache: go.mod directory → the modules its `replace` directives take from directories of the repository.
+    const replacedByDir = new Map();
+    /** The modules the go.mod in `moduleDir` replaces with a directory inside the repository whose own go.mod declares that module, as the toolchain requires of a directory replacement. */
+    function replacedModules(moduleDir) {
+        let replaced = replacedByDir.get(moduleDir);
+        if (replaced === undefined) {
+            replaced = [];
+            for (const { modulePath, dir } of parseGoModReplaces(plain.read(joinRel(moduleDir, 'go.mod')) ?? '')) {
+                const joined = path.posix.normalize(moduleDir === '' ? dir : path.posix.join(moduleDir, dir));
+                if (joined === '..' || joined.startsWith('../'))
+                    continue;
+                const target = joined === '.' ? '' : joined.replace(/\/+$/, '');
+                if (moduleAt(target) === modulePath)
+                    replaced.push({ modulePath, moduleDir: target });
+            }
+            replacedByDir.set(moduleDir, replaced);
+        }
+        return replaced;
+    }
     /** Every in-repo module reachable from `fromFile`: each go.mod from the file's directory
-     *  up to the root (nearest first), plus the members of the nearest go.work. */
+     *  up to the root (nearest first), the members of the nearest go.work, and the modules the
+     *  nearest go.mod (the main module when the file's package is built) replaces with a
+     *  directory of the repository. */
     function modulesFor(fromFile) {
         const out = [];
         let dir = path.posix.dirname(toPosix(fromFile));
@@ -1417,10 +1438,10 @@ function makeGoResolveDeps(plain, probe, ownerOf, isExcluded) {
             const parent = path.posix.dirname(dir);
             dir = parent === '.' ? '' : parent;
         }
-        for (const member of workMembersFrom(start)) {
-            const mod = moduleAt(member);
-            if (mod !== undefined && !out.some((m) => m.moduleDir === member)) {
-                out.push({ modulePath: mod, moduleDir: member });
+        const replaced = out.length > 0 ? replacedModules(out[0].moduleDir) : [];
+        for (const extra of [...workMembersFrom(start).map((member) => ({ modulePath: moduleAt(member), moduleDir: member })), ...replaced]) {
+            if (extra.modulePath !== undefined && !out.some((m) => m.moduleDir === extra.moduleDir)) {
+                out.push({ modulePath: extra.modulePath, moduleDir: extra.moduleDir });
             }
         }
         return out;
@@ -1480,6 +1501,44 @@ export function parseGoModulePath(text) {
             return value;
     }
     return undefined;
+}
+/** The modules go.mod text replaces with a local directory: each `replace <module> [<version>] => <dir>` (single-line and block form, quoted or bare) whose right side is one path beginning with `./` or `../`, as written, relative to the go.mod directory. A replacement by another module and version, an absolute directory, and a line it cannot split into those parts give nothing. */
+export function parseGoModReplaces(text) {
+    const out = [];
+    const tokens = (side) => (side.match(/"(?:[^"\\]|\\.)*"|`[^`]*`|\S+/g) ?? []).map(goUnquote);
+    const take = (spec) => {
+        const sides = spec.split('=>');
+        if (sides.length !== 2)
+            return;
+        const left = tokens(sides[0]);
+        const right = tokens(sides[1]);
+        if (left.length < 1 || left.length > 2 || right.length !== 1 || left[0] === '')
+            return;
+        if (right[0].startsWith('./') || right[0].startsWith('../'))
+            out.push({ modulePath: left[0], dir: right[0] });
+    };
+    let inBlock = false;
+    for (const rawLine of text.split('\n')) {
+        const line = goLine(rawLine);
+        if (line === '')
+            continue;
+        if (inBlock) {
+            if (line === ')')
+                inBlock = false;
+            else
+                take(line);
+            continue;
+        }
+        const m = /^replace(?:\s+|(?=\())(.*)$/.exec(line);
+        if (!m)
+            continue;
+        const rest = m[1].trim();
+        if (rest === '(')
+            inBlock = true;
+        else
+            take(rest.startsWith('(') && rest.endsWith(')') ? rest.slice(1, -1) : rest);
+    }
+    return out;
 }
 /** The directories named by `use` directives in go.work text (single-line and block form,
  *  quoted or bare), as written — relative to the go.work directory. */
