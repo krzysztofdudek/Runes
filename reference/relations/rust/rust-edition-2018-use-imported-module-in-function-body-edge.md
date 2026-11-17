@@ -8,7 +8,7 @@ cites: "Rust Reference — Use declarations; Names, Scopes (a `use` inside a fun
 
 ## Rule
 
-Edition 2021. `src/api/mod.rs` writes `use crate::shapes as sh;` at its top level. Inside the body of `f`, `use sh::round::Arc;` starts with that name and binds `src/shapes/round/mod.rs` (node `round`). The inline module `inner` is another module: `sh` is no name of it, so its `use sh::round::Arc;` is read as a path into a crate called `sh` and binds nothing.
+Edition 2021. `src/api/mod.rs` writes `use crate::shapes as sh;` at its top level. Inside the body of `f`, `use sh::round::Arc;` starts with that name and binds `src/shapes/round/mod.rs` (node `round`). The inline module `inner` is another module: `sh` is no name of it, so its `use sh::round::Arc;` is a path into the registry crate `sh` the package depends on, and binds nothing.
 
 ## Files
 
@@ -16,6 +16,9 @@ Edition 2021. `src/api/mod.rs` writes `use crate::shapes as sh;` at its top leve
 [package]
 name = "app"
 edition = "2021"
+
+[dependencies]
+sh = "1"
 ```
 
 ```rust path=src/lib.rs owner=api
@@ -51,4 +54,4 @@ mod inner {
 
 ## Why
 
-A name is looked up outward through the blocks around the `use` and stops at the module: taking it for a name of every module of the file would bind line 7, which Rust refuses.
+A name is looked up outward through the blocks around the `use` and stops at the module: taking it for a name of every module of the file would bind line 7, which names the crate `sh`.

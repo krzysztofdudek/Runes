@@ -52,6 +52,10 @@ pub struct TestServer;
 pub struct Fixture;
 ```
 
+```rust path=tests/integration/cases/mod.rs
+mod login;
+```
+
 ```rust path=tests/integration/cases/login.rs
 use crate::support::Fixture;
 use crate::TestServer;
@@ -67,6 +71,10 @@ fn main() {}
 pub struct Model;
 ```
 
+```rust path=demos/viewer/panels/mod.rs
+mod list;
+```
+
 ```rust path=demos/viewer/panels/list.rs
 use crate::state::Model;
 ```
@@ -74,6 +82,10 @@ use crate::state::Model;
 ```rust path=perf/bench_main.rs
 mod cases;
 pub struct Harness;
+```
+
+```rust path=perf/cases/mod.rs
+mod sort;
 ```
 
 ```rust path=perf/cases/sort.rs
@@ -87,6 +99,9 @@ use crate::Harness;
 - tests/integration/cases/login.rs:2 -> node:integration # a crate-root item → the [[test]] root tests/integration/suite.rs
 - demos/viewer/panels/list.rs:1 -> node:viewer           # crate:: from a module of the [[example]] crate → demos/viewer/state.rs, never src/state.rs (node:src)
 - perf/cases/sort.rs:1 -> node:perf                      # a crate-root item of the [[bench]] crate → perf/bench_main.rs, never the library's Harness in src/lib.rs (node:src)
+- tests/integration/suite.rs:2 -> node:cases             # the module declaration of the completed crate
+- demos/viewer/app.rs:2 -> node:panels                   # the module declaration of the completed crate
+- perf/bench_main.rs:1 -> node:cases                     # the module declaration of the completed crate
 
 ## Why
 

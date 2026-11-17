@@ -8,7 +8,7 @@ cites: "The Cargo Book — Cargo Targets (the `path` field of the `[lib]` target
 
 ## Rule
 
-A package can place its library outside `src/`: `[lib] path = "core/lib.rs"`. `src/main.rs` is then still the default binary, auto-discovered, and a file under `src/` is a module of that binary, not of the library, whose directory does not hold it. So in `src/cli/run.rs`, `crate::Config` binds the binary root `src/main.rs` (node `src`), never the library's same-named `Config` in `core/lib.rs` (node `core`), and `crate::LibOnly`, an item only the library declares, binds nothing (line 2). The package's own name, which edition 2021 puts in scope without `extern crate`, still addresses the library from the binary's modules: `shop::Engine` binds `core/lib.rs` (line 3).
+A package can place its library outside `src/`: `[lib] path = "core/lib.rs"`. `src/main.rs` is then still the default binary, auto-discovered, and a file under `src/` is a module of that binary, not of the library, whose directory does not hold it. So in `src/cli/run.rs`, `crate::Config` binds the binary root `src/main.rs` (node `src`), never the library's same-named `Config` in `core/lib.rs` (node `core`), and `crate::LibOnly`, an item only the library declares, binds nothing (line 2). The package's own name, which edition 2021 puts in scope without `extern crate`, still addresses the library from the binary's modules: `shop::Engine` binds `core/lib.rs` (line 3). `src/cli/mod.rs` does not declare `run`, since rustc refuses line 2 in the binary: no `mod` declares `src/cli/run.rs`, and the crate does not compile it, while the resolver reads it as a module of the binary all the same.
 
 ## Files
 
@@ -33,6 +33,10 @@ pub struct Config;
 fn main() {}
 ```
 
+```rust path=src/cli/mod.rs
+pub struct Args;
+```
+
 ```rust path=src/cli/run.rs
 use crate::Config;
 use crate::LibOnly;
@@ -42,6 +46,7 @@ use shop::Engine;
 ## Expect
 
 - src/cli/run.rs:1 -> node:src     # crate:: from a module of the default binary → its root src/main.rs, never the library's core/lib.rs (node:core)
+- src/main.rs:1 -> node:cli      # the module declaration of the completed crate
 - src/cli/run.rs:3 -> node:core    # the package's own name → the library root core/lib.rs; line 2 (an item only the library declares) stays silent
 
 ## Why

@@ -8,7 +8,7 @@ cites: "Rust Reference — Extern crate declarations (the name is bound in the m
 
 ## Rule
 
-Edition 2021. `extern crate engine_core as core2;` stands in the module `src/api/mod.rs`, not in the crate root, so `core2` is a name of that module alone. There `use core2::Engine;` binds the path dependency's root `engine-core/src/lib.rs` (node `dep`). In `src/other/mod.rs` the same `use` names a crate `core2` that nothing binds, and stays silent.
+Edition 2021. `extern crate engine_core as core2;` stands in the module `src/api/mod.rs`, not in the crate root, so `core2` is a name of that module alone. There `use core2::Engine;` binds the path dependency's root `engine-core/src/lib.rs` (node `dep`). In `src/other/mod.rs` the same `use` names the registry crate `core2` the package depends on, and stays silent.
 
 ## Files
 
@@ -19,6 +19,7 @@ edition = "2021"
 
 [dependencies]
 engine-core = { path = "engine-core" }
+core2 = "1"
 ```
 
 ```toml path=engine-core/Cargo.toml
@@ -54,4 +55,4 @@ use core2::Engine;
 
 ## Why
 
-Taking an alias written anywhere in the crate for a name of the whole crate would bind `core2` in modules where it names nothing.
+Taking an alias written anywhere in the crate for a name of the whole crate would bind `core2` to the path dependency in modules where it names another crate.

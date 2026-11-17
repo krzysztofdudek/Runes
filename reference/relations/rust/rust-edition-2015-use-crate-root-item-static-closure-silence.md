@@ -15,6 +15,8 @@ A struct declared in the body of a closure that a `static` of `src/lib.rs` passe
 ```toml path=Cargo.toml
 [package]
 name = "app"
+[dependencies]
+once_cell = "1"
 ```
 
 ```rust path=src/lib.rs

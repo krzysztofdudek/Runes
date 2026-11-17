@@ -26,9 +26,14 @@ pub struct X;
 mod foo;
 ```
 
+```rust path=src/lib.rs
+mod c;
+```
+
 ## Expect
 
 - src/c/mod.rs:2 -> node:custom   # the `mod` the `#[path]` attribute moves names the file the attribute gives
+- src/lib.rs:1 -> node:c      # the module declaration of the completed crate
 
 ## Why
 
