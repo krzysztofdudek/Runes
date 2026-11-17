@@ -8,7 +8,7 @@ cites: "Rust Reference — Use declarations, Glob imports (a name two globs both
 
 ## Rule
 
-The crate root of the path dependency `kit` writes `pub use types::*;` and `pub use models::*;`, and both modules define `Order`. Rust refuses `use kit::Order;` as ambiguous, so the path gives no edge.
+The crate root of the path dependency `kit` writes `pub use types::*;` and `pub use models::*;`, and both modules define `Order`. Rust refuses `use kit::Order;` as ambiguous, so the path gives no edge. Since rustc refuses it, the path stands in `app/src/orders.rs`, a file no `mod` declares, which the crate does not compile, beside the crate root `app/src/lib.rs`.
 
 ## Files
 
@@ -43,6 +43,10 @@ pub struct Order;
 ```
 
 ```rust path=app/src/lib.rs owner=root
+pub struct App;
+```
+
+```rust path=app/src/orders.rs owner=root
 use kit::Order;
 ```
 
