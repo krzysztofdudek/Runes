@@ -1153,7 +1153,7 @@ const PYTHON_FIXTURE_DIRS = new Set(['tests', 'test', 'fixtures']);
  * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
  *
  * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself, and one with `to` makes the whole key name nothing), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
- * - `pyproject.toml`, from 1.2.0 also: maturin's `[tool.maturin] python-source` and the PDM backend's `[tool.pdm.build] package-dir` (each a string), and Hatch's `sources` under `[tool.hatch.build]` or `[tool.hatch.build.targets.wheel]`, as an array of strings (each a prefix the wheel drops) or a mapping, inline or as its own table, whose every member maps a prefix to `""`; a member that rewrites a prefix to another names nothing for the whole key.
+ * - `pyproject.toml`, from 1.2.0 also: maturin's `[tool.maturin] python-source` and the PDM backend's `[tool.pdm.build] package-dir` (each a string), and Hatch's `sources` under `[tool.hatch.build.targets.wheel]`, or under `[tool.hatch.build]` when the wheel target sets none, as an array of strings (each a prefix the wheel drops) or a mapping, inline or as its own table, whose every member maps a prefix to `""`; a member that rewrites a prefix to another names nothing for the whole key, and a wheel option so refused, or empty, still replaces the build-wide one.
  * - `setup.cfg`: the empty key of `[options] package_dir`, and the first directory of `[options.packages.find] where`, read as setuptools reads them (a list of lines, or of comma-separated items on one line).
  *
  * Any other key or form gives nothing, and a key with a value it cannot read whole (an element that is not a string, a mapping of a named package) gives nothing for that key: a misread root moves every absolute import of a project, so the reader refuses rather than guesses. A path that is absolute, holds a backslash or climbs above the manifest's directory names no root, so a root never leaves the project.
@@ -1191,6 +1191,10 @@ function pyprojectRoots(text) {
         if (header) {
             section = keySegments(header[1]);
             arrayTable = line.startsWith('[[');
+            // The table form sets the option even before, or without, a member.
+            const table = section.join('.');
+            if (!arrayTable && HATCH_SOURCES.has(table) && !hatchSources.has(table))
+                hatchSources.set(table, []);
             continue;
         }
         const kv = KEY_VALUE.exec(line);
@@ -1240,6 +1244,9 @@ function pyprojectRoots(text) {
         else if (HATCH_SOURCES.has(key)) {
             const list = inlineArrayItems(value);
             const members = list === undefined ? inlineTableMembers(value) : undefined;
+            // An empty array or mapping sets the option too, to nothing.
+            if ((list !== undefined || members !== undefined) && !hatchSources.has(key))
+                hatchSources.set(key, []);
             if (list !== undefined) {
                 const items = strings(value);
                 if (items === undefined)
@@ -1257,11 +1264,12 @@ function pyprojectRoots(text) {
             }
         }
     }
-    for (const sources of hatchSources.values())
-        roots.push(...(sources ?? []));
+    // hatchling reads the wheel target's sources alone whenever the target sets them, refused or empty included, and the build-wide ones otherwise.
+    const wheel = 'tool.hatch.build.targets.wheel.sources';
+    roots.push(...((hatchSources.has(wheel) ? hatchSources.get(wheel) : hatchSources.get('tool.hatch.build.sources')) ?? []));
     return roots;
 }
-/** The two places Hatch reads its `sources` option: for every target, and for the wheel. */
+/** The two places Hatch reads its `sources` option: for every target, and for the wheel, whose own option replaces the build-wide one. */
 const HATCH_SOURCES = new Set(['tool.hatch.build.sources', 'tool.hatch.build.targets.wheel.sources']);
 /** The roots `pythonManifestRoots` reads from a `setup.cfg`, an INI file as setuptools reads it: a `[section]` header, `key = value` or `key: value`, a value continued on the indented lines below it, and whole-line comments led by `#` or `;`. Setuptools keeps the case of the `[options]` keys (it lowercases only `[metadata]`), so `Package_Dir` is not `package_dir`. */
 function setupCfgRoots(text) {
