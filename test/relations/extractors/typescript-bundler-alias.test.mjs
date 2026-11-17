@@ -130,10 +130,36 @@ describe('readBundlerAliases — where an alias stands', () => {
   it('Vite reads test.alias beside resolve.alias, each a list of its own', () => {
     expect(read("export default { resolve: { alias: { a: '/x' } }, test: { alias: { b: '/y' } } };", 'vite', 'web')).toEqual([[{ find: 'a', exact: false, replacement: PATH('web/x') }], [{ find: 'b', exact: false, replacement: PATH('web/y') }]]);
   });
-  it('an object entry it cannot read leaves its key unknown, in its place; a key written twice leaves the whole list unknown', () => {
-    const entries = read("export default { resolve: { alias: { a: 'x', ...more, [k]: 'y', short, 1: 'z', m() {}, b: 'w' } } };");
-    expect(entries[0].map((e) => e.find)).toEqual(['a', undefined, undefined, undefined, undefined, undefined, 'b']);
-    expect(read("export default { resolve: { alias: { a: 'x', a: 'y' } } };")).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
+  it('a member of the alias object it cannot read may replace any earlier key, so it leaves the whole object unknown, as a key written twice does; a shorthand member is a key whose value is unknown', () => {
+    const UNREADABLE = [[{ exact: false, replacement: UNKNOWN }]];
+    for (const member of ['...more', '[k]: \'y\'', '1: \'z\'', 'm() {}', "get '@'() { return '/o'; }", "'\\x40': '/o'", "a: 'y'"]) {
+      expect(read(`export default { resolve: { alias: { a: 'x', ${member}, b: 'w' } } };`)).toEqual(UNREADABLE);
+    }
+    expect(read("export default { resolve: { alias: { a: 'x', short, b: '/w' } } };")[0]).toEqual([
+      { find: 'a', exact: false, replacement: { kind: 'request', request: 'x' } },
+      { find: 'short', exact: false, replacement: UNKNOWN },
+      { find: 'b', exact: false, replacement: PATH('w') },
+    ]);
+  });
+  it('the resolve object and the configuration object around it are read the same way: a member it cannot read, or a key written twice, leaves the alias unknown', () => {
+    const UNREADABLE = [[{ exact: false, replacement: UNKNOWN }]];
+    for (const text of [
+      "export default { resolve: { alias: { a: '/x' }, ...more } };",
+      "export default { resolve: { ...base, alias: { a: '/x' } } };",
+      "export default { resolve: { alias: { a: '/x' }, [k]: {} } };",
+      "export default { resolve: { alias: { a: '/x' } }, ...overrides };",
+      "export default { resolve: { alias: { a: '/x' } }, resolve: {} };",
+      "export default { resolve: { alias: { a: '/x' } }, get resolve() { return {}; } };",
+      "export default { resolve: { alias: { a: '/x' } }, 'resolv\\u0065': {} };",
+      "export default { test: { alias: { a: '/x' } }, resolve };",
+    ]) expect(read(text)).toEqual(UNREADABLE);
+    expect(read("export default { plugins, resolve: { alias: { a: '/x' }, extensions } };")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+  });
+  it('an alias under a resolve that is not the configuration\'s own (a webpack rule, a nested object) is one the reader cannot follow', () => {
+    expect(read("module.exports = { module: { rules: [{ test: /x/, resolve: { alias: { a: path.resolve(__dirname, 'x') } } }] } };", 'webpack')).toBe('unknown');
+    expect(read("export default { environments: { client: { resolve: { alias: { a: '/x' } } } } };")).toBe('unknown');
+    expect(read("export default defineConfig(({ mode }) => { const x = 1; return { resolve: { alias: { a: '/x' } } }; });")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+    expect(read("module.exports = [{ resolve: { alias: { a: '/x' } } }, { resolve: { alias: { a: '/x' } } }];", 'vite')).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }], [{ find: 'a', exact: false, replacement: PATH('x') }]]);
   });
   it('Vite\'s array form reads a string find and a replacement; a regular expression, another property or another element is an unknown key', () => {
     const entries = read("export default { resolve: { alias: [{ find: 'a', replacement: '/x' }, { find: /^b$/, replacement: '/y' }, { find: 'c', replacement: '/z', customResolver: r }, { find: 'd' }, more, { find: 'e', replacement: '/v' }, ] } };");
@@ -145,6 +171,9 @@ describe('readBundlerAliases — where an alias stands', () => {
       { exact: false, replacement: UNKNOWN },
       { find: 'e', exact: false, replacement: PATH('v') },
     ]);
+  });
+  it('a webpack key with a `*` is a pattern, not a name, and is not read', () => {
+    expect(read("module.exports = { resolve: { alias: { '@app/*': path.resolve(__dirname, 'src/*') } } };", 'webpack')[0]).toEqual([{ exact: false, replacement: UNKNOWN }]);
   });
   it('keys: webpack\'s name$ matches the name alone; Babel\'s ^ and $ keys are regular expressions; an empty key, one ending in / and one with an escape are not read', () => {
     expect(read("module.exports = { resolve: { alias: { vue$: 'vue/dist/vue.esm.js' } } };", 'webpack')[0]).toEqual([{ find: 'vue', exact: true, replacement: { kind: 'request', request: 'vue/dist/vue.esm.js' } }]);
@@ -193,6 +222,16 @@ describe('readBundlerAliases — the replacement forms', () => {
     expect(one("path.relative(__dirname, 'src')")).toEqual(UNKNOWN);
     expect(one("resolve(__dirname, 'src')")).toEqual(UNKNOWN);
   });
+  it('path.resolve and path.join of __dirname are not read where the configuration declares a __dirname of its own', () => {
+    for (const prelude of [
+      "import path from 'path';\nconst __dirname = path.resolve('elsewhere');\n",
+      "import path from 'path';\nlet __dirname;\n__dirname = 'x';\n",
+      "import path from 'path';\nconst make = (__dirname) => 1;\n",
+      "import path from 'path';\nfunction make(a, __dirname) {}\n",
+      "import path from 'path';\nimport { here as __dirname } from './here';\n",
+    ]) expect(one("path.resolve(__dirname, 'src')", 'vite', prelude)).toEqual(UNKNOWN);
+    expect(one("path.resolve(__dirname, 'src')", 'vite', "import path from 'path';\nconst dts = path.resolve(__dirname, 'types');\nif (__dirname === x) {}\n")).toEqual(PATH('src'));
+  });
   it('fileURLToPath(new URL(\'<path>\', import.meta.url)), a path relative to the configuration', () => {
     expect(readBundlerAliases("export default { resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } } };", 'vite', 'app')[0][0].replacement).toEqual(PATH('app/src'));
     expect(one("fileURLToPath(new URL('src/', import.meta.url))")).toEqual(PATH('src'));
@@ -210,6 +249,12 @@ describe('readBundlerAliases — Babel module-resolver', () => {
     expect(babel("[['module-resolver', 'name']]")).toEqual([]);
     expect(babel("[['module-resolver', ]]")).toEqual([]);
     expect(babel("[['module-resolver', {}]]")).toEqual([]);
+  });
+  it('module-resolver under overrides or env, which apply to some files only, is one the reader cannot follow; its options are read the same way as an alias object', () => {
+    expect(read("module.exports = { overrides: [{ test: './web', plugins: [['module-resolver', { alias: { '@': './src' } }]] }] };", 'babel')).toBe('unknown');
+    expect(read('{ "env": { "test": { "plugins": [["module-resolver", { "alias": { "@": "./src" } }]] } } }', 'babel')).toBe('unknown');
+    expect(read("module.exports = { plugins: [['module-resolver', { alias: { '@': './src' }, alias: {} }]] };", 'babel')).toBe('unknown');
+    expect(read("module.exports = { plugins: [['module-resolver', { 'ali\\u0061s': {} }]] };", 'babel')).toBe('unknown');
   });
   it('options it cannot see, a root, cwd or resolvePath option, or the plugin named any other way leave the configuration unknown', () => {
     for (const plugins of [
@@ -249,6 +294,51 @@ describe('applyBundlerAliases and combineAliasAnswers', () => {
     expect(combineAliasAnswers([undefined, PATH('a'), PATH('a')])).toEqual(PATH('a'));
     expect(combineAliasAnswers([PATH('a'), PATH('b')])).toEqual(UNKNOWN);
     expect(combineAliasAnswers([undefined])).toBeUndefined();
+  });
+});
+
+describe('makeResolvePathToFile — a later member the reader cannot read gives no false edge', () => {
+  const resolverWith = (config, name = 'vite.config.ts') => {
+    const contents = new Map(Object.entries({ [name]: config, 'src/x.ts': '', 'other/x.ts': '', 'app/a.ts': '', 'package.json': '{ "name": "app" }' }));
+    return makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) });
+  };
+  it('a spread, computed, escaped or getter member after an alias key binds nothing and answers unfollowed', () => {
+    for (const config of [
+      "export default { resolve: { alias: { '@': '/src', ...{ '@': '/other' } } } };",
+      "export default { resolve: { alias: { '@': '/src', ['@']: '/other' } } };",
+      "export default { resolve: { alias: { '@': '/src', '\\x40': '/other' } } };",
+      "export default { resolve: { alias: { '@': '/src', get '@'() { return '/other'; } } } };",
+      "export default { resolve: { alias: { '@': '/src' }, ...{ alias: { '@': '/other' } } } };",
+      "export default { resolve: { alias: { '@': '/src' } }, ...{ resolve: { alias: { '@': '/other' } } } };",
+    ]) {
+      const r = resolverWith(config);
+      expect(r('@/x', 'app/a.ts', 'typescript')).toBeUndefined();
+      expect(r.explainMiss('@/x', 'app/a.ts', 'typescript')).toBe('unfollowed');
+    }
+  });
+  it('a webpack rule\'s resolve, a Babel override, a webpack pattern key and a __dirname of the configuration\'s own bind nothing and answer unfollowed', () => {
+    const cases = [
+      ['webpack.config.js', "const path = require('path');\nmodule.exports = { module: { rules: [{ test: /web/, resolve: { alias: { '@': path.resolve(__dirname, 'src') } } }] } };", '@/x'],
+      ['babel.config.js', "module.exports = { overrides: [{ test: './web', plugins: [['module-resolver', { alias: { '@': './src' } }]] }] };", '@/x'],
+      ['webpack.config.js', "const path = require('path');\nmodule.exports = { resolve: { alias: { 'lib*': path.resolve(__dirname, 'src') } } };", 'libx'],
+      ['webpack.config.js', "const path = require('path');\nconst __dirname = path.resolve('other');\nmodule.exports = { resolve: { alias: { '@': path.resolve(__dirname, '..', 'src') } } };", '@/x'],
+    ];
+    for (const [name, config, spec] of cases) {
+      const r = resolverWith(config, name);
+      expect(r(spec, 'app/a.js', 'javascript')).toBeUndefined();
+      expect(r.explainMiss(spec, 'app/a.js', 'javascript')).toBe('unfollowed');
+    }
+  });
+  it('a configuration of 131072 alias lists, or one list of 131072 keys, costs each import a bounded time', () => {
+    const lists = Array.from({ length: 131072 }, (_, k) => `{ resolve: { alias: { k${k}: '/src' } } }`).join(',');
+    const keys = Array.from({ length: 131072 }, (_, k) => `k${k}: '/src'`).join(',');
+    for (const config of [`module.exports = [${lists}];`, `module.exports = { resolve: { alias: { ${keys} } } };`]) {
+      const r = resolverWith(config, 'webpack.config.js');
+      r('@first/x', 'app/a.js', 'javascript');
+      const start = performance.now();
+      for (let k = 0; k < 2000; k++) r.explainMiss(`spec${k}/x`, 'app/a.js', 'javascript');
+      expect(performance.now() - start).toBeLessThan(2_000);
+    }
   });
 });
 

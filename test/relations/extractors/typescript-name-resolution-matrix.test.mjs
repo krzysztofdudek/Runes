@@ -177,6 +177,8 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-package-subpath-imports-silence', () => runCase('typescript-package-subpath-imports-silence'));
   it('typescript-bare-specifier-silence', () => runCase('typescript-bare-specifier-silence'));
   it('typescript-unresolved-outside-or-unfollowed-silence', () => runCase('typescript-unresolved-outside-or-unfollowed-silence'));
+  it('typescript-vite-resolve-alias-edge', () => runCase('typescript-vite-resolve-alias-edge'));
+  it('typescript-bundler-alias-unreadable-unfollowed-silence', () => runCase('typescript-bundler-alias-unreadable-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +210,4 @@ describe('MATRIX — JavaScript (no type syntax): the same path forms resolve, n
   it('typescript-imports-pattern-target-with-extension-edge', () => runCase('typescript-imports-pattern-target-with-extension-edge'));
   it('typescript-resolution-mode-clause-on-next-line-edge', () => runCase('typescript-resolution-mode-clause-on-next-line-edge'));
   it('typescript-resolution-mode-two-attributes-file-format-edge', () => runCase('typescript-resolution-mode-two-attributes-file-format-edge'));
-  it('typescript-vite-resolve-alias-edge', () => runCase('typescript-vite-resolve-alias-edge'));
-  it('typescript-bundler-alias-unreadable-unfollowed-silence', () => runCase('typescript-bundler-alias-unreadable-unfollowed-silence'));
 });
