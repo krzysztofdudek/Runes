@@ -710,10 +710,14 @@ describe('what the host leaves after a runtime abort, and the runtime freeing on
       await h.getParser('.cs');
       await assert.rejects(h.parseFile('a.rb', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
     })();
-    for (let i = 0; i < 100 && runtimeRef.deref() !== undefined; i++) {
+    // deref() keeps its target alive to the end of the current job, so each collection runs in a job of its own.
+    let collected = false;
+    for (let i = 0; i < 100 && !collected; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
       gc();
       await new Promise((resolve) => setTimeout(resolve, 0));
+      collected = runtimeRef.deref() === undefined;
     }
-    assert.equal(runtimeRef.deref(), undefined, 'the runtime was collected');
+    assert.ok(collected, 'the runtime was collected');
   });
 });
