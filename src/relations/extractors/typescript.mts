@@ -148,8 +148,8 @@ function isJestChain(node: Node, chains: Map<number, boolean>): boolean {
     }
     answer = chains.get(at.id);
     if (answer !== undefined) break;
-    const fn = at.childForFieldName('function');
-    const object = fn?.type === 'member_expression' ? fn.childForFieldName('object') : null;
+    const fn: Node | null = at.childForFieldName('function');
+    const object: Node | null = fn?.type === 'member_expression' ? fn.childForFieldName('object') : null;
     const property = fn?.type === 'member_expression' ? fn.childForFieldName('property') : null;
     pending.push(at);
     if (object === null || property === null || !JEST_CHAINED.has(property.text)) answer = false;
