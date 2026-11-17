@@ -2184,7 +2184,9 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       // Emit it as a candidate (a type reference if Z is a type; silence otherwise).
       const whole = node.namedChild(0);
       // In a chain of tests the grammar may read `x is App.Models.Order || x is App.Models.Line` as `(x is App).Models.Order || (x is App).Models.Line`: member accesses on a test, which no C# expression is, since a member access binds tighter than `is`. Each test is of the whole dotted name, read as a lone `x is App.Models.Order` is.
-      const test = parentOf();
+      // `x is not App.Models.Order || x is not App.Models.Line` tears the same way, with the constant under the negated pattern: the test is the one around the `not`.
+      let test = parentOf();
+      while (test !== null && test.type === 'negated_pattern') test = test.parent;
       const accessed = test !== null && test.type === 'is_pattern_expression' ? scopeOf(test).access : null;
       if (accessed !== null && whole !== null) {
         const tail: Node[] = [];
@@ -3065,7 +3067,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 44,
+  rev: 45,
   declarations,
   uses,
 };
