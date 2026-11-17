@@ -6821,6 +6821,10 @@ airflow-core/src/airflow/ui/tests/e2e/utils/api/hitl.ts:24	airflow-core/src/airf
 airflow-core/src/airflow/ui/tests/e2e/utils/api/hitl.ts:25	airflow-core/src/airflow/ui/tests/e2e/utils/api/dag-runs.ts
 airflow-core/src/airflow/ui/tests/e2e/utils/api/variables.ts:24	airflow-core/src/airflow/ui/tests/e2e/utils/shared.ts
 airflow-core/src/airflow/ui/tests/e2e/utils/shared.ts:24	airflow-core/src/airflow/ui/playwright.config.ts
+airflow-core/src/airflow/ui/testsSetup.ts:25	airflow-core/src/airflow/ui/src/mocks/handlers/index.ts
+airflow-core/src/airflow/ui/testsSetup.ts:30	airflow-core/src/airflow/ui/src/components/Graph/useGraphLayout.ts
+airflow-core/src/airflow/ui/testsSetup.ts:36	airflow-core/src/airflow/ui/src/layouts/Details/Graph/Graph.tsx
+airflow-core/src/airflow/ui/testsSetup.ts:37	airflow-core/src/airflow/ui/src/pages/Asset/AssetGraph.tsx
 airflow-core/src/airflow/utils/__init__.py:21	airflow-core/src/airflow/utils/deprecation_tools.py
 airflow-core/src/airflow/utils/cli.py:108	airflow-core/src/airflow/configuration.py
 airflow-core/src/airflow/utils/cli.py:109	airflow-core/src/airflow/utils/db.py
