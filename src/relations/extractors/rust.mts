@@ -272,40 +272,71 @@ function uses(file: ParsedFile): DetectedDep[] {
   // The blocks and item lists around the node being visited, innermost first, carried down the walk.
   let lexical: LexicalScope | null = null;
 
-  const externsByScope = new Map<number, ReadonlyMap<string, string>>();
-  const externsOf = (scope: Node): ReadonlyMap<string, string> => {
-    let bound = externsByScope.get(scope.id);
-    if (bound === undefined) {
-      bound = new Map(externCratesIn(scope).flatMap((e) => (e.crate === undefined ? [] : [[e.name, e.crate] as const])));
-      externsByScope.set(scope.id, bound);
+  // The scopes around the node being visited, by depth: `chain[d]` is the one of depth `d`, for every `d` up to the depth of `lexical`. A deeper entry is a scope the walk has left.
+  const chain: LexicalScope[] = [];
+  const onChain = (scope: LexicalScope): boolean => scope.depth <= (lexical?.depth ?? -1) && chain[scope.depth] === scope;
+  // For each name, the scopes around the node being visited whose items bind it in one way, outermost first, one index per way a lookup below reads: each lookup jumps to the scopes that bind its name instead of walking every block around the node, which costs the square of the depth of the file. A scope the walk has left is dropped from the end of a list when the list is next read or added to.
+  const byName = (): Map<string, LexicalScope[]> => new Map();
+  const usesNamed = byName(); // the names `scopeNames` reads: modules, and the names `use` declarations bind
+  const externsNamed = byName(); // those, the crates an `extern crate` binds and the items of the type namespace
+  const boundNamed = byName(); // those, and the names of every `extern crate`
+  const itemsNamed = byName(); // the items of the type namespace
+  const enter = (index: Map<string, LexicalScope[]>, names: Iterable<string>, scope: LexicalScope): void => {
+    for (const name of new Set(names)) {
+      const list = index.get(name);
+      if (list === undefined) {
+        index.set(name, [scope]);
+        continue;
+      }
+      while (list.length > 0 && !(list[list.length - 1]!.depth < scope.depth && chain[list[list.length - 1]!.depth] === list[list.length - 1])) list.pop();
+      list.push(scope);
     }
-    return bound;
+  };
+  /** The scope a block, the body of a module, an `impl` or a trait, or the file makes for what stands in it, with what its own items bind, entered in the indexes. */
+  const scopeOf = (node: Node, module: boolean, outer: LexicalScope | null): LexicalScope => {
+    const names = scopeNames(node, module);
+    const externCrates = externCratesIn(node);
+    const externs = new Map(externCrates.flatMap((e) => (e.crate === undefined ? [] : [[e.name, e.crate] as const])));
+    const { items, glob } = scopeTypeNames(node);
+    const depth = outer === null ? 0 : outer.depth + 1;
+    const scope: LexicalScope = { node, module, outer, depth, moduleDepth: module || outer === null ? depth : outer.moduleDepth, glob: glob || (!module && (outer?.glob ?? false)), names, externs, items };
+    chain[depth] = scope;
+    enter(usesNamed, names.keys(), scope);
+    enter(externsNamed, [...externs.keys(), ...names.keys(), ...items], scope);
+    enter(boundNamed, [...externCrates.map((e) => e.name), ...names.keys(), ...items], scope);
+    enter(itemsNamed, items, scope);
+    return scope;
+  };
+  /** The innermost scope of `index` that binds `name`, from `from` outward to the module around it, for which `accept` holds. */
+  const nearest = (index: Map<string, LexicalScope[]>, name: string, from: LexicalScope | null, accept: (scope: LexicalScope) => boolean = () => true): LexicalScope | undefined => {
+    const list = index.get(name);
+    if (from === null || list === undefined) return undefined;
+    while (list.length > 0 && !onChain(list[list.length - 1]!)) list.pop();
+    // The list is a chain of scopes, each inside the one before, so the depths rise along it: the last at most as deep as `from` is the innermost around it.
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid]!.depth <= from.depth) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo - 1; i >= 0 && list[i]!.depth >= from.moduleDepth; i--) if (accept(list[i]!)) return list[i];
+    return undefined;
   };
 
   // While a `use` declaration is read: the declaration, whose scope's names its path may start with.
   let useDecl: Node | null = null;
   // Whether that declaration's path starts with `::`: the crate root in edition 2015, a crate from edition 2018 on, and in neither a name in scope.
   let useFromRoot = false;
-  const namesByScope = new Map<number, ReadonlyMap<string, ScopeName[]>>();
-  const namesOf = (scope: LexicalScope): ReadonlyMap<string, ScopeName[]> => {
-    let names = namesByScope.get(scope.node.id);
-    if (names === undefined) {
-      names = scopeNames(scope.node, scope.module);
-      namesByScope.set(scope.node.id, names);
-    }
-    return names;
-  };
   /** The path the first segment `name` of a `use` path written in `decl` stands for, when a name in scope there says so: a module the module around it declares (`self::<name>`), or the path another `use` in scope bound to that name. The scopes are the blocks around the declaration, outward, and the module around them; a name of an outer module is not in scope. Undefined when no such name is found, or the `use` declarations found disagree. */
   const inScope = (name: string, decl: Node, from: LexicalScope | null): { name: ScopeName; scope: LexicalScope } | undefined => {
-    for (let scope = from; scope !== null; scope = scope.outer) {
-      const found = (namesOf(scope).get(name) ?? []).filter((n) => n.decl?.id !== decl.id);
-      if (found.length > 0) {
-        const one = found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0]!.path) ? found[0] : undefined);
-        return one === undefined ? undefined : { name: one, scope };
-      }
-      if (scope.module) return undefined;
-    }
-    return undefined;
+    const others = (scope: LexicalScope): ScopeName[] => (scope.names.get(name) ?? []).filter((n) => n.decl?.id !== decl.id);
+    // Only the scope that holds `decl` can bind the name through `decl` alone, so this passes over one scope at most.
+    const scope = nearest(usesNamed, name, from, (s) => others(s).length > 0);
+    if (scope === undefined) return undefined;
+    const found = others(scope);
+    const one = found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0]!.path) ? found[0] : undefined);
+    return one === undefined ? undefined : { name: one, scope };
   };
   /** A `use` path of `decl` with its first segment replaced by what that name stands for in scope, again and again while the path starts with such a name (`use crate::a; use a::b; use b::C;`). A path that starts with `crate`, `self` or `super`, or with a name nothing in scope binds, is returned as it is. */
   const inScopePath = (specifier: string, decl: Node, scope: LexicalScope | null): string => {
@@ -328,21 +359,15 @@ function uses(file: ParsedFile): DetectedDep[] {
 
   /** The crate an `extern crate` declaration binds as `name` where `decl`, a `use` declaration, stands: the declaration's own scope, then the blocks around it, outward, and the module around them, the first that binds `name` deciding. A scope where another `use`, a module or another item of the type namespace binds the name hides a declaration farther out, and an outer module is not in scope. */
   const externCrateFor = (name: string, decl: Node, from: LexicalScope | null): string | undefined => {
-    for (let scope = from; scope !== null; scope = scope.outer) {
-      const crate = externsOf(scope.node).get(name);
-      if (crate !== undefined) return crate;
-      if ((namesOf(scope).get(name) ?? []).some((n) => n.decl?.id !== decl.id) || scope.module) return undefined;
-      if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name)) return undefined;
-    }
-    return undefined;
+    // A scope that binds the name only through `decl` itself hides nothing; only the scope that holds `decl` can, so this passes over one scope at most.
+    const scope = nearest(externsNamed, name, from, (s) => s.externs.has(name) || s.items.has(name) || (s.names.get(name) ?? []).some((n) => n.decl?.id !== decl.id));
+    return scope?.externs.get(name);
   };
 
   /** True when a block around `from`, before the module that holds it, declares an item of the type namespace named `name` (a `mod` in a function body): a `use` path that starts with it names that item, which sits in this file, and no crate, module file or other file. */
   const blockItemNamed = (name: string, from: LexicalScope | null): boolean => {
-    for (let scope = from; scope !== null && !scope.module; scope = scope.outer) {
-      if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name)) return true;
-    }
-    return false;
+    const scope = nearest(itemsNamed, name, from);
+    return scope !== undefined && !scope.module;
   };
 
   const emit = (raw: string | undefined, node: Node): void => {
@@ -385,18 +410,7 @@ function uses(file: ParsedFile): DetectedDep[] {
   };
 
   /** Whether `name` is bound where a path written outside a `use` stands, so that a path starting with it names no crate of the extern prelude: by a `use` or a module in scope, an item of the type namespace or an `extern crate` of a block around it or of its module, or possibly by a glob `use` there. An outer module is not in scope. */
-  const typeNamesByScope = new Map<number, { names: ReadonlySet<string>; glob: boolean }>();
-  const boundInScope = (name: string, from: LexicalScope | null): boolean => {
-    for (let scope = from; scope !== null; scope = scope.module ? null : scope.outer) {
-      let own = typeNamesByScope.get(scope.node.id);
-      if (own === undefined) {
-        own = scopeTypeNames(scope.node);
-        typeNamesByScope.set(scope.node.id, own);
-      }
-      if (own.glob || own.names.has(name) || namesOf(scope).has(name)) return true;
-    }
-    return false;
-  };
+  const boundInScope = (name: string, from: LexicalScope | null): boolean => from !== null && (from.glob || nearest(boundNamed, name, from) !== undefined);
 
   /** Emit an inline path: one rooted at `crate`/`self`/`super` as it is, and one whose first name is lowercase and bound by nothing in scope as `in::<the path>`, a crate of the extern prelude. */
   const emitInline = (specifier: string | undefined, node: Node, inAttribute = false): void => {
@@ -484,7 +498,7 @@ function uses(file: ParsedFile): DetectedDep[] {
     lexical = around.lexical;
     // A block, the body of a module, an `impl` or a trait, and the file are scopes: what stands in them reads their names first.
     if (node.type === 'source_file' || node.type === 'block' || node.type === 'declaration_list') {
-      return { mods: scope, lexical: { node, module: node.type === 'source_file' || parent()?.type === 'mod_item', outer: around.lexical } };
+      return { mods: scope, lexical: scopeOf(node, node.type === 'source_file' || parent()?.type === 'mod_item', around.lexical) };
     }
     if (node.type === 'use_declaration') {
       const arg = node.childForFieldName('argument');
@@ -560,11 +574,17 @@ interface ScopeName {
   readonly decl: Node | null;
 }
 
-/** A scope around a node, carried down the walk: a block, the body of a module, an `impl` or a trait, or the file. `module` says it is a module's own (the file, or the body of an inline module), where the lookup of a name stops. */
+/** A scope around a node, carried down the walk: a block, the body of a module, an `impl` or a trait, or the file. `module` says it is a module's own (the file, or the body of an inline module), where the lookup of a name stops. `depth` counts the scopes around it, and `moduleDepth` is the depth of the module's own scope it lies in, itself included. What its own items bind: `names` as `scopeNames` reads them, `externs` the crate each `extern crate` that names one binds, `items` the names of the items of the type namespace; `glob` says that it or a scope around it, up to its module, holds a glob `use`. */
 interface LexicalScope {
   readonly node: Node;
   readonly module: boolean;
   readonly outer: LexicalScope | null;
+  readonly depth: number;
+  readonly moduleDepth: number;
+  readonly glob: boolean;
+  readonly names: ReadonlyMap<string, ScopeName[]>;
+  readonly externs: ReadonlyMap<string, string>;
+  readonly items: ReadonlySet<string>;
 }
 
 /** What the walk of `uses()` hands down: the inline modules and the scopes around a node. */
@@ -950,17 +970,17 @@ const TYPE_NAMESPACE_ITEMS = new Set(['mod_item', 'struct_item', 'enum_item', 'u
 /** The primitive types, whose names start a path to an associated item (`u32::MAX`, `str::from_utf8`) and name no crate. */
 const PRIMITIVE_TYPES = new Set(['bool', 'char', 'str', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'f16', 'f32', 'f64', 'f128']);
 
-/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` reads: the names of its items of the type namespace and of its `extern crate` declarations, and whether it holds a glob `use`, which can bring in any name, in a branch of a `cfg_if!` among its items too. */
-function scopeTypeNames(scope: Node): { names: ReadonlySet<string>; glob: boolean } {
-  const names = new Set(externCratesIn(scope).map((e) => e.name));
+/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` and `externCratesIn` read: the names of its items of the type namespace, and whether it holds a glob `use`, which can bring in any name, in a branch of a `cfg_if!` among its items too. */
+function scopeTypeNames(scope: Node): { items: ReadonlySet<string>; glob: boolean } {
+  const items = new Set<string>();
   let glob = false;
   for (const c of scope.namedChildren) {
-    if (c !== null && TYPE_NAMESPACE_ITEMS.has(c.type)) names.add(unraw(c.childForFieldName('name')?.text ?? ''));
+    if (c !== null && TYPE_NAMESPACE_ITEMS.has(c.type)) items.add(unraw(c.childForFieldName('name')?.text ?? ''));
     if (c !== null && c.type === 'use_declaration' && c.descendantsOfType('use_wildcard').length > 0) glob = true;
     const body = c === null ? null : cfgIfBodyOf(c, scope);
     if (body !== null && cfgIfNames(body).glob) glob = true;
   }
-  return { names, glob };
+  return { items, glob };
 }
 
 /** The item kinds whose `name` field a file's top level binds as an item. */
