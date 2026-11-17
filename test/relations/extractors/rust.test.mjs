@@ -453,6 +453,11 @@ describe('rust extractor — a path written outside a use whose first name nothi
     expect(at(uses)).toEqual(['other::bound@1', 'std::io@2', 'self::local@3', 'in::datacrate::Thing@6', 'in::datacrate::dc@7', 'in::std::mem::swap@8', 'in::registry_crate::call@9', 'in::datacrate::dc@19', 'x::y@21', 'in::datacrate::m@23', 'crate::a::b@24']);
   });
 
+  it('keeps a type of two segments rooted at crate, self or super as it stands, and emits none rooted at a type', async () => {
+    const { uses } = await run('fn f<T: Tr>(_a: crate::Foo, _b: self::Bar, _c: super::Baz, _d: T::Assoc, _e: <T as Tr>::Out) {}');
+    expect(specs(uses)).toEqual(['crate::Foo', 'self::Bar', 'super::Baz']);
+  });
+
   it('reads the names of its own module only, and stays silent where a glob or an extern crate of a scope around it may bind the name', async () => {
     const code = [
       'mod local;',
