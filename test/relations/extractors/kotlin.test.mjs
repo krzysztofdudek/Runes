@@ -462,10 +462,45 @@ describe('kotlin extractor — a declaration whose annotation the grammar splits
     }
   });
 
+  it('declares it on the line of its first annotation when the grammar splits each stacked annotation line into a statement of its own', async () => {
+    for (const annotations of [
+      '@Suppress("unused")\n@OptIn(KspExperimental::class)',
+      '@Suppress("unused")\n@Throws(IOException::class)',
+      '@Suppress("unused")\n@Throws(IOException::class)\n@OptIn(KspExperimental::class)',
+    ]) {
+      for (const depth of [0, 1, 2]) {
+        expect((await factsAfter(depth, annotations)).declarations).toContain('p.primaryConstructor@13');
+      }
+    }
+  });
+
+  it('declares it on the line of its first annotation with a comment between the annotations and the declaration', async () => {
+    for (const annotations of [
+      '@Flaky // logging enabled for this test\n@OptIn(KspExperimental::class)',
+      '@OptIn(KspExperimental::class) // needs the experimental API',
+      '@OptIn(KspExperimental::class)\n// needs the experimental API',
+      '@OptIn(KspExperimental::class)\n/* needs the experimental API */',
+      '@OptIn(KspExperimental::class)\n/** Needs the experimental API. */',
+      '@Suppress("unused")\n// needs the experimental API\n@OptIn(KspExperimental::class)',
+    ]) {
+      for (const depth of [0, 1, 2]) {
+        expect((await factsAfter(depth, annotations)).declarations).toContain('p.primaryConstructor@13');
+      }
+    }
+  });
+
   it('keeps an annotated expression statement a statement, the declaration after it on its own line', async () => {
-    for (const statement of ['@Suppress("unused") run()', '@Suppress("unused") (y)']) {
+    for (const statement of ['@Suppress("unused") run()', '@Suppress("unused") (y)', '@Suppress("unused") { y }', 'lbl@ (y)', '@Suppress("unused") (y) // a statement']) {
       for (const depth of [0, 1, 2]) {
         expect((await factsAfter(depth, statement)).declarations).toContain('p.primaryConstructor@14');
+      }
+    }
+  });
+
+  it('takes no line from the statement before the split annotations', async () => {
+    for (const statement of ['@Suppress("unused") run()', '@Suppress("unused") (y)', '@Suppress("unused") { y }', 'lbl@ (y)']) {
+      for (const depth of [0, 1, 2]) {
+        expect((await factsAfter(depth, `${statement}\n// a comment\n@OptIn(KspExperimental::class)`)).declarations).toContain('p.primaryConstructor@15');
       }
     }
   });
