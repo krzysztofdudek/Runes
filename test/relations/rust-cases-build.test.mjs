@@ -23,6 +23,7 @@ const skip = verdict.skip;
 const DO_NOT_BUILD_YET = new Set([
   'rust-autolib-off-own-crate-name-from-bin-silence',
   'rust-autolib-off-path-dependency-without-lib-silence',
+  'rust-cfg-if-module-and-use-are-names-in-scope-edge',
   'rust-crate-path-root-item-of-known-macro-edge',
   'rust-crate-root-glob-module-without-name-silence',
   'rust-crate-root-two-globs-same-name-silence',

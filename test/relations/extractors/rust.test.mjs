@@ -496,4 +496,47 @@ describe('rust extractor — mod declarations inside cfg_if!', () => {
     const { uses } = await run('mod outer {\n    cfg_if! { if #[cfg(a)] { mod leaf; } }\n}\nfn f() {\n    cfg_if! { if #[cfg(a)] { mod local; } }\n    cfg_if! { if #[cfg(a)] { mod stmt; } };\n}\ncfg_if! { if #[cfg(a)] { mod top; } };\nother_macro! { mod not_read; }\n#[path = "p"]\nmod pinned { cfg_if! { if #[cfg(a)] { mod unpinned; } } }\ncfg_if!();');
     expect(specs(uses)).toEqual(['self::outer::leaf', 'self::top']);
   });
+
+  it('takes the modules a branch declares and the names its use declarations bind for names in scope of the module, as written outside the macro', async () => {
+    const code = [
+      'cfg_if::cfg_if! {',
+      '    if #[cfg(unix)] {',
+      '        mod datacrate;',
+      '        mod unix;',
+      '        pub(crate) use unix as imp;',
+      '        use crate::g::{b, c as d, e::{self}};',
+      '        use ::x::outside;',
+      '        mod inline { use crate::hidden; }',
+      '        fn body() { use crate::body_only; }',
+      '    } else {',
+      '        cfg_if! { if #[cfg(a)] { use crate::nested; mod r#gen {} } }',
+      '    }',
+      '}',
+      'use datacrate::dc;',
+      'use imp::G;',
+      'use b::X; use d::X; use e::X; use nested::X; use r#gen::X;',
+      'use outside::X; use hidden::X; use body_only::X;',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual([
+      'self::datacrate@3', 'self::unix@4', 'use::2::self::datacrate::datacrate::dc@14', 'use::2::self::unix::imp::G@15',
+      'use::3::crate::g::b::b::X@16', 'use::3::crate::g::c::d::X@16', 'use::3::crate::g::e::e::X@16', 'use::2::crate::nested::nested::X@16', 'use::2::self::gen::gen::X@16',
+      'outside::X@17', 'hidden::X@17', 'body_only::X@17',
+    ]);
+  });
+
+  it('takes those names, and a glob use in a branch, as binding the first name of a path written outside a use', async () => {
+    const code = [
+      'cfg_if! {',
+      '    if #[cfg(unix)] { mod datacrate; use unix_impl as imp; }',
+      '}',
+      'mod globbed {',
+      '    cfg_if! { if #[cfg(a)] { use super::*; } }',
+      '    fn t() { other::f(); }',
+      '}',
+      'fn f() { datacrate::dc(1u8); imp::g(); other::f(); }',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['self::datacrate@2', 'in::other::f@8']);
+  });
 });
