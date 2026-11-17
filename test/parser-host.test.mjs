@@ -114,3 +114,63 @@ describe('failure isolation', () => {
     assert.throws(() => host.grammarWasmHash('.swift'), /no grammar for extension/);
   });
 });
+
+describe('a parse stopped by its progress callback', () => {
+  // a<a, repeated is TypeScript the grammar cannot settle: its parse grows its memory about fourfold per doubling (some 450 MiB at 16 KiB), so a consumer needs a way to stop it. Each test stops it at the runtime's first progress call.
+  const PATHOLOGICAL = 'a<a,'.repeat(4096);
+  const NEXT = 'const b: number = 2;\n';
+  const nextIsWhole = (h) => h.withParsedFile('next.ts', NEXT, (tree) => {
+    assert.equal(tree.rootNode.type, 'program');
+    assert.equal(tree.rootNode.hasError, false);
+    assert.equal(tree.rootNode.text, NEXT);
+  });
+
+  for (const call of ['withParsedFile', 'parseFile']) {
+    it(`${call} rejects without a tree when the callback returns true, and the next parse on the same host is whole`, async () => {
+      const h = createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+      let progressCalls = 0;
+      let fnRan = false;
+      const options = { progressCallback: () => { progressCalls++; return true; } };
+      const attempt = call === 'withParsedFile'
+        ? h.withParsedFile('shape.ts', PATHOLOGICAL, () => { fnRan = true; }, undefined, options)
+        : h.parseFile('shape.ts', PATHOLOGICAL, undefined, options);
+      await assert.rejects(attempt, (error) => error.code === 'EPARSESTOPPED' && error.message.includes('shape.ts'));
+      assert.equal(progressCalls, 1, 'stopped at the first call');
+      assert.equal(fnRan, false, 'no tree reached fn');
+      await nextIsWhole(h);
+    });
+  }
+
+  it('a callback that throws stops the parse: the call rejects with what it threw, and the next parse on the same host is whole', async () => {
+    const h = createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    const thrown = new Error('budget check failed');
+    await assert.rejects(h.withParsedFile('shape.ts', PATHOLOGICAL, () => {}, undefined, { progressCallback: () => { throw thrown; } }), (error) => error === thrown);
+    await nextIsWhole(h);
+  });
+
+  it('a callback that never returns true lets the parse finish, and gets the runtime parse state', async () => {
+    const h = createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    const states = [];
+    const text = await h.withParsedFile('a.ts', NEXT, (tree) => tree.rootNode.text, undefined, { progressCallback: (state) => { states.push(state); return false; } });
+    assert.equal(text, NEXT);
+    for (const state of states) assert.equal(typeof state.currentOffset, 'number');
+  });
+
+  it('without the option no progress callback reaches the runtime; with it, one does', async () => {
+    // A stub runtime records what each parse is given, so the default parse is seen to stay the runtime's plain parse.
+    const seen = [];
+    class StubParser {
+      static init() { return Promise.resolve(); }
+      setLanguage() {}
+      parse(...args) { seen.push(args); return { rootNode: { type: 'program' }, delete() {} }; }
+      reset() {}
+      delete() {}
+    }
+    const h = createParserHost({ runtime: { Parser: StubParser, Language: { load: async () => ({}) } }, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    assert.equal(await h.withParsedFile('a.ts', 'x', (tree) => tree.rootNode.type), 'program');
+    (await h.parseFile('b.ts', 'y')).delete();
+    assert.deepEqual(seen.map((args) => args[2]?.progressCallback), [undefined, undefined]);
+    (await h.parseFile('c.ts', 'z', undefined, { progressCallback: () => false })).delete();
+    assert.equal(typeof seen[2][2]?.progressCallback, 'function');
+  });
+});
