@@ -561,6 +561,11 @@ describe('the Python oracle\'s root list', () => {
       'hatch/pyproject.toml': '[tool.hatch.build.targets.wheel]\npackages = ["hl/hp"]\n[tool.hatch.build]\nsources = ["hs"]\n',
       'hatch/hl/hp/__init__.py': '',
       'hatch/hs/z.py': '',
+      'hatch2/pyproject.toml': '[tool.hatch.build]\nsources = ["x1"]\n[tool.hatch.build.targets.wheel]\nsources = ["x2"]\n',
+      'hatch2/x1/yaml.py': '',
+      'hatch2/x2/p/__init__.py': '',
+      'hatch3/pyproject.toml': '[tool.hatch.build]\nsources = ["x1"]\n[tool.hatch.build.targets.wheel]\nsources = []\n',
+      'hatch3/x1/yaml.py': '',
       'poe/pyproject.toml': '[tool.poetry]\npackages = [{ include = "a", from = "pl" }, { include = "b" }]\n',
       'poe/pl/a/__init__.py': '',
       'poe/b/__init__.py': '',
@@ -574,7 +579,7 @@ describe('the Python oracle\'s root list', () => {
     };
     for (const [rel, text] of Object.entries(files)) put(repo, rel, text);
     assert.deepEqual(pythonOracleRoots(repo, Object.keys(files)), [
-      '', 'app', 'app/code', 'bad', 'cfgfind', 'cfgfind/py', 'escape', 'flat', 'hatch', 'hatch/hl', 'hatch/hs', 'lib', 'pdm', 'pdm/pkgs', 'poe', 'poe/pl', 'rs', 'rs/python', 'setuptools', 'setuptools/sd', 'web', 'web/src',
+      '', 'app', 'app/code', 'bad', 'cfgfind', 'cfgfind/py', 'escape', 'flat', 'hatch', 'hatch/hl', 'hatch/hs', 'hatch2', 'hatch2/x2', 'hatch3', 'lib', 'pdm', 'pdm/pkgs', 'poe', 'poe/pl', 'rs', 'rs/python', 'setuptools', 'setuptools/sd', 'web', 'web/src',
     ]);
   });
 });
