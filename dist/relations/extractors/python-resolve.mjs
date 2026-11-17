@@ -47,7 +47,7 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
                 .filter((p) => p.fixture)
                 .map((p) => ({ dir: p.dir, usable: p.roots.filter((root) => !usable.includes(root) && !insidePackage(root)) }));
             const packageRoots = new Set(projects.flatMap((p) => p.roots.filter((root) => root !== p.dir)));
-            roots = { all, usable, fixtures, packageRoots };
+            roots = { all, usable, fixtures, packageRoots, projectDirs: new Set(projects.map((p) => p.dir)) };
         }
         return roots;
     };
@@ -91,7 +91,10 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
         belowDiscoveredRoot: (dir) => {
             let isBelow = below.get(dir);
             if (isBelow === undefined) {
-                isBelow = properAncestors(dir).some((ancestor) => discovered().all.has(ancestor));
+                const { all, projectDirs } = discovered();
+                const ancestors = properAncestors(dir);
+                // Inside a project: strictly below a source root or a project's directory, without being a project's directory or a source root itself.
+                isBelow = !projectDirs.has(dir) && !all.has(dir) && ancestors.some((ancestor) => all.has(ancestor) || projectDirs.has(ancestor));
                 below.set(dir, isBelow);
             }
             return isBelow;
@@ -180,7 +183,7 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  *
  * An ancestor directory INSIDE A REGULAR PACKAGE is never a root: one that holds an `__init__.py`, or whose parent does (a namespace sub-directory of a regular package). `sys.path` only ever holds directories outside packages, so `import logging` in `app/api/routes.py` loads the standard library even when the package `app/` has a `logging.py`, and must not bind to it.
  *
- * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every regular package, yet it is no more on `sys.path` than a package is: what Python puts there is an installed project's source root, the directory of the script it runs, or the current directory for `python -m`. So an ancestor directory lying strictly below a discovered project root is never a root, and for a top-level name the standard library owns (which precedes every installed project on `sys.path`) no ancestor is a root but the repository root. The importing file's own directory is exempt from both rules: it is `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging` and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/` when `acme/` is a namespace package. A file in a package directory strictly below a discovered root that is not its project's directory (a `src/` child or a root the configuration names, which holds only the code the project installs) is imported through that root, not run as a script, so its own directory is no root unless a tool runs from it (below): `src/poetry/poetry.py` does not answer for `poetry.json` in `src/poetry/factory.py`. Below a flat project's directory, where script folders (`scripts/`, `tools/`) sit beside the packages, the importer's own directory stays a root.
+ * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every regular package, yet it is no more on `sys.path` than a package is: what Python puts there is an installed project's source root, the directory of the script it runs, or the current directory for `python -m`. So an ancestor directory inside a project is never a root: one lying strictly below a discovered source root or a project's directory while being neither a project's directory nor a source root itself (beside `src/`, `scripts/` is no root for `scripts/sub/run.py`, which Python runs with `scripts/sub/` on `sys.path`; a workspace member's directory below a root manifest stays one, as pytest inserts it for the member's `tests` package), and for a top-level name the standard library owns (which precedes every installed project on `sys.path`) no ancestor is a root but the repository root. The importing file's own directory is exempt from both rules: it is `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging` and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/` when `acme/` is a namespace package. A file in a package directory strictly below a discovered root that is not its project's directory (a `src/` child or a root the configuration names, which holds only the code the project installs) is imported through that root, not run as a script, so its own directory is no root unless a tool runs from it (below): `src/poetry/poetry.py` does not answer for `poetry.json` in `src/poetry/factory.py`. Below a flat project's directory, where script folders (`scripts/`, `tools/`) sit beside the packages, the importer's own directory stays a root.
  *
  * Two conventions put a directory below a project root first on `sys.path` without any configuration, so for a name outside the standard library such a directory stays a root: one holding `conftest.py` and no `__init__.py` (pytest's rootdir rule inserts it), and one holding `manage.py` (Django runs from it). A directory put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not seen and is not searched.
  *
