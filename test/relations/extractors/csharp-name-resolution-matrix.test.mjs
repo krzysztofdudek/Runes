@@ -525,3 +525,7 @@ describe('MATRIX — file-local types shadow within their own file and level', (
   it('csharp-cyclic-base-inherited-nested-call-edge', () => runCase('csharp-cyclic-base-inherited-nested-call-edge'));
   it('csharp-using-namespace-hidden-for-one-project-only-edge', () => runCase('csharp-using-namespace-hidden-for-one-project-only-edge'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('csharp-lone-cr-line-ends-edge', () => runCase('csharp-lone-cr-line-ends-edge'));
+});

@@ -46,6 +46,7 @@ frontmatter:
 #   Rule   — the name-resolution rule the case exercises (prose + spec cite).
 #   Files  — one or more ```<lang> path=<repo-rel>``` fenced blocks: the embedded
 #            fixture code the test loads verbatim (single source, no drift).
+#            A fence may end with `eol=cr`: its lines then end with a lone CR.
 #   Expect — the asserted outcome: `file:line -> node:<id>` edge lines, and/or a
 #            bare `silence` line meaning no cross-node edge may be emitted; and
 #            optionally `file:line answers <answer>` lines, which hold exactly the

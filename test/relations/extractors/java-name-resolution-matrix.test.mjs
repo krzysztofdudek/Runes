@@ -313,3 +313,7 @@ describe('MATRIX — declaration-key shape & resolver invariants (not expressibl
     ).toEqual({ kind: 'absent' });
   });
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('java-lone-cr-line-ends-edge', () => runCase('java-lone-cr-line-ends-edge'));
+});

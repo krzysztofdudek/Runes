@@ -162,3 +162,7 @@ describe('MATRIX — grammar gaps that must not cost an edge', () => {
   it('php-84-asymmetric-promotion-edge', () => runCase('php-84-asymmetric-promotion-edge'));
   it('php-unresolved-outside-or-unfollowed-silence', () => runCase('php-unresolved-outside-or-unfollowed-silence'));
 });
+
+describe('MATRIX — a file whose lines end with a lone CR reports the line an editor shows', () => {
+  it('php-lone-cr-line-ends-edge', () => runCase('php-lone-cr-line-ends-edge'));
+});
