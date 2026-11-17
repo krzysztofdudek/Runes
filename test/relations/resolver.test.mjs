@@ -697,6 +697,8 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
     expect(use('src/main/kotlin/com/acme/app/Tree.kt', sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
     // A supertype in a package of the repository may be a type of the repository no file declares (generated): its member types stay the repository's.
     expect(use(main, sym('com.acme.app.Base+Entry', { samePackage: true }), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A supertype written as the source writes it, led by a type an import or the package resolves (`JsonAdapter.Factory`), names no package: it may be the repository's.
+    expect(use(main, sym('JsonAdapter.Factory+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
     // A farther reading that commits to the repository decides, as before: a starred package of the repository declares the name.
     const starred = resolverOf([['java', 'com.acme.app.Order', 'src/main/java/com/acme/app/Order.java'], ['java', 'com.acme.gen.Entry', 'src/main/java/com/acme/gen/Entry.java']]);
     expect(starred.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true, onDemand: ['com.acme.gen'] })], main, 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });

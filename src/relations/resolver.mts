@@ -895,13 +895,16 @@ export function makeResolver(deps: ResolverDeps): TargetResolver & Required<Pick
     return onDemand.some((pkg) => !inRepository(language, pkg)) ? 'outside' : 'pass';
   };
 
-  /** A Java or Kotlin reading of a member type inherited from a supertype outside the repository (`java.util.AbstractMap+Entry`): its supertype is no type of the repository and lies in a package the repository declares nothing in, so it reads on (the library's members are unknown) and, where no farther reading commits to the repository, leaves it. */
+  /** A Java or Kotlin reading of a member type inherited from a supertype outside the repository (`java.util.AbstractMap+Entry`): its supertype is no type of the repository and is qualified by a package the repository declares nothing in, so it reads on (the library's members are unknown) and, where no farther reading commits to the repository, leaves it. The package is the run of names before the first capitalised one, so a supertype the extractor writes as the source does, led by a type (`Map.Entry`, `JsonAdapter.Factory`, which an import or the package resolves), is never taken for one. */
   const inheritedFromOutside = (hint: TargetHint, language: string): boolean => {
     if (hint.kind !== 'symbol' || !JVM_LANGUAGES.has(language) || hint.set !== undefined || hint.within !== undefined || hint.nestedOnly === true) return false;
     const plus = hint.symbolKey.indexOf('+');
     if (plus === -1) return false;
     const supertype = hint.symbolKey.slice(0, plus);
-    return !inRepository(language, supertype) && !inRepository(language, supertype.slice(0, Math.max(supertype.lastIndexOf('.'), 0)));
+    const names = supertype.split('.');
+    const typeAt = names.findIndex((n) => /^\p{Lu}/u.test(n));
+    if (typeAt < 1) return false;
+    return !inRepository(language, supertype) && !inRepository(language, names.slice(0, typeAt).join('.'));
   };
 
   /** Whether the file's own package may declare the type a same-package reading names, by the first name of its key: a file of the repository declares it, in any source set, or a file of the package whose declarations could not be read may. */
