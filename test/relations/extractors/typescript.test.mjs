@@ -614,4 +614,13 @@ describe('sfcScriptView — a component of about 1 MB is read in linear time', (
     expect(view).toBeNull();
     expect(elapsed).toBeLessThan(BOUND_MS);
   });
+
+  it('a run of script openings with attributes and no closing angle bracket is read in linear time', () => {
+    // Each opening tries the tag to the end of the component; once one finds no `>`, none after it can.
+    for (const [file, opening] of [['c/spaced.vue', '<script '], ['c/quoted.svelte', '<script a="'], ['c/quoted.vue', '<script a="'], ['c/spaced.svelte', '<script ']]) {
+      const { view, elapsed } = timedView(file, opening.repeat(Math.floor(MB / opening.length)));
+      expect(view).toBeNull();
+      expect(elapsed).toBeLessThan(BOUND_MS);
+    }
+  });
 });
