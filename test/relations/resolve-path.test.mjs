@@ -599,6 +599,54 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(unreadable('pkg.m', 'tests/t.py', 'python')).toBe('src/pkg/m.py');
   });
 
+  it('maturin python-source, PDM package-dir and Hatch sources name a source root, read by the same refusing reader', () => {
+    const tree = (body) => {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('Cargo.toml', '[package]\nname = "mixed"\nversion = "0.1.0"\n');
+      write('pyproject.toml', body);
+      write('python/pkg/__init__.py');
+      write('python/pkg/data/__init__.py');
+      write('python/pkg/data/d.py');
+      write('python/pkg/ui/__init__.py');
+      write('python/pkg/ui/a.py');
+      write('tests/test_a.py');
+      const resolve = makeResolvePathToFile(root);
+      return (spec, from = 'python/pkg/ui/a.py') => resolve(spec, from, 'python');
+    };
+    const named = [
+      '[build-system]\nbuild-backend = "maturin"\n\n[tool.maturin]\npython-source = "python"\nmodule-name = "pkg._native"\n',
+      '[tool]\nmaturin.python-source = \'python/\'\n',
+      '[tool.pdm.build]\npackage-dir = "python"\n',
+      '[tool.pdm]\nbuild = { package-dir = "python" }\n',
+      '[tool.hatch.build.targets.wheel]\nsources = ["python"]\n',
+      '[tool.hatch.build]\nsources = ["python"]\n',
+      '[tool.hatch.build.targets.wheel]\nsources = { "python" = "" }\n',
+      '[tool.hatch.build.targets.wheel.sources]\n"python" = ""\n',
+      '[tool.hatch.build.sources]\npython = ""\n',
+    ];
+    for (const body of named) {
+      const resolve = tree(body);
+      expect(resolve('pkg.data.d.x'), body).toBe('python/pkg/data/d.py');
+      expect(resolve('pkg.data.d', 'tests/test_a.py'), body).toBe('python/pkg/data/d.py');
+    }
+    // Any other form of these keys names no root.
+    const unread = [
+      '[tool.maturin]\npython-source = ["python"]\n',
+      '[tool.maturin]\npython-packages = ["pkg"]\n',
+      '[tool.pdm.build]\npackage-dir = 1\n',
+      '[tool.pdm]\npackage-dir = "python"\n',
+      '[tool.hatch.build.targets.wheel]\nsources = ["python", 1]\n',
+      '[tool.hatch.build.targets.wheel]\nsources = { "python" = "target" }\n',
+      '[tool.hatch.build.targets.wheel]\nsources = { "python" = "", "other" = "x" }\n',
+      '[tool.hatch.build.targets.wheel.sources]\n"python" = ""\n"other" = "x"\n',
+      '[tool.hatch.build.targets.wheel.sources]\n"" = "pkg"\n',
+      '[tool.hatch.build.targets.sdist]\nsources = ["python"]\n',
+      '[tool.maturin]\npython-source = "../python"\n',
+    ];
+    for (const body of unread) expect(tree(body)('pkg.data.d.x'), body).toBeUndefined();
+  });
+
   it('a root from configuration never shadows the standard library, and the same tree under src/ answers as before', () => {
     write('pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib", "."]\n');
     write('lib/pkg/__init__.py');
