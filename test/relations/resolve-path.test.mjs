@@ -599,6 +599,64 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(unreadable('pkg.m', 'tests/t.py', 'python')).toBe('src/pkg/m.py');
   });
 
+  it('maturin python-source, PDM package-dir and Hatch sources name a source root, read by the same refusing reader', () => {
+    const tree = (body) => {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('Cargo.toml', '[package]\nname = "mixed"\nversion = "0.1.0"\n');
+      write('pyproject.toml', body);
+      write('python/pkg/__init__.py');
+      write('python/pkg/data/__init__.py');
+      write('python/pkg/data/d.py');
+      write('python/pkg/ui/__init__.py');
+      write('python/pkg/ui/a.py');
+      write('tests/test_a.py');
+      const resolve = makeResolvePathToFile(root);
+      return (spec, from = 'python/pkg/ui/a.py') => resolve(spec, from, 'python');
+    };
+    const named = [
+      '[build-system]\nbuild-backend = "maturin"\n\n[tool.maturin]\npython-source = "python"\nmodule-name = "pkg._native"\n',
+      '[tool]\nmaturin.python-source = \'python/\'\n',
+      '[tool.pdm.build]\npackage-dir = "python"\n',
+      '[tool.hatch.build.targets.wheel]\nsources = ["python"]\n',
+      '[tool.hatch.build]\nsources = ["python"]\n',
+      '[tool.hatch.build.targets.wheel]\nsources = { "python" = "" }\n',
+      '[tool.hatch.build.targets.wheel.sources]\n"python" = ""\n',
+      '[tool.hatch.build.sources]\npython = ""\n',
+    ];
+    for (const body of named) {
+      const resolve = tree(body);
+      expect(resolve('pkg.data.d.x'), body).toBe('python/pkg/data/d.py');
+      expect(resolve('pkg.data.d', 'tests/test_a.py'), body).toBe('python/pkg/data/d.py');
+    }
+    // Any other form of these keys names no root.
+    const unread = [
+      '[tool.maturin]\npython-source = ["python"]\n',
+      '[tool.maturin]\npython-packages = ["pkg"]\n',
+      '[tool.pdm.build]\npackage-dir = 1\n',
+      '[tool.pdm]\npackage-dir = "python"\n',
+      '[tool.pdm]\nbuild = { package-dir = "python" }\n',
+      '[tool.hatch.build.targets.wheel]\nsources = ["python", 1]\n',
+      '[tool.hatch.build.targets.wheel]\nsources = { "python" = "target" }\n',
+      '[tool.hatch.build.targets.wheel]\nsources = { "python" = "", "other" = "x" }\n',
+      '[tool.hatch.build.targets.wheel.sources]\n"python" = ""\n"other" = "x"\n',
+      '[tool.hatch.build.targets.wheel.sources]\n"" = "pkg"\n',
+      '[tool.hatch.build.targets.sdist]\nsources = ["python"]\n',
+      '[tool.maturin]\npython-source = "../python"\n',
+      '[tool.hatch.build]\nsources = "python"\n',
+      '[tool.hatch.build]\nsources = { python }\n',
+      '[tool.hatch.build]\nsources = { a.b = "" }\n',
+    ];
+    for (const body of unread) expect(tree(body)('pkg.data.d.x'), body).toBeUndefined();
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a", "b/"]\n[tool.maturin]\npython-source = "py"\n[tool.pdm.build]\npackage-dir = "lib"\n')).toEqual(['py', 'lib', 'a', 'b']);
+    // Hatch reads the wheel target's sources alone whenever the target sets them, so the build-wide ones then name nothing, also when the wheel's are refused or empty.
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a", "b/"]\n[tool.hatch.build.targets.wheel.sources]\n"c/d" = ""\n')).toEqual(['c/d']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build.targets.wheel]\nsources = ["src"]\n[tool.hatch.build]\nsources = ["lib"]\n')).toEqual(['src']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = { "b" = "", "c" = "x" }\n')).toEqual([]);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = []\n')).toEqual([]);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.hatch.build]\nsources = ["a"]\n[tool.hatch.build.targets.wheel]\nsources = {}\n')).toEqual([]);
+  });
+
   it('a root from configuration never shadows the standard library, and the same tree under src/ answers as before', () => {
     write('pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib", "."]\n');
     write('lib/pkg/__init__.py');
@@ -614,6 +672,154 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(resolve.explainMiss('logging.handlers', 'tools/run.py', 'python')).toBe('outside');
     // `.` names the project's own directory, a root as it was without configuration.
     expect(resolve('tools.run', 'lib/pkg/core.py', 'python')).toBe('tools/run.py');
+  });
+
+  it('a project in or below a directory named tests, test or fixtures is a root only for the files inside it', () => {
+    write('pyproject.toml', '[project]\nname = "tool"\n');
+    write('src/tool/__init__.py');
+    write('src/tool/chef.py', 'import build\n');
+    write('src/tool/app/__init__.py');
+    write('src/tool/app/view.py');
+    write('tests/test_chef.py', 'import build\nfrom tool.app import view\n');
+    write('tests/fixtures/sample/pyproject.toml', '[tool.poetry]\nname = "sample"\n');
+    write('tests/fixtures/sample/build.py', 'def run(): pass\n');
+    write('tests/fixtures/sample/tool/__init__.py');
+    write('tests/fixtures/sample/tool/app/__init__.py');
+    write('tests/fixtures/sample/tool/app/view.py');
+    write('tests/fixtures/sample/main.py', 'import build\n');
+    write('tests/fixtures/sample/tool/runner.py', 'import build\n');
+    const resolve = makeResolvePathToFile(root);
+    // Outside the fixture, the PyPA build package and the project's own package answer as if no fixture were there.
+    for (const from of ['src/tool/chef.py', 'tests/test_chef.py']) {
+      expect(resolve('build', from, 'python'), from).toBeUndefined();
+      expect(resolve.explainMiss('build', from, 'python'), from).toBe('outside');
+      expect(resolve('tool.app.view', from, 'python'), from).toBe('src/tool/app/view.py');
+    }
+    // Inside it, the fixture's own root still binds its modules.
+    expect(resolve('build', 'tests/fixtures/sample/main.py', 'python')).toBe('tests/fixtures/sample/build.py');
+    expect(resolve('build', 'tests/fixtures/sample/tool/runner.py', 'python')).toBe('tests/fixtures/sample/build.py');
+    // A directory named test or fixtures, at any depth, is one too.
+    for (const dir of ['test/data/one', 'pkg/fixtures', 'pkg/fixtures/deep/two']) {
+      write(`${dir}/setup.cfg`, '[metadata]\nname = x\n');
+      write(`${dir}/onlyhere_${dir.replace(/\//g, '_')}.py`);
+      expect(resolve(`onlyhere_${dir.replace(/\//g, '_')}`, 'src/tool/chef.py', 'python'), dir).toBeUndefined();
+      expect(makeResolvePathToFile(root)(`onlyhere_${dir.replace(/\//g, '_')}`, `${dir}/inner/x.py`, 'python'), dir).toBe(`${dir}/onlyhere_${dir.replace(/\//g, '_')}.py`);
+    }
+    // A directory whose name only contains one of these words is no fixture directory.
+    write('testing/proj/pyproject.toml', '[project]\nname = "proj"\n');
+    write('testing/proj/proj_mod.py');
+    expect(makeResolvePathToFile(root)('proj_mod', 'src/tool/chef.py', 'python')).toBe('testing/proj/proj_mod.py');
+  });
+
+  it('the importing file\'s own directory is no root when it is a package directory under a discovered root', () => {
+    write('pyproject.toml', '[tool.poetry]\nname = "poetry"\npackages = [{ include = "poetry", from = "src" }]\n');
+    write('src/poetry/__version__.py');
+    write('src/poetry/poetry.py', 'from poetry.__version__ import __version__\nfrom poetry.toml import load\n');
+    write('src/poetry/factory.py', 'from poetry.__version__ import __version__\nfrom poetry.json import validate\nfrom poetry.poetry import Poetry\n');
+    write('src/poetry/json/__init__.py');
+    write('src/poetry/toml/__init__.py');
+    write('src/main.py', 'import helper\n');
+    write('src/helper.py');
+    write('scripts/run.py', 'import util\n');
+    write('scripts/util.py');
+    const resolve = makeResolvePathToFile(root);
+    // `from poetry.json import validate` gives the module use poetry.json and the name use poetry.json.validate.
+    for (const spec of ['poetry.__version__', 'poetry.__version__.__version__']) expect(resolve(spec, 'src/poetry/factory.py', 'python'), spec).toBe('src/poetry/__version__.py');
+    for (const spec of ['poetry.json', 'poetry.json.validate']) expect(resolve(spec, 'src/poetry/factory.py', 'python'), spec).toBe('src/poetry/json/__init__.py');
+    for (const spec of ['poetry.poetry', 'poetry.poetry.Poetry']) expect(resolve(spec, 'src/poetry/factory.py', 'python'), spec).toBe('src/poetry/poetry.py');
+    // Never the importing file itself.
+    expect(resolve('poetry.__version__', 'src/poetry/poetry.py', 'python')).toBe('src/poetry/__version__.py');
+    expect(resolve('poetry.toml', 'src/poetry/poetry.py', 'python')).toBe('src/poetry/toml/__init__.py');
+    expect(resolve.explainMiss('poetry.missing.x', 'src/poetry/poetry.py', 'python')).toBe('unfollowed');
+    // A file directly in a root, and a script directory outside every root, still have their own directory as a root.
+    expect(resolve('helper', 'src/main.py', 'python')).toBe('src/helper.py');
+    expect(resolve('util', 'scripts/run.py', 'python')).toBe('scripts/util.py');
+    // Below a flat project's own directory, where script folders sit beside the packages, the importer's own directory stays a root.
+    write('tools/pyproject.toml', '[project]\nname = "tools"\n');
+    write('tools/bin/run.py', 'import helper_tool\n');
+    write('tools/bin/helper_tool.py');
+    expect(makeResolvePathToFile(root)('helper_tool', 'tools/bin/run.py', 'python')).toBe('tools/bin/helper_tool.py');
+  });
+
+  it('whether a directory is a root is judged against each project\'s directory as well as its source roots', () => {
+    for (const manifest of ['[project]\nname = "app"\n', '[tool.setuptools.packages.find]\nwhere = ["lib"]\n']) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('pyproject.toml', manifest);
+      write('src/app/__init__.py');
+      write('lib/app/__init__.py');
+      write('scripts/util.py');
+      write('scripts/run.py', 'import util\n');
+      write('scripts/sub/run.py', 'import util\n');
+      const resolve = makeResolvePathToFile(root);
+      // python scripts/sub/run.py puts scripts/sub on sys.path, never scripts/.
+      expect(resolve('util', 'scripts/sub/run.py', 'python'), manifest).toBeUndefined();
+      expect(resolve.explainMiss('util', 'scripts/sub/run.py', 'python'), manifest).toBe('outside');
+      expect(resolve('util', 'scripts/run.py', 'python'), manifest).toBe('scripts/util.py');
+    }
+    // Below a root manifest, a member's tests package beside its src/ or configured root keeps tests.helpers: pytest inserts the member's directory, the first one up without __init__.py.
+    for (const [member, layout] of [['[project]\nname = "member"\n', 'src'], ['[tool.setuptools.packages.find]\nwhere = ["lib"]\n', 'lib']]) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('pyproject.toml', '[tool.uv.workspace]\nmembers = ["member"]\n');
+      write('member/pyproject.toml', member);
+      write(`member/${layout}/mpkg/__init__.py`);
+      write(`member/${layout}/mpkg/core.py`);
+      write('member/tests/__init__.py');
+      write('member/tests/helpers.py');
+      write('member/tests/unit/__init__.py');
+      write('member/tests/unit/test_core.py', 'from tests.helpers import make\nfrom mpkg.core import run\n');
+      const resolve = makeResolvePathToFile(root);
+      expect(resolve('tests.helpers', 'member/tests/unit/test_core.py', 'python'), layout).toBe('member/tests/helpers.py');
+      expect(resolve('tests.helpers.make', 'member/tests/unit/test_core.py', 'python'), layout).toBe('member/tests/helpers.py');
+      expect(resolve('mpkg.core', 'member/tests/unit/test_core.py', 'python'), layout).toBe(`member/${layout}/mpkg/core.py`);
+    }
+  });
+
+  it('inside a project, a package importing itself by its own name and a pytest test module keep the roots Python and pytest give them', () => {
+    for (const manifest of ['[project]\nname = "app"\n', '[tool.setuptools.packages.find]\nwhere = ["lib"]\n']) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('pyproject.toml', manifest);
+      write('src/app/__init__.py');
+      write('lib/app/__init__.py');
+      // A package that runs as myext at all has docs/_ext on sys.path.
+      write('docs/_ext/myext/__init__.py', 'from myext.util import helper\n');
+      write('docs/_ext/myext/util/__init__.py');
+      write('docs/_ext/myext/sub/mod.py', 'import myext.util\n');
+      write('docs/_ext/myext/sub/__init__.py');
+      write('docs/_ext/other.py');
+      // pytest inserts the first directory upward without __init__.py for a test module or a conftest.py.
+      write('tests/helpers.py');
+      write('tests/unit/__init__.py');
+      write('tests/unit/common.py');
+      write('tests/unit/test_a.py', 'from helpers import make\nfrom unit.common import c\n');
+      write('tests/unit/conftest.py', 'from helpers import make\n');
+      write('tests/unit/case_test.py', 'from helpers import make\n');
+      write('src/app_tests/test_x.py', 'import helpers_x\n');
+      write('src/app_tests/helpers_x.py');
+      const resolve = makeResolvePathToFile(root);
+      const at = (spec, from) => resolve(spec, from, 'python');
+      expect(at('myext.util', 'docs/_ext/myext/__init__.py'), manifest).toBe('docs/_ext/myext/util/__init__.py');
+      expect(at('myext.util.helper', 'docs/_ext/myext/__init__.py'), manifest).toBe('docs/_ext/myext/util/__init__.py');
+      expect(at('myext.util', 'docs/_ext/myext/sub/mod.py'), manifest).toBe('docs/_ext/myext/util/__init__.py');
+      // Only the package's own name: another module beside it stays out of reach, as a plain directory inside the project is no root.
+      expect(at('other', 'docs/_ext/myext/__init__.py'), manifest).toBeUndefined();
+      for (const from of ['tests/unit/test_a.py', 'tests/unit/conftest.py', 'tests/unit/case_test.py']) {
+        expect(at('helpers', from), from).toBe('tests/helpers.py');
+        expect(at('unit.common', from), from).toBe('tests/unit/common.py');
+      }
+      expect(at('helpers_x', 'src/app_tests/test_x.py'), manifest).toBe('src/app_tests/helpers_x.py');
+    }
+  });
+
+  it('a pytest basedir is a root below a flat project too: a member\'s tests/ without __init__.py whose subdirectories are packages', () => {
+    write('m/pyproject.toml', '[project]\nname = "m"\n');
+    write('m/m/__init__.py');
+    write('m/tests/helpers.py');
+    write('m/tests/unit/__init__.py');
+    write('m/tests/unit/test_a.py', 'from helpers import make\n');
+    expect(makeResolvePathToFile(root)('helpers', 'm/tests/unit/test_a.py', 'python')).toBe('m/tests/helpers.py');
   });
 
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {

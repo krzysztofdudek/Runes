@@ -1152,10 +1152,13 @@ const PYTHON_PROJECT_MANIFESTS = ['pyproject.toml', 'setup.cfg', 'setup.py'];
 /** Directories never searched for Python project manifests: VCS and tool state, dependency
  *  trees and caches. A directory holding `pyvenv.cfg` (a virtual environment) is skipped too. */
 const PYTHON_ROOT_SCAN_SKIP = new Set(['node_modules', '__pycache__', 'site-packages', 'dist-packages']);
+/** A project whose manifest sits in or below a directory of one of these names is a test fixture: sample data the tests read or build, never installed beside the repository's own projects. */
+const PYTHON_FIXTURE_DIRS = new Set(['tests', 'test', 'fixtures']);
 /**
  * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
  *
  * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself, and one with `to` makes the whole key name nothing), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
+ * - `pyproject.toml`, from 1.2.0 also: maturin's `[tool.maturin] python-source` and the PDM backend's `[tool.pdm.build] package-dir` (each a string), and Hatch's `sources` under `[tool.hatch.build.targets.wheel]`, or under `[tool.hatch.build]` when the wheel target sets none, as an array of strings (each a prefix the wheel drops) or a mapping, inline or as its own table, whose every member maps a prefix to `""`; a member that rewrites a prefix to another names nothing for the whole key, and a wheel option so refused, or empty, still replaces the build-wide one.
  * - `setup.cfg`: the empty key of `[options] package_dir`, and the first directory of `[options.packages.find] where`, read as setuptools reads them (a list of lines, or of comma-separated items on one line).
  *
  * Any other key or form gives nothing, and a key with a value it cannot read whole (an element that is not a string, a mapping of a named package) gives nothing for that key: a misread root moves every absolute import of a project, so the reader refuses rather than guesses. A path that is absolute, holds a backslash or climbs above the manifest's directory names no root, so a root never leaves the project.
@@ -1177,6 +1180,12 @@ function pyprojectRoots(text) {
         const items = inlineArrayItems(value)?.map(tomlString);
         return items === undefined || items.some((item) => item === undefined) ? undefined : items;
     };
+    // Hatch's sources: each key's roots, or undefined once a member rewrites a prefix to another, which no root can express. The table form collects its members across lines.
+    const hatchSources = new Map();
+    const addHatchSource = (key, root, to) => {
+        const sofar = hatchSources.has(key) ? hatchSources.get(key) : [];
+        hatchSources.set(key, sofar === undefined || root === undefined || to !== '' ? undefined : [...sofar, root]);
+    };
     let section = [];
     let arrayTable = false;
     for (const logicalLine of tomlLogicalLines(text)) {
@@ -1187,13 +1196,24 @@ function pyprojectRoots(text) {
         if (header) {
             section = keySegments(header[1]);
             arrayTable = line.startsWith('[[');
+            // The table form sets the option even before, or without, a member.
+            const table = section.join('.');
+            if (!arrayTable && HATCH_SOURCES.has(table) && !hatchSources.has(table))
+                hatchSources.set(table, []);
             continue;
         }
         const kv = KEY_VALUE.exec(line);
         if (!kv || arrayTable)
             continue;
-        const key = [...section, ...keySegments(kv[1])].join('.');
+        const segments = [...section, ...keySegments(kv[1])];
+        const key = segments.join('.');
         const value = kv[2].trim();
+        const tablePath = segments.slice(0, -1).join('.');
+        if (HATCH_SOURCES.has(tablePath)) {
+            // `[tool.hatch.build.targets.wheel.sources]` then `"lib" = ""`: one member of the mapping per line.
+            addHatchSource(tablePath, segments[segments.length - 1], tomlString(value));
+            continue;
+        }
         if (key === 'tool.setuptools.packages.find.where')
             roots.push(...(strings(value) ?? []));
         else if (key === 'tool.setuptools.package-dir.')
@@ -1223,9 +1243,39 @@ function pyprojectRoots(text) {
         else if (key === 'tool.hatch.build.targets.wheel.packages') {
             roots.push(...(strings(value) ?? []).map((pkg) => path.posix.dirname(pkg.replace(/\/+$/, ''))));
         }
+        else if (key === 'tool.maturin.python-source' || key === 'tool.pdm.build.package-dir') {
+            roots.push(...[tomlString(value)].filter((root) => root !== undefined));
+        }
+        else if (HATCH_SOURCES.has(key)) {
+            const list = inlineArrayItems(value);
+            const members = list === undefined ? inlineTableMembers(value) : undefined;
+            // An empty array or mapping sets the option too, to nothing.
+            if ((list !== undefined || members !== undefined) && !hatchSources.has(key))
+                hatchSources.set(key, []);
+            if (list !== undefined) {
+                const items = strings(value);
+                if (items === undefined)
+                    addHatchSource(key, undefined, undefined);
+                else
+                    for (const item of items)
+                        addHatchSource(key, item, '');
+            }
+            else if (members !== undefined) {
+                for (const member of members) {
+                    const entry = KEY_VALUE.exec(member);
+                    const memberKey = entry ? keySegments(entry[1]) : [];
+                    addHatchSource(key, memberKey.length === 1 ? memberKey[0] : undefined, entry ? tomlString(entry[2]) : undefined);
+                }
+            }
+        }
     }
+    // hatchling reads the wheel target's sources alone whenever the target sets them, refused or empty included, and the build-wide ones otherwise.
+    const wheel = 'tool.hatch.build.targets.wheel.sources';
+    roots.push(...((hatchSources.has(wheel) ? hatchSources.get(wheel) : hatchSources.get('tool.hatch.build.sources')) ?? []));
     return roots;
 }
+/** The two places Hatch reads its `sources` option: for every target, and for the wheel, whose own option replaces the build-wide one. */
+const HATCH_SOURCES = new Set(['tool.hatch.build.sources', 'tool.hatch.build.targets.wheel.sources']);
 /** The roots `pythonManifestRoots` reads from a `setup.cfg`, an INI file as setuptools reads it: a `[section]` header, `key = value` or `key: value`, a value continued on the indented lines below it, and whole-line comments led by `#` or `;`. Setuptools keeps the case of the `[options]` keys (it lowercases only `[metadata]`), so `Package_Dir` is not `package_dir`. */
 function setupCfgRoots(text) {
     const values = new Map();
@@ -1291,14 +1341,16 @@ function setupCfgRoots(text) {
  *
  * A root read from a manifest joins the same set as the others, so it gets the same rules:
  * a top-level name the standard library owns is never matched there, and a module two roots
- * hold stays unbound.
+ * hold stays unbound. A project whose directory is, or lies below, one named `tests`, `test`
+ * or `fixtures` is marked a fixture, whose roots the resolver searches only for the files
+ * inside it.
  */
 function makePythonProjectRoots(plain, isExcluded) {
-    let roots;
+    let projects;
     const isDir = (repoRel) => plain.isDirectory(repoRel);
     return () => {
-        if (roots !== undefined)
-            return roots;
+        if (projects !== undefined)
+            return projects;
         const found = [];
         const stack = [''];
         while (stack.length > 0) {
@@ -1319,7 +1371,7 @@ function makePythonProjectRoots(plain, isExcluded) {
                 });
                 const configured = [...new Set(named.map((root) => (root === '.' ? dir : joinRel(dir, root))))].filter((root) => isDir(root));
                 const src = rel('src');
-                found.push(...(configured.length > 0 ? configured : [isDir(src) ? src : dir]));
+                found.push({ dir, roots: configured.length > 0 ? configured : [isDir(src) ? src : dir], fixture: dir.split('/').some((name) => PYTHON_FIXTURE_DIRS.has(name)) });
             }
             for (const e of entries) {
                 if (e.kind !== 'dir' || e.name.startsWith('.') || PYTHON_ROOT_SCAN_SKIP.has(e.name))
@@ -1327,8 +1379,8 @@ function makePythonProjectRoots(plain, isExcluded) {
                 stack.push(rel(e.name));
             }
         }
-        roots = [...new Set(found)].sort();
-        return roots;
+        projects = found.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
+        return projects;
     };
 }
 /**
@@ -1396,8 +1448,12 @@ function makeGoResolveDeps(plain, probe, ownerOf, isExcluded) {
         const work = joinRel(dir, 'go.work');
         if (plain.exists(work)) {
             for (const use of parseGoWorkUses(plain.read(work) ?? '')) {
-                const joined = path.posix.normalize(dir === '' ? use : path.posix.join(dir, use));
-                if (joined === '..' || joined.startsWith('../') || path.posix.isAbsolute(joined))
+                // Keyed as the ancestor walk and replacedModules key a directory ('' for the repository root, no trailing slash), so `use ./` is the module `use .` names.
+                const normalized = path.posix.normalize(dir === '' ? use : path.posix.join(dir, use));
+                if (path.posix.isAbsolute(normalized))
+                    continue;
+                const joined = normalized.replace(/\/+$/, '');
+                if (joined === '..' || joined.startsWith('../'))
                     continue;
                 members.push(joined === '.' ? '' : joined);
             }
