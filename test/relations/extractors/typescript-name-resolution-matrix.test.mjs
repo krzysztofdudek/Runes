@@ -179,6 +179,7 @@ describe('MATRIX — project configuration (tsconfig paths/baseUrl/extends, work
   it('typescript-unresolved-outside-or-unfollowed-silence', () => runCase('typescript-unresolved-outside-or-unfollowed-silence'));
   it('typescript-vite-resolve-alias-edge', () => runCase('typescript-vite-resolve-alias-edge'));
   it('typescript-bundler-alias-unreadable-unfollowed-silence', () => runCase('typescript-bundler-alias-unreadable-unfollowed-silence'));
+  it('typescript-bundler-config-composed-unfollowed-silence', () => runCase('typescript-bundler-config-composed-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

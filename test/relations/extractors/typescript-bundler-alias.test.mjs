@@ -1,4 +1,6 @@
 // A bare specifier that only a bundler configuration maps: the alias of a Vite, webpack or Babel module-resolver configuration, read from its literals, binds the file it names; a configuration whose alias cannot be read leaves a bare specifier that names no declared dependency unfollowed.
+import v8 from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { describe, it, expect } from '../../helpers/expect.mjs';
 import { makeResolver, makeResolvePathToFile, listedFileView, SymbolTable } from '@chrisdudek/runes/relations';
 import { readBundlerAliases, applyBundlerAliases, combineAliasAnswers } from '../../helpers/internal/relations.mjs';
@@ -9,6 +11,9 @@ const resolverOf = (files) => {
   return makeResolver({ ownerIndex: { ownerOf: (f) => f.split('/').at(-2) }, symbolTable: new SymbolTable(), resolvePathToFile });
 };
 const use = (r, specifier, fromFile, language = 'typescript') => r.classifyUse([{ kind: 'path', specifier }], fromFile, language);
+// A collection on demand, so a bound on the heap counts what the reader keeps and not what it has dropped.
+v8.setFlagsFromString('--expose-gc');
+const gc = runInNewContext('gc');
 
 describe('classifyUse — a bare specifier through a bundler alias', () => {
   it('Vite: resolve.alias read from a string, path.resolve(__dirname) and fileURLToPath(new URL(import.meta.url)) binds the file; an installed package stays outside', () => {
@@ -167,10 +172,89 @@ describe('readBundlerAliases — where an alias stands', () => {
     expect(read("module.exports = { module: { rules: [{ test: /x/, resolve: { alias: { a: path.resolve(__dirname, 'x') } } }] } };", 'webpack')).toBe('unknown');
     expect(read("export default { environments: { client: { resolve: { alias: { a: '/x' } } } } };")).toBe('unknown');
     expect(read("export default defineConfig(({ mode }) => { const x = 1; return { resolve: { alias: { a: '/x' } } }; });")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
-    expect(read("let c;\nif (prod) { c = 1; } else { c = { resolve: { alias: { a: '/x' } } }; }\nexport default c;")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+    expect(read("export default function (env) {\n  if (env.prod) { return { resolve: { alias: { a: '/x' } } }; } else { return { resolve: { alias: { a: '/y' } } }; }\n}")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }], [{ find: 'a', exact: false, replacement: PATH('y') }]]);
     expect(read("{ resolve: { alias: { a: '/x' } } }")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
     expect(read("call(x, { resolve: { alias: { a: '/x' } } }, { resolve: { alias: { a: '/x' } }.alias });")).toBe('unknown');
     expect(read("module.exports = [{ resolve: { alias: { a: '/x' } } }, { resolve: { alias: { a: '/x' } } }];", 'vite')).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }], [{ find: 'a', exact: false, replacement: PATH('x') }]]);
+  });
+  it('the configuration is what the file exports: an object, defineConfig of one, an array of them, a function that returns them, or a name the file declares once with one and never assigns again', () => {
+    const READ = [[{ find: 'a', exact: false, replacement: PATH('x') }]];
+    for (const text of [
+      "export default { resolve: { alias: { a: '/x' } } } satisfies UserConfig;",
+      "const config: UserConfig = { resolve: { alias: { a: '/x' } } };\nexport default config;",
+      "import { defineConfig } from 'vite'\nconst config = defineConfig({ resolve: { alias: { a: '/x' } } })\nexport default config\nfunction helper() { return 1 }",
+      "export default ({ mode }: ConfigEnv): UserConfig => {\n  const env = loadEnv(mode);\n  const keys = Object.keys(env).map((k) => { return k; });\n  return { resolve: { alias: { a: '/x' } } };\n};",
+      "export default defineConfig(async ({ command }) => ({ resolve: { alias: { a: '/x' } } }));",
+      "module.exports = (env, argv) => {\n  const config = { resolve: { alias: { a: '/x' } } };\n  switch (argv.mode) { case 'production': return config; default: return config; }\n};",
+      "const config = { resolve: { alias: { a: '/x' } } };\nmodule.exports = (env) => config;",
+      "export default (((defineConfig)({ resolve: { alias: { a: '/x' } } })) as UserConfig);",
+      "module.exports = [(env) => ({ resolve: { alias: { a: '/x' } } })];",
+      "export = { resolve: { alias: { a: '/x' } } };",
+    ]) expect(read(text)).toEqual(READ);
+    expect(read('')).toEqual([]);
+    expect(read('// nothing but a comment')).toEqual([]);
+  });
+  it('an export the reader cannot read as such a configuration (a name it does not declare or that is assigned again, a merge, a wrapper, a require, a condition, a member) leaves the file unknown', () => {
+    for (const text of [
+      "import base from './vite.base';\nexport default base;",
+      "export default mergeConfig(base, defineConfig({ plugins: [] }));",
+      "export default mergeConfig(defineConfig({ resolve: { alias: { a: '/x' } } }), overrides);",
+      "module.exports = merge(common, { mode: 'production' });",
+      "module.exports = withPlugins({ resolve: { alias: { a: '/x' } } });",
+      "module.exports = require('../../babel.config');",
+      "module.exports = Object.assign({}, base, { plugins: [] });",
+      "export default defineConfig(({ mode }) => mergeConfig(base, {}));",
+      "export default defineConfig((env) => { if (env.prod) return prod; return { resolve: { alias: { a: '/x' } } }; });",
+      "export default defineConfig(() => () => ({}));",
+      "export default defineConfig(() => { console.log(1); });",
+      "let c;\nif (prod) { c = 1; } else { c = { resolve: { alias: { a: '/x' } } }; }\nexport default c;",
+      "let config = { resolve: {} };\nconfig = merge(config, extra);\nexport default config;",
+      "const config = { resolve: {} };\nconst config = { resolve: {} };\nexport default config;",
+      "const config = { web: { resolve: {} } };\nexport default config.web;",
+      "export default prod ? { resolve: {} } : { resolve: {} };",
+      "export default { resolve: {} } || other;",
+      "export default [...configs];",
+      "export default defineConfig(...configs);",
+      "export default defineConfig({ resolve: {} }, extra);",
+      "module.exports = { resolve: {} };\nmodule.exports = other;",
+      "export const config = { resolve: {} };",
+      "module.exports.resolve = {};",
+      "export default new Promise((done) => done({ resolve: {} }));",
+    ]) expect(read(text)).toBe('unknown');
+  });
+  it('a configuration composed from something the reader cannot see leaves every bare specifier unknown, whether or not it writes an alias: a spread no key the lookup reads follows, a resolve, test or plugins that is no literal, an extends', () => {
+    const UNREADABLE = [[{ exact: false, replacement: UNKNOWN }]];
+    for (const [text, kind] of [
+      ['export default defineConfig({ ...base });', 'vite'],
+      ['export default defineConfig({ ...base, plugins: [] });', 'vite'],
+      ['export default defineConfig({ resolve: base.resolve });', 'vite'],
+      ['export default defineConfig({ resolve: { ...base.resolve } });', 'vite'],
+      ['export default defineConfig({ resolve: { ...base.resolve, dedupe: [] } });', 'vite'],
+      ['export default defineConfig({ resolve: {}, test: shared.test });', 'vite'],
+      ['export default defineConfig({ resolve: {}, test: { ...shared } });', 'vite'],
+      ['export default defineConfig({ resolve });', 'vite'],
+      ["module.exports = { ...common, mode: 'production' };", 'webpack'],
+      ['module.exports = { resolve: common.resolve };', 'webpack'],
+      ["module.exports = { extends: './webpack.base.js' };", 'webpack'],
+      ["module.exports = { ...require('./babel.shared') };", 'babel'],
+      ["module.exports = { plugins: require('./babel.shared').plugins };", 'babel'],
+      ["module.exports = { plugins: [...shared.plugins, 'x'] };", 'babel'],
+      ['module.exports = { plugins };', 'babel'],
+      ['{ "extends": "./base.babelrc", "presets": [] }', 'babel'],
+      ['{ "presets": [], "presets": [] }', 'babel'],
+    ]) expect(read(text, kind)).toEqual(UNREADABLE);
+  });
+  it('a configuration it reads in full that writes no alias has none, as before', () => {
+    for (const [text, kind] of [
+      ['export default defineConfig({ plugins: [react()], server: { port: 3000 } });', 'vite'],
+      ["export default defineConfig({ ...base, resolve: { extensions: ['.ts'] }, test: { environment: 'node' } });", 'vite'],
+      ["const resolve = { dedupe: ['vue'] };\nexport default defineConfig({ resolve });", 'vite'],
+      ["module.exports = { entry: './src', resolve: { extensions: ['.js'] } };", 'webpack'],
+      ["const config: Configuration = { mode: 'production' };\nexport default config;", 'webpack'],
+      ["module.exports = (api) => {\n  const plugins = [['@babel/plugin-transform-flow-strip-types']];\n  if (prod) plugins.push('x');\n  return { plugins, presets: ['@babel/preset-env'] };\n};", 'babel'],
+      ['{ "presets": ["@babel/preset-env"] }', 'babel'],
+      ['{}', 'babel'],
+    ]) expect(read(text, kind)).toEqual([]);
   });
   it('Vite\'s array form reads a string find and a replacement; a regular expression, another property or another element is an unknown key', () => {
     const entries = read("export default { resolve: { alias: [{ find: 'a', replacement: '/x' }, { find: /^b$/, replacement: '/y' }, { find: 'c', replacement: '/z', customResolver: r }, { find: 'd' }, more, { find: 'e', replacement: '/v' }, ] } };");
@@ -365,6 +449,80 @@ describe('makeResolvePathToFile — a later member the reader cannot read gives 
       const start = performance.now();
       for (let k = 0; k < 2000; k++) r.explainMiss(`spec${k}/x`, 'app/a.js', 'javascript');
       expect(performance.now() - start).toBeLessThan(2_000);
+    }
+  });
+  it('a table of long keys costs memory in proportion to their text, and an import time in proportion to its specifier', () => {
+    // 2048 keys of 1024 characters, each its own from the fourth character on: 2 MB of keys.
+    const keys = Array.from({ length: 2048 }, (_, k) => `${k.toString(36).padStart(3, '0')}${'k'.repeat(1021)}`);
+    const r = resolverWith(`export default { resolve: { alias: { ${keys.map((key) => `'${key}': '/src'`).join(', ')} } } };`);
+    gc();
+    const before = process.memoryUsage().heapUsed;
+    const start = performance.now();
+    expect(r(`${keys[7]}/x`, 'app/a.ts', 'typescript')).toBe('src/x.ts');
+    for (const key of keys) expect(r.explainMiss(`${key.slice(0, -1)}/x`, 'app/a.ts', 'typescript')).toBe('outside');
+    const ms = performance.now() - start;
+    gc();
+    const grown = (process.memoryUsage().heapUsed - before) / 2 ** 20;
+    expect(r(`${keys[2047]}/x`, 'app/a.ts', 'typescript')).toBe('src/x.ts');
+    expect(grown).toBeLessThan(64);
+    expect(ms).toBeLessThan(3_000);
+  });
+  it('a key outside the Basic Multilingual Plane matches, beside one that shares its first code unit', () => {
+    const r = resolverWith(`export default { resolve: { alias: { '\u{1F600}': '/src', '\u{1F601}': '/other' } } };`);
+    expect(r('\u{1F600}/x', 'app/a.ts', 'typescript')).toBe('src/x.ts');
+    expect(r('\u{1F601}/x', 'app/a.ts', 'typescript')).toBe('other/x.ts');
+    expect(r('\u{1F600}', 'app/a.ts', 'typescript')).toBeUndefined();
+  });
+});
+
+describe('makeResolvePathToFile — a configuration composed from something the reader cannot read', () => {
+  const resolverWith = (name, config) => {
+    const contents = new Map(Object.entries({
+      'package.json': '{ "name": "app", "dependencies": { "vue": "^3.4.0" } }',
+      'vite.base.ts': "export default { resolve: { alias: { '@': '/src' } } };",
+      'webpack.common.js': "const path = require('path');\nmodule.exports = { resolve: { alias: { '@': path.resolve(__dirname, 'src') } } };",
+      'babel.shared.js': "module.exports = { plugins: [['module-resolver', { alias: { '@': './src' } }]] };",
+      [name]: config,
+      'src/x.ts': '',
+      'app/a.ts': '',
+    }));
+    return makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) });
+  };
+  it('binds nothing and answers unfollowed for a bare specifier that names no declared dependency, whether or not it writes an alias', () => {
+    for (const [name, config] of [
+      ['vite.config.ts', "import base from './vite.base';\nexport default base;"],
+      ['vite.config.ts', "import base from './vite.base';\nexport default defineConfig({ ...base });"],
+      ['vite.config.ts', "import base from './vite.base';\nexport default defineConfig({ ...base, plugins: [] });"],
+      ['vite.config.ts', "import base from './vite.base';\nexport default defineConfig({ resolve: base.resolve });"],
+      ['vite.config.ts', "import base from './vite.base';\nexport default defineConfig({ resolve: { ...base.resolve } });"],
+      ['vite.config.ts', "import base from './vite.base';\nexport default defineConfig({ resolve: { ...base.resolve, dedupe: [] } });"],
+      ['vite.config.ts', "import base from './vite.base';\nexport default mergeConfig(base, defineConfig({ plugins: [] }));"],
+      ['vite.config.ts', "import overrides from './vite.local';\nexport default mergeConfig(defineConfig({ resolve: { alias: { '@': '/src' } } }), overrides);"],
+      ['webpack.config.js', "const { merge } = require('webpack-merge');\nconst common = require('./webpack.common');\nmodule.exports = merge(common, { mode: 'production' });"],
+      ['webpack.config.js', "const common = require('./webpack.common');\nmodule.exports = { ...common, mode: 'production' };"],
+      ['webpack.config.js', "const common = require('./webpack.common');\nmodule.exports = { resolve: common.resolve };"],
+      ['webpack.config.js', "const path = require('path');\nmodule.exports = merge({ resolve: { alias: { '@': path.resolve(__dirname, 'src') } } }, require('./local'));"],
+      ['webpack.config.js', "module.exports = { extends: './webpack.common.js' };"],
+      ['babel.config.js', "module.exports = { ...require('./babel.shared') };"],
+      ['babel.config.js', "module.exports = { plugins: require('./babel.shared').plugins };"],
+      ['babel.config.js', "module.exports = require('./babel.shared');"],
+      ['.babelrc', '{ "extends": "./babel.shared.js" }'],
+    ]) {
+      const r = resolverWith(name, config);
+      expect(r('@/x', 'app/a.ts', 'typescript')).toBeUndefined();
+      expect(r.explainMiss('@/x', 'app/a.ts', 'typescript')).toBe('unfollowed');
+      expect(r.explainMiss('vue', 'app/a.ts', 'typescript')).toBe('outside');
+    }
+  });
+  it('a configuration it reads in full that writes no alias leaves such a specifier outside, as before', () => {
+    for (const [name, config] of [
+      ['vite.config.ts', "import { defineConfig } from 'vite';\nexport default defineConfig({ plugins: [], build: { outDir: 'build' } });"],
+      ['webpack.config.js', "const path = require('path');\nconst config = { entry: './src', resolve: { extensions: ['.js'] } };\nmodule.exports = config;"],
+      ['babel.config.js', "module.exports = function (api) {\n  api.cache(true);\n  const presets = ['@babel/preset-env'];\n  return { presets };\n};"],
+      ['.babelrc', '{}'],
+    ]) {
+      const r = resolverWith(name, config);
+      expect(r.explainMiss('@/x', 'app/a.ts', 'typescript')).toBe('outside');
     }
   });
 });
