@@ -8,7 +8,7 @@ cites: "Jest — `jest.requireActual`, `jest.requireMock`, `jest.doMock`, `jest.
 
 ## Rule
 
-The companion forms of a test mock name a module by its path as `vi.mock` and `jest.mock` do: `jest.requireActual` and `vi.importActual` load the real module, `jest.requireMock` loads its mock, `jest.doMock` and `vi.doMock` replace it without hoisting, and `jest.unmock` takes it back from the automatic mock. Each with a string-literal path gives the edge a dynamic `import()` of that path gives. `jest.mock` returns the `jest` object, so in `jest.mock('a').mock('b')` the second call names a module too. `jest.requireActual` returns the module, not the `jest` object, so a `.mock` called on what it returns is no mock call, and a path that is not a string literal names no module.
+The companion forms of a test mock name a module by its path as `vi.mock` and `jest.mock` do: `jest.requireActual` and `vi.importActual` load the real module, `jest.requireMock` loads its mock, `jest.doMock` and `vi.doMock` replace it without hoisting, and `jest.unmock` takes it back from the automatic mock. Each with a string-literal path gives the edge a dynamic `import()` of that path gives. `jest.mock` returns the `jest` object, so in `jest.mock('a').mock('b')` the second call names a module too; every link of a chain written over several lines gives its use on the line where the chain starts, as each call of the chain starts there. `jest.requireActual` returns the module, not the `jest` object, so a `.mock` called on what it returns is no mock call, and a path that is not a string literal names no module.
 
 ## Files
 
@@ -38,6 +38,9 @@ jest.unmock('../b/fake');
 jest.mock('../b/fake').mock('../c/second');
 jest.requireActual(process.env.TARGET);
 jest.requireActual('../a/real').mock('../d/other');
+jest
+  .mock('../b/fake')
+  .unmock('../c/second');
 ```
 
 ## Expect
@@ -51,6 +54,8 @@ jest.requireActual('../a/real').mock('../d/other');
 - r/app/use.test.ts:7 -> node:b      # the first path of the chain
 - r/app/use.test.ts:7 -> node:c      # and the second
 - r/app/use.test.ts:9 -> node:a      # what jest.requireActual returns is no jest object, so its .mock names nothing
+- r/app/use.test.ts:10 -> node:b     # a chain over several lines: each link on the line where the chain starts
+- r/app/use.test.ts:10 -> node:c
 
 ## Why
 

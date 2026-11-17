@@ -473,8 +473,17 @@ describe('typescript extractor — test mocks and the bundler forms that stay un
         `vi.mock('../data/k').mock('../data/l');`,
         `other.requireActual('../data/m');`,
         `jest.fn('../data/n');`,
+        `jest.dontMock('../data/o'); jest.deepUnmock('../data/p'); jest.setMock('../data/q', {}); jest.createMockFromModule('../data/r');`,
+        `vi.unmock('../data/s'); vi.doUnmock('../data/t'); await vi.importMock('../data/u');`,
+        `jest.resetModules().mock('../data/v'); jest.doMock('../data/w').unmock('../data/x').setMock('../data/y', {}); a.b.mock('../data/z');`,
+        `jest.mock('../data/aa')['mock']('../data/ab'); (0, jest.mock)('../data/ac');`,
+        `toString.mock('../data/ad'); constructor.has('../data/ae'); Object.prototype.toString.call(x);`,
+        `jest`,
+        `  .mock('../data/af')`,
+        `  .unmock('../data/ag');`,
       ].join('\n'),
     );
+    // A chain is read from its outer call in: the last path of `jest.mock('g').mock('h')` comes first. Every link of a chain gives its use on the line the chain starts, as the call does.
     expect(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm, u.line])).toEqual([
       ['../data/a', 'import', 1],
       ['../data/b', 'import', 2],
@@ -482,10 +491,23 @@ describe('typescript extractor — test mocks and the bundler forms that stay un
       ['../data/d', 'import', 4],
       ['../data/e', 'import', 5],
       ['../data/f', 'import', 6],
-      ['../data/g', 'import', 7],
       ['../data/h', 'import', 7],
+      ['../data/g', 'import', 7],
       ['../data/i', 'import', 9],
       ['../data/k', 'import', 10],
+      ['../data/o', 'import', 13],
+      ['../data/p', 'import', 13],
+      ['../data/q', 'import', 13],
+      ['../data/r', 'import', 13],
+      ['../data/s', 'import', 14],
+      ['../data/t', 'import', 14],
+      ['../data/u', 'import', 14],
+      ['../data/y', 'import', 15],
+      ['../data/x', 'import', 15],
+      ['../data/w', 'import', 15],
+      ['../data/aa', 'import', 16],
+      ['../data/ag', 'import', 18],
+      ['../data/af', 'import', 18],
     ]);
   });
   it('reads no use from import.meta.glob or require.context', async () => {
@@ -557,6 +579,15 @@ describe('typescript extractor — about 1 MB of source is read in linear time (
     const { uses, declarations, elapsed } = await timed(code);
     expect(declarations).toEqual([]);
     expect(uses.map((u) => u.candidates[0].specifier)).toEqual(['./kept']);
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+
+  it('a chain of Jest module calls of about 1 MB, each link read once', async () => {
+    const link = ".mock('./m')";
+    const n = Math.floor(MB / link.length);
+    const { uses, elapsed } = await timed(`jest${link.repeat(n)};\n`);
+    expect(uses.length).toBe(1);
+    expect(uses[0].candidates[0].specifier).toBe('./m');
     expect(elapsed).toBeLessThan(BOUND_MS);
   });
 });
