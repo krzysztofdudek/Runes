@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile } from '@chrisdudek/runes/relations';
-import { parseCompileCommands } from '../../helpers/internal/relations.mjs';
+import { explainIncludeMiss, parseCompileCommands } from '../../helpers/internal/relations.mjs';
 
 // The C/C++ include resolver maps an `#include` name → a repo-relative file. A quoted include
 // resolves next to the includer first; then, with a compile_commands.json, under its
@@ -243,5 +243,17 @@ describe('parseCompileCommands', () => {
       { directory: '.', file: 'a.c', command: `cc -I"dir one" -I'dir two' -Idir\\ three "-I\\"q\\"" -Ilast` },
     ]);
     expect(db.rootsFor('a.c').angle).toEqual(['dir one', 'dir two', 'dir three', '"q"', 'last']);
+  });
+});
+
+describe('explainIncludeMiss without include roots', () => {
+  it('reads the includer\'s directory alone: a quoted name with no file is the repository\'s, an angle name no file of that directory holds leaves it', () => {
+    const exists = (f) => f === 'src/conf.h';
+    expect(explainIncludeMiss('gone.h', 'src/a.c', exists)).toBe('unfollowed');
+    expect(explainIncludeMiss('<stdio.h>', 'src/a.c', exists)).toBe('outside');
+    expect(explainIncludeMiss('<conf.h>', 'src/a.c', exists)).toBe('unfollowed');
+    expect(explainIncludeMiss('../../up.h', 'src/a.c', exists)).toBe('outside');
+    expect(explainIncludeMiss('<>', 'src/a.c', exists)).toBe('outside');
+    expect(explainIncludeMiss('C:\\inc\\x.h', 'src/a.c', exists)).toBe('outside');
   });
 });

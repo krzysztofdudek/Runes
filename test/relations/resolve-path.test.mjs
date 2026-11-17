@@ -976,8 +976,15 @@ describe('makeResolvePathToFile — explainMiss tells a path that leaves the rep
     expect(none.explainMiss('fmt', 'loose/x.go', 'go')).toBeUndefined();
   });
   it('tells nothing for a language whose readers cannot say', () => {
-    const r = resolverOf({ 'a.c': '', 'a.rb': '' });
-    expect(r.explainMiss('missing.h', 'a.c', 'c')).toBeUndefined();
-    expect(r.explainMiss('missing', 'a.rb', 'ruby')).toBeUndefined();
+    const r = resolverOf({ 'a.cs': '', 'a.swift': '' });
+    expect(r.explainMiss('Missing', 'a.cs', 'csharp')).toBeUndefined();
+    expect(r.explainMiss('missing', 'a.swift', 'swift')).toBeUndefined();
+  });
+  it('C, C++ and Ruby: an angle include no place of the repository holds leaves it; a quoted include or a require_relative with no file does not', () => {
+    const r = resolverOf({ 'a.c': '', 'a.cpp': '', 'a.rb': '' });
+    expect(r.explainMiss('<stdio.h>', 'a.c', 'c')).toBe('outside');
+    expect(r.explainMiss('missing.h', 'a.c', 'c')).toBe('unfollowed');
+    expect(r.explainMiss('<vector>', 'a.cpp', 'cpp')).toBe('outside');
+    expect(r.explainMiss('missing', 'a.rb', 'ruby')).toBe('unfollowed');
   });
 });

@@ -6,8 +6,8 @@ import { resolveJavaFqn, resolveJavaPackageFiles } from './extractors/java-resol
 import { explainPhpMiss, resolvePhpFqn, parseComposerAutoload } from './extractors/php-resolve.mjs';
 import { explainRustMiss, resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey } from './extractors/rust-resolve.mjs';
 import { declarationCount } from './symbol-table.mjs';
-import { resolveIncludePath } from './extractors/include-resolve.mjs';
-import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
+import { explainIncludeMiss, resolveIncludePath } from './extractors/include-resolve.mjs';
+import { explainRubyRequireMiss, explainRubyRequireRelativeMiss, resolveRubyRequire, resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
 import { diskFileView, joinRel } from './file-view.mjs';
 import { makeDiagnosticSink, reportUnreadable, strictJsonFailure } from './diagnostics.mjs';
@@ -204,15 +204,16 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return resolveIncludePath(specifier, fromFile, exists, layout.includeRoots);
         }
         if (language === 'ruby') {
-            // Ruby's ONLY path-precise link: `require_relative '<lit>'` resolves relative to the
-            // requiring file's directory (`.rb` appended). Constant references carry no path —
-            // they route through the SymbolTable, so they never reach this branch.
-            return resolveRubyRequireRelative(specifier, fromFile, exists);
+            // `require_relative '<lit>'` resolves relative to the requiring file's directory (`.rb`
+            // appended); a plain `require '<lit>'` (the hint's `callForm` `require`) under the
+            // load-path roots the repository gives the requiring file. Constant references carry no path — they route through
+            // the SymbolTable, so they never reach this branch.
+            return callForm === 'require' ? resolveRubyRequire(specifier, fromFile, exists, layout.rubyLoadPath) : resolveRubyRequireRelative(specifier, fromFile, exists);
         }
         return undefined;
     };
     // Why a path bound no file, for the resolver's `classifyUse`: asked only after the function above answered undefined for the same arguments.
-    const explainMiss = (specifier, fromFile, language, _isPackage, symbolTable) => {
+    const explainMiss = (specifier, fromFile, language, _isPackage, symbolTable, callForm) => {
         if (language === 'typescript' || language === 'tsx' || language === 'javascript')
             return explainTsMiss(specifier, fromFile, tsDeps);
         if (language === 'python')
@@ -223,6 +224,10 @@ export function makeResolvePathToFile(projectRoot, ownerOf, isExcluded, options)
             return explainPhpMiss(specifier, fromFile, phpDeps);
         if (language === 'rust')
             return explainRustMiss(specifier, fromFile, exists, rustDepsFor(symbolTable));
+        if (language === 'c' || language === 'cpp')
+            return explainIncludeMiss(specifier, fromFile, exists, layout.includeRoots);
+        if (language === 'ruby')
+            return callForm === 'require' ? explainRubyRequireMiss(specifier, fromFile, exists, layout.rubyLoadPath) : explainRubyRequireRelativeMiss(specifier, fromFile);
         return undefined;
     };
     return Object.assign(resolvePathToFile, { explainMiss });

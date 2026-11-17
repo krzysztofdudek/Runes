@@ -57,6 +57,15 @@ export interface IncludeRoots {
 }
 export declare function resolveIncludePath(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, roots?: IncludeRoots): string | undefined;
 /**
+ * Why an include bound no file, asked only after {@link resolveIncludePath} answered undefined for the same arguments, for the resolver's `classifyUse`:
+ *  - `{ split }`, the files sorted, when the roots the resolver searched hold the name two or more times (the exactly-one-hit rule left it unbound);
+ *  - `outside` for a name that leaves the repository (absolute, or a quoted name whose join with the includer's directory climbs past the root), and for an angle include whose name no searched place of the repository holds: the `-I` roots of a compilation database, or without one the includer's directory (the includer itself aside) and the probe roots, which a build's `-I` list would most likely name;
+ *  - `unfollowed` for every other quoted include, which names a header beside the includer or under the repository's roots that is not there (a generated header, a typo, a header of a library the repository expects on its path), and for an angle include whose name one of those places holds.
+ */
+export declare function explainIncludeMiss(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, roots?: IncludeRoots): 'outside' | 'unfollowed' | {
+    split: string[];
+};
+/**
  * Parse a `compile_commands.json` (the JSON Compilation Database) into per-translation-unit
  * include roots. `dbDirAbs` is the absolute directory holding the database, `projectRoot` the
  * absolute repository root. Each entry's `directory` (absolute, or — leniently — relative to

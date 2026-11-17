@@ -1372,8 +1372,8 @@ export interface CsharpUsesOptions {
 export type CsharpRefDescriptor =
   /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
    *  identifier. `rooted` (a `global::`-stripped or `using static` target form) resolves
-   *  verbatim-only; otherwise alias/enclosing-ns/using-prefix expansion applies on assembly. */
-  | { kind: 'plain'; ref: string; line: number; rooted: boolean; enclosingNs: string[]; at: number; types?: string[] }
+   *  verbatim-only; otherwise alias/enclosing-ns/using-prefix expansion applies on assembly. `members`, on a simple name a pattern binds as an expression first (`case Order:`, `Order =>`, `(Order, _)`), names the types around it that can hold a member this file does not show, as a `receiver` descriptor's does: where the name is such a member there, it is that member and names no type. */
+  | { kind: 'plain'; ref: string; line: number; rooted: boolean; enclosingNs: string[]; at: number; types?: string[]; members?: number }
   /** An `S::Tail` alias-qualified reference (`alias_qualified_name`, non-`global` alias). Emitted
    *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
    *  resolves verbatim-from-root; otherwise dropped (extern/unknown alias → R13 silence). */
@@ -1413,7 +1413,7 @@ export interface CsharpExtract {
   refs: CsharpRefDescriptor[];
   /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
   fileLocalTypes: string[];
-  /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent only when no descriptor names one: whoever stores `refs` stores this with them, and a descriptor that names a place this does not hold gives no candidate group. */
+  /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` or a `plain` descriptor's `members`): a list many calls of one type body share is written once. Absent only when no descriptor names one: whoever stores `refs` stores this with them, and a descriptor that names a place this does not hold gives no candidate group. */
   lists?: string[][];
   /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent only when no call has one, and stored with `refs` like `lists`. */
   receiverTypes?: CsharpRefDescriptor[];
@@ -1805,7 +1805,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
 
   /** Emit a plain reference descriptor (alias-unresolved). `enclosingNs` is precomputed from the
    *  node before the tree is destroyed; the alias/using expansion happens later, on assembly. */
-  const pushRef = (ref: string, node: Node, line: number, rooted = false): void => {
+  const pushRef = (ref: string, node: Node, line: number, rooted = false, around: { members?: number } = {}): void => {
     if (namesOwnProgram(ref)) return;
     refs.push({
       kind: 'plain',
@@ -1815,6 +1815,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       enclosingNs: nsChain(node),
       at: node.startIndex,
       ...(rooted ? {} : enclosingTypes(node)),
+      ...around,
     });
   };
 
@@ -2008,6 +2009,13 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return true;
   }
 
+  /** A simple name the file does not declare as a value, where a pattern binds it as an expression first (see the constant pattern): the type it reads as, unless a type around it holds a member of that name this file does not show, in another part or from a base class, which is then what the name binds. */
+  function emitPatternName(name: Node): void {
+    emitted.add(name.id);
+    if (isTypeParameterInScope(name.text, scopeOf(name))) return;
+    pushRef(name.text, name, name.startPosition.row + 1, false, membersAround(name));
+  }
+
   /** The subpatterns of a positional pattern the grammar reads as a tuple expression (see the constant pattern). A subpattern after a name (`(Item1: Order, _)`) is the argument's last child. */
   function readPositionalElements(tuple: Node): void {
     for (const arg of tuple.namedChildren) {
@@ -2015,7 +2023,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       const e = arg!.namedChild(arg!.namedChildCount - 1)!;
       if (e.type === 'tuple_expression') readPositionalElements(e);
       else if (e.type === 'identifier') {
-        if (e.text !== '_' && !namesValue(e.text)) emitTypeNode(e);
+        if (e.text !== '_' && !namesValue(e.text)) emitPatternName(e);
       } else if (e.type === 'generic_name' || e.type === 'qualified_name' || e.type === 'alias_qualified_name') emitTypeNode(e);
       else if (e.type === 'member_access_expression' && emitMemberAccessType(e, true)) readAsType.add(e.id);
     }
@@ -2248,7 +2256,9 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       }
       // A simple name straight after `is` is the is-type operator, which C# binds as a type first and as a constant only where no type of the name is found. Any other pattern (`Config =>`, `case Config:`, `not Config`, `Config or …`, `(Config)`) binds it as an expression first, so a value the file declares of that name is what it tests.
       if (expr !== null && expr.type === 'identifier' && above.type !== 'is_pattern_expression' && namesValue(expr.text)) return undefined;
-      if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name')) emitTypeNode(expr);
+      // Such a pattern finds a member of a type around it, inherited ones included, before any namespace too, so a name the file does not declare is a type only where no such member is (`case Order:` in a class whose base declares a constant `Order`).
+      if (expr !== null && expr.type === 'identifier' && above.type !== 'is_pattern_expression') emitPatternName(expr);
+      else if (expr !== null && (expr.type === 'identifier' || expr.type === 'qualified_name' || expr.type === 'generic_name' || expr.type === 'alias_qualified_name')) emitTypeNode(expr);
       // A dotted name or a name with type arguments inside a dotted one (`o is App.Models.Order`, `Models.Order =>`, `A.B<int>.C`) is a member access to the grammar, and it names a type or a constant of one (`Status.Active`). C# binds its first name first: a type there ends the lookup (a nested type or a constant of it is read through that type), and only a namespace lets the next name be read. It is read as a receiver whose chain is every name, so the first name that binds a type gives the edge to that type and stops, and a type of the same spelling farther out is never reached.
       // The whole name is read here: the accesses inside it are no receivers of their own (read alone, `Data` of `o is Data.Row` would name a type `Data` where the nearer `Data` is a namespace). At the head of a chain (`x is Models.Order || b`) it is read the same way, and the rest of the chain as it stands.
       // A constant pattern names a constant, so a first name the file also declares as a value (`var Status = Make(); x is Status.Active`) is the type there: C# reads it so when the value has the type of that name (spec §12.8.7.2), and in no other case does the pattern compile.
@@ -3011,9 +3021,12 @@ export function assembleCsharpCandidates(
         pushHints(candidates, r.line);
         break;
       }
-      case 'plain':
-        pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at, r.types);
+      case 'plain': {
+        const members = r.members === undefined ? undefined : lists[r.members];
+        if (r.members !== undefined && members === undefined) break;
+        pushRef(r.ref, r.enclosingNs, r.line, r.rooted, r.at, r.types, members === undefined ? undefined : [{ kind: 'member', types: members, name: r.ref }]);
         break;
+      }
       case 'alias': {
         // `S::Tail` (B5): rewrite the leftmost alias to its aliased FQN and resolve `N.Tail` from
         // the root (verbatim FQN). Fires ONLY when `S` is a confirmed alias in the MERGED map —
@@ -3119,7 +3132,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 48,
+  rev: 49,
   declarations,
   uses,
 };

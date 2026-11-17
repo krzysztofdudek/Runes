@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { parseCompileCommands } from './extractors/include-resolve.mjs';
 import { parseComposerAutoload } from './extractors/php-resolve.mjs';
+import { gemspecRequirePaths } from './extractors/ruby-resolve.mjs';
 import { joinRel } from './file-view.mjs';
 import { reportUnreadable, strictJsonFailure } from './diagnostics.mjs';
 /**
- * Repository-wide build-layout facts the C/C++ and PHP path resolvers need beyond the
+ * Repository-wide build-layout facts the C/C++, PHP and Ruby path resolvers need beyond the
  * importing file's own ancestors: every directory named `include` (the C/C++ probe roots),
- * every `composer.json` (the PHP autoload union), and the C/C++ compilation database.
+ * every `composer.json` (the PHP autoload union), every gemspec (the Ruby load path), and the C/C++ compilation database.
  *
  * Everything is discovered LAZILY, at most once per factory instance (one resolver run),
  * and only when a resolver actually needs it: a repository without C/C++ or PHP never walks.
@@ -20,12 +21,18 @@ import { reportUnreadable, strictJsonFailure } from './diagnostics.mjs';
 const MAX_DEPTH = 12;
 const MAX_DIRS = 50_000;
 const SKIP_DIRS = new Set(['node_modules', 'vendor']);
+/** The directories a Ruby project puts on its load path by convention: `lib` (RubyGems' default), `spec` (RSpec) and `test` (Rails, Minitest's rake task). */
+const RUBY_DIRS = new Set(['lib', 'spec', 'test']);
+/** The directory names under which a gemspec describes a fixture, not a gem of the repository: its load path reaches only the files under it. */
+const RUBY_FIXTURE_DIRS = new Set(['test', 'tests', 'spec', 'specs', 'fixture', 'fixtures']);
+/** The directory names whose contents are fixtures alone: no `lib`, `spec` or `test` directory under them is a place a file of the repository is required from. */
+const RUBY_FIXTURE_ONLY = new Set(['fixture', 'fixtures']);
 export function makeRepoLayout(projectRoot, files, isExcluded, report) {
     let layout;
     const scan = () => {
         if (layout !== undefined)
             return layout;
-        const found = { includeDirs: [], composerFiles: [] };
+        const found = { includeDirs: [], composerFiles: [], gemspecFiles: [], rubyDirs: [] };
         const queue = [{ dir: '', depth: 0 }];
         let visited = 0;
         while (queue.length > 0 && visited < MAX_DIRS) {
@@ -43,6 +50,8 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
                         continue;
                     if (e.name === 'include')
                         found.includeDirs.push(rel);
+                    if (RUBY_DIRS.has(e.name) && !rel.split('/').some((seg) => RUBY_FIXTURE_ONLY.has(seg)))
+                        found.rubyDirs.push(rel);
                     if (depth + 1 <= MAX_DEPTH)
                         queue.push({ dir: rel, depth: depth + 1 });
                 }
@@ -50,6 +59,11 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
                     if (isExcluded?.(rel) === true)
                         continue;
                     found.composerFiles.push(rel);
+                }
+                else if (e.kind === 'file' && e.name.endsWith('.gemspec')) {
+                    if (isExcluded?.(rel) === true)
+                        continue;
+                    found.gemspecFiles.push(rel);
                 }
             }
         }
@@ -102,5 +116,42 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
         }
         return maps;
     };
-    return { includeRoots, composerMaps };
+    let gemRoots;
+    const gemspecRoots = () => {
+        if (gemRoots !== undefined)
+            return gemRoots;
+        gemRoots = [];
+        for (const file of scan().gemspecFiles) {
+            const text = files.read(file);
+            if (text === undefined)
+                continue;
+            const dir = path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file);
+            const scope = dir.split('/').some((seg) => RUBY_FIXTURE_DIRS.has(seg)) ? dir : undefined;
+            for (const p of gemspecRequirePaths(text)) {
+                const root = path.posix.normalize(dir === '' ? p : `${dir}/${p}`).replace(/\/+$/, '');
+                if (root === '..' || root.startsWith('../') || root.startsWith('/'))
+                    continue;
+                gemRoots.push({ root: root === '.' ? '' : root, scope });
+            }
+        }
+        return gemRoots;
+    };
+    const rubyLoadPath = {
+        rootsFor: (fromFile) => {
+            const roots = new Set(['lib']);
+            for (const { root, scope } of gemspecRoots())
+                if (scope === undefined || fromFile.startsWith(`${scope}/`))
+                    roots.add(root);
+            const segs = fromFile.split('/');
+            // A spec or test directory inside lib/ is part of the library's tree, which no test run puts on the load path.
+            const inLib = segs.indexOf('lib');
+            for (let i = 1; i < segs.length; i++)
+                if ((segs[i - 1] === 'spec' || segs[i - 1] === 'test') && (inLib === -1 || inLib >= i - 1))
+                    roots.add(segs.slice(0, i).join('/'));
+            return [...roots];
+        },
+        probeDirs: () => ['', ...scan().rubyDirs],
+        isExcluded,
+    };
+    return { includeRoots, composerMaps, rubyLoadPath };
 }
