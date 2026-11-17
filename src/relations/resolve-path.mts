@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { explainTsMiss, resolveTsPath, makeTsResolveDeps } from './extractors/typescript-resolve.mjs';
-import { makePythonResolver } from './extractors/python-resolve.mjs';
+import { makePythonResolver, type PythonProject } from './extractors/python-resolve.mjs';
 import { explainGoImport, resolveGoImport, type GoResolveDeps } from './extractors/go-resolve.mjs';
 import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from './extractors/java-resolve.mjs';
 import { explainPhpMiss, resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
@@ -1150,6 +1150,9 @@ const PYTHON_PROJECT_MANIFESTS = ['pyproject.toml', 'setup.cfg', 'setup.py'];
  *  trees and caches. A directory holding `pyvenv.cfg` (a virtual environment) is skipped too. */
 const PYTHON_ROOT_SCAN_SKIP = new Set(['node_modules', '__pycache__', 'site-packages', 'dist-packages']);
 
+/** A project whose manifest sits in or below a directory of one of these names is a test fixture: sample data the tests read or build, never installed beside the repository's own projects. */
+const PYTHON_FIXTURE_DIRS = new Set(['tests', 'test', 'fixtures']);
+
 /**
  * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
  *
@@ -1274,17 +1277,19 @@ function setupCfgRoots(text: string): string[] {
  *
  * A root read from a manifest joins the same set as the others, so it gets the same rules:
  * a top-level name the standard library owns is never matched there, and a module two roots
- * hold stays unbound.
+ * hold stays unbound. A project whose directory is, or lies below, one named `tests`, `test`
+ * or `fixtures` is marked a fixture, whose roots the resolver searches only for the files
+ * inside it.
  */
 function makePythonProjectRoots(
   plain: FileSource,
   isExcluded?: (repoRelPosix: string) => boolean,
-): () => readonly string[] {
-  let roots: string[] | undefined;
+): () => readonly PythonProject[] {
+  let projects: PythonProject[] | undefined;
   const isDir = (repoRel: string): boolean => plain.isDirectory(repoRel);
   return () => {
-    if (roots !== undefined) return roots;
-    const found: string[] = [];
+    if (projects !== undefined) return projects;
+    const found: PythonProject[] = [];
     const stack: string[] = [''];
     while (stack.length > 0) {
       const dir = stack.pop()!;
@@ -1303,15 +1308,15 @@ function makePythonProjectRoots(
         });
         const configured = [...new Set(named.map((root) => (root === '.' ? dir : joinRel(dir, root))))].filter((root) => isDir(root));
         const src = rel('src');
-        found.push(...(configured.length > 0 ? configured : [isDir(src) ? src : dir]));
+        found.push({ dir, roots: configured.length > 0 ? configured : [isDir(src) ? src : dir], fixture: dir.split('/').some((name) => PYTHON_FIXTURE_DIRS.has(name)) });
       }
       for (const e of entries) {
         if (e.kind !== 'dir' || e.name.startsWith('.') || PYTHON_ROOT_SCAN_SKIP.has(e.name)) continue;
         stack.push(rel(e.name));
       }
     }
-    roots = [...new Set(found)].sort();
-    return roots;
+    projects = found.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
+    return projects;
   };
 }
 

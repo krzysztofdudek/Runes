@@ -40,11 +40,18 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
     let roots;
     const discovered = () => {
         if (roots === undefined) {
-            const all = new Set(projectRoots?.() ?? []);
-            roots = { all, usable: [...all].filter((root) => !insidePackage(root)) };
+            const projects = (projectRoots?.() ?? []).map((p) => (typeof p === 'string' ? { dir: p, roots: [p], fixture: false } : p));
+            const all = new Set(projects.flatMap((p) => p.roots));
+            const usable = [...new Set(projects.filter((p) => !p.fixture).flatMap((p) => p.roots))].filter((root) => !insidePackage(root));
+            const fixtures = projects
+                .filter((p) => p.fixture)
+                .map((p) => ({ dir: p.dir, usable: p.roots.filter((root) => !usable.includes(root) && !insidePackage(root)) }));
+            roots = { all, usable, fixtures };
         }
         return roots;
     };
+    // The roots of the fixture projects whose directory holds `dir`, which serve its imports beside the usable roots.
+    const fixtureRootsFor = (dir) => discovered().fixtures.flatMap((f) => (dir === f.dir || dir.startsWith(`${f.dir}/`) ? f.usable : []));
     // A directory's entries, `x/` and `x.py` both as `x`, compared in NFC as the exact-case check compares names.
     const listings = new Map();
     const namesIn = (dir) => {
@@ -96,7 +103,7 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
             }
             return runs;
         },
-        matchesUnderDiscoveredRoots: (segments, modulePath, parentPath) => {
+        matchesUnderDiscoveredRoots: (segments, modulePath, parentPath, ownDir) => {
             let matches = underDiscovered.get(modulePath);
             if (matches === undefined) {
                 matches = emptyMatches();
@@ -105,7 +112,13 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
                     probeRoot(root, modulePath, parentPath, ctx, matches);
                 underDiscovered.set(modulePath, matches);
             }
-            return matches;
+            const fixtureRoots = fixtureRootsFor(ownDir);
+            if (fixtureRoots.length === 0)
+                return matches;
+            const scoped = { exact: new Set(matches.exact), parentPackages: new Set(matches.parentPackages), parentModules: new Set(matches.parentModules) };
+            for (const root of fixtureRoots)
+                probeRoot(root, modulePath, parentPath, ctx, scoped);
+            return scoped;
         },
     };
     const resolve = (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : soleMatch(absoluteMatches(specifier, fromFile, ctx));
@@ -125,7 +138,7 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
             if (isRoot && !ctx.insideRegularPackage(dir) && holds(dir))
                 return 'unfollowed';
         }
-        return !stdlibName && discovered().usable.some(holds) ? 'unfollowed' : 'outside';
+        return !stdlibName && [...discovered().usable, ...fixtureRootsFor(ownDir)].some(holds) ? 'unfollowed' : 'outside';
     };
     return Object.assign(resolve, { explain });
 }
@@ -162,7 +175,7 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  *
  * Two conventions put a directory below a project root first on `sys.path` without any configuration, so for a name outside the standard library such a directory stays a root: one holding `conftest.py` and no `__init__.py` (pytest's rootdir rule inserts it), and one holding `manage.py` (Django runs from it). A directory put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not seen and is not searched.
  *
- * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a test outside `src/` or one workspace member importing another resolves although the root is no ancestor of the importing file. A discovered root is on `sys.path` only because its project is installed, after the standard library, so a top-level name the standard library owns is never matched there. Discovered roots join the SAME distinct-match count, so a module found under two roots still stays silent.
+ * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a test outside `src/` or one workspace member importing another resolves although the root is no ancestor of the importing file. A discovered root is on `sys.path` only because its project is installed, after the standard library, so a top-level name the standard library owns is never matched there. Discovered roots join the SAME distinct-match count, so a module found under two roots still stays silent. A test fixture project's roots are searched only for a file inside the fixture's directory: from anywhere else a name it holds is an installed package's or the standard library's (`import build` is the PyPA package, not a fixture's `build.py`).
  *
  * An excluded match is dropped BEFORE that ambiguity count. It is told by the caller to not exist, so it can never be the genuine target and must not keep a real, surviving match silenced merely because it once shared a dotted module name with a file the caller no longer considers.
  */
@@ -184,7 +197,7 @@ function absoluteMatches(specifier, fromFile, ctx) {
     }
     if (!stdlibName) {
         // A discovered root that is also an ancestor root adds the same file of the same kind again: the sets keep one.
-        const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath);
+        const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath, ownDir);
         for (const kind of ['exact', 'parentPackages', 'parentModules'])
             for (const file of under[kind])
                 found[kind].add(file);

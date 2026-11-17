@@ -16,9 +16,16 @@ export function resolvePythonModule(
   fromFile: string,
   exists: (repoRelPosix: string) => boolean,
   isExcluded?: (repoRelPosix: string) => boolean,
-  projectRoots?: () => readonly string[],
+  projectRoots?: () => readonly (string | PythonProject)[],
 ): string | undefined {
   return makePythonResolver(exists, isExcluded, projectRoots)(specifier, fromFile);
+}
+
+/** A Python project found from its manifest: its directory, its source roots, and whether it is a test fixture (a manifest in or below a directory named `tests`, `test` or `fixtures`), whose roots serve only the files inside its directory, because nothing installs a sample project the tests read. A bare string stands for a project that is its own one root. */
+export interface PythonProject {
+  readonly dir: string;
+  readonly roots: readonly string[];
+  readonly fixture: boolean;
 }
 
 /**
@@ -29,7 +36,7 @@ export function resolvePythonModule(
 export function makePythonResolver(
   exists: (repoRelPosix: string) => boolean,
   isExcluded?: (repoRelPosix: string) => boolean,
-  projectRoots?: () => readonly string[],
+  projectRoots?: () => readonly (string | PythonProject)[],
   listDir?: (repoRelPosix: string) => readonly string[] | undefined,
 ): ((specifier: string, fromFile: string) => string | undefined) & { explain(specifier: string, fromFile: string): 'outside' | 'unfollowed' | { split: string[] } } {
   const known = new Map<string, boolean>();
@@ -53,11 +60,19 @@ export function makePythonResolver(
   let roots: DiscoveredRoots | undefined;
   const discovered = (): DiscoveredRoots => {
     if (roots === undefined) {
-      const all = new Set(projectRoots?.() ?? []);
-      roots = { all, usable: [...all].filter((root) => !insidePackage(root)) };
+      const projects = (projectRoots?.() ?? []).map((p): PythonProject => (typeof p === 'string' ? { dir: p, roots: [p], fixture: false } : p));
+      const all = new Set(projects.flatMap((p) => p.roots));
+      const usable = [...new Set(projects.filter((p) => !p.fixture).flatMap((p) => p.roots))].filter((root) => !insidePackage(root));
+      const fixtures = projects
+        .filter((p) => p.fixture)
+        .map((p) => ({ dir: p.dir, usable: p.roots.filter((root) => !usable.includes(root) && !insidePackage(root)) }));
+      roots = { all, usable, fixtures };
     }
     return roots;
   };
+  // The roots of the fixture projects whose directory holds `dir`, which serve its imports beside the usable roots.
+  const fixtureRootsFor = (dir: string): string[] =>
+    discovered().fixtures.flatMap((f) => (dir === f.dir || dir.startsWith(`${f.dir}/`) ? f.usable : []));
   // A directory's entries, `x/` and `x.py` both as `x`, compared in NFC as the exact-case check compares names.
   const listings = new Map<string, ReadonlySet<string> | undefined>();
   const namesIn = (dir: string): ReadonlySet<string> | undefined => {
@@ -108,7 +123,7 @@ export function makePythonResolver(
       }
       return runs;
     },
-    matchesUnderDiscoveredRoots: (segments, modulePath, parentPath) => {
+    matchesUnderDiscoveredRoots: (segments, modulePath, parentPath, ownDir) => {
       let matches = underDiscovered.get(modulePath);
       if (matches === undefined) {
         matches = emptyMatches();
@@ -116,7 +131,11 @@ export function makePythonResolver(
         for (const root of holders(segments.length > 1 ? segments.slice(0, -1) : segments)) probeRoot(root, modulePath, parentPath, ctx, matches);
         underDiscovered.set(modulePath, matches);
       }
-      return matches;
+      const fixtureRoots = fixtureRootsFor(ownDir);
+      if (fixtureRoots.length === 0) return matches;
+      const scoped: RootMatches = { exact: new Set(matches.exact), parentPackages: new Set(matches.parentPackages), parentModules: new Set(matches.parentModules) };
+      for (const root of fixtureRoots) probeRoot(root, modulePath, parentPath, ctx, scoped);
+      return scoped;
     },
   };
   const resolve = (specifier: string, fromFile: string): string | undefined =>
@@ -135,15 +154,16 @@ export function makePythonResolver(
       const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
       if (isRoot && !ctx.insideRegularPackage(dir) && holds(dir)) return 'unfollowed';
     }
-    return !stdlibName && discovered().usable.some(holds) ? 'unfollowed' : 'outside';
+    return !stdlibName && [...discovered().usable, ...fixtureRootsFor(ownDir)].some(holds) ? 'unfollowed' : 'outside';
   };
   return Object.assign(resolve, { explain });
 }
 
-/** The discovered project roots: all of them (an ancestor directory strictly below any is no root), and the usable ones, outside every regular package. */
+/** The discovered project roots: all of them (an ancestor directory strictly below any is no root), the usable ones of the projects that are no test fixture, outside every regular package, and each fixture project's directory with its own usable roots, which serve only the files inside that directory. */
 interface DiscoveredRoots {
   readonly all: ReadonlySet<string>;
   readonly usable: readonly string[];
+  readonly fixtures: ReadonlyArray<{ readonly dir: string; readonly usable: readonly string[] }>;
 }
 
 /** The strongest live match of each root, by kind (see absoluteMatches). */
@@ -164,7 +184,7 @@ interface AbsoluteContext {
   readonly insideRegularPackage: (dir: string) => boolean;
   readonly belowDiscoveredRoot: (dir: string) => boolean;
   readonly toolRoot: (dir: string) => boolean;
-  readonly matchesUnderDiscoveredRoots: (segments: readonly string[], modulePath: string, parentPath: string) => RootMatches;
+  readonly matchesUnderDiscoveredRoots: (segments: readonly string[], modulePath: string, parentPath: string, ownDir: string) => RootMatches;
 }
 
 /**
@@ -202,7 +222,7 @@ const PYTHON_STDLIB_TOP_LEVEL: ReadonlySet<string> = new Set(
  *
  * Two conventions put a directory below a project root first on `sys.path` without any configuration, so for a name outside the standard library such a directory stays a root: one holding `conftest.py` and no `__init__.py` (pytest's rootdir rule inserts it), and one holding `manage.py` (Django runs from it). A directory put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not seen and is not searched.
  *
- * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a test outside `src/` or one workspace member importing another resolves although the root is no ancestor of the importing file. A discovered root is on `sys.path` only because its project is installed, after the standard library, so a top-level name the standard library owns is never matched there. Discovered roots join the SAME distinct-match count, so a module found under two roots still stays silent.
+ * `projectRoots`, when supplied, adds the source roots discovered repo-wide from project manifests (a src-layout project's `src/`, each uv/Poetry workspace member's root), so a test outside `src/` or one workspace member importing another resolves although the root is no ancestor of the importing file. A discovered root is on `sys.path` only because its project is installed, after the standard library, so a top-level name the standard library owns is never matched there. Discovered roots join the SAME distinct-match count, so a module found under two roots still stays silent. A test fixture project's roots are searched only for a file inside the fixture's directory: from anywhere else a name it holds is an installed package's or the standard library's (`import build` is the PyPA package, not a fixture's `build.py`).
  *
  * An excluded match is dropped BEFORE that ambiguity count. It is told by the caller to not exist, so it can never be the genuine target and must not keep a real, surviving match silenced merely because it once shared a dotted module name with a file the caller no longer considers.
  */
@@ -224,7 +244,7 @@ function absoluteMatches(specifier: string, fromFile: string, ctx: AbsoluteConte
   }
   if (!stdlibName) {
     // A discovered root that is also an ancestor root adds the same file of the same kind again: the sets keep one.
-    const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath);
+    const under = ctx.matchesUnderDiscoveredRoots(segments, modulePath, parentPath, ownDir);
     for (const kind of ['exact', 'parentPackages', 'parentModules'] as const) for (const file of under[kind]) found[kind].add(file);
   }
   return new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
