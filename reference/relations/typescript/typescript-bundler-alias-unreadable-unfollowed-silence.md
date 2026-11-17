@@ -33,7 +33,7 @@ export default { resolve: { alias: { '@': pathSrc } } };
 ```ts path=src/ui/a.ts
 import { d } from '@/data/d';
 import { ref } from 'vue';
-import { readFile } from 'node:fs/promises';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
 export const all = [d, ref, readFile, join];
 ```
