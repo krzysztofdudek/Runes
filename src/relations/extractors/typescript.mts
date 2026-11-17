@@ -490,29 +490,96 @@ interface ScriptElement {
   bodyEnd: number;
 }
 
+/** Elements whose content an HTML tokenizer reads as raw text, where a `<!--` is text. */
+const RAW_TEXT_ELEMENTS = new Set(['iframe', 'noembed', 'noframes', 'noscript', 'style', 'textarea', 'title', 'xmp']);
+
 /**
- * The `<script>` elements of a component, in document order. An HTML comment
- * (`<!-- … -->`) is skipped whole, so an element inside it is no element; a `<!--` with
- * no `-->` after it, and a `<!--` inside an element's body, are text.
+ * The `<script>` elements of a component, in document order. The markup is read as an
+ * HTML tokenizer reads it: a `<!--` starts a comment only in markup text, so inside an
+ * attribute value, a raw-text element, a Svelte `{…}` expression or a script body it is
+ * text. A comment is skipped whole, and a `<!--` with no `-->` after it is text too.
  */
-function scriptElements(content: string): ScriptElement[] {
+function scriptElements(content: string, svelte: boolean): ScriptElement[] {
   const elements: ScriptElement[] = [];
-  const token = /<!--|<script\b([^>]*)>/gi;
-  const closeTag = /<\/script\s*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = token.exec(content)) !== null) {
-    if (m[1] === undefined) {
-      // `<!-->` and `<!--->` end the comment at once, as HTML reads them.
-      const end = content.indexOf('-->', m.index + 2);
-      if (end !== -1) token.lastIndex = end + 3;
-      continue;
+  const scriptOpen = /<script\b([^>]*)>/iy;
+  const scriptClose = /<\/script\s*>/gi;
+  const tagName = /[A-Za-z][^\s/>]*/y;
+  let i = 0;
+  let inTag = false;
+  let quote = '';
+  let previous = '';
+  let name = '';
+  let raw = '';
+  let depth = 0;
+  let stringQuote = '';
+  while (i < content.length) {
+    if (content[i] === '<') {
+      scriptOpen.lastIndex = i;
+      const open = scriptOpen.exec(content);
+      if (open !== null) {
+        const bodyStart = i + open[0].length;
+        scriptClose.lastIndex = bodyStart;
+        const close = scriptClose.exec(content);
+        if (close === null) break;
+        elements.push({ attributes: open[1], tagStart: i, bodyStart, bodyEnd: close.index });
+        i = close.index + close[0].length;
+        inTag = false;
+        quote = '';
+        raw = '';
+        depth = 0;
+        stringQuote = '';
+        continue;
+      }
     }
-    const bodyStart = token.lastIndex;
-    closeTag.lastIndex = bodyStart;
-    const close = closeTag.exec(content);
-    if (close === null) break;
-    elements.push({ attributes: m[1], tagStart: m.index, bodyStart, bodyEnd: close.index });
-    token.lastIndex = close.index + close[0].length;
+    const c = content[i];
+    if (raw !== '') {
+      if (c === '<' && content.slice(i + 1, i + 2 + raw.length).toLowerCase() === `/${raw}`) raw = '';
+      i++;
+    } else if (depth > 0) {
+      if (stringQuote !== '') {
+        if (c === '\\') i++;
+        else if (c === stringQuote) stringQuote = '';
+      } else if (c === '"' || c === "'" || c === '`') {
+        stringQuote = c;
+      } else if (c === '{') {
+        depth++;
+      } else if (c === '}') {
+        depth--;
+      }
+      i++;
+    } else if (inTag) {
+      const before = previous;
+      if (!/\s/.test(c)) previous = c;
+      if (quote !== '') {
+        if (c === quote) quote = '';
+      } else if ((c === '"' || c === "'") && before === '=') {
+        quote = c;
+      } else if (svelte && c === '{') {
+        depth = 1;
+      } else if (c === '>') {
+        inTag = false;
+        raw = RAW_TEXT_ELEMENTS.has(name) ? name : '';
+      }
+      i++;
+    } else if (content.startsWith('<!--', i)) {
+      // `<!-->` and `<!--->` end the comment at once, as HTML reads them.
+      const end = content.indexOf('-->', i + 2);
+      i = end === -1 ? i + 4 : end + 3;
+    } else if (svelte && c === '{') {
+      depth = 1;
+      i++;
+    } else {
+      tagName.lastIndex = i + 1;
+      const tag = c === '<' ? tagName.exec(content) : null;
+      if (tag === null) {
+        i++;
+      } else {
+        inTag = true;
+        previous = '';
+        name = tag[0].toLowerCase();
+        i += 1 + tag[0].length;
+      }
+    }
   }
   return elements;
 }
@@ -548,7 +615,7 @@ function srcImport(element: ScriptElement, content: string): string | undefined 
  */
 export function sfcScriptView(filePath: string, content: string): SfcScriptView | null {
   if (!SFC_EXTENSIONS.has(path.posix.extname(filePath).toLowerCase())) return null;
-  const elements = scriptElements(content);
+  const elements = scriptElements(content, path.posix.extname(filePath).toLowerCase() === '.svelte');
   if (elements.length === 0) return null;
   let language = 'javascript';
   for (const element of elements) {
