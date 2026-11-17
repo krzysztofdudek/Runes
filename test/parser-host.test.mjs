@@ -168,6 +168,19 @@ describe('a parse stopped by its progress callback', () => {
     await nextIsWhole(h);
   });
 
+  it('null where the language goes still means no language, as in 1.1, and the options after it still apply', async () => {
+    const h = createParserHost({ runtime: TreeSitter, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    const tree = await h.parseFile('next.ts', NEXT, null);
+    try {
+      assert.equal(tree.rootNode.text, NEXT);
+      assert.equal(tree.rootNode.hasError, false);
+    } finally {
+      tree.delete();
+    }
+    await assert.rejects(h.withParsedFile('shape.ts', PATHOLOGICAL, () => {}, null, { progressCallback: () => true }), (error) => error.code === 'EPARSESTOPPED');
+    await nextIsWhole(h);
+  });
+
   it('without the option no progress callback reaches the runtime; with it, one does', async () => {
     // A stub runtime records what each parse is given, so the default parse is seen to stay the runtime's plain parse.
     const seen = [];

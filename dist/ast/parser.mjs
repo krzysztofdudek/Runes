@@ -112,8 +112,8 @@ export function createParserHost(options) {
     };
     const parseFile = async (filePath, content, language, options) => {
         failIfAborted(filePath);
-        if (language !== undefined && typeof language !== 'string')
-            throw new TypeError(`parseFile of ${filePath}: the language is a string or undefined, and the options go after it`);
+        if (typeof language === 'object' && language !== null)
+            throw new TypeError(`parseFile of ${filePath}: the language is a string, null or undefined, and the options go after it`);
         const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
         const progress = options?.progressCallback;
         let stop;
