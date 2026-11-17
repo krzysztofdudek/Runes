@@ -33,7 +33,7 @@ export interface ParserHost {
     newParser(): Parser;
     /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. When the runtime aborts, the call rejects with `code` `ERUNTIMEABORTED`, and so does every call on this host from then on, those already waiting included. */
     parseFile(filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree>;
-    /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. A stopped parse never calls `fn`. */
+    /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does, unless the runtime has aborted by then: after an abort the host frees nothing. A stopped parse never calls `fn`, and neither does a parse the runtime aborted before `fn` could be called. An abort `fn` throws is recorded as one in a parse. */
     withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string, options?: ParseFileOptions): Promise<T>;
     /** sha256 of the grammar WASM of `extension`. Reads the file, never loads it. */
     grammarWasmHash(extension: string): string;

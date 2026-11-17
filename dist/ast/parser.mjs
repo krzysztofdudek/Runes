@@ -5,6 +5,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { LANGUAGES, grammarExtensionForPath } from '../grammars/languages.mjs';
+// web-tree-sitter 0.27 frees every parser and tree it made once JavaScript collects it, unless it was deleted first (a FinalizationRegistry). After an abort that free runs on the damaged runtime, from a callback outside every handler, where it can fail (the runtime traps) and end the process. So what a host leaves unfreed after an abort stays referenced for as long as its runtime lives, beyond the life of the host, and no longer: a consumer that replaces an aborted runtime with a fresh copy lets the old one go with its memory. The key is the runtime's own Parser class, the root of the class a host is given, which may be a subclass of it made for that host.
+const keptAfterAbort = new WeakMap();
+const runtimeRoot = (parserClass) => {
+    let root = parserClass;
+    for (let up = Object.getPrototypeOf(root); typeof up === 'function' && up !== Function.prototype; up = Object.getPrototypeOf(up))
+        root = up;
+    return root;
+};
 /** sha256 of a file's bytes, hex. A convenient runtime identity: the sha256 of the runtime's `web-tree-sitter.wasm`. */
 export function fileSha256(file) {
     return createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -14,6 +22,14 @@ export function fileSha256(file) {
  */
 export function createParserHost(options) {
     const { runtime } = options;
+    const root = runtimeRoot(runtime.Parser);
+    const keep = (...objects) => {
+        const kept = keptAfterAbort.get(root);
+        if (kept === undefined)
+            keptAfterAbort.set(root, objects);
+        else
+            kept.push(...objects);
+    };
     const languages = options.languages ?? LANGUAGES;
     const extToLanguage = new Map();
     for (const def of Object.values(languages))
@@ -28,6 +44,7 @@ export function createParserHost(options) {
     let initialized = false;
     const langCache = new Map();
     const parserCache = new Map();
+    const dropped = [];
     const wasmHashCache = new Map();
     const digestCache = new Map();
     let identity;
@@ -55,20 +72,38 @@ export function createParserHost(options) {
     // The runtime aborts (at its 2 GiB memory limit, for one) by throwing a RuntimeError whose message starts with `Aborted(`, and stays damaged for the rest of the process: a grammar load, a parser or a parse made afterwards can fail on anything. So an abort is not retried, and from then on the host makes no call into the runtime and hands out no parser: each place that does checks first, with no wait between the check and the call.
     let abortedOn;
     const isAbort = (error) => error instanceof Error && error.message.startsWith('Aborted(');
-    const abortedError = (filePath) => {
-        const { filePath: first, error } = abortedOn;
-        const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}${filePath === undefined ? '' : `, so ${filePath} was not parsed`}`;
+    const abortedError = (filePath, skipped = 'was not parsed') => {
+        const { filePath: first, doing, error } = abortedOn;
+        const what = first === filePath ? `while ${doing} ${filePath}` : `earlier, while ${doing} ${first}${filePath === undefined ? '' : `, so ${filePath} ${skipped}`}`;
         return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${error.message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
     };
-    const failIfAborted = (filePath) => {
+    const failIfAborted = (filePath, skipped) => {
         if (abortedOn !== undefined)
-            throw abortedError(filePath);
+            throw abortedError(filePath, skipped);
     };
-    const failOnAbort = (filePath, error) => {
-        if (!isAbort(error))
+    // Emscripten also reports a runtime WebAssembly file it cannot fetch or instantiate with `Aborted(`; that is a failed init, which a later call retries, so an abort counts only once the runtime is initialized.
+    const failOnAbort = (filePath, error, doing = 'parsing', skipped) => {
+        if (!isAbort(error) || !initialized)
             return;
-        abortedOn ??= { filePath, error };
-        throw abortedError(filePath);
+        if (abortedOn === undefined) {
+            abortedOn = { filePath, doing, error };
+            keep(...parserCache.values(), ...dropped);
+        }
+        throw abortedError(filePath, skipped);
+    };
+    // Freeing takes a little of the runtime's memory too, so it can abort like a parse. After an abort nothing is freed: the damaged runtime can fail on anything, so what the host holds is kept instead.
+    const free = (filePath, doing, freed) => {
+        if (abortedOn !== undefined) {
+            keep(freed);
+            return;
+        }
+        try {
+            freed.delete();
+        }
+        catch (error) {
+            failOnAbort(filePath, error, doing);
+            throw error;
+        }
     };
     const loadLanguage = (wasmFile) => {
         let langP = langCache.get(wasmFile);
@@ -84,11 +119,18 @@ export function createParserHost(options) {
     };
     const makeParser = (lang) => {
         const parser = new runtime.Parser();
-        parser.setLanguage(lang);
+        try {
+            parser.setLanguage(lang);
+        }
+        catch (error) {
+            if (isAbort(error))
+                keep(parser);
+            throw error;
+        }
         return parser;
     };
     const loadedLanguages = new Map();
-    const getParser = async (extension) => {
+    const parserFor = async (extension) => {
         await init();
         const wasmFile = grammarFor(extension);
         if (wasmFile === undefined)
@@ -104,11 +146,26 @@ export function createParserHost(options) {
         parserCache.set(wasmFile, parser);
         return parser;
     };
+    const getParser = async (extension) => {
+        try {
+            return await parserFor(extension);
+        }
+        catch (error) {
+            failOnAbort(extension, error, 'getting the parser for');
+            throw error;
+        }
+    };
     const newParser = () => {
         if (!initialized)
             throw new Error('newParser: the tree-sitter runtime is not initialized yet; parse a file or await getParser first.');
         failIfAborted();
-        return new runtime.Parser();
+        try {
+            return new runtime.Parser();
+        }
+        catch (error) {
+            failOnAbort('a new parser', error, 'making');
+            throw error;
+        }
     };
     const parseFile = async (filePath, content, language, options) => {
         if (typeof language === 'object' && language !== null)
@@ -141,7 +198,7 @@ export function createParserHost(options) {
         };
         let tree;
         try {
-            const first = await getParser(ext);
+            const first = await parserFor(ext);
             // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a heredoc delimiter of 256+ characters). The trap leaves that parser unusable while a fresh parser over the same language parses normally, so a throwing parse drops its parser from the cache and retries once on a private fresh parser, made from the language already loaded. The retry follows the trap with no wait, so no other call runs between them. The poisoned parser is not freed: a concurrent caller may still hold it and would hit freed memory instead of a clean throw.
             try {
                 tree = run(first);
@@ -154,6 +211,7 @@ export function createParserHost(options) {
                 for (const [key, cached] of parserCache)
                     if (cached === first)
                         parserCache.delete(key);
+                dropped.push(first);
                 const fresh = makeParser(loadedLanguages.get(grammarFor(ext)));
                 try {
                     tree = run(fresh);
@@ -163,12 +221,13 @@ export function createParserHost(options) {
                     throw retryError;
                 }
                 finally {
-                    fresh.delete();
+                    free(filePath, 'parsing', fresh);
                 }
             }
         }
         catch (error) {
-            // A call that was waiting when another call aborted fails on whatever the damaged runtime throws, or on a check; either way it is told why.
+            // Making a parser takes the runtime's memory too, so an abort there is one in this parse. A call that was waiting when another call aborted fails on whatever the damaged runtime throws, or on a check; either way it is told why.
+            failOnAbort(filePath, error);
             if (abortedOn !== undefined)
                 throw abortedError(filePath);
             throw error;
@@ -223,10 +282,15 @@ export function createParserHost(options) {
         async withParsedFile(filePath, content, fn, language, options) {
             const tree = await parseFile(filePath, content, language, options);
             try {
+                failIfAborted(filePath, 'was parsed, but its function was not called');
                 return await fn(tree);
             }
+            catch (error) {
+                failOnAbort(filePath, error, 'working on the tree of', 'was parsed, but its function failed on the damaged runtime');
+                throw error;
+            }
             finally {
-                tree.delete();
+                free(filePath, 'freeing the tree of', tree);
             }
         },
         grammarWasmHash,
