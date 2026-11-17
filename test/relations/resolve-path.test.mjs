@@ -616,6 +616,43 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     expect(resolve('tools.run', 'lib/pkg/core.py', 'python')).toBe('tools/run.py');
   });
 
+  it('a project in or below a directory named tests, test or fixtures is a root only for the files inside it', () => {
+    write('pyproject.toml', '[project]\nname = "tool"\n');
+    write('src/tool/__init__.py');
+    write('src/tool/chef.py', 'import build\n');
+    write('src/tool/app/__init__.py');
+    write('src/tool/app/view.py');
+    write('tests/test_chef.py', 'import build\nfrom tool.app import view\n');
+    write('tests/fixtures/sample/pyproject.toml', '[tool.poetry]\nname = "sample"\n');
+    write('tests/fixtures/sample/build.py', 'def run(): pass\n');
+    write('tests/fixtures/sample/tool/__init__.py');
+    write('tests/fixtures/sample/tool/app/__init__.py');
+    write('tests/fixtures/sample/tool/app/view.py');
+    write('tests/fixtures/sample/main.py', 'import build\n');
+    write('tests/fixtures/sample/tool/runner.py', 'import build\n');
+    const resolve = makeResolvePathToFile(root);
+    // Outside the fixture, the PyPA build package and the project's own package answer as if no fixture were there.
+    for (const from of ['src/tool/chef.py', 'tests/test_chef.py']) {
+      expect(resolve('build', from, 'python'), from).toBeUndefined();
+      expect(resolve.explainMiss('build', from, 'python'), from).toBe('outside');
+      expect(resolve('tool.app.view', from, 'python'), from).toBe('src/tool/app/view.py');
+    }
+    // Inside it, the fixture's own root still binds its modules.
+    expect(resolve('build', 'tests/fixtures/sample/main.py', 'python')).toBe('tests/fixtures/sample/build.py');
+    expect(resolve('build', 'tests/fixtures/sample/tool/runner.py', 'python')).toBe('tests/fixtures/sample/build.py');
+    // A directory named test or fixtures, at any depth, is one too.
+    for (const dir of ['test/data/one', 'pkg/fixtures', 'pkg/fixtures/deep/two']) {
+      write(`${dir}/setup.cfg`, '[metadata]\nname = x\n');
+      write(`${dir}/onlyhere_${dir.replace(/\//g, '_')}.py`);
+      expect(resolve(`onlyhere_${dir.replace(/\//g, '_')}`, 'src/tool/chef.py', 'python'), dir).toBeUndefined();
+      expect(makeResolvePathToFile(root)(`onlyhere_${dir.replace(/\//g, '_')}`, `${dir}/inner/x.py`, 'python'), dir).toBe(`${dir}/onlyhere_${dir.replace(/\//g, '_')}.py`);
+    }
+    // A directory whose name only contains one of these words is no fixture directory.
+    write('testing/proj/pyproject.toml', '[project]\nname = "proj"\n');
+    write('testing/proj/proj_mod.py');
+    expect(makeResolvePathToFile(root)('proj_mod', 'src/tool/chef.py', 'python')).toBe('testing/proj/proj_mod.py');
+  });
+
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {
     // 60 src-layout projects; every module imports three external libraries, its own package and the first project's.
     const projects = 60;
