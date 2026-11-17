@@ -145,7 +145,6 @@ describe('readBundlerAliases — where an alias stands', () => {
     const UNREADABLE = [[{ exact: false, replacement: UNKNOWN }]];
     for (const text of [
       "export default { resolve: { alias: { a: '/x' }, ...more } };",
-      "export default { resolve: { ...base, alias: { a: '/x' } } };",
       "export default { resolve: { alias: { a: '/x' }, [k]: {} } };",
       "export default { resolve: { alias: { a: '/x' } }, ...overrides };",
       "export default { resolve: { alias: { a: '/x' } }, resolve: {} };",
@@ -156,10 +155,13 @@ describe('readBundlerAliases — where an alias stands', () => {
     expect(read("export default { plugins, resolve: { alias: { a: '/x' }, extensions } };")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
     // A spread before every key the lookup reads cannot replace them: a later key takes the place of what the spread wrote.
     const READ = [[{ find: 'a', exact: false, replacement: PATH('x') }]];
-    expect(read("export default { ...base, resolve: { ...shared, alias: { a: '/x' } } };", 'webpack')).toEqual(READ);
+    expect(read("const path = require('path');\nmodule.exports = { ...base, resolve: { ...shared, alias: { a: path.join(__dirname, 'x') } } };", 'webpack')).toEqual(READ);
     expect(read("export default { ...base, resolve: { alias: { a: '/x' } }, test: { environment: 'node' } };")).toEqual(READ);
     expect(read("export default { ...base, resolve: { alias: { a: '/x' } } };")).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
     expect(read("export default { resolve: { ...shared, alias: { a: '/x' }, ...more } };")).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
+    expect(read("export default { resolve: { alias: { ...more, a: '/x' } } };")).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
+    expect(read("module.exports = { plugins: [['module-resolver', { ...shared, alias: { a: './x' } }]] };", 'babel')).toBe('unknown');
+    expect(read("module.exports = { ...base, plugins: [['module-resolver', { alias: { a: './x' } }]] };", 'babel')).toEqual(READ);
   });
   it('an alias under a resolve that is not the configuration\'s own (a webpack rule, a nested object) is one the reader cannot follow', () => {
     expect(read("module.exports = { module: { rules: [{ test: /x/, resolve: { alias: { a: path.resolve(__dirname, 'x') } } }] } };", 'webpack')).toBe('unknown');

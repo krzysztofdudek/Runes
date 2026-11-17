@@ -35,15 +35,27 @@ export function readBundlerAliases(text, kind, configDir) {
             memberCache.set(open, membersOf(tokens, close, open));
         return memberCache.get(open);
     };
-    // An object no other object holds: a block (a function body) around it is no object.
-    const outermost = (open) => {
-        for (let k = parent[open]; k !== -1; k = parent[k])
-            if (tokens[k].v === '{' && !isBlock(tokens, k))
-                return false;
-        return tokens[open].v === '{' && !isBlock(tokens, open);
+    // For each bracket, whether an object literal holds it, found in one pass from the outside in (a block, a function body, is no object).
+    const insideObject = [];
+    tokens.forEach((tok, k) => {
+        const around = parent[k];
+        if (tok.t === 'punct' && (tok.v === '{' || tok.v === '[' || tok.v === '('))
+            insideObject[k] = around !== -1 && ((tokens[around].v === '{' && !isBlock(tokens, around)) || insideObject[around]);
+    });
+    // An object no other object holds.
+    const outermost = (open) => tokens[open].v === '{' && !isBlock(tokens, open) && !insideObject[open];
+    // Whether the object holds every member as a key it can read, none of them a shorthand of a name the lookup reads, and every spread before each of those names, which then replaces what the spread wrote.
+    const readable = (open, names) => {
+        const all = members(open);
+        if (all === undefined)
+            return false;
+        const last = new Map();
+        all.forEach((m, k) => {
+            if (!m.spread)
+                last.set(m.key, k);
+        });
+        return all.every((m, k) => (m.spread ? names.every((name) => (last.get(name) ?? -1) > k) : !(m.shorthand && names.includes(m.key))));
     };
-    // Whether the object holds every member as a key it can read, none of them a shorthand of a name the lookup reads.
-    const readable = (open, names) => members(open)?.every((m) => !(m.shorthand && names.includes(m.key))) === true;
     // The options objects of module-resolver, written `['module-resolver', { … }]`.
     const resolverOptions = new Set();
     for (let i = 0; i < tokens.length; i++) {
@@ -63,7 +75,7 @@ export function readBundlerAliases(text, kind, configDir) {
         if (next?.v !== '{' || tokens[close[i + 2] + 1]?.v !== ']')
             return 'unknown';
         const options = members(i + 2);
-        if (options === undefined || options.some((m) => m.shorthand || ['root', 'cwd', 'resolvePath'].includes(m.key)))
+        if (options === undefined || options.some((m) => m.spread || m.shorthand || ['root', 'cwd', 'resolvePath'].includes(m.key)))
             return 'unknown';
         // The pair stands in the `plugins` of the configuration itself: `overrides` and `env` apply theirs to some files only.
         const list = parent[i - 1];
@@ -86,7 +98,7 @@ export function readBundlerAliases(text, kind, configDir) {
         const config = parent[owner];
         if (kind !== 'babel' && (config === -1 || !outermost(config)))
             return 'unknown';
-        if (!readable(owner, ['alias']) || (kind !== 'babel' && !readable(config, ['resolve', 'test']))) {
+        if (!readable(owner, ['alias']) || (kind !== 'babel' && !readable(config, kind === 'vite' ? ['resolve', 'test'] : ['resolve']))) {
             lists.push([UNKNOWN_KEY]);
             continue;
         }
@@ -127,22 +139,27 @@ export function makeAliasTable(lists) {
     const unknown = { kind: 'unknown' };
     if (lists.length > MAX_ALIAS_LISTS || lists.includes('unknown'))
         return { lookup: () => unknown };
-    // For each list: the first entry of each key (exact or not), the first that matches a longer specifier too, and the first unreadable key.
+    // For each list: a trie of its keys, each node holding the first entry of its key (exact or not) and the first that also matches a longer specifier, and the first unreadable key. A specifier walks the trie once, character by character, so a lookup costs the length of the specifier at most.
     const indexed = lists.map((entries) => {
-        const any = new Map();
-        const loose = new Map();
+        const root = { children: new Map() };
         let firstUnknown = Infinity;
         entries.forEach((entry, k) => {
-            if (entry.find === undefined)
+            if (entry.find === undefined) {
                 firstUnknown = Math.min(firstUnknown, k);
-            else {
-                if (!any.has(entry.find))
-                    any.set(entry.find, k);
-                if (!entry.exact && !loose.has(entry.find))
-                    loose.set(entry.find, k);
+                return;
             }
+            let node = root;
+            for (const c of entry.find) {
+                let next = node.children.get(c);
+                if (next === undefined)
+                    node.children.set(c, (next = { children: new Map() }));
+                node = next;
+            }
+            node.any ??= k;
+            if (!entry.exact)
+                node.loose ??= k;
         });
-        return { entries, any, loose, firstUnknown };
+        return { entries, root, firstUnknown };
     });
     const answers = new Map();
     return {
@@ -151,9 +168,17 @@ export function makeAliasTable(lists) {
                 return answers.get(spec);
             const found = [];
             for (const list of indexed) {
-                let best = list.any.get(spec) ?? Infinity;
-                for (let at = spec.indexOf('/'); at !== -1; at = spec.indexOf('/', at + 1))
-                    best = Math.min(best, list.loose.get(spec.slice(0, at)) ?? Infinity);
+                let best = Infinity;
+                let node = list.root;
+                for (let at = 0; at < spec.length && node !== undefined; at++) {
+                    node = node.children.get(spec[at]);
+                    if (node === undefined)
+                        break;
+                    if (at === spec.length - 1)
+                        best = Math.min(best, node.any ?? Infinity);
+                    else if (spec[at + 1] === '/')
+                        best = Math.min(best, node.loose ?? Infinity);
+                }
                 const first = Math.min(best, list.firstUnknown);
                 found.push(first === Infinity ? undefined : applyBundlerAliases(spec, [list.entries[first]]));
             }
@@ -171,19 +196,23 @@ export function combineAliasAnswers(answers) {
     const first = JSON.stringify(found[0]);
     return found.every((a) => JSON.stringify(a) === first) ? found[0] : { kind: 'unknown' };
 }
-/** The members of an object literal, or undefined when one of them may stand for any key, so a key it reads may be replaced: a spread, a computed, numeric or escaped key, a method or accessor, or a key written twice (which keeps its first place and takes its last value). */
+/** The members of an object literal, or undefined when one of them names a key the reader cannot tell: a computed, numeric or escaped key, a method or accessor, or a key written twice (which keeps its first place and takes its last value). A spread is a member of its own, which may write any key. */
 function membersOf(tokens, close, open) {
     const out = [];
     const seen = new Set();
     for (const [start, end] of segments(tokens, close, open)) {
         const key = tokens[start];
+        if (key.t === 'punct' && key.v === '...') {
+            out.push({ key: '', shorthand: false, spread: true, value: start + 1, end });
+            continue;
+        }
         const named = key.t === 'id' || (key.t === 'str' && !key.v.includes('\\'));
         const keyed = named && tokens[start + 1]?.v === ':' && tokens[start + 1].t === 'punct';
         const shorthand = key.t === 'id' && end === start + 1;
         if ((!keyed && !shorthand) || seen.has(key.v))
             return undefined;
         seen.add(key.v);
-        out.push({ key: key.v, shorthand, value: start + 2, end });
+        out.push({ key: key.v, shorthand, spread: false, value: start + 2, end });
     }
     return out;
 }
@@ -219,7 +248,8 @@ const UNKNOWN_KEY = { exact: false, replacement: { kind: 'unknown' } };
 /** The entries of an object literal `{ key: value, … }`, in order. */
 function objectEntries(tokens, close, open, env) {
     const members = membersOf(tokens, close, open);
-    if (members === undefined)
+    // A spread writes keys before or over the ones after it, so in an alias object it may decide any specifier.
+    if (members === undefined || members.some((m) => m.spread))
         return [UNKNOWN_KEY];
     return members.map((m) => entryOf(m.key, m.shorthand ? { kind: 'unknown' } : replacementOf(tokens, close, m.value, m.end, env), env));
 }

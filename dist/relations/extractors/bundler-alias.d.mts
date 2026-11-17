@@ -30,7 +30,7 @@ export declare function readBundlerAliases(text: string, kind: BundlerKind, conf
 export declare function applyBundlerAliases(spec: string, entries: AliasEntry[]): AliasAnswer | undefined;
 /** More alias lists than any configuration writes by hand: a file with more is not read, so a crafted one cannot make each import slow. */
 export declare const MAX_ALIAS_LISTS = 64;
-/** The aliases of the configurations one directory holds, indexed by key, so an import costs the number of lists times the segments of its specifier, whatever the number of keys. Answers are remembered by specifier. */
+/** The aliases of the configurations one directory holds, indexed by key, so an import costs the number of lists times the length of its specifier at most, whatever the number and the length of the keys. Answers are remembered by specifier. */
 export interface AliasTable {
     lookup(spec: string): AliasAnswer | undefined;
 }
