@@ -843,6 +843,35 @@ describe('resolver.classifyUse — C, C++ and Ruby say whether a use leaves the 
     const rspec = resolverFor(new Map([['lib/rspec.rb', '']]), [['RSpec', 'lib/rspec.rb']]);
     expect(rspec.classifyUse([sym('RSpec::Core')], 'lib/rspec/core.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
   });
+  it('Ruby: a constant under a framework namespace is the repository\'s where the file some prefix of its name requires declares that prefix', () => {
+    // A gem under a framework namespace (rack-attack): no lib/rack.rb, but lib/rack/attack.rb declares Rack::Attack.
+    const gem = resolverFor(new Map([['lib/rack/attack.rb', ''], ['lib/rack/attack/throttle.rb', ''], ['spec/attack_spec.rb', '']]), [['Rack', 'lib/rack/attack.rb'], ['Rack::Attack', 'lib/rack/attack.rb'], ['Rack', 'lib/rack/attack/throttle.rb'], ['Rack::Attack', 'lib/rack/attack/throttle.rb'], ['Rack::Attack::Throttle', 'lib/rack/attack/throttle.rb']]);
+    const inGem = (key) => gem.classifyUse([sym(key)], 'spec/attack_spec.rb', 'ruby');
+    expect(inGem('Rack::Attack')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inGem('Rack::Attack::Throttle')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inGem('Rack::Attack::Gone')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inGem('Rack::Request')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(inGem('Rack')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A framework whose entry file only requires others (sinatra): lib/sinatra.rb declares nothing, lib/sinatra/base.rb declares Sinatra::Base.
+    const entry = resolverFor(new Map([['lib/sinatra.rb', ''], ['lib/sinatra/base.rb', ''], ['test/app_test.rb', '']]), [['Sinatra', 'lib/sinatra/base.rb'], ['Sinatra::Base', 'lib/sinatra/base.rb']]);
+    expect(entry.classifyUse([sym('Sinatra::Base')], 'test/app_test.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(entry.classifyUse([sym('Sinatra::Base::Gone')], 'lib/sinatra/main.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A framework with no root file (rspec-core): no lib/rspec.rb; the namespace is lowercased, every later name underscored.
+    const core = resolverFor(new Map([['lib/rspec/core.rb', ''], ['lib/rspec/core/rake_task.rb', ''], ['Rakefile', '']]), [['RSpec', 'lib/rspec/core.rb'], ['RSpec::Core', 'lib/rspec/core.rb'], ['RSpec', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core::RakeTask', 'lib/rspec/core/rake_task.rb']]);
+    expect(core.classifyUse([sym('RSpec::Core::RakeTask')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(core.classifyUse([sym('RSpec::Core::Gone')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(core.classifyUse([sym('RSpec::Mocks')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    const task = resolverFor(new Map([['lib/rspec/core/rake_task.rb', ''], ['Rakefile', '']]), [['RSpec', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core::RakeTask', 'lib/rspec/core/rake_task.rb']]);
+    expect(task.classifyUse([sym('RSpec::Core::RakeTask')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(task.classifyUse([sym('RSpec::Core::Gone')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A gem's own require name joins the names with a hyphen (rspec-rails: lib/rspec-rails.rb declares RSpec::Rails, lib/rspec/rails.rb only requires).
+    const rails = resolverFor(new Map([['lib/rspec-rails.rb', ''], ['lib/rspec/rails.rb', ''], ['lib/rspec/rails/example/rails_example_group.rb', '']]), [['RSpec', 'lib/rspec-rails.rb'], ['RSpec::Rails', 'lib/rspec-rails.rb'], ['RSpec', 'lib/rspec/rails/example/rails_example_group.rb'], ['RSpec::Rails', 'lib/rspec/rails/example/rails_example_group.rb'], ['RSpec::Rails::RailsExampleGroup', 'lib/rspec/rails/example/rails_example_group.rb']]);
+    expect(rails.classifyUse([sym('RSpec::Rails::RailsExampleGroup')], 'lib/rspec/rails/example/view_example_group.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(rails.classifyUse([sym('RSpec::Core::ExampleGroup')], 'lib/rspec/rails/example/view_example_group.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    // An application's reopenings have no such file: a reopening in test/test_helper.rb or config/initializers, or a compact one of a nested name, leaves every prefix without the file its require name loads.
+    const app = resolverFor(new Map([['test/test_helper.rb', ''], ['config/initializers/ar.rb', ''], ['lib/active_record/base_ext.rb', ''], ['app/models/user.rb', '']]), [['ActiveSupport', 'test/test_helper.rb'], ['ActiveSupport::TestCase', 'test/test_helper.rb'], ['ActiveRecord', 'config/initializers/ar.rb'], ['ActiveRecord::Base', 'config/initializers/ar.rb'], ['ActiveRecord::Base', 'lib/active_record/base_ext.rb']]);
+    for (const key of ['ActiveSupport::TestCase', 'ActiveSupport::Concern', 'ActiveRecord::Base', 'ActiveRecord::Base::Gone', 'ActiveRecord']) expect(app.classifyUse([sym(key)], 'test/models/user_test.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+  });
 });
 
 // A Python name imported from a relative module that is no module itself (`from ..data.m import x`, `from ..data import x`) binds that module's file, as the absolute form (`from pkg.data.m import x`) does.

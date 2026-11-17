@@ -8,7 +8,7 @@ cites: "Rails test_helper.rb template (`module ActiveSupport` / `class TestCase`
 
 ## Rule
 
-An application that only reopens a framework's namespace is not that framework. Rails' generated `test/test_helper.rb` writes `module ActiveSupport` and `class TestCase` around the test setup, so the repository declares `ActiveSupport` and `ActiveSupport::TestCase`, but no file the namespace's own require name loads (`require 'active_support'`, `lib/active_support.rb`) declares it. A use of `ActiveSupport::Concern` or `ActiveSupport::TestCase` leaves the repository: absent, `outside`.
+An application that only reopens a framework's namespace is not that framework. Rails' generated `test/test_helper.rb` writes `module ActiveSupport` and `class TestCase` around the test setup, so the repository declares `ActiveSupport` and `ActiveSupport::TestCase`, but no file that the require name of the namespace or of a longer prefix of the name loads (`require 'active_support'`, `require 'active_support/test_case'`) declares that prefix: the application holds no `lib/active_support.rb` and no `active_support/test_case.rb` on a load path. A use of `ActiveSupport::Concern` or `ActiveSupport::TestCase` leaves the repository: absent, `outside`.
 
 ## Files
 

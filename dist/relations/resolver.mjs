@@ -825,29 +825,41 @@ export function makeResolver(deps) {
         return reasons.includes('unfollowed') ? 'unfollowed' : reasons.includes('outside') ? 'outside' : 'pass';
     };
     /**
-     * What a Ruby constant reading that bound nothing says, `written` the key of the group's reading of the name as written (the top-level one, read after the namespaces around the reference): a reading in an enclosing namespace reads on, as Ruby's lookup goes outward. The name as written is the repository's when the repository declares its root (`Shop::Missing`), or when a namespace of the repository nests a constant of its first name, which the reference may inherit. A framework namespace the edge walk takes for external (`Rack`, `ActiveSupport`) is the repository's only in the framework's own repository: where the file its own require name loads from the requiring file's load path (`require 'rack'`, `lib/rack.rb`) declares it, and not where the repository only reopens it (a Rails application's `module ActiveSupport` in `test/test_helper.rb`). It leaves the repository when it is rooted at a core class or module, which only a reopening declares, or at a constant the repository does not declare (`JSON`, `Nokogiri::XML`, a compact reopening of a gem's namespace).
+     * What a Ruby constant reading that bound nothing says, `written` the key of the group's reading of the name as written (the top-level one, read after the namespaces around the reference): a reading in an enclosing namespace reads on, as Ruby's lookup goes outward. The name as written is the repository's when the repository declares its root (`Shop::Missing`), or when a namespace of the repository nests a constant of its first name, which the reference may inherit. A name under a framework namespace the edge walk takes for external (`Rack`, `ActiveSupport`) is the repository's only where the repository is that framework or a gem under its namespace: where, for some prefix of the name, the file that prefix's require name loads from the requiring file's load path declares that prefix (`require 'rack'`, `lib/rack.rb`, in rack; `rack/attack` in rack-attack; `sinatra/base` in sinatra, whose `lib/sinatra.rb` declares nothing), and not where the repository only reopens it (a Rails application's `module ActiveSupport` in `test/test_helper.rb`). It leaves the repository when it is rooted at a core class or module, which only a reopening declares, or at a constant the repository does not declare (`JSON`, `Nokogiri::XML`, a compact reopening of a gem's namespace).
      */
     const rubyReason = (hint, written, fromFile) => {
         if (hint.symbolKey !== written)
             return 'pass';
         if (isRubyCoreConstant(hint.symbolKey))
             return 'outside';
-        const root = hint.symbolKey.split('::')[0];
-        if (isRubyFrameworkConstant(hint.symbolKey) ? frameworkOfRepository(root, fromFile) : deps.symbolTable.has('ruby', root))
+        if (isRubyFrameworkConstant(hint.symbolKey) ? frameworkNameOfRepository(hint.symbolKey, fromFile) : deps.symbolTable.has('ruby', hint.symbolKey.split('::')[0]))
             return 'unfollowed';
         if (hint.rubyInheritGuard !== undefined && deps.symbolTable.hasNestedTail('ruby', hint.rubyInheritGuard))
             return 'unfollowed';
         return 'outside';
     };
-    /** Whether the repository is the framework whose namespace is `root`: the file `require '<name>'` loads from `fromFile`, its name the namespace underscored or lowercased (`active_support`, `rspec`), declares the namespace. */
-    const frameworkOfRepository = (root, fromFile) => {
-        const declaring = new Set(deps.symbolTable.filesFor('ruby', root));
-        if (declaring.size === 0)
-            return false;
-        return [...new Set([rubyUnderscore(root), root.toLowerCase()])].some((name) => {
-            const file = deps.resolvePathToFile(name, fromFile, 'ruby', false, deps.symbolTable, 'require');
-            return file !== undefined && declaring.has(file);
-        });
+    /** Whether a name under a framework namespace is the repository's: some prefix of `key` (`Rack`, `Rack::Attack`, `Rack::Attack::Throttle`) is declared by the file that `require '<path>'` loads from `fromFile`, the path the prefix's names underscored, the namespace also lowercased, joined by `/` or, as the gem's own name that Bundler requires, by `-` (`rack/attack`, `rspec/core/rake_task`, `rspec-rails`). */
+    const frameworkNameOfRepository = (key, fromFile) => {
+        const names = key.split('::');
+        const heads = [...new Set([rubyUnderscore(names[0]), names[0].toLowerCase()])];
+        let prefix = '';
+        let tail = '';
+        for (const [i, name] of names.entries()) {
+            prefix = i === 0 ? name : `${prefix}::${name}`;
+            if (i > 0)
+                tail = `${tail}/${rubyUnderscore(name)}`;
+            const declaring = deps.symbolTable.filesFor('ruby', prefix);
+            if (declaring.length === 0)
+                continue;
+            const paths = heads.flatMap((head) => (i === 0 ? [head] : [`${head}${tail}`, `${head}${tail.replaceAll('/', '-')}`]));
+            const declares = paths.some((spelling) => {
+                const file = deps.resolvePathToFile(spelling, fromFile, 'ruby', false, deps.symbolTable, 'require');
+                return file !== undefined && declaring.includes(file);
+            });
+            if (declares)
+                return true;
+        }
+        return false;
     };
     /** What the on-demand imports of a Java or Kotlin file say of a simple name its package does not declare (`TargetHint.onDemand`), read after the package and before Kotlin's default imports: a starred package or type of the repository that declares the name makes the use the repository's, though the readers bind it through the package alone; else a starred package from elsewhere can give it, and the use leaves the repository. */
     const onDemandReason = (language, key, onDemand) => {

@@ -85,6 +85,9 @@ describe('MATRIX — dynamic / external / coverage silences (const_get/autoload,
   it('ruby-unbound-use-outside-or-unfollowed-silence', () => runCase('ruby-unbound-use-outside-or-unfollowed-silence'));
   it('ruby-framework-namespace-of-the-repository-unfollowed-silence', () => runCase('ruby-framework-namespace-of-the-repository-unfollowed-silence'));
   it('ruby-framework-namespace-reopened-by-an-application-outside-silence', () => runCase('ruby-framework-namespace-reopened-by-an-application-outside-silence'));
+  it('ruby-gem-under-a-framework-namespace-unfollowed-silence', () => runCase('ruby-gem-under-a-framework-namespace-unfollowed-silence'));
+  it('ruby-framework-entry-file-only-requires-unfollowed-edge', () => runCase('ruby-framework-entry-file-only-requires-unfollowed-edge'));
+  it('ruby-framework-with-no-root-file-unfollowed-silence', () => runCase('ruby-framework-with-no-root-file-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
