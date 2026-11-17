@@ -6,8 +6,8 @@ import { resolveJavaFqn, resolveJavaPackageFiles, type JavaResolveDeps } from '.
 import { explainPhpMiss, resolvePhpFqn, parseComposerAutoload, type ComposerAutoload, type PhpResolveDeps } from './extractors/php-resolve.mjs';
 import { explainRustMiss, resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
 import { declarationCount, type SymbolTable } from './symbol-table.mjs';
-import { resolveIncludePath } from './extractors/include-resolve.mjs';
-import { resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
+import { explainIncludeMiss, resolveIncludePath } from './extractors/include-resolve.mjs';
+import { explainRubyRequireRelativeMiss, resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
 import { diskFileView, joinRel, type FileSource, type FileView } from './file-view.mjs';
 import { makeDiagnosticSink, reportUnreadable, strictJsonFailure, type DiagnosticSink, type RelationDiagnostic } from './diagnostics.mjs';
@@ -224,6 +224,8 @@ export function makeResolvePathToFile(
     if (language === 'go') return explainGoImport(specifier, fromFile, goDeps);
     if (language === 'php') return explainPhpMiss(specifier, fromFile, phpDeps);
     if (language === 'rust') return explainRustMiss(specifier, fromFile, exists, rustDepsFor(symbolTable));
+    if (language === 'c' || language === 'cpp') return explainIncludeMiss(specifier, fromFile, exists, layout.includeRoots);
+    if (language === 'ruby') return explainRubyRequireRelativeMiss(specifier, fromFile);
     return undefined;
   };
   return Object.assign(resolvePathToFile, { explainMiss });

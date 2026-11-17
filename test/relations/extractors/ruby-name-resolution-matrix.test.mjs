@@ -78,6 +78,7 @@ describe('MATRIX — dynamic / external / coverage silences (const_get/autoload,
   it('ruby-external-stdlib-constant-silence', () => runCase('ruby-external-stdlib-constant-silence'));
   it('ruby-unmapped-target-silence', () => runCase('ruby-unmapped-target-silence'));
   it('ruby-intra-node-silence', () => runCase('ruby-intra-node-silence'));
+  it('ruby-unbound-use-outside-or-unfollowed-silence', () => runCase('ruby-unbound-use-outside-or-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

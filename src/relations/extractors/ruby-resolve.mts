@@ -43,6 +43,12 @@ export function resolveRubyRequireRelative(
   return exists(normalized) ? normalized : undefined;
 }
 
+/** Why a `require_relative` bound no file, asked only after {@link resolveRubyRequireRelative} answered undefined for the same arguments: `outside` when its path climbs past the repository root, else `unfollowed` (it names a file of the repository that is not there). */
+export function explainRubyRequireRelativeMiss(specifier: string, fromFile: string): 'outside' | 'unfollowed' {
+  const withExt = /\.rb$/.test(specifier) ? specifier : `${specifier}.rb`;
+  return path.posix.normalize(path.posix.join(path.posix.dirname(toPosix(fromFile)), withExt)).startsWith('..') ? 'outside' : 'unfollowed';
+}
+
 function toPosix(p: string): string {
   return p.replace(/\\/g, '/');
 }

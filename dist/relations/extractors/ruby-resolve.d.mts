@@ -24,6 +24,8 @@
  * `require_relative` PATH hint reaches this resolver.
  */
 export declare function resolveRubyRequireRelative(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean): string | undefined;
+/** Why a `require_relative` bound no file, asked only after {@link resolveRubyRequireRelative} answered undefined for the same arguments: `outside` when its path climbs past the repository root, else `unfollowed` (it names a file of the repository that is not there). */
+export declare function explainRubyRequireRelativeMiss(specifier: string, fromFile: string): 'outside' | 'unfollowed';
 /** True when a Ruby constant key (`A::B::C`, leading `::` already stripped) is rooted at a
  *  constant that is always external (see RUBY_EXTERNAL_ROOTS). */
 export declare function isRubyExternalConstant(symbolKey: string): boolean;

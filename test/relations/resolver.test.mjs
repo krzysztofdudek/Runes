@@ -711,13 +711,91 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
     expect(cs(attribute([sym('Shop.App.MineAttribute'), sym('MineAttribute')]))).toEqual({ kind: 'absent', reason: 'unfollowed' });
   });
   it('says nothing where the readers cannot tell, and nothing for a path when the path function cannot explain', () => {
-    const r = resolverOf([['ruby', 'Shop', 'lib/shop/s.rb']]);
-    expect(r.classifyUse([sym('Missing')], 'lib/a/x.rb', 'ruby')).toEqual({ kind: 'absent' });
+    const r = resolverOf([['php', 'Shop', 'lib/shop/s.php']]);
+    expect(r.classifyUse([sym('Missing')], 'lib/a/x.php', 'php')).toEqual({ kind: 'absent' });
     expect(r.classifyUse([{ kind: 'path', specifier: 'react' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent' });
     const explaining = Object.assign(() => undefined, { explainMiss: (spec) => (spec === 'react' ? 'outside' : undefined) });
     const told = resolverOf([], explaining);
     expect(told.classifyUse([{ kind: 'path', specifier: 'react' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent', reason: 'outside' });
     expect(told.classifyUse([{ kind: 'path', specifier: 'x.h' }], 'src/a/a.c', 'c')).toEqual({ kind: 'absent' });
+  });
+});
+
+// C and C++: an include that binds no file leaves the repository when it is an angle include of a header no searched place of the repository holds, and names a place of the repository otherwise. Ruby: a require_relative with no file names a file of the repository; a constant leaves it when the repository declares nothing at its root, as the edge walk reads it.
+describe('resolver.classifyUse — C, C++ and Ruby say whether a use leaves the repository', () => {
+  const resolverFor = (contents, decls = []) => {
+    const ownerOf = (f) => (contents.has(f) ? f.split('/').slice(0, -1).join('/') || '.' : undefined);
+    const st = new SymbolTable();
+    for (const [key, file] of decls) st.declare('ruby', key, file);
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: st, resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const include = (r, specifier, from, language = 'c') => r.classifyUse([{ kind: 'path', specifier }], from, language);
+  const sym = (symbolKey, extra = {}) => ({ kind: 'symbol', symbolKey, ...extra });
+
+  it('C and C++ without a compilation database: an angle include of a system header leaves the repository, a quoted include with no file does not', () => {
+    const r = resolverFor(new Map([['src/a.c', ''], ['src/a.cpp', ''], ['src/b.h', ''], ['hiredis.h', ''], ['adapters/ae.h', ''], ['lib/x/y.h', ''], ['include/x/y.h', ''], ['include/k/v.h', '']]));
+    expect(include(r, '<stdio.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, 'missing.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, '<vector>', 'src/a.cpp', 'cpp')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, 'missing.hpp', 'src/a.cpp', 'cpp')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, 'b.h', 'src/a.c')).toEqual({ kind: 'resolved', owner: 'src', resolvedFile: 'src/b.h' });
+    // An angle include of a header the repository holds where a build's -I list would name it: beside the includer or under a probe root.
+    expect(include(r, '<b.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, '<hiredis.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, '<k/v.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A header that includes its own name wraps the library's header of that name.
+    expect(include(r, '<ae.h>', 'adapters/ae.h')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A quoted name the probe finds under two roots binds neither: the files it could name, which the edge walk passes by.
+    const split = resolverFor(new Map([['src/a.c', ''], ['k/v.h', ''], ['include/k/v.h', ''], ['solo/s.h', '']]));
+    expect(include(split, 'k/v.h', 'src/a.c')).toEqual({ kind: 'ambiguous', candidates: ['include/k/v.h', 'k/v.h'] });
+    expect(split.classify({ kind: 'path', specifier: 'k/v.h' }, 'src/a.c', 'c')).toEqual({ kind: 'absent' });
+    expect(split.classifyUse([{ kind: 'path', specifier: 'k/v.h' }, { kind: 'path', specifier: 'solo/s.h' }], 'src/a.c', 'c')).toEqual({ kind: 'resolved', owner: 'solo', resolvedFile: 'solo/s.h' });
+    // A name that leaves the repository: absolute, or climbing past its root.
+    expect(include(r, '/usr/include/zlib.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '../../zlib.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '../missing.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('C and C++ with a compilation database: an angle include binds the -I roots only, so a header outside them leaves the repository', () => {
+    const db = JSON.stringify([{ directory: '/nonexistent', file: 'src/a.c', arguments: ['cc', '-Ipub', '-Iinc', '-c', 'src/a.c'] }]);
+    const r = resolverFor(new Map([['compile_commands.json', db], ['src/a.c', ''], ['hiredis.h', ''], ['pub/p.h', ''], ['inc/p.h', ''], ['pub/q.h', '']]));
+    expect(include(r, '<pub/q.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '<hiredis.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '<q.h>', 'src/a.c')).toEqual({ kind: 'resolved', owner: 'pub', resolvedFile: 'pub/q.h' });
+    expect(include(r, '<p.h>', 'src/a.c')).toEqual({ kind: 'ambiguous', candidates: ['inc/p.h', 'pub/p.h'] });
+    expect(include(r, 'gone.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('an excluded header names a place of the repository: unfollowed, never outside', () => {
+    const contents = new Map([['src/a.c', ''], ['include/k/v.h', ''], ['include/gen/g.h', '']]);
+    const ownerOf = (f) => (contents.has(f) ? f.split('/').slice(0, -1).join('/') : undefined);
+    const isExcluded = (f) => f.startsWith('include/gen/');
+    const r = makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, isExcluded, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+    expect(r.classifyUse([{ kind: 'path', specifier: 'gen/g.h' }], 'src/a.c', 'c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(r.classifyUse([{ kind: 'path', specifier: '<gen/g.h>' }], 'src/a.c', 'c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('Ruby: a require_relative with no file names a file of the repository, unless its path climbs past the root', () => {
+    const r = resolverFor(new Map([['lib/a.rb', ''], ['lib/b.rb', '']]));
+    const req = (specifier) => r.classifyUse([{ kind: 'path', specifier }], 'lib/a.rb', 'ruby');
+    expect(req('./missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(req('b')).toEqual({ kind: 'resolved', owner: 'lib', resolvedFile: 'lib/b.rb' });
+    expect(req('../../outside.rb')).toEqual({ kind: 'absent', reason: 'outside' });
+  });
+  it('Ruby: a constant leaves the repository when nothing of the repository is at its root, and is the repository\'s when its root or an inheritable nested constant is', () => {
+    const r = resolverFor(new Map([['lib/shop.rb', '']]), [['Shop', 'lib/shop.rb'], ['Shop::Cart', 'lib/shop.rb'], ['Shop::Cart::Line', 'lib/shop.rb'], ['Rackup::Handler', 'lib/shop.rb']]);
+    const use = (...candidates) => r.classifyUse(candidates, 'lib/a.rb', 'ruby');
+    expect(use(sym('JSON'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Nokogiri::XML'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Shop::Missing'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(use(sym('Shop::Cart::Gone'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // Read in the namespaces around the reference first, then as written.
+    expect(use(sym('Shop::JSON'), sym('JSON', { rubyInheritGuard: 'JSON' }))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Shop::Cart::Gone::X', { rubyAnchor: 'Shop::Cart::Gone' }), sym('Shop::Gone::X', { rubyAnchor: 'Shop::Gone' }), sym('Gone::X', { rubyInheritGuard: 'Gone' }))).toEqual({ kind: 'absent', reason: 'outside' });
+    // A constant some namespace of the repository nests may be inherited by the reference.
+    expect(use(sym('Shop::Cart::Line'), sym('Line', { rubyInheritGuard: 'Line' }))).toEqual({ kind: 'resolved', owner: 'lib', resolvedFile: 'lib/shop.rb' });
+    expect(use(sym('Other::Line'), sym('Line', { rubyInheritGuard: 'Line' }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A core class, a framework namespace and a compact reopening of a namespace the repository does not declare leave it, as the edge walk reads them.
+    expect(use(sym('String'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('ActiveRecord::Base'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Rackup::Handler'))).toEqual({ kind: 'absent', reason: 'outside' });
   });
 });
 
