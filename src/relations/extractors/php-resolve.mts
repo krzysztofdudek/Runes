@@ -92,7 +92,7 @@ export interface ComposerAutoload {
   psr0: ReadonlyMap<string, readonly string[]>;
 }
 
-type MapsResult = { kind: 'hit'; file: string } | { kind: 'ambiguous' } | { kind: 'miss' };
+type MapsResult = { kind: 'hit'; file: string } | { kind: 'ambiguous'; files: string[] } | { kind: 'miss' };
 
 /**
  * Resolve an FQN against a set of autoload maps with the exactly-one-hit rule.
@@ -101,14 +101,14 @@ type MapsResult = { kind: 'hit'; file: string } | { kind: 'ambiguous' } | { kind
  *   Stage B — only when stage A found no file: the fallbacks, i.e. each map's PSR-4 `""`
  *     directories (the whole FQN as a path under them) and every matching PSR-0 prefix
  *     (the whole FQN as a path, `_` in the class name → `/`).
- * Excluded hits are dropped first; one distinct live file → hit, 2+ → ambiguous, 0 → miss.
+ * Excluded hits are dropped first; one distinct live file → hit, 2+ → ambiguous with those files, sorted, 0 → miss.
  */
 function resolveInMaps(fqn: string, maps: readonly ComposerAutoload[], deps: PhpResolveDeps): MapsResult {
   const isExcl = deps.isExcluded ?? ((): boolean => false);
   const decide = (hits: Set<string>): MapsResult | undefined => {
     const live = [...hits].filter((h) => !isExcl(h));
     if (live.length === 0) return undefined;
-    if (live.length > 1) return { kind: 'ambiguous' };
+    if (live.length > 1) return { kind: 'ambiguous', files: live.sort() };
     return { kind: 'hit', file: live[0] };
   };
   const fqnWithSep = fqn + '\\';
@@ -181,31 +181,33 @@ export function resolvePhpFqn(
   deps: PhpResolveDeps,
 ): string | undefined {
   if (specifier.includes('/')) return resolvePhpFilePath(specifier, fromFile, deps);
-  const fqn = specifier.startsWith('\\') ? specifier.slice(1) : specifier;
-  if (fqn === '') return undefined;
+  const r = lookupPhpFqn(specifier, fromFile, deps);
+  return r.kind === 'hit' ? r.file : undefined;
+}
 
-  // 1. The nearest composer.json's maps. Ambiguous there → silence; a hit → done.
+/** What a class name comes to in the autoload maps, as `resolvePhpFqn` reads them: the nearest composer.json's maps first, where an ambiguity ends the lookup; when they bind nothing, the union of every composer.json in the repository. */
+function lookupPhpFqn(specifier: string, fromFile: string, deps: PhpResolveDeps): MapsResult {
+  const fqn = specifier.startsWith('\\') ? specifier.slice(1) : specifier;
+  if (fqn === '') return { kind: 'miss' };
   const nearest: ComposerAutoload = {
     psr4: deps.psr4For(fromFile),
     psr0: deps.psr0For?.(fromFile) ?? new Map(),
   };
   if (nearest.psr4.size > 0 || nearest.psr0.size > 0) {
     const r = resolveInMaps(fqn, [nearest], deps);
-    if (r.kind === 'hit') return r.file;
-    if (r.kind === 'ambiguous') return undefined;
+    if (r.kind !== 'miss') return r;
   }
-  // 2. Nothing in the nearest map: the union of every composer.json in the repository.
   const all = deps.allMaps?.() ?? [];
-  if (all.length === 0) return undefined;
-  const r = resolveInMaps(fqn, all, deps);
-  return r.kind === 'hit' ? r.file : undefined;
+  return all.length === 0 ? { kind: 'miss' } : resolveInMaps(fqn, all, deps);
 }
 
 /**
- * Why a name `resolvePhpFqn` bound no file came to nothing: `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
+ * Why a name `resolvePhpFqn` bound no file came to nothing: `{ split }` with the files, sorted, for a class name that two or more directories of the maps it reads map to files (two PSR-4 directories of one prefix, or two composer.json files of the repository); `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
  */
-export function explainPhpMiss(specifier: string, fromFile: string, deps: PhpResolveDeps): 'outside' | 'unfollowed' | undefined {
+export function explainPhpMiss(specifier: string, fromFile: string, deps: PhpResolveDeps): 'outside' | 'unfollowed' | { split: string[] } | undefined {
   if (specifier.includes('/')) return 'unfollowed';
+  const found = lookupPhpFqn(specifier, fromFile, deps);
+  if (found.kind === 'ambiguous') return { split: found.files };
   const fqn = specifier.startsWith('\\') ? specifier.slice(1) : specifier;
   const maps: ComposerAutoload[] = [{ psr4: deps.psr4For(fromFile), psr0: deps.psr0For?.(fromFile) ?? new Map() }, ...(deps.allMaps?.() ?? [])];
   const prefixes = maps.flatMap((m) => [...m.psr4.keys(), ...m.psr0.keys()]);

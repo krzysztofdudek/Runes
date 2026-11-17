@@ -108,11 +108,14 @@ export function makePythonResolver(exists, isExcluded, projectRoots, listDir) {
             return matches;
         },
     };
-    const resolve = (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : resolveAbsolute(specifier, fromFile, ctx);
-    // Why an import bound no module: a relative one, or an absolute one whose top-level name a root it searches holds (a package, a module, a namespace directory), names a module of the repository; any other leaves it (the standard library, an installed package).
+    const resolve = (specifier, fromFile) => specifier.startsWith('.') ? resolveRelative(specifier, fromFile, has, isExcluded) : soleMatch(absoluteMatches(specifier, fromFile, ctx));
+    // Why an import bound no module: an absolute one that two or more roots answer is split between those files, sorted; a relative one, or an absolute one whose top-level name a root it searches holds (a package, a module, a namespace directory), names a module of the repository; any other leaves it (the standard library, an installed package).
     const explain = (specifier, fromFile) => {
         if (specifier.startsWith('.'))
             return 'unfollowed';
+        const matches = absoluteMatches(specifier, fromFile, ctx);
+        if (matches.size > 1)
+            return { split: [...matches].sort() };
         const top = specifier.split('.').find((s) => s.length > 0) ?? '';
         const holds = (root) => ctx.exists(joinUnder(root, `${top}/__init__.py`)) || ctx.exists(joinUnder(root, `${top}.py`)) || namesIn(root)?.has(top.normalize('NFC')) === true;
         const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(top);
@@ -130,7 +133,7 @@ function emptyMatches() {
     return { exact: new Set(), parentPackages: new Set(), parentModules: new Set() };
 }
 /**
- * Top-level standard-library module names (CPython 3.13 `sys.stdlib_module_names` without the private `_x` modules, plus the modules removed in 3.12/3.13 and added in 3.14, so an older or newer interpreter is covered). A DISCOVERED project root (see resolveAbsolute) is on `sys.path` only because its project is installed, and installed projects come after the standard library, so a module there named like one of these can never shadow it.
+ * Top-level standard-library module names (CPython 3.13 `sys.stdlib_module_names` without the private `_x` modules, plus the modules removed in 3.12/3.13 and added in 3.14, so an older or newer interpreter is covered). A DISCOVERED project root (see absoluteMatches) is on `sys.path` only because its project is installed, and installed projects come after the standard library, so a module there named like one of these can never shadow it.
  */
 const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse array ast asynchat asyncio asyncore atexit audioop base64 bdb binascii ' +
     'bisect builtins bz2 cProfile calendar cgi cgitb chunk cmath cmd code codecs codeop collections colorsys ' +
@@ -149,7 +152,7 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
     'turtle turtledemo types typing unicodedata unittest urllib uu uuid venv warnings wave weakref webbrowser ' +
     'winreg winsound wsgiref xdrlib xml xmlrpc zipapp zipfile zipimport zlib zoneinfo').split(' '));
 /**
- * Absolute dotted module `a.b.c`. Without a directory listing we approximate CPython's source-root search: for the importing file's directory and every ancestor directory up to (and including) the repo root, probe the module as a file/package rooted at that directory. For `from a.b import c` the LAST segment may be a symbol rather than a submodule, so also probe the parent module (`a/b.py`, `a/b/__init__.py`) for the longest-match. We probe EVERY ancestor root (the importer's own/intermediate dirs are not genuine roots, so they must not shadow the real source root): a single distinct matching file is returned; 2+ distinct matches are ambiguous and resolve to undefined (silence).
+ * Absolute dotted module `a.b.c`. Without a directory listing we approximate CPython's source-root search: for the importing file's directory and every ancestor directory up to (and including) the repo root, probe the module as a file/package rooted at that directory. For `from a.b import c` the LAST segment may be a symbol rather than a submodule, so also probe the parent module (`a/b.py`, `a/b/__init__.py`) for the longest-match. We probe EVERY ancestor root (the importer's own/intermediate dirs are not genuine roots, so they must not shadow the real source root) and return the DISTINCT matching files: a single one is the resolution; 2+ are ambiguous, so the import resolves to undefined (silence) and `explain` names them.
  *
  * The exact module is looked for at every root before the parent fallback counts. When some root holds the module itself (`a/b/c.py` or `a/b/c/__init__.py`), a parent PACKAGE (`a/b/__init__.py`) found at another root does not compete with it: a package can span several roots (a pkgutil-style namespace package that several distributions ship, each with its own `__init__.py` extending `__path__`), so the submodule is reachable through it. A parent MODULE file (`a/b.py`) at another root still competes, because a module holds no submodules and which of the two Python loads depends on the `sys.path` order. The parent packages count only when no root holds the exact module.
  *
@@ -163,10 +166,10 @@ const PYTHON_STDLIB_TOP_LEVEL = new Set(('abc annotationlib antigravity argparse
  *
  * An excluded match is dropped BEFORE that ambiguity count. It is told by the caller to not exist, so it can never be the genuine target and must not keep a real, surviving match silenced merely because it once shared a dotted module name with a file the caller no longer considers.
  */
-function resolveAbsolute(specifier, fromFile, ctx) {
+function absoluteMatches(specifier, fromFile, ctx) {
     const segments = specifier.split('.').filter((s) => s.length > 0);
     if (segments.length === 0)
-        return undefined;
+        return new Set();
     const modulePath = segments.join('/'); // a/b/c
     const parentPath = segments.slice(0, -1).join('/'); // a/b (drop last segment)
     // Probe EVERY ancestor source root and collect the DISTINCT files that match. The importing file's own dir and the intermediate dirs are NOT genuine absolute-import roots, so a same-named module sitting in the importer's own package must not shadow the real source root. Resolving the same dotted module to 2+ distinct LIVE files means we cannot tell which root is genuine — silence (undefined) per the zero-false-positive rule. A single distinct live file is an unambiguous resolution and is returned.
@@ -186,11 +189,14 @@ function resolveAbsolute(specifier, fromFile, ctx) {
             for (const file of under[kind])
                 found[kind].add(file);
     }
-    const matches = new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
+    return new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
+}
+/** The one file of `matches`, or undefined when there is none or there are several (ambiguous: silence). */
+function soleMatch(matches) {
     return matches.size === 1 ? [...matches][0] : undefined;
 }
 /**
- * Adds one root's strongest live match to `into`, by kind. Per root, the candidate priority order is preserved (module-as-file/package first, then the parentPath longest-match): only the first LIVE hit at the root counts, so a root that matches both the full module and its parent still contributes just one file (the stronger match wins) — but an EXCLUDED hit does not stop the search at that root: it is skipped exactly like a genuine miss, so a live candidate further down the SAME root's list (a package outranking its own excluded same-named module, matching CPython's real precedence) still counts. Across roots, an exact hit outranks a parent package fallback (see resolveAbsolute's doc comment).
+ * Adds one root's strongest live match to `into`, by kind. Per root, the candidate priority order is preserved (module-as-file/package first, then the parentPath longest-match): only the first LIVE hit at the root counts, so a root that matches both the full module and its parent still contributes just one file (the stronger match wins) — but an EXCLUDED hit does not stop the search at that root: it is skipped exactly like a genuine miss, so a live candidate further down the SAME root's list (a package outranking its own excluded same-named module, matching CPython's real precedence) still counts. Across roots, an exact hit outranks a parent package fallback (see absoluteMatches's doc comment).
  */
 function probeRoot(dir, modulePath, parentPath, ctx, into) {
     const firstLive = (candidates) => candidates.find((cand) => ctx.exists(cand) && !ctx.isExcluded(cand));

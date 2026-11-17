@@ -90,9 +90,11 @@ export interface ComposerAutoload {
 }
 export declare function resolvePhpFqn(specifier: string, fromFile: string, deps: PhpResolveDeps): string | undefined;
 /**
- * Why a name `resolvePhpFqn` bound no file came to nothing: `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
+ * Why a name `resolvePhpFqn` bound no file came to nothing: `{ split }` with the files, sorted, for a class name that two or more directories of the maps it reads map to files (two PSR-4 directories of one prefix, or two composer.json files of the repository); `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
  */
-export declare function explainPhpMiss(specifier: string, fromFile: string, deps: PhpResolveDeps): 'outside' | 'unfollowed' | undefined;
+export declare function explainPhpMiss(specifier: string, fromFile: string, deps: PhpResolveDeps): 'outside' | 'unfollowed' | {
+    split: string[];
+} | undefined;
 /**
  * Parse a composer.json's `autoload.psr-4` and `autoload-dev.psr-4` into the normalized
  * prefix → directories map, with directories made relative to `composerDir` (repo-rel

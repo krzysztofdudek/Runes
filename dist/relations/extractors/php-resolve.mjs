@@ -6,7 +6,7 @@ import path from 'node:path';
  *   Stage B — only when stage A found no file: the fallbacks, i.e. each map's PSR-4 `""`
  *     directories (the whole FQN as a path under them) and every matching PSR-0 prefix
  *     (the whole FQN as a path, `_` in the class name → `/`).
- * Excluded hits are dropped first; one distinct live file → hit, 2+ → ambiguous, 0 → miss.
+ * Excluded hits are dropped first; one distinct live file → hit, 2+ → ambiguous with those files, sorted, 0 → miss.
  */
 function resolveInMaps(fqn, maps, deps) {
     const isExcl = deps.isExcluded ?? (() => false);
@@ -15,7 +15,7 @@ function resolveInMaps(fqn, maps, deps) {
         if (live.length === 0)
             return undefined;
         if (live.length > 1)
-            return { kind: 'ambiguous' };
+            return { kind: 'ambiguous', files: live.sort() };
         return { kind: 'hit', file: live[0] };
     };
     const fqnWithSep = fqn + '\\';
@@ -92,34 +92,35 @@ function resolvePhpFilePath(specifier, fromFile, deps) {
 export function resolvePhpFqn(specifier, fromFile, deps) {
     if (specifier.includes('/'))
         return resolvePhpFilePath(specifier, fromFile, deps);
+    const r = lookupPhpFqn(specifier, fromFile, deps);
+    return r.kind === 'hit' ? r.file : undefined;
+}
+/** What a class name comes to in the autoload maps, as `resolvePhpFqn` reads them: the nearest composer.json's maps first, where an ambiguity ends the lookup; when they bind nothing, the union of every composer.json in the repository. */
+function lookupPhpFqn(specifier, fromFile, deps) {
     const fqn = specifier.startsWith('\\') ? specifier.slice(1) : specifier;
     if (fqn === '')
-        return undefined;
-    // 1. The nearest composer.json's maps. Ambiguous there → silence; a hit → done.
+        return { kind: 'miss' };
     const nearest = {
         psr4: deps.psr4For(fromFile),
         psr0: deps.psr0For?.(fromFile) ?? new Map(),
     };
     if (nearest.psr4.size > 0 || nearest.psr0.size > 0) {
         const r = resolveInMaps(fqn, [nearest], deps);
-        if (r.kind === 'hit')
-            return r.file;
-        if (r.kind === 'ambiguous')
-            return undefined;
+        if (r.kind !== 'miss')
+            return r;
     }
-    // 2. Nothing in the nearest map: the union of every composer.json in the repository.
     const all = deps.allMaps?.() ?? [];
-    if (all.length === 0)
-        return undefined;
-    const r = resolveInMaps(fqn, all, deps);
-    return r.kind === 'hit' ? r.file : undefined;
+    return all.length === 0 ? { kind: 'miss' } : resolveInMaps(fqn, all, deps);
 }
 /**
- * Why a name `resolvePhpFqn` bound no file came to nothing: `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
+ * Why a name `resolvePhpFqn` bound no file came to nothing: `{ split }` with the files, sorted, for a class name that two or more directories of the maps it reads map to files (two PSR-4 directories of one prefix, or two composer.json files of the repository); `unfollowed` for a file path, and for a class name under a prefix of a Composer autoload map of the repository (the nearest one or any other; the empty fallback prefix names no namespace); `outside` for any other class name (a library installed under `vendor/`); undefined when the repository has no autoload map at all.
  */
 export function explainPhpMiss(specifier, fromFile, deps) {
     if (specifier.includes('/'))
         return 'unfollowed';
+    const found = lookupPhpFqn(specifier, fromFile, deps);
+    if (found.kind === 'ambiguous')
+        return { split: found.files };
     const fqn = specifier.startsWith('\\') ? specifier.slice(1) : specifier;
     const maps = [{ psr4: deps.psr4For(fromFile), psr0: deps.psr0For?.(fromFile) ?? new Map() }, ...(deps.allMaps?.() ?? [])];
     const prefixes = maps.flatMap((m) => [...m.psr4.keys(), ...m.psr0.keys()]);

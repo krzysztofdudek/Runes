@@ -768,6 +768,38 @@ describe('resolver.classifyUse — a Python source root named by configuration',
   });
 });
 
+// A Python module two source roots hold, and a PHP class two PSR-4 directories map, bind no file; `classifyUse` answers them ambiguous with both files, sorted, where `classify` and the edges answer as before.
+describe('resolver.classifyUse — a Python module or a PHP class that several roots answer', () => {
+  const resolverOf = (files, ownerOf) => {
+    const contents = new Map(Object.entries(files));
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const byDir = (f) => (/\.(py|php)$/.test(f) ? f.split('/').at(-2) : undefined);
+
+  it('Python: a module under two project roots', () => {
+    const r = resolverOf({ 'b/pyproject.toml': '', 'b/src/shared/__init__.py': '', 'b/src/shared/util.py': '', 'a/pyproject.toml': '', 'a/src/shared/__init__.py': '', 'a/src/shared/util.py': '', 'c/app/main.py': '', 'c/app/solo.py': '' }, byDir);
+    const hint = { kind: 'path', specifier: 'shared.util' };
+    expect(r.classifyUse([hint], 'c/app/main.py', 'python')).toEqual({ kind: 'ambiguous', candidates: ['a/src/shared/util.py', 'b/src/shared/util.py'] });
+    expect(r.classify(hint, 'c/app/main.py', 'python')).toEqual({ kind: 'absent' });
+    expect(r.resolve(hint, 'c/app/main.py', 'python')).toBeUndefined();
+    // A name of a module two roots hold falls back to the module, ambiguous the same way; a farther reading that binds still answers.
+    expect(r.classifyUse([{ kind: 'path', specifier: 'shared.util.run' }], 'c/app/main.py', 'python')).toEqual({ kind: 'ambiguous', candidates: ['a/src/shared/util.py', 'b/src/shared/util.py'] });
+    expect(r.classifyUse([hint, { kind: 'path', specifier: '.solo' }], 'c/app/main.py', 'python')).toEqual({ kind: 'resolved', owner: 'app', resolvedFile: 'c/app/solo.py' });
+    // An excluded copy leaves one file, which binds as before.
+    const excluded = makeResolver({ ownerIndex: { ownerOf: byDir }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', byDir, (p) => p.startsWith('b/'), { files: listedFileView(['a/pyproject.toml', 'a/src/shared/__init__.py', 'a/src/shared/util.py', 'b/pyproject.toml', 'b/src/shared/util.py', 'c/app/main.py'], () => '') }) });
+    expect(excluded.classifyUse([hint], 'c/app/main.py', 'python')).toEqual({ kind: 'resolved', owner: 'shared', resolvedFile: 'a/src/shared/util.py' });
+  });
+  it('PHP: a class two PSR-4 directories of one prefix map, in the nearest map and in the repository\'s union', () => {
+    const near = resolverOf({ 'composer.json': '{ "autoload": { "psr-4": { "App\\\\": ["src/", "lib/"] } } }', 'src/Pay/G.php': '<?php', 'lib/Pay/G.php': '<?php', 'src/Order/Handler.php': '<?php' }, byDir);
+    const hint = { kind: 'path', specifier: 'App\\Pay\\G' };
+    expect(near.classifyUse([hint], 'src/Order/Handler.php', 'php')).toEqual({ kind: 'ambiguous', candidates: ['lib/Pay/G.php', 'src/Pay/G.php'] });
+    expect(near.classify(hint, 'src/Order/Handler.php', 'php')).toEqual({ kind: 'absent' });
+    expect(near.classifyUse([{ kind: 'path', specifier: 'App\\Pay\\Gone' }], 'src/Order/Handler.php', 'php')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    const union = resolverOf({ 'p1/composer.json': '{ "autoload": { "psr-4": { "Lib\\\\": "src/" } } }', 'p1/src/Thing.php': '<?php', 'p2/composer.json': '{ "autoload": { "psr-4": { "Lib\\\\": "src/" } } }', 'p2/src/Thing.php': '<?php', 'app/composer.json': '{ "autoload": { "psr-4": { "App\\\\": "src/" } } }', 'app/src/Use.php': '<?php' }, (f) => f.split('/')[0]);
+    expect(union.classifyUse([{ kind: 'path', specifier: 'Lib\\Thing' }], 'app/src/Use.php', 'php')).toEqual({ kind: 'ambiguous', candidates: ['p1/src/Thing.php', 'p2/src/Thing.php'] });
+  });
+});
+
 // Java reads a simple name of java.lang through the implicit on-demand import of java.lang (JLS §7.3), after the file's own package: its use leaves the repository, where a simple name of the package that no file declares was not followed.
 describe('resolver.classifyUse — a simple Java name of java.lang leaves the repository', () => {
   it('tells String from a name of the package that binds nothing, and binds the repository\'s own java.lang where it has one', () => {
