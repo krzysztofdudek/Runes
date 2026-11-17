@@ -139,3 +139,22 @@ test('the grammar files are built when the package is published, never when it i
   assert.deepEqual(grammarPackages.dependencies, Object.fromEntries(manifest.grammars.filter((g) => g.source.kind === 'npm').map((g) => [g.source.package, g.source.version]).sort(([a], [b]) => (a < b ? -1 : 1))), 'the folder installs exactly the npm pins of the manifest');
   assert.match(readFileSync(path.join(root, 'grammars', 'npm', '.npmrc'), 'utf8'), /^ignore-scripts=true$/m);
 });
+
+// A consumer installed from the packed package with no npm grammar package: the pin check README tells it to run must not ask for a grammar package whose grammar the package ships, and must still report one the consumer installed at another version than the pin.
+test('checkRuntimePins asks for no npm grammar package the installed package ships, and still reports one installed at another version', { timeout: 900_000 }, async () => {
+  const { pkg } = await packedPackage();
+  const consumer = mkdtempSync(path.join(work, 'pins-'));
+  const installedRunes = path.join(consumer, 'node_modules', '@chrisdudek', 'runes');
+  cpSync(pkg, installedRunes, { recursive: true });
+  writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', private: true, dependencies: { '@chrisdudek/runes': JSON.parse(readFileSync(path.join(installedRunes, 'package.json'), 'utf8')).version } }));
+  const { checkRuntimePins } = await import(pathToFileURL(path.join(installedRunes, 'dist', 'testkit', 'index.mjs')).href);
+  const npmPins = manifest.grammars.filter((g) => g.source.kind === 'npm');
+  const grammarProblems = (problems) => problems.filter((p) => !['runtime', 'runtime wasm', 'cli'].includes(p.role));
+  assert.deepEqual(grammarProblems(checkRuntimePins({ resolveFrom: consumer })), [], 'every npm grammar the package ships needs no package');
+  assert.deepEqual(grammarProblems(checkRuntimePins({ resolveFrom: consumer, languages: ['go', 'python'] })), []);
+  const go = npmPins.find((g) => g.language === 'go');
+  const goDir = path.join(consumer, 'node_modules', go.source.package);
+  mkdirSync(goDir, { recursive: true });
+  writeFileSync(path.join(goDir, 'package.json'), JSON.stringify({ name: go.source.package, version: '0.24.0' }));
+  assert.deepEqual(grammarProblems(checkRuntimePins({ resolveFrom: consumer, languages: ['go', 'python'] })), [{ package: go.source.package, role: 'go', expected: go.source.version, installed: '0.24.0' }]);
+});
