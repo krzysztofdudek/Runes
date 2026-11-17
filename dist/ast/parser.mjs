@@ -52,9 +52,28 @@ export function createParserHost(options) {
         }
         throw new Error(`grammar ${wasmFile} not found in ${options.grammarDirs.join(', ') || '(no grammar directories)'}; build it with buildGrammars from @chrisdudek/runes/grammars.`);
     };
+    // The runtime aborts (at its 2 GiB memory limit, for one) by throwing a RuntimeError whose message starts with `Aborted(`, and stays damaged for the rest of the process: a grammar load, a parser or a parse made afterwards can fail on anything. So an abort is not retried, and from then on the host makes no call into the runtime and hands out no parser: each place that does checks first, with no wait between the check and the call.
+    let abortedOn;
+    const isAbort = (error) => error instanceof Error && error.message.startsWith('Aborted(');
+    const abortedError = (filePath) => {
+        const { filePath: first, error } = abortedOn;
+        const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}${filePath === undefined ? '' : `, so ${filePath} was not parsed`}`;
+        return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${error.message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
+    };
+    const failIfAborted = (filePath) => {
+        if (abortedOn !== undefined)
+            throw abortedError(filePath);
+    };
+    const failOnAbort = (filePath, error) => {
+        if (!isAbort(error))
+            return;
+        abortedOn ??= { filePath, error };
+        throw abortedError(filePath);
+    };
     const loadLanguage = (wasmFile) => {
         let langP = langCache.get(wasmFile);
         if (langP === undefined) {
+            failIfAborted();
             const p = runtime.Language.load(resolveWasm(wasmFile));
             langP = p;
             langCache.set(wasmFile, p);
@@ -63,61 +82,42 @@ export function createParserHost(options) {
         }
         return langP;
     };
+    const makeParser = (lang) => {
+        const parser = new runtime.Parser();
+        parser.setLanguage(lang);
+        return parser;
+    };
+    const loadedLanguages = new Map();
     const getParser = async (extension) => {
         await init();
         const wasmFile = grammarFor(extension);
         if (wasmFile === undefined)
             throw new Error(`no parser for extension '${extension}'`);
         const lang = await loadLanguage(wasmFile);
+        loadedLanguages.set(wasmFile, lang);
+        failIfAborted();
         // Checked after the await so the first concurrent caller to resume wins the slot.
         const existing = parserCache.get(wasmFile);
         if (existing)
             return existing;
-        const parser = new runtime.Parser();
-        parser.setLanguage(lang);
+        const parser = makeParser(lang);
         parserCache.set(wasmFile, parser);
         return parser;
     };
     const newParser = () => {
         if (!initialized)
             throw new Error('newParser: the tree-sitter runtime is not initialized yet; parse a file or await getParser first.');
+        failIfAborted();
         return new runtime.Parser();
     };
-    /** A new parser for `extension`'s grammar, outside the cache. */
-    const freshParser = async (extension) => {
-        await getParser(extension);
-        const lang = await loadLanguage(grammarFor(extension));
-        const parser = new runtime.Parser();
-        parser.setLanguage(lang);
-        return parser;
-    };
-    // The runtime aborts (at its 2 GiB memory limit, for one) by throwing a RuntimeError whose message starts with `Aborted(`, and stays damaged for the rest of the process: a parser made afterwards can fail on any text. So an abort is not retried, and the host parses nothing more.
-    let abortedOn;
-    const isAbort = (error) => error instanceof Error && error.message.startsWith('Aborted(');
-    const abortedError = (filePath) => {
-        const { filePath: first, error } = abortedOn;
-        const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}, so ${filePath} was not parsed`;
-        return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${error.message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
-    };
-    const failOnAbort = (filePath, error) => {
-        if (!isAbort(error))
-            return;
-        abortedOn ??= { filePath, error };
-        throw abortedError(filePath);
-    };
-    // Checked again after every wait, right before the runtime is called: another call's parse may have aborted meanwhile.
-    const failIfAborted = (filePath) => {
-        if (abortedOn !== undefined)
-            throw abortedError(filePath);
-    };
     const parseFile = async (filePath, content, language, options) => {
-        failIfAborted(filePath);
         if (typeof language === 'object' && language !== null)
             throw new TypeError(`parseFile of ${filePath}: the language is a string, null or undefined, and the options go after it`);
         const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
         const progress = options?.progressCallback;
         let stop;
         const run = (parser) => {
+            failIfAborted(filePath);
             if (progress === undefined)
                 return parser.parse(content);
             stop = undefined;
@@ -139,30 +139,36 @@ export function createParserHost(options) {
                 parser.reset();
             return tree;
         };
-        // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a heredoc delimiter of 256+ characters). The trap leaves that parser unusable while a fresh parser over the same language parses normally, so a throwing parse drops its parser from the cache and retries once on a private fresh parser. The poisoned parser is not freed: a concurrent caller may still hold it and would hit freed memory instead of a clean throw.
         let tree;
-        const first = await getParser(ext);
-        failIfAborted(filePath);
         try {
-            tree = run(first);
+            const first = await getParser(ext);
+            // A grammar's external scanner can trap on one pathological input (tree-sitter-ruby on a heredoc delimiter of 256+ characters). The trap leaves that parser unusable while a fresh parser over the same language parses normally, so a throwing parse drops its parser from the cache and retries once on a private fresh parser, made from the language already loaded. The retry follows the trap with no wait, so no other call runs between them. The poisoned parser is not freed: a concurrent caller may still hold it and would hit freed memory instead of a clean throw.
+            try {
+                tree = run(first);
+            }
+            catch (error) {
+                failOnAbort(filePath, error);
+                for (const [key, cached] of parserCache)
+                    if (cached === first)
+                        parserCache.delete(key);
+                const fresh = makeParser(loadedLanguages.get(grammarFor(ext)));
+                try {
+                    tree = run(fresh);
+                }
+                catch (retryError) {
+                    failOnAbort(filePath, retryError);
+                    throw retryError;
+                }
+                finally {
+                    fresh.delete();
+                }
+            }
         }
         catch (error) {
-            failOnAbort(filePath, error);
-            for (const [key, cached] of parserCache)
-                if (cached === first)
-                    parserCache.delete(key);
-            const fresh = await freshParser(ext);
-            try {
-                failIfAborted(filePath);
-                tree = run(fresh);
-            }
-            catch (retryError) {
-                failOnAbort(filePath, retryError);
-                throw retryError;
-            }
-            finally {
-                fresh.delete();
-            }
+            // A call that was waiting when another call aborted fails on whatever the damaged runtime throws, or on a check; either way it is told why.
+            if (abortedOn !== undefined)
+                throw abortedError(filePath);
+            throw error;
         }
         if (tree === null && stop !== undefined) {
             if (stop.thrown)

@@ -31,7 +31,7 @@ export interface ParserHost {
     loadedParserFor(extension: string): Parser | undefined;
     /** A new parser with no language set, outside the cache; the caller deletes it. Needs the runtime initialized, which any earlier parse did. */
     newParser(): Parser;
-    /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. When the runtime aborts, the call rejects with `code` `ERUNTIMEABORTED`, and so does every later call on this host. */
+    /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. When the runtime aborts, the call rejects with `code` `ERUNTIMEABORTED`, and so does every call on this host from then on, those already waiting included. */
     parseFile(filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree>;
     /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. A stopped parse never calls `fn`. */
     withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string, options?: ParseFileOptions): Promise<T>;

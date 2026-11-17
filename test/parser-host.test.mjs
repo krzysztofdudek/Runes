@@ -276,6 +276,7 @@ describe('a parse the runtime aborts', () => {
   // A stub runtime that logs every call made into it, and after an abort fails as the damaged runtime does ('table index is out of bounds'). Grammars other than C# and Ruby load after a timer, so a call can be waiting for its grammar when another call aborts.
   const loggingRuntime = (events) => {
     let aborted = false;
+    let trapped = false;
     const damaged = () => new WebAssembly.RuntimeError('table index is out of bounds');
     class LoggingParser {
       static init() { return Promise.resolve(); }
@@ -291,8 +292,8 @@ describe('a parse the runtime aborts', () => {
           events.push('ABORT');
           throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.');
         }
-        if (content === 'trap' && !this.trapped) {
-          this.trapped = true;
+        if (content === 'trap' && !trapped) {
+          trapped = true;
           throw new WebAssembly.RuntimeError('unreachable');
         }
         return { rootNode: { type: 'program' }, delete() {} };
@@ -340,12 +341,13 @@ describe('a parse the runtime aborts', () => {
     assert.equal(aborting.reason.code, 'ERUNTIMEABORTED');
   });
 
-  it('after an abort, getParser, loadGrammarsFor and newParser refuse with ERUNTIMEABORTED and make no runtime call', async () => {
+  it('after an abort, getParser (a held parser too), loadGrammarsFor and newParser refuse with ERUNTIMEABORTED and make no runtime call', async () => {
     const events = [];
     const h = createParserHost({ runtime: loggingRuntime(events), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
     await assert.rejects(h.parseFile('a.cs', 'abort'), (error) => error.code === 'ERUNTIMEABORTED');
     const mark = events.length;
     await assert.rejects(h.getParser('.ts'), (error) => error.code === 'ERUNTIMEABORTED' && /while parsing a\.cs/.test(error.message));
+    await assert.rejects(h.getParser('.cs'), (error) => error.code === 'ERUNTIMEABORTED', 'not even the parser the host already holds');
     await assert.rejects(h.loadGrammarsFor(['.py']), (error) => error.code === 'ERUNTIMEABORTED');
     assert.throws(() => h.newParser(), (error) => error.code === 'ERUNTIMEABORTED');
     assert.deepEqual(events.slice(mark), []);
