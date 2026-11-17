@@ -1,4 +1,4 @@
-import type { Language, Parser, Tree } from 'web-tree-sitter';
+import type { Language, Parser, ParseState, Tree } from 'web-tree-sitter';
 import { type LanguageDef } from '../grammars/languages.mjs';
 /** The part of the `web-tree-sitter` module a parser host uses; `import * as TreeSitter from 'web-tree-sitter'` satisfies it. */
 export interface TreeSitterRuntime {
@@ -15,6 +15,11 @@ export interface ParserHostOptions {
     /** The language table: extensions and grammar file per language. Default: the Runes table (`LANGUAGES` of `@chrisdudek/runes/grammars`). */
     languages?: Readonly<Record<string, LanguageDef>>;
 }
+/** Options of one parse. */
+export interface ParseFileOptions {
+    /** Called by the runtime as the parse proceeds, with the runtime's `ParseState`. Returning `true` stops the parse: the parser is reset and the call rejects with an error whose `code` is `EPARSESTOPPED`. A callback that throws stops it the same way, and the call rejects with what it threw. */
+    progressCallback?: (state: ParseState) => boolean | void;
+}
 export interface ParserHost {
     /** The runtime identity this host folds into its digests. */
     runtimeIdentity(): string;
@@ -22,14 +27,14 @@ export interface ParserHost {
     getParser(extension: string): Promise<Parser>;
     /** Loads the grammar of every extension that has one, so `loadedParserFor` can parse synchronously afterwards. */
     loadGrammarsFor(extensions: Iterable<string>): Promise<void>;
-    /** The parser of `extension` when its grammar is already loaded, else undefined. Never loads anything. */
+    /** The parser of `extension` when its grammar is already loaded and the runtime has not aborted, else undefined. Never loads anything. */
     loadedParserFor(extension: string): Parser | undefined;
     /** A new parser with no language set, outside the cache; the caller deletes it. Needs the runtime initialized, which any earlier parse did. */
     newParser(): Parser;
-    /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. */
-    parseFile(filePath: string, content: string, language?: string): Promise<Tree>;
-    /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. */
-    withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string): Promise<T>;
+    /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. When the runtime aborts, the call rejects with `code` `ERUNTIMEABORTED`, and so does every call on this host from then on, those already waiting included. */
+    parseFile(filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree>;
+    /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. A stopped parse never calls `fn`. */
+    withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string, options?: ParseFileOptions): Promise<T>;
     /** sha256 of the grammar WASM of `extension`. Reads the file, never loads it. */
     grammarWasmHash(extension: string): string;
     /** Identity of the trees files with `extension` get: sha256 over the runtime identity and the grammar WASM hash. */
