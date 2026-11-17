@@ -34,6 +34,9 @@ export function resolveRustPath(specifier, fromFile, exists, deps) {
         const named = crateNamed(name, fromFile, deps, crate);
         return named === undefined ? undefined : resolveFromModuleDir(named.srcDir, segments.slice(aliased ? 4 : 2), exists, rootContext(named.srcDir, named.rootFiles, declares), moduleCheckOf(deps));
     }
+    // A path written outside a `use` whose first name nothing in scope binds (`in::<the path>`): in every edition that name is a crate of the extern prelude, as a 2018 `use` path reads it.
+    if (root === 'in')
+        return resolveBare(segments.slice(1), fromFile, exists, deps, { ...crate, crateRelativeUses: false });
     // A `use` path whose first name is in scope where it is written (`use::<n>::<the n segments that name stands for>::<the path as written>`). From edition 2018 that name is what the path starts at; in edition 2015 a `use` path starts at the crate root whatever is in scope, so it is read as written.
     if (root === 'use') {
         const lead = Number(segments[1]);
@@ -72,6 +75,8 @@ export function explainRustMiss(specifier, fromFile, exists, deps) {
             return bareMiss(segments.slice(3), fromFile, exists, deps, crate);
         return crateNamed(name, fromFile, deps, crate) === undefined ? 'outside' : 'unfollowed';
     }
+    if (root === 'in')
+        return bareMiss(segments.slice(1), fromFile, exists, deps, { ...crate, crateRelativeUses: false });
     if (root === 'use') {
         const lead = Number(segments[1]);
         const written = segments.slice(2 + lead);

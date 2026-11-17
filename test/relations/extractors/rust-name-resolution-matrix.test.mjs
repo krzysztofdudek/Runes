@@ -184,6 +184,7 @@ describe('MATRIX — mod declarations & inline crate-relative paths (file-backed
   it('rust-inline-crate-expression-position-edge', () =>
     runCase('rust-inline-crate-expression-position-edge'));
   it('rust-inline-self-super-relative-edge', () => runCase('rust-inline-self-super-relative-edge'));
+  it('rust-inline-path-dependency-crate-edge', () => runCase('rust-inline-path-dependency-crate-edge'));
   it('rust-mod-path-attribute-override-edge', () => runCase('rust-mod-path-attribute-override-edge'));
   it('rust-mod-path-attribute-relative-to-declaring-file-edge', () => runCase('rust-mod-path-attribute-relative-to-declaring-file-edge'));
 });

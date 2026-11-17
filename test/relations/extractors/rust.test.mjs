@@ -417,6 +417,65 @@ describe('rust extractor — a mod with a path attribute among the items of the 
   });
 });
 
+describe('rust extractor — a path written outside a use whose first name nothing in scope binds', () => {
+  const at = (uses) => uses.map((u) => `${u.candidates[0].specifier}@${u.line}`);
+
+  it('names a crate of the extern prelude, in a function body and in a type, unless a name in scope, a type, a primitive or a leading :: says otherwise', async () => {
+    const code = [
+      'use other::bound;',
+      'use std::io;',
+      'mod local;',
+      'mod inline_mod {}',
+      'enum lower { A }',
+      'pub fn k(_x: datacrate::Thing) -> u32 {',
+      '    datacrate::dc();',
+      '    std::mem::swap(&mut 1, &mut 2);',
+      '    registry_crate::call();',
+      '    bound::x();',
+      '    io::stdout();',
+      '    local::f();',
+      '    inline_mod::f();',
+      '    let _ = lower::A;',
+      '    Vec::<u8>::new();',
+      '    String::new();',
+      '    u32::MAX;',
+      '    ::datacrate::dc();',
+      '    r#datacrate::r#dc();',
+      '    { mod blockmod {} blockmod::f(); }',
+      '    { use x::y as z; z::f(); }',
+      '    { struct st; st::f(); }',
+      '    datacrate::m!();',
+      '    crate::a::b();',
+      '    0',
+      '}',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(at(uses)).toEqual(['other::bound@1', 'std::io@2', 'self::local@3', 'in::datacrate::Thing@6', 'in::datacrate::dc@7', 'in::std::mem::swap@8', 'in::registry_crate::call@9', 'in::datacrate::dc@19', 'x::y@21', 'in::datacrate::m@23', 'crate::a::b@24']);
+  });
+
+  it('reads the names of its own module only, and stays silent where a glob or an extern crate of a scope around it may bind the name', async () => {
+    const code = [
+      'mod local;',
+      'mod tests {',
+      '    use super::*;',
+      '    fn t() { datacrate::dc(); }',
+      '}',
+      'mod other_mod {',
+      '    fn t() { local::f(); }',
+      '    extern crate foo as aliased;',
+      '    fn u() { aliased::f(); }',
+      '    fn v() { { use a::{b::*, c}; datacrate::dc(); } datacrate::dc(); }',
+      '}',
+      '#[rustfmt::skip]',
+      'fn w() {}',
+      '#[tokio::main]',
+      'async fn main2() {}',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(at(uses)).toEqual(['self::local@1', 'self@3', 'in::local::f@7', 'extern::foo@8', 'a::b@10', 'a::c@10', 'in::datacrate::dc@10', 'in::tokio::main@14']);
+  });
+});
+
 describe('rust extractor — mod declarations inside cfg_if!', () => {
   it('emits each file-backed mod of each branch from its own line, under either name of the macro', async () => {
     const { uses } = await run('cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        mod unix;\n    } else if #[cfg(windows)] {\n        pub mod r#gen;\n    } else {\n        pub(crate) mod other;\n    }\n}\ncfg_if! { if #[cfg(a)] { mod plain; } }');

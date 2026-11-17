@@ -79,7 +79,7 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * unparsed tokens, never a `use_declaration`, so macro-generated deps are never
  * emitted (the `mod` declarations of a `cfg_if!` aside, see below). EXTERNAL crates (std, serde, …) emit a path hint too, but the resolver
  * returns undefined for any path whose root is not `crate`/`super`/`self` (and not
- * the current crate's own name) — so they never become a violation.
+ * the current crate's own name or an in-repository path dependency) — so they never become a violation.
  *
  * MODULE DECLARATIONS: a file-backed `mod foo;` (a `mod_item` with NO body) declares that
  * submodule `foo` lives in `foo.rs` / `foo/mod.rs` beside the current file's module — a real
@@ -109,10 +109,19 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * `scoped_identifier` — is emitted when its ROOT segment is `crate` / `self` / `super`. Those
  * three roots are absolute-within-crate or relative-to-module markers: the path is shadow-free
  * and resolves deterministically through the module tree, so detection is zero false positives.
- * A path rooted at a BARE identifier (`foo::Bar`) is NOT emitted — `foo` may be a `use`-bound
- * alias or the crate's own name, an ambiguity a source-only tool must not guess; the import or
- * a `crate::`-qualified form covers the real edge instead. Only the OUTERMOST scoped node of a
- * chain is read (it carries the complete path); the inner `path` segments are skipped.
+ * A path rooted at a BARE lowercase identifier (`datacrate::dc()`, `kit::Engine`) names what
+ * that name is bound to where the path stands: a name a `use` in scope brought in, a module, an
+ * item of the type namespace or an `extern crate` of a block around it or of its module, and
+ * failing those a crate of the extern prelude, in every edition. The scopes are read as for a
+ * `use` path (NAMES IN SCOPE) and an outer module is not one of them. Where none binds the name,
+ * the path is emitted as `in::<the path>` (`in` is a keyword, so no path of the source starts
+ * with it), which the resolver binds to a path dependency or the package's own library and to
+ * nothing for `std` or a registry crate. Where one binds it, or a glob `use` there may, nothing
+ * is emitted: a local module shadows a crate of its name, and a guess would be a false edge.
+ * A capitalised first name, `Self` and a primitive type (`u32::MAX`) name a type, a path that
+ * starts with `::` starts at the crate root in edition 2015, and a tool's attribute
+ * (`#[rustfmt::skip]`) names no crate: none of them is emitted. Only the OUTERMOST scoped node
+ * of a chain is read (it carries the complete path); the inner `path` segments are skipped.
  */
 
 /**
@@ -171,15 +180,15 @@ function prefixNode(parent: Node): Node | null {
   return null;
 }
 
-/** The `::`-joined text of a `scoped_type_identifier` (`crate::orders::Order`): its `path`
- *  field (a scoped_identifier or a crate/self/super leaf) joined to its `name` type_identifier.
- *  Returns undefined when the path field is type-rooted (`Outer::Inner`, not crate-absolute)
- *  or structurally unexpected — so a non-crate-rooted type ref is never built. */
+/** The `::`-joined text of a `scoped_type_identifier` (`crate::orders::Order`, `kit::Engine`): its `path`
+ *  field (a scoped_identifier, a crate/self/super leaf or a bare identifier) joined to its `name` type_identifier.
+ *  Returns undefined when the path field is a type (`Outer::Inner` with `Outer` a type identifier, a generic type)
+ *  or structurally unexpected. */
 function scopedTypePathText(node: Node): string | undefined {
   const pathNode = node.childForFieldName('path');
   const nameNode = node.childForFieldName('name');
   if (pathNode === null || nameNode === null) return undefined;
-  const prefix = pathNode.type === 'scoped_identifier' ? pathText(pathNode) : leafRoot(pathNode);
+  const prefix = pathNode.type === 'scoped_identifier' ? pathText(pathNode) : pathNode.type === 'identifier' ? pathNode.text : leafRoot(pathNode);
   if (prefix === undefined) return undefined;
   return `${prefix}::${nameNode.text}`;
 }
@@ -192,9 +201,8 @@ function leafRoot(node: Node): string | undefined {
   return undefined;
 }
 
-/** True when the `::`-path's root segment is a crate-relative marker (`crate`/`self`/`super`)
- *  — the only roots that resolve deterministically shadow-free. A bare-identifier root
- *  (`foo::Bar`, an external crate or a `use`-bound alias) is excluded. */
+/** True when the `::`-path's root segment is a crate-relative marker (`crate`/`self`/`super`),
+ *  which no name in scope can shadow. */
 function isCrateRelativeRoot(specifier: string): boolean {
   const root = specifier.split('::', 1)[0];
   return root === 'crate' || root === 'self' || root === 'super';
@@ -373,11 +381,36 @@ function uses(file: ParsedFile): DetectedDep[] {
     out.push(single({ kind: 'path', specifier }, 'import', line));
   };
 
-  /** Emit an inline path ONLY when it is crate-relative (`crate`/`self`/`super` root). */
-  const emitInline = (specifier: string | undefined, node: Node): void => {
+  /** Whether `name` is bound where a path written outside a `use` stands, so that a path starting with it names no crate of the extern prelude: by a `use` or a module in scope, an item of the type namespace or an `extern crate` of a block around it or of its module, or possibly by a glob `use` there. An outer module is not in scope. */
+  const typeNamesByScope = new Map<number, { names: ReadonlySet<string>; glob: boolean }>();
+  const boundInScope = (name: string, from: LexicalScope | null): boolean => {
+    for (let scope = from; scope !== null; scope = scope.module ? null : scope.outer) {
+      let own = typeNamesByScope.get(scope.node.id);
+      if (own === undefined) {
+        own = scopeTypeNames(scope.node);
+        typeNamesByScope.set(scope.node.id, own);
+      }
+      if (own.glob || own.names.has(name) || namesOf(scope).has(name)) return true;
+    }
+    return false;
+  };
+
+  /** Emit an inline path: one rooted at `crate`/`self`/`super` as it is, and one whose first name is lowercase and bound by nothing in scope as `in::<the path>`, a crate of the extern prelude. */
+  const emitInline = (specifier: string | undefined, node: Node, inAttribute = false): void => {
     if (specifier === undefined || specifier === '') return;
-    if (!isCrateRelativeRoot(specifier)) return;
-    emit(specifier, node);
+    if (isCrateRelativeRoot(specifier)) {
+      emit(specifier, node);
+      return;
+    }
+    const first = unraw(specifier.split('::', 1)[0]!);
+    // A leading `::` starts at the crate root in edition 2015 and at a crate from 2018 on; a capitalised name, `Self` or a primitive names a type; a tool's attribute (`#[rustfmt::skip]`) names no crate.
+    if (node.text.startsWith('::') || !/^[a-z_]/.test(first) || PRIMITIVE_TYPES.has(first) || (inAttribute && TOOL_ATTRIBUTES.has(first))) return;
+    if (boundInScope(first, lexical)) return;
+    const specifierIn = `in::${unrawPath(specifier)}`;
+    const line = node.startPosition.row + 1;
+    if (seen.has(`${specifierIn} ${line}`)) return;
+    seen.add(`${specifierIn} ${line}`);
+    out.push(single({ kind: 'path', specifier: specifierIn }, 'import', line));
   };
 
   // Resolve one `use` argument node (or a list item) to its specifier and emit.
@@ -508,7 +541,7 @@ function uses(file: ParsedFile): DetectedDep[] {
       parent()?.type !== 'scoped_identifier' &&
       parent()?.type !== 'scoped_type_identifier'
     ) {
-      emitInline(pathText(node), node);
+      emitInline(pathText(node), node, parent()?.type === 'attribute');
       return undefined;
     }
 
@@ -902,6 +935,20 @@ function attributeIsInert(item: Node, inner: boolean): boolean {
 /** The item kinds that bind their `name` in the type namespace, where a path's first segment is looked for. */
 const TYPE_NAMESPACE_ITEMS = new Set(['mod_item', 'struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item']);
 
+/** The primitive types, whose names start a path to an associated item (`u32::MAX`, `str::from_utf8`) and name no crate. */
+const PRIMITIVE_TYPES = new Set(['bool', 'char', 'str', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'f16', 'f32', 'f64', 'f128']);
+
+/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` reads: the names of its items of the type namespace and of its `extern crate` declarations, and whether it holds a glob `use`, which can bring in any name. */
+function scopeTypeNames(scope: Node): { names: ReadonlySet<string>; glob: boolean } {
+  const names = new Set(externCratesIn(scope).map((e) => e.name));
+  let glob = false;
+  for (const c of scope.namedChildren) {
+    if (c !== null && TYPE_NAMESPACE_ITEMS.has(c.type)) names.add(unraw(c.childForFieldName('name')?.text ?? ''));
+    if (c !== null && c.type === 'use_declaration' && c.descendantsOfType('use_wildcard').length > 0) glob = true;
+  }
+  return { names, glob };
+}
+
 /** The item kinds whose `name` field a file's top level binds as an item. */
 const NAMED_ITEMS = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item', 'function_item', 'function_signature_item', 'const_item', 'static_item', 'mod_item', 'macro_definition']);
 
@@ -1157,7 +1204,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 27,
+  rev: 28,
   declarations,
   uses,
 };

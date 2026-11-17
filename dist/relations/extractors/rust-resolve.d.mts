@@ -56,6 +56,13 @@
  * file, and binds nothing; in edition 2015 a `use` path starts at the crate root, so it is read as
  * written.
  *
+ * PATHS OUTSIDE A `use`: a path written in code whose first name is lowercase and bound by
+ * nothing in scope where it stands is emitted as `in::<the path>` (`in` is a keyword, so no path
+ * of the source starts with it). Rust finds such a name in the extern prelude in every edition:
+ * a crate a crate root binds with `extern crate`, the package's own library, or a dependency.
+ * It is read as a `use` path is from edition 2018 on, never from the crate root: a path
+ * dependency binds its library, and `std`, `core` or a registry crate binds nothing.
+ *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
  * from `[workspace.dependencies]`) resolves inside that crate's library tree. Registry
