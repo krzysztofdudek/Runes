@@ -81,6 +81,7 @@ describe('MATRIX — dynamic references (string literal resolves, a mock registr
   it('typescript-template-no-substitution-dynamic-import-edge', () => runCase('typescript-template-no-substitution-dynamic-import-edge'));
   it('typescript-new-url-import-meta-edge', () => runCase('typescript-new-url-import-meta-edge'));
   it('typescript-vi-and-jest-mock-literal-edge', () => runCase('typescript-vi-and-jest-mock-literal-edge'));
+  it('typescript-test-mock-companion-forms-edge', () => runCase('typescript-test-mock-companion-forms-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

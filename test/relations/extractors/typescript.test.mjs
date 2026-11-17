@@ -458,6 +458,36 @@ describe('typescript extractor — test mocks and the bundler forms that stay un
       ['../data/t', 'import', 3],
     ]);
   });
+  it('gives the companion forms of a mock with a literal path the same use, and the second path of a chained jest.mock', async () => {
+    const { uses } = await run(
+      [
+        `const real = jest.requireActual('../data/a');`,
+        `const fake = jest.requireMock('../data/b');`,
+        `const actual = await vi.importActual('../data/c');`,
+        `jest.doMock('../data/d', () => ({}));`,
+        `vi.doMock('../data/e');`,
+        `jest.unmock('../data/f');`,
+        `jest.mock('../data/g').mock('../data/h');`,
+        `jest.requireActual(name);`,
+        `jest.requireActual('../data/i').mock('../data/j');`,
+        `vi.mock('../data/k').mock('../data/l');`,
+        `other.requireActual('../data/m');`,
+        `jest.fn('../data/n');`,
+      ].join('\n'),
+    );
+    expect(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm, u.line])).toEqual([
+      ['../data/a', 'import', 1],
+      ['../data/b', 'import', 2],
+      ['../data/c', 'import', 3],
+      ['../data/d', 'import', 4],
+      ['../data/e', 'import', 5],
+      ['../data/f', 'import', 6],
+      ['../data/g', 'import', 7],
+      ['../data/h', 'import', 7],
+      ['../data/i', 'import', 9],
+      ['../data/k', 'import', 10],
+    ]);
+  });
   it('reads no use from import.meta.glob or require.context', async () => {
     const { uses } = await run(
       [
