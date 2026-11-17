@@ -250,6 +250,8 @@ function probeRoot(dir: string, modulePath: string, parentPath: string, ctx: Abs
 
 /**
  * Relative module: a leading run of `k` dots then an optional dotted tail. CPython semantics: 1 dot = the importing file's own package (its directory), each extra dot climbs one parent. So climb `(k - 1)` directories from the importing file's directory, append the tail path, then try `<base>/__init__.py` and `<base>.py` (a package before a same-named module-as-file, the same priority order the absolute resolver uses). An excluded candidate is skipped exactly like a genuine miss, so a live package sitting right next to its own excluded same-named module still resolves — there is only one base here, so no cross-root ambiguity to decide.
+ *
+ * When the tail has two or more names and binds nothing, its last name may be a name the module before it defines (`from ..data.m import x` gives `..data.m.x`), so the module the tail names without it is tried the same way, as the absolute resolver's parent fallback does: `..data.m.x` binds `data/m.py`, `..data.x` binds `data/__init__.py`. A one-name tail never falls back to the dots' own package: `.missing` is what both `from . import missing` and `from .missing import y` write, and the second needs a module `missing`.
  */
 function resolveRelative(
   specifier: string,
@@ -281,10 +283,11 @@ function resolveRelative(
       : [path.posix.join(normalized, '__init__.py')]; // bare dots → the package's __init__
 
   const isExcl = isExcluded ?? ((): boolean => false);
-  for (const cand of candidates) {
-    if (exists(cand) && !isExcl(cand)) return cand;
-  }
-  return undefined;
+  const live = (cand: string): boolean => exists(cand) && !isExcl(cand);
+  const hit = candidates.find(live);
+  if (hit !== undefined || !tailPath.includes('/')) return hit;
+  const parent = path.posix.dirname(normalized);
+  return [path.posix.join(parent, '__init__.py'), parent + '.py'].find(live);
 }
 
 /** True when `dir` is inside a regular package, so it can never be a `sys.path` root: it holds an `__init__.py` itself, or its parent does (a namespace sub-directory of a regular package). The repo root has no parent inside the repo. */

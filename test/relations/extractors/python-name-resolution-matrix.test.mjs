@@ -52,6 +52,7 @@ describe('MATRIX — from-import (module + longest-match submodule candidate, ne
 describe('MATRIX — relative imports (directory-pinned climb by dot-count)', () => {
   it('python-relative-sibling-import-edge', () => runCase('python-relative-sibling-import-edge'));
   it('python-relative-parent-import-edge', () => runCase('python-relative-parent-import-edge'));
+  it('python-relative-member-of-module-edge', () => runCase('python-relative-member-of-module-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

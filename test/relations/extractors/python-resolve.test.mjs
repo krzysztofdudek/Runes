@@ -197,6 +197,35 @@ describe('resolvePythonModule — relative', () => {
     expect(resolvePythonModule('.missing', 'src/a/x.py', exists)).toBeUndefined();
   });
 
+  describe('a name imported from a relative module that is no module itself binds that module, as the absolute form does', () => {
+    const tree = new Set(['src/pkg/__init__.py', 'src/pkg/data/__init__.py', 'src/pkg/data/m.py', 'src/pkg/ui/__init__.py', 'src/pkg/ui/a.py']);
+    const has = (p) => tree.has(p);
+
+    it('`from ..data.m import x` binds data/m.py and `from ..data import x` binds data/__init__.py, the files `pkg.data.m.x` and `pkg.data.x` bind', () => {
+      expect(resolvePythonModule('..data.m.x', 'src/pkg/ui/a.py', has)).toBe('src/pkg/data/m.py');
+      expect(resolvePythonModule('pkg.data.m.x', 'src/pkg/ui/a.py', has)).toBe('src/pkg/data/m.py');
+      expect(resolvePythonModule('..data.x', 'src/pkg/ui/a.py', has)).toBe('src/pkg/data/__init__.py');
+      expect(resolvePythonModule('pkg.data.x', 'src/pkg/ui/a.py', has)).toBe('src/pkg/data/__init__.py');
+      expect(resolvePythonModule('.a.f', 'src/pkg/ui/b.py', has)).toBe('src/pkg/ui/a.py');
+    });
+
+    it('a module that exists still wins over its parent, and an excluded parent is skipped like a missing one', () => {
+      expect(resolvePythonModule('..data.m', 'src/pkg/ui/a.py', has)).toBe('src/pkg/data/m.py');
+      expect(resolvePythonModule('..data.x', 'src/pkg/ui/a.py', has, (p) => p === 'src/pkg/data/__init__.py')).toBeUndefined();
+      const both = new Set([...tree, 'src/pkg/data/m/__init__.py']);
+      expect(resolvePythonModule('..data.m.x', 'src/pkg/ui/a.py', (p) => both.has(p))).toBe('src/pkg/data/m/__init__.py');
+      expect(resolvePythonModule('..data.m.x', 'src/pkg/ui/a.py', (p) => both.has(p), (p) => p === 'src/pkg/data/m/__init__.py')).toBe('src/pkg/data/m.py');
+    });
+
+    it('a relative module that binds no file stays unbound, and the dots alone are never the parent of a name', () => {
+      expect(resolvePythonModule('..data.gone.x', 'src/pkg/ui/a.py', has)).toBeUndefined();
+      expect(resolvePythonModule('..gone.x', 'src/pkg/ui/a.py', has)).toBeUndefined();
+      // `.missing` is what both `from . import missing` and `from .missing import y` write: a module, never a name of the package's __init__.py.
+      expect(resolvePythonModule('.missing', 'src/pkg/ui/a.py', has)).toBeUndefined();
+      expect(resolvePythonModule('..missing', 'src/pkg/ui/a.py', has)).toBeUndefined();
+    });
+  });
+
   describe('same-root module/package shadow, exclusion-aware', () => {
     // `from .mod import X` from src/a/x.py: base 'src/a', tailPath 'mod', candidates
     // 'src/a/mod/__init__.py' (package) then 'src/a/mod.py' (module) — the same

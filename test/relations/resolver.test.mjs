@@ -721,6 +721,27 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
   });
 });
 
+// A Python name imported from a relative module that is no module itself (`from ..data.m import x`, `from ..data import x`) binds that module's file, as the absolute form (`from pkg.data.m import x`) does.
+describe('resolver.classifyUse — a Python name imported from a relative module', () => {
+  const contents = new Map([['src/pkg/__init__.py', ''], ['src/pkg/data/__init__.py', ''], ['src/pkg/data/m.py', 'x = 1'], ['src/pkg/ui/__init__.py', ''], ['src/pkg/ui/a.py', '']]);
+  const ownerOf = (f) => (contents.has(f) ? f.split('/').at(-2) : undefined);
+  const r = makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  const use = (specifier) => r.classifyUse([{ kind: 'path', specifier }], 'src/pkg/ui/a.py', 'python');
+
+  it('binds the module or the package\'s __init__.py, the file the absolute form binds', () => {
+    expect(use('..data.m.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/m.py' });
+    expect(use('pkg.data.m.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/m.py' });
+    expect(use('..data.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/__init__.py' });
+    expect(use('pkg.data.x')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/__init__.py' });
+    expect(r.classify({ kind: 'path', specifier: '..data.m.x' }, 'src/pkg/ui/a.py', 'python')).toEqual({ kind: 'resolved', owner: 'data', resolvedFile: 'src/pkg/data/m.py' });
+  });
+  it('a relative path that binds no file stays unfollowed', () => {
+    expect(use('..data.gone.x')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(use('..gone.x')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(use('.missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+});
+
 // Java reads a simple name of java.lang through the implicit on-demand import of java.lang (JLS §7.3), after the file's own package: its use leaves the repository, where a simple name of the package that no file declares was not followed.
 describe('resolver.classifyUse — a simple Java name of java.lang leaves the repository', () => {
   it('tells String from a name of the package that binds nothing, and binds the repository\'s own java.lang where it has one', () => {
