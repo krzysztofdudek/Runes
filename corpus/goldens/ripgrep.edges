@@ -99,6 +99,8 @@ crates/core/index/disabled.rs:1	crates/core/flags/mod.rs
 crates/core/index/enabled.rs:1	crates/core/flags/mod.rs
 crates/core/index/enabled.rs:12	crates/core/search.rs
 crates/core/index/enabled.rs:14	crates/core/main.rs
+crates/core/index/mod.rs:5	crates/core/index/disabled.rs
+crates/core/index/mod.rs:8	crates/core/index/enabled.rs
 crates/core/main.rs:12	crates/core/messages.rs
 crates/core/main.rs:14	crates/core/flags/mod.rs
 crates/core/main.rs:15	crates/core/haystack.rs

@@ -27947,3 +27947,14 @@ The heavy tier below was read by hand at the pinned commits. Its TypeScript entr
 - `next-intl` `typescript:false-edge` `packages/use-intl/src/core/createBaseTranslator.tsx:2` `use-intl/format-message` `packages/use-intl/src/core/format-message/index.tsx` `unresolved in the repository`: the package entry names build output that the commit does not hold, so TypeScript resolves nothing in a clean checkout; Runes maps the entry back to its source through the package's tsconfig, as the compiler does for a referenced project, on purpose (the catalogue case `typescript-package-entry-outdir-exports-edge`).
 - `next-intl` `typescript:false-edge` `packages/use-intl/src/core/createTranslator.format-only.test.tsx:1` `icu-minify/compile` `packages/icu-minify/src/compile.tsx` `unresolved in the repository`: the package entry names build output that the commit does not hold, so TypeScript resolves nothing in a clean checkout; Runes maps the entry back to its source through the package's tsconfig, as the compiler does for a referenced project, on purpose (the catalogue case `typescript-package-entry-outdir-exports-edge`).
 - `next-intl` `typescript:false-edge` `packages/use-intl/src/core/format-message/format-only.tsx:1` `icu-minify/format` `packages/icu-minify/src/format.tsx` `unresolved in the repository`: the package entry names build output that the commit does not hold, so TypeScript resolves nothing in a clean checkout; Runes maps the entry back to its source through the package's tsconfig, as the compiler does for a referenced project, on purpose (the catalogue case `typescript-package-entry-outdir-exports-edge`).
+
+## From release 1.1.0 to release 1.2.0
+
+The goldens move with each change of `release/1.2.0`, and each changed reference is attributed to the commit that changed it.
+
+### Commit "rust: a mod with a path attribute among the items of its file gives a use of the file the attribute names (issue 759)"
+
+Added: Rust: a file-backed `mod` with a `#[path]` attribute among the items of its file gives an edge to the file the attribute names, read from the directory of the file that writes it.
+
+- `ripgrep` `+` `crates/core/index/mod.rs:5` `crates/core/index/disabled.rs`: line 5 is `mod imp;` under `#[cfg(not(feature = "unstable-index"))]` and `#[path = "disabled.rs"]`, so rustc loads `crates/core/index/disabled.rs`, beside the file, in every build without that feature
+- `ripgrep` `+` `crates/core/index/mod.rs:8` `crates/core/index/enabled.rs`: line 8 is `mod imp;` under `#[cfg(feature = "unstable-index")]` and `#[path = "enabled.rs"]`, so rustc loads `crates/core/index/enabled.rs`, beside the file, in every build with that feature; each `mod` under a `cfg` gives its edge, as a plain `mod` under a `cfg` does
