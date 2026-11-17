@@ -6,6 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 
 import { makeResolvePathToFile, listedFileView, SymbolTable } from '@chrisdudek/runes/relations';
+import { pythonManifestRoots } from '../helpers/internal/relations.mjs';
 
 // Unit coverage for the production resolvePathToFile dispatcher: it must route
 // TS-family languages through resolveTsPath against on-disk files, and return
@@ -485,6 +486,95 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     // the namespace package acme/ is neither, so the 009 trap stays closed
     expect(resolve('logging', 'acme/core/service.py', 'python')).toBeUndefined();
     expect(resolve('yaml', 'acme/core/service.py', 'python')).toBeUndefined();
+  });
+
+  it('a source root a pyproject.toml or a setup.cfg names replaces the src/ rule, read from the listed keys only', () => {
+    const tree = (manifest, body) => {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write(manifest, body);
+      write('lib/pkg/__init__.py');
+      write('lib/pkg/data/__init__.py');
+      write('lib/pkg/data/d.py');
+      write('lib/pkg/ui/__init__.py');
+      write('lib/pkg/ui/a.py');
+      write('tests/test_a.py');
+      const resolve = makeResolvePathToFile(root);
+      return (spec, from = 'lib/pkg/ui/a.py') => resolve(spec, from, 'python');
+    };
+    const named = [
+      ['pyproject.toml', '[project]\nname = "x"\n\n[tool.setuptools.packages.find]\nwhere = ["lib"]  # the packages\n'],
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = [\n  "lib",\n]\n'],
+      ['pyproject.toml', '[tool.setuptools]\npackages.find.where = [\'lib/\']\n'],
+      ['pyproject.toml', '[tool.setuptools]\npackage-dir = { "" = "lib" }\n'],
+      ['pyproject.toml', '[tool.setuptools.package-dir]\n"" = "lib"\n'],
+      ['pyproject.toml', '[tool.poetry]\nname = "x"\npackages = [\n  { include = "pkg", from = "lib" },\n]\n'],
+      ['pyproject.toml', '[tool.hatch.build.targets.wheel]\npackages = ["lib/pkg"]\n'],
+      ['setup.cfg', '[metadata]\nname = x\n\n[options]\npackage_dir =\n    = lib\npackages = find:\n'],
+      ['setup.cfg', '[options]\npackage_dir = =lib\n'],
+      ['setup.cfg', '[options.packages.find]\nwhere = lib\n'],
+      ['setup.cfg', '[options.packages.find]\n# the packages\nwhere =\n    lib\n'],
+    ];
+    for (const [manifest, body] of named) {
+      const resolve = tree(manifest, body);
+      expect(resolve('pkg.data.d.x'), `${manifest}: ${body}`).toBe('lib/pkg/data/d.py');
+      expect(resolve('pkg.data.d', 'tests/test_a.py'), `${manifest}: ${body}`).toBe('lib/pkg/data/d.py');
+    }
+    // Forms the reader does not list, a root outside the repository or not a directory of it, and setup.py's code name no root: the import stays unbound, as at 1.1.0.
+    const unread = [
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = "lib"\n'],
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib", 3]\n'],
+      ['pyproject.toml', '[tool.setuptools]\npackages = { find = { where = ["lib"] } }\n'],
+      ['pyproject.toml', '[tool.setuptools]\npackage-dir = { "pkg" = "lib/pkg" }\n'],
+      ['pyproject.toml', '[[tool.poetry.packages]]\ninclude = "pkg"\nfrom = "lib"\n'],
+      ['pyproject.toml', '[tool.poetry]\npackages = [{ include = "pkg", from = 1 }]\n'],
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["/lib"]\n'],
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["../lib"]\n'],
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["gone"]\n'],
+      ['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib\\\\pkg"]\n'],
+      ['pyproject.toml', '[tool.other]\nwhere = ["lib"]\n'],
+      ['setup.cfg', '[options]\npackage_dir =\n    pkg = lib/pkg\n'],
+      ['setup.cfg', '[other]\nwhere = lib\n'],
+      ['setup.cfg', '[options]\npackage_dir = =lib\npackage_dir = =lib\n'],
+      ['setup.cfg', '[options]\npackage_dir =\n    =lib\n    pkg\n'],
+      ['setup.py', 'from setuptools import setup\nsetup(package_dir={"": "lib"})\n'],
+    ];
+    for (const [manifest, body] of unread) expect(tree(manifest, body)('pkg.data.d.x'), `${manifest}: ${body}`).toBeUndefined();
+    // A named root that is not a directory leaves the src/ rule in force.
+    write('pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["gone"]\n');
+    write('src/other/m.py');
+    expect(makeResolvePathToFile(root)('other.m', 'tests/test_a.py', 'python')).toBe('src/other/m.py');
+  });
+
+  it('the manifest reader gives each named root relative to the manifest, and nothing for setup.py or a file it cannot read', () => {
+    expect(pythonManifestRoots('pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib", "./py/", "a/../b", "."]\n[tool.hatch.build.targets.wheel]\npackages = ["pkg", "src/x/"]\n')).toEqual(['lib', 'py', 'b', '.', '.', 'src']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.poetry]\npackages = [{ include = "a" }, { include = "b", from = "lib" }]\n')).toEqual(['.', 'lib']);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.poetry]\npackages = [{ include = "a" }, "b"]\n')).toEqual([]);
+    expect(pythonManifestRoots('pyproject.toml', '[tool.setuptools]\npackage-dir = { "" = "lib", "x" = "y" }\n')).toEqual(['lib']);
+    expect(pythonManifestRoots('setup.cfg', '[options]\npackage_dir = =lib, x = y\n[options.packages.find]\nwhere = py, other\n')).toEqual(['lib', 'py']);
+    expect(pythonManifestRoots('setup.cfg', '[Options]\nPACKAGE_DIR: =lib\n  ; a comment\n\n[options]\npackage_dir = =lib\n')).toEqual(['lib']);
+    expect(pythonManifestRoots('setup.py', 'setup(package_dir={"": "lib"})\n')).toEqual([]);
+    expect(pythonManifestRoots('setup.cfg', '  where = lib\n[options.packages.find]\nwhere =\n')).toEqual([]);
+    const contents = new Map([['pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib"]\n'], ['lib/pkg/m.py', ''], ['src/pkg/m.py', '']]);
+    const unreadable = makeResolvePathToFile('/nonexistent', undefined, undefined, { files: listedFileView(contents.keys(), (p) => (p === 'pyproject.toml' ? undefined : contents.get(p))) });
+    expect(unreadable('pkg.m', 'tests/t.py', 'python')).toBe('src/pkg/m.py');
+  });
+
+  it('a root from configuration never shadows the standard library, and the same tree under src/ answers as before', () => {
+    write('pyproject.toml', '[tool.setuptools.packages.find]\nwhere = ["lib", "."]\n');
+    write('lib/pkg/__init__.py');
+    write('lib/pkg/core.py');
+    write('lib/logging/__init__.py');
+    write('lib/logging/handlers.py');
+    write('tools/run.py');
+    write('tools/__init__.py');
+    const resolve = makeResolvePathToFile(root);
+    expect(resolve('pkg.core', 'lib/pkg/__init__.py', 'python')).toBe('lib/pkg/core.py');
+    expect(resolve('logging', 'lib/pkg/core.py', 'python')).toBeUndefined();
+    expect(resolve('logging.handlers', 'tools/run.py', 'python')).toBeUndefined();
+    expect(resolve.explainMiss('logging.handlers', 'tools/run.py', 'python')).toBe('outside');
+    // `.` names the project's own directory, a root as it was without configuration.
+    expect(resolve('tools.run', 'lib/pkg/core.py', 'python')).toBe('tools/run.py');
   });
 
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {

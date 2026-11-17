@@ -945,6 +945,11 @@ function inlineArrayItems(value: string): string[] | undefined {
   return inlineTableMembers(`{${v.slice(1, v.endsWith(']') ? -1 : undefined)}}`);
 }
 
+/** A TOML `key = value` line, the key possibly dotted (`a.b`, `"a".b`, `a . b`), and one segment of such a key or a table header: double-quoted (escapes allowed), single-quoted or bare. The value may hold the newlines of a multi-line string. */
+const KEY_VALUE = /^((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*)\s*=\s*([\s\S]*)$/;
+const KEY_SEGMENT = /"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_-]+)/g;
+const keySegments = (key: string): string[] => [...key.matchAll(KEY_SEGMENT)].map((m) => m[1] ?? m[2] ?? m[3]);
+
 /** A minimal Cargo.toml reader over logical lines (`tomlLogicalLines`): `[package].name`, `[lib].name` / `.path`, the `path` of each `[[bin]]`, `[[test]]`, `[[example]]` and `[[bench]]` table (or element of that array written inline, `bin = [{ path = … }]`) and the `name` of a test, example or bench target that gives no `path`, the `[package]` flags `autobins`, `autotests`, `autoexamples` and `autobenches`, the `[package]` edition (written, inherited with `edition.workspace = true` from `[workspace.package]`, or absent), and the path / package / git / registry / workspace fields of dependency entries plus `[workspace.dependencies]` and the entries of the `[patch.<source>]` tables, and whether a `[workspace]` table is written, and the `[package]` `build`. A field is found by its full TOML key path, so every spelling of it reads alike: an inline table (`package = { name = … }`, `kit = { path = … }`), dotted keys such as `name.workspace = true` or `lib.path = …`, the `[dependencies.<name>]` table form, a dotted key that names the table itself (`dependencies.name.path` above the first header, `dependencies.name.path` inside `[workspace]` or `[target.<cfg>]`), and the dependency table written as one inline table (`dependencies = { name = { path = … } }`). A string value is read as TOML reads it, in any of its four forms (`tomlString`). The first declaration of a crate keeps it, whatever form it or a later declaration takes; only the lines of that one declaration fill its spec. Anything it does not recognise is ignored, which can only lose an edge, never invent one. */
 export function parseCargoManifest(text: string): CargoManifest {
   let packageName: string | undefined;
@@ -972,10 +977,6 @@ export function parseCargoManifest(text: string): CargoManifest {
   let hasWorkspace = false;
   // The current table header's key segments ([] above the first header).
   let sectionPath: string[] = [];
-  // A `key = value` line, the key possibly dotted (`a.b`, `"a".b`, `a . b`), and one segment of such a key or a table header: double-quoted (escapes allowed), single-quoted or bare. The value may hold the newlines of a multi-line string.
-  const KEY_VALUE = /^((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*)\s*=\s*([\s\S]*)$/;
-  const KEY_SEGMENT = /"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_-]+)/g;
-  const keySegments = (key: string): string[] => [...key.matchAll(KEY_SEGMENT)].map((m) => m[1] ?? m[2] ?? m[3]);
   // The `key = value` members of the inline table `value`, each as its key segments and value text (none when `value` is no inline table).
   const membersOf = (value: string): [string[], string][] =>
     (inlineTableMembers(value) ?? []).flatMap((member): [string[], string][] => {
@@ -1150,17 +1151,127 @@ const PYTHON_PROJECT_MANIFESTS = ['pyproject.toml', 'setup.cfg', 'setup.py'];
 const PYTHON_ROOT_SCAN_SKIP = new Set(['node_modules', '__pycache__', 'site-packages', 'dist-packages']);
 
 /**
+ * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
+ *
+ * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
+ * - `setup.cfg`: the empty key of `[options] package_dir`, and the first directory of `[options.packages.find] where`, read as setuptools reads them (a list of lines, or of comma-separated items on one line).
+ *
+ * Any other key or form gives nothing, and a key with a value it cannot read whole (an element that is not a string, a mapping of a named package) gives nothing for that key: a misread root moves every absolute import of a project, so the reader refuses rather than guesses. A path that is absolute, holds a backslash or climbs above the manifest's directory names no root, so a root never leaves the project.
+ */
+export function pythonManifestRoots(name: string, text: string): string[] {
+  const raw = name === 'pyproject.toml' ? pyprojectRoots(text) : name === 'setup.cfg' ? setupCfgRoots(text) : [];
+  return raw.flatMap((root) => {
+    const trimmed = root.trim();
+    if (trimmed === '' || trimmed.includes('\\') || path.posix.isAbsolute(trimmed)) return [];
+    const normalized = path.posix.normalize(trimmed).replace(/\/+$/, '');
+    return normalized === '' || normalized === '..' || normalized.startsWith('../') ? [] : [normalized];
+  });
+}
+
+/** The roots `pythonManifestRoots` reads from a `pyproject.toml`. */
+function pyprojectRoots(text: string): string[] {
+  const roots: string[] = [];
+  const strings = (value: string): string[] | undefined => {
+    const items = inlineArrayItems(value)?.map(tomlString);
+    return items === undefined || items.some((item) => item === undefined) ? undefined : (items as string[]);
+  };
+  let section: string[] = [];
+  let arrayTable = false;
+  for (const logicalLine of tomlLogicalLines(text)) {
+    const line = logicalLine.trim();
+    if (line === '') continue;
+    const header = /^\[\[?\s*([^\]]+?)\s*\]\]?$/.exec(line);
+    if (header) {
+      section = keySegments(header[1]);
+      arrayTable = line.startsWith('[[');
+      continue;
+    }
+    const kv = KEY_VALUE.exec(line);
+    if (!kv || arrayTable) continue;
+    const key = [...section, ...keySegments(kv[1])].join('.');
+    const value = kv[2].trim();
+    if (key === 'tool.setuptools.packages.find.where') roots.push(...(strings(value) ?? []));
+    else if (key === 'tool.setuptools.package-dir.') roots.push(...[tomlString(value)].filter((root) => root !== undefined));
+    else if (key === 'tool.setuptools.package-dir') {
+      for (const member of inlineTableMembers(value) ?? []) {
+        const entry = KEY_VALUE.exec(member);
+        if (entry && keySegments(entry[1]).join('.') === '') roots.push(...[tomlString(entry[2])].filter((root) => root !== undefined));
+      }
+    } else if (key === 'tool.poetry.packages') {
+      const froms = (inlineArrayItems(value) ?? []).map((item) => {
+        const members = inlineTableMembers(item)?.map((member) => KEY_VALUE.exec(member));
+        if (members === undefined || members.some((m) => m === null)) return undefined;
+        const from = (members as RegExpExecArray[]).find((m) => keySegments(m[1]).join('.') === 'from');
+        return from === undefined ? '.' : tomlString(from[2]);
+      });
+      if (!froms.some((from) => from === undefined)) roots.push(...(froms as string[]));
+    } else if (key === 'tool.hatch.build.targets.wheel.packages') {
+      roots.push(...(strings(value) ?? []).map((pkg) => path.posix.dirname(pkg.replace(/\/+$/, ''))));
+    }
+  }
+  return roots;
+}
+
+/** The roots `pythonManifestRoots` reads from a `setup.cfg`, an INI file as `configparser` reads it: a `[section]` header, `key = value` or `key: value` with the key in any case, a value continued on the indented lines below it, and whole-line comments led by `#` or `;`. */
+function setupCfgRoots(text: string): string[] {
+  const values = new Map<string, string>();
+  // A key written twice in one section, which configparser refuses: neither value is read.
+  const repeated = new Set<string>();
+  let section = '';
+  let current: string | undefined;
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    if (/^\s*[#;]/.test(line)) continue;
+    if (line.trim() === '') continue;
+    if (/^\s/.test(line) && current !== undefined) {
+      values.set(current, `${values.get(current)}\n${line.trim()}`);
+      continue;
+    }
+    const header = /^\[([^\]]+)\]\s*$/.exec(line);
+    if (header) {
+      section = header[1].trim();
+      current = undefined;
+      continue;
+    }
+    const kv = /^([^=:]+?)\s*[=:]\s*(.*)$/.exec(line);
+    current = kv ? `${section}\0${kv[1].trim().toLowerCase()}` : undefined;
+    if (current === undefined) continue;
+    if (values.has(current)) {
+      repeated.add(current);
+      current = undefined;
+    } else values.set(current, kv![2].trim());
+  }
+  for (const key of repeated) values.delete(key);
+  // setuptools' list: one item per line when the value spans lines, else comma-separated.
+  const list = (value: string | undefined): string[] =>
+    value === undefined ? [] : (value.includes('\n') ? value.split('\n') : value.split(',')).map((item) => item.trim()).filter((item) => item !== '');
+  const roots: string[] = [];
+  const packageDir = list(values.get('options\0package_dir'));
+  if (packageDir.every((entry) => entry.includes('='))) {
+    for (const entry of packageDir) {
+      const at = entry.indexOf('=');
+      if (entry.slice(0, at).trim() === '') roots.push(entry.slice(at + 1).trim());
+    }
+  }
+  const where = list(values.get('options.packages.find\0where'))[0];
+  if (where !== undefined) roots.push(where);
+  return roots;
+}
+
+/**
  * The Python source roots discovered repo-wide from project manifests, computed lazily ONCE
  * per factory instance (on the first absolute Python import) and cached. Every directory
- * holding a `pyproject.toml`, `setup.cfg` or `setup.py` is a project; its source root is
- * its `src/` child when that directory exists (the src layout), else the directory itself
- * (the flat layout). A uv workspace's members, a Poetry monorepo's packages and a
- * src-layout project's tests are all covered by this one rule, because each member is a
- * project with its own manifest. A manifest that is excluded by the caller contributes no
- * root. Hidden directories, dependency trees, caches and virtual environments are skipped.
+ * holding a `pyproject.toml`, `setup.cfg` or `setup.py` is a project. Its source roots are
+ * the directories its `pyproject.toml` and `setup.cfg` name (`pythonManifestRoots`) that are
+ * directories of the repository; when they name none, its `src/` child when that directory
+ * exists (the src layout), else the directory itself (the flat layout). A uv workspace's
+ * members, a Poetry monorepo's packages and a src-layout project's tests are all covered by
+ * this one rule, because each member is a project with its own manifest. A manifest that is
+ * excluded by the caller contributes no root and is not read. `setup.py` is code and is never
+ * read. Hidden directories, dependency trees, caches and virtual environments are skipped.
  *
- * NOTE: makeResolvePathToFile's deps are pure filesystem access; listing directories and
- * checking for manifests is fine there, it parses nothing.
+ * A root read from a manifest joins the same set as the others, so it gets the same rules:
+ * a top-level name the standard library owns is never matched there, and a module two roots
+ * hold stays unbound.
  */
 function makePythonProjectRoots(
   plain: FileSource,
@@ -1178,12 +1289,18 @@ function makePythonProjectRoots(
       if (entries === undefined) continue;
       if (entries.some((e) => e.kind === 'file' && e.name === 'pyvenv.cfg')) continue; // a virtual environment
       const rel = (name: string): string => joinRel(dir, name);
-      const isProject = entries.some(
+      const manifests = entries.filter(
         (e) => e.kind === 'file' && PYTHON_PROJECT_MANIFESTS.includes(e.name) && !(isExcluded?.(rel(e.name)) ?? false),
       );
-      if (isProject) {
+      if (manifests.length > 0) {
+        const named = manifests.flatMap((e) => {
+          if (e.name === 'setup.py') return [];
+          const text = plain.read(rel(e.name));
+          return text === undefined ? [] : pythonManifestRoots(e.name, text);
+        });
+        const configured = [...new Set(named.map((root) => (root === '.' ? dir : joinRel(dir, root))))].filter((root) => isDir(root));
         const src = rel('src');
-        found.push(isDir(src) ? src : dir);
+        found.push(...(configured.length > 0 ? configured : [isDir(src) ? src : dir]));
       }
       for (const e of entries) {
         if (e.kind !== 'dir' || e.name.startsWith('.') || PYTHON_ROOT_SCAN_SKIP.has(e.name)) continue;

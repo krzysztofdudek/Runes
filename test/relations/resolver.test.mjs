@@ -742,6 +742,32 @@ describe('resolver.classifyUse — a Python name imported from a relative module
   });
 });
 
+// A Python package under a source root that only the project's configuration names (`[tool.setuptools.packages.find] where = ["lib"]`, a setup.cfg `package_dir`) has its absolute imports answered from that root.
+describe('resolver.classifyUse — a Python source root named by configuration', () => {
+  const resolverOf = (files) => {
+    const contents = new Map(Object.entries(files));
+    const ownerOf = (f) => (f.endsWith('.py') && contents.has(f) ? f.split('/').at(-2) : undefined);
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const layout = (prefix) => ({ [`${prefix}/pkg/__init__.py`]: '', [`${prefix}/pkg/data/__init__.py`]: '', [`${prefix}/pkg/data/d.py`]: 'x = 1', [`${prefix}/pkg/ui/__init__.py`]: '', [`${prefix}/pkg/ui/a.py`]: '' });
+  const uses = (r, prefix) => ['pkg.data.d', 'pkg.data.d.x', '..data.d'].map((specifier) => r.classifyUse([{ kind: 'path', specifier }], `${prefix}/pkg/ui/a.py`, 'python'));
+  const resolved = (file) => ({ kind: 'resolved', owner: 'data', resolvedFile: file });
+
+  it('a pyproject.toml naming where = ["lib"] and a setup.cfg mapping package_dir to lib resolve the package in lib/', () => {
+    const pyproject = resolverOf({ 'pyproject.toml': '[project]\nname = "x"\n\n[tool.setuptools.packages.find]\nwhere = ["lib"]\n', ...layout('lib') });
+    expect(uses(pyproject, 'lib')).toEqual([resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py')]);
+    const cfg = resolverOf({ 'setup.cfg': '[metadata]\nname = x\n\n[options]\npackage_dir =\n    = lib\n', ...layout('lib') });
+    expect(uses(cfg, 'lib')).toEqual([resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py'), resolved('lib/pkg/data/d.py')]);
+    expect(pyproject.classify({ kind: 'path', specifier: 'pkg.data.d' }, 'lib/pkg/ui/a.py', 'python')).toEqual(resolved('lib/pkg/data/d.py'));
+  });
+  it('the same tree under src/ answers as it did, and without the key the package in lib/ stays outside', () => {
+    const src = resolverOf({ 'pyproject.toml': '[project]\nname = "x"\n', ...layout('src') });
+    expect(uses(src, 'src')).toEqual([resolved('src/pkg/data/d.py'), resolved('src/pkg/data/d.py'), resolved('src/pkg/data/d.py')]);
+    const plain = resolverOf({ 'pyproject.toml': '[project]\nname = "x"\n', ...layout('lib') });
+    expect(uses(plain, 'lib').slice(0, 2)).toEqual([{ kind: 'absent', reason: 'outside' }, { kind: 'absent', reason: 'outside' }]);
+  });
+});
+
 // Java reads a simple name of java.lang through the implicit on-demand import of java.lang (JLS §7.3), after the file's own package: its use leaves the repository, where a simple name of the package that no file declares was not followed.
 describe('resolver.classifyUse — a simple Java name of java.lang leaves the repository', () => {
   it('tells String from a name of the package that binds nothing, and binds the repository\'s own java.lang where it has one', () => {
