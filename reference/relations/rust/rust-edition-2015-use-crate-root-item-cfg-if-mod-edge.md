@@ -8,13 +8,15 @@ cites: "The Rust Edition Guide — Path and module system changes (in edition 20
 
 ## Rule
 
-A `mod imp;` written in a branch of a `cfg_if!` invocation at the top level of `src/lib.rs` declares a module of the crate root (the module of every branch counts, since which condition holds is not known), also when the condition holds a string with a keyword in it (`feature = "impl"`), so in edition 2015 `use imp::Backend;` binds the module's file `src/imp/mod.rs` (node `imp`).
+A `mod imp;` written in a branch of a `cfg_if!` invocation at the top level of `src/lib.rs` declares a module of the crate root (the module of every branch counts, since which condition holds is not known), also when the condition holds a string with a keyword in it (`feature = "impl"`), so in edition 2015 `use imp::Backend;` binds the module's file `src/imp/mod.rs` (node `imp`). The `mod fallback;` of the other branch declares `src/fallback/mod.rs` (node `fallback`) the same way.
 
 ## Files
 
 ```toml path=Cargo.toml
 [package]
 name = "app"
+[dependencies]
+cfg-if = "1"
 ```
 
 ```rust path=src/lib.rs
@@ -34,6 +36,10 @@ cfg_if! {
 pub struct Backend;
 ```
 
+```rust path=src/fallback/mod.rs
+pub struct Backend;
+```
+
 ```rust path=src/api/client.rs
 use imp::Backend;
 ```
@@ -41,6 +47,7 @@ use imp::Backend;
 ## Expect
 
 - src/lib.rs:6 -> node:imp           # the `mod imp;` of the branch itself
+- src/lib.rs:8 -> node:fallback      # the `mod fallback;` of the other branch, the one this build compiles
 - src/api/client.rs:1 -> node:imp    # `cfg_if!` declares the module `imp` at the top level of the crate root
 
 ## Why

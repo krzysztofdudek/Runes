@@ -22,6 +22,10 @@ edition = "2021"
 pub struct Client;
 ```
 
+```rust path=src/lib.rs
+pub mod api;
+```
+
 ```rust path=tests/common/mod.rs
 pub fn setup() {}
 ```
@@ -35,6 +39,7 @@ use mycrate::api::Client;
 
 - tests/it.rs:1 -> node:common      # `mod common;` in a test crate root → tests/common/mod.rs
 - tests/it.rs:2 -> node:api         # the package name from a test crate → the library's src/api/mod.rs
+- src/lib.rs:1 -> node:api          # the module declaration of the completed crate
 
 ## Why
 

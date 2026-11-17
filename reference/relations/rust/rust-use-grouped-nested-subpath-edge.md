@@ -20,6 +20,7 @@ name = "mycrate"
 ```rust path=src/domain/mod.rs
 pub mod billing;
 pub mod orders;
+pub mod web;
 ```
 
 ```rust path=src/domain/billing/mod.rs
@@ -38,10 +39,18 @@ use crate::domain::{billing::Invoice, orders::Order};
 use super::{billing::Invoice, orders::Order};
 ```
 
+```rust path=src/lib.rs
+pub mod app;
+pub mod domain;
+```
+
 ## Expect
 
 - src/domain/mod.rs:1 -> node:billing        # `pub mod billing;` in the domain module file
 - src/domain/mod.rs:2 -> node:orders         # `pub mod orders;` in the domain module file
+- src/domain/mod.rs:3 -> node:web            # the module declaration of the completed crate
+- src/lib.rs:1 -> node:app                   # the module declaration of the completed crate
+- src/lib.rs:2 -> node:domain                # the module declaration of the completed crate
 - src/app/mod.rs:1 -> node:billing           # crate::domain::billing::Invoice → src/domain/billing/mod.rs
 - src/app/mod.rs:1 -> node:orders            # crate::domain::orders::Order → src/domain/orders/mod.rs; no edge to node:domain
 - src/domain/web/mod.rs:1 -> node:billing    # super:: from module domain::web climbs to domain, then billing

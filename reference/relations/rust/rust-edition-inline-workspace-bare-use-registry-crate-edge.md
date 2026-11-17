@@ -8,7 +8,7 @@ cites: "The Cargo Book, The [workspace] section (`edition.workspace = true`, the
 
 ## Rule
 
-A member writes `edition = { workspace = true }` (the inline-table spelling of `edition.workspace = true`) and the workspace says `edition = "2021"`. The member is edition 2021, so in `src/api/client.rs` `use config::Config;` names the registry crate `config`, never the root's module `config` (`src/config/mod.rs`, node config): the file gives no edge, and only the root's own `mod config;` stays an edge.
+A member writes `edition = { workspace = true }` (the inline-table spelling of `edition.workspace = true`) and the workspace says `edition = "2021"`. The member is edition 2021, so in `src/api/client.rs` `use config::Config;` names the registry crate `config`, never the root's module `config` (`src/config/mod.rs`, node config): the file gives no edge, and only the root's own `mod config;` and `mod api;` (whose `src/api/mod.rs` declares the file) are edges.
 
 ## Files
 
@@ -38,6 +38,10 @@ mod api;
 pub struct Config;
 ```
 
+```rust path=app/src/api/mod.rs
+mod client;
+```
+
 ```rust path=app/src/api/client.rs
 use config::Config;
 ```
@@ -45,3 +49,4 @@ use config::Config;
 ## Expect
 
 - app/src/lib.rs:1 -> node:config
+- app/src/lib.rs:2 -> node:api      # the module declaration of the completed crate
