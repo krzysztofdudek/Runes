@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { pythonOracleRoots } from './python-oracle-roots.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -674,24 +675,14 @@ for q in req:
 json.dump(res, sys.stdout)
 `;
 
-const PYTHON_MANIFESTS = new Set(['pyproject.toml', 'setup.cfg', 'setup.py']);
-
-/** Python's PathFinder on every place the module could be imported from: each directory that holds a project manifest (and its src/), and each ancestor directory of the importing file, which covers a script's own directory and a test runner's root. A reference Runes resolves to a file that PathFinder finds from none of them is a false edge. A reference Runes leaves silent is not checked: the interpreter's real sys.path is an installation's, and silence is Runes' answer to ambiguity. */
+/** Python's PathFinder on every place the module could be imported from: each directory that holds a project manifest (and its src/, and the source roots its pyproject.toml or setup.cfg names), and each ancestor directory of the importing file, which covers a script's own directory and a test runner's root. A reference Runes resolves to a file that PathFinder finds from none of them is a false edge. A reference Runes leaves silent is not checked: the interpreter's real sys.path is an installation's, and silence is Runes' answer to ambiguity. */
 function pythonOracle(repoDir, result, findings) {
   const deps = result.references.filter((r) => r.language === 'python' && r.resolved !== undefined && r.candidates.every((c) => c.kind === 'path'));
   if (deps.length === 0) return { checked: 0 };
   const probe = spawnSync(PYTHON, ['-I', '-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
   if (probe.error || probe.status !== 0) return { skipped: `${PYTHON} is not available (${probe.error?.message ?? probe.stderr})` };
   const listed = new Set(result.tracked.map((f) => f.path));
-  const dirs = new Set(result.tracked.map((f) => dirOf(f.path)));
-  const roots = new Set();
-  for (const f of result.tracked) {
-    if (!PYTHON_MANIFESTS.has(path.posix.basename(f.path))) continue;
-    const d = dirOf(f.path);
-    roots.add(d);
-    const src = d === '' ? 'src' : `${d}/src`;
-    if (dirs.has(src) || [...dirs].some((x) => x.startsWith(`${src}/`))) roots.add(src);
-  }
+  const roots = pythonOracleRoots(repoDir, result.tracked.map((f) => f.path), PYTHON);
   const abs = (rel) => (rel === '' ? repoDir : path.join(repoDir, rel));
   const queries = deps.map((r) => r.candidates.map((c) => {
     const spec = c.specifier;
@@ -701,7 +692,7 @@ function pythonOracle(repoDir, result, findings) {
       for (let i = 1; i < dots; i++) base = dirOf(base);
       return [spec.slice(dots), [abs(base)]];
     }
-    const bases = new Set([...roots].map(abs));
+    const bases = new Set(roots.map(abs));
     for (let cur = dirOf(r.from); ; cur = dirOf(cur)) {
       bases.add(abs(cur));
       if (cur === '') break;

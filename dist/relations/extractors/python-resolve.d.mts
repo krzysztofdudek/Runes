@@ -9,13 +9,19 @@
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important false-positive guard: a stdlib/third-party module, a mis-climbed relative import, or any module whose file is not present resolves to nothing and is never flagged.
  */
-export declare function resolvePythonModule(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly string[]): string | undefined;
+export declare function resolvePythonModule(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly (string | PythonProject)[]): string | undefined;
+/** A Python project found from its manifest: its directory, its source roots, and whether it is a test fixture (a manifest in or below a directory named `tests`, `test` or `fixtures`), whose roots serve only the files inside its directory, because nothing installs a sample project the tests read. A bare string stands for a project that is its own one root. */
+export interface PythonProject {
+    readonly dir: string;
+    readonly roots: readonly string[];
+    readonly fixture: boolean;
+}
 /**
  * The resolver `resolvePythonModule` describes, built once for the many imports of one resolution pass over a file universe that does not change during it: every call answers exactly what `resolvePythonModule` answers, and the work imports share is done once. `exists` and the regular-package test are memoized per path, the discovered project roots are read once, and the matches under the discovered roots, which depend on the specifier alone, are memoized per specifier.
  *
  * `listDir`, when supplied, lists the names directly inside a directory (undefined when it cannot be listed), and every path `exists` accepts must be spelled with names those listings give. Each directory is then listed at most once, and an import probes only the discovered roots that hold the path of its parent module (`a/b` as a directory or `a/b.py` for `a.b.c`, `a` for `a`): an external library such as `requests` probes none, and `airflow.models.dag` probes the one distribution that holds `airflow/models` although every distribution holds `airflow/`. Without it every discovered root is probed, with the same answers.
  */
-export declare function makePythonResolver(exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly string[], listDir?: (repoRelPosix: string) => readonly string[] | undefined): ((specifier: string, fromFile: string) => string | undefined) & {
+export declare function makePythonResolver(exists: (repoRelPosix: string) => boolean, isExcluded?: (repoRelPosix: string) => boolean, projectRoots?: () => readonly (string | PythonProject)[], listDir?: (repoRelPosix: string) => readonly string[] | undefined): ((specifier: string, fromFile: string) => string | undefined) & {
     explain(specifier: string, fromFile: string): 'outside' | 'unfollowed' | {
         split: string[];
     };
