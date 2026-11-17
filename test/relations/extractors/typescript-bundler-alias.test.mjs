@@ -154,6 +154,12 @@ describe('readBundlerAliases — where an alias stands', () => {
       "export default { test: { alias: { a: '/x' } }, resolve };",
     ]) expect(read(text)).toEqual(UNREADABLE);
     expect(read("export default { plugins, resolve: { alias: { a: '/x' }, extensions } };")).toEqual([[{ find: 'a', exact: false, replacement: PATH('x') }]]);
+    // A spread before every key the lookup reads cannot replace them: a later key takes the place of what the spread wrote.
+    const READ = [[{ find: 'a', exact: false, replacement: PATH('x') }]];
+    expect(read("export default { ...base, resolve: { ...shared, alias: { a: '/x' } } };", 'webpack')).toEqual(READ);
+    expect(read("export default { ...base, resolve: { alias: { a: '/x' } }, test: { environment: 'node' } };")).toEqual(READ);
+    expect(read("export default { ...base, resolve: { alias: { a: '/x' } } };")).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
+    expect(read("export default { resolve: { ...shared, alias: { a: '/x' }, ...more } };")).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
   });
   it('an alias under a resolve that is not the configuration\'s own (a webpack rule, a nested object) is one the reader cannot follow', () => {
     expect(read("module.exports = { module: { rules: [{ test: /x/, resolve: { alias: { a: path.resolve(__dirname, 'x') } } }] } };", 'webpack')).toBe('unknown');
@@ -333,6 +339,20 @@ describe('makeResolvePathToFile — a later member the reader cannot read gives 
       expect(r(spec, 'app/a.js', 'javascript')).toBeUndefined();
       expect(r.explainMiss(spec, 'app/a.js', 'javascript')).toBe('unfollowed');
     }
+  });
+  it('a configuration of 20000 configuration objects inside 100000 brackets is read in linear time', () => {
+    const configs = Array.from({ length: 20000 }, () => "{ resolve: { alias: { a: '/x' } } }").join(',');
+    const r = resolverWith(`const c = ${'('.repeat(100000)}[${configs}]${')'.repeat(100000)};\nexport default c;`);
+    const start = performance.now();
+    expect(r.explainMiss('@first/x', 'app/a.ts', 'typescript')).toBe('unfollowed');
+    expect(performance.now() - start).toBeLessThan(3_000);
+  });
+  it('a specifier of 5000 segments under 64 alias lists costs a bounded time', () => {
+    const lists = Array.from({ length: 64 }, (_, k) => `{ resolve: { alias: { k${k}: '/src', 'a/a': '/src' } } }`).join(',');
+    const r = resolverWith(`module.exports = [${lists}];`, 'webpack.config.js');
+    const start = performance.now();
+    for (let k = 0; k < 4; k++) expect(r(`${'a/'.repeat(5000)}x${k}`, 'app/a.js', 'javascript')).toBeUndefined();
+    expect(performance.now() - start).toBeLessThan(500);
   });
   it('a configuration of 131072 alias lists, or one list of 131072 keys, costs each import a bounded time', () => {
     const lists = Array.from({ length: 131072 }, (_, k) => `{ resolve: { alias: { k${k}: '/src' } } }`).join(',');
