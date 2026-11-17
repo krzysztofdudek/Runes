@@ -22,4 +22,5 @@ describe('MATRIX — C dead branches and non-includes (SILENCE)', () => {
   it('c-has-include-elif-zero-silence', () => runCase('c-has-include-elif-zero-silence'));
   it('c-elifdef-dead-branch', () => runCase('c-elifdef-dead-branch'));
   it('c-embed-silence', () => runCase('c-embed-silence'));
+  it('c-unbound-include-outside-or-unfollowed-silence', () => runCase('c-unbound-include-outside-or-unfollowed-silence'));
 });

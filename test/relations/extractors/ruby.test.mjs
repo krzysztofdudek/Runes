@@ -43,10 +43,19 @@ describe('ruby extractor — uses() emits PATH hints (require_relative)', () => 
     expect(hint?.line).toBe(3);
   });
 
-  it('SKIPS a plain `require` of a gem (only require_relative is a path link)', async () => {
-    const { uses } = await run("require 'json'\nrequire 'order/processor'\n");
-    // Neither is a require_relative → no path hint at all.
-    expect(pathSpecs(uses)).toHaveLength(0);
+  it('emits a plain `require` as a path hint marked `callForm: require`, which the resolver looks up on the load path', async () => {
+    const { uses } = await run("require 'json'\nrequire \"order/processor\"\nrequire_relative 'json'; require 'json'\n");
+    expect(uses.map((u) => [u.line, u.candidates])).toEqual([
+      [1, [{ kind: 'path', specifier: 'json', callForm: 'require' }]],
+      [2, [{ kind: 'path', specifier: 'order/processor', callForm: 'require' }]],
+      [3, [{ kind: 'path', specifier: 'json' }]],
+      [3, [{ kind: 'path', specifier: 'json', callForm: 'require' }]],
+    ]);
+  });
+
+  it('SKIPS a `require` with a dynamic argument or a receiver', async () => {
+    const { uses } = await run('require "#{base}/x"\nrequire File.join("a", "b")\nKernel.require \'json\'\n');
+    expect(uses.filter((u) => u.candidates[0].kind === 'path')).toHaveLength(0);
   });
 
   it('SKIPS require_relative with an interpolated / dynamic argument', async () => {

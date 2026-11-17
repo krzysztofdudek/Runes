@@ -688,6 +688,30 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
     expect(r.classifyUse([sym('com.acme.app.Base+Missing', { samePackage: true }), sym('com.acme.app.Missing', { samePackage: true })], 'src/use/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
     expect(r.classifyUse([sym('com.acme.app.Order+Missing', { samePackage: true }), sym('com.acme.app.Missing', { samePackage: true }), sym('java.lang.Missing')], 'src/use/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'outside' });
   });
+  it('Java and Kotlin: a member type inherited from a supertype outside the repository leaves it, unless the package may declare the name', () => {
+    const r = resolverOf([['java', 'com.acme.app.Order', 'src/main/java/com/acme/app/Order.java']]);
+    const use = (file, ...hints) => r.classifyUse(hints, file, file.endsWith('.kt') ? 'kotlin' : 'java');
+    const main = 'src/main/java/com/acme/app/Tree.java';
+    expect(use(main, sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(main, sym('java.util.Map+Entry'), sym('java.io.Serializable+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use('src/main/kotlin/com/acme/app/Tree.kt', sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
+    // A supertype in a package of the repository may be a type of the repository no file declares (generated): its member types stay the repository's.
+    expect(use(main, sym('com.acme.app.Base+Entry', { samePackage: true }), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A supertype written as the source writes it, led by a type an import or the package resolves (`JsonAdapter.Factory`), names no package: it may be the repository's.
+    expect(use(main, sym('JsonAdapter.Factory+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A farther reading that commits to the repository decides, as before: a starred package of the repository declares the name.
+    const starred = resolverOf([['java', 'com.acme.app.Order', 'src/main/java/com/acme/app/Order.java'], ['java', 'com.acme.gen.Entry', 'src/main/java/com/acme/gen/Entry.java']]);
+    expect(starred.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true, onDemand: ['com.acme.gen'] })], main, 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // Where the package declares the name, the answer is the one of the package's reading.
+    const own = resolverOf([['java', 'com.acme.app.Entry', 'src/main/java/com/acme/app/Entry.java']]);
+    expect(own.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], main, 'java')).toEqual({ kind: 'resolved', owner: 'app', resolvedFile: 'src/main/java/com/acme/app/Entry.java' });
+    const unowned = resolverOf([['java', 'com.acme.app.Entry', 'vendor/com/acme/app/Entry.java']]);
+    expect(unowned.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], main, 'java')).toEqual({ kind: 'absent', reason: 'unowned', resolvedFile: 'vendor/com/acme/app/Entry.java' });
+    const testOnly = resolverOf([['java', 'com.acme.app.Entry', 'src/test/java/com/acme/app/Entry.java']]);
+    expect(testOnly.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], main, 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    const unread = resolverOf([['kotlin', 'com.acme.app.Order', 'src/main/kotlin/com/acme/app/Order.kt'], ['kotlin', 'com.acme.app.*', 'src/main/kotlin/com/acme/app/Broken.kt']]);
+    expect(unread.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], 'src/main/kotlin/com/acme/app/Tree.kt', 'kotlin')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
   it('C#: a name only a namespace from elsewhere can give leaves it; a name read in the repository\'s namespaces, or through an alias of one, does not', () => {
     const r = resolverOf([['csharp', 'Shop.Core.Order', 'src/core/Order.cs'], ['csharp', 'Shop.App.Use', 'src/app/Use.cs'], ['csharp', 'Microsoft.AspNetCore.Hosting.Boot', 'src/host/Boot.cs'], ['csharp', 'Shop.App.Ext', 'src/app/Ext.cs']]);
     const cs = (...hints) => r.classifyUse(hints, 'src/app/Use.cs', 'csharp');
@@ -711,13 +735,142 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
     expect(cs(attribute([sym('Shop.App.MineAttribute'), sym('MineAttribute')]))).toEqual({ kind: 'absent', reason: 'unfollowed' });
   });
   it('says nothing where the readers cannot tell, and nothing for a path when the path function cannot explain', () => {
-    const r = resolverOf([['ruby', 'Shop', 'lib/shop/s.rb']]);
-    expect(r.classifyUse([sym('Missing')], 'lib/a/x.rb', 'ruby')).toEqual({ kind: 'absent' });
+    const r = resolverOf([['php', 'Shop', 'lib/shop/s.php']]);
+    expect(r.classifyUse([sym('Missing')], 'lib/a/x.php', 'php')).toEqual({ kind: 'absent' });
     expect(r.classifyUse([{ kind: 'path', specifier: 'react' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent' });
     const explaining = Object.assign(() => undefined, { explainMiss: (spec) => (spec === 'react' ? 'outside' : undefined) });
     const told = resolverOf([], explaining);
     expect(told.classifyUse([{ kind: 'path', specifier: 'react' }], 'src/a/a.ts', 'typescript')).toEqual({ kind: 'absent', reason: 'outside' });
     expect(told.classifyUse([{ kind: 'path', specifier: 'x.h' }], 'src/a/a.c', 'c')).toEqual({ kind: 'absent' });
+  });
+});
+
+// C and C++: an include that binds no file leaves the repository when it is an angle include of a header no searched place of the repository holds, and names a place of the repository otherwise. Ruby: a require_relative with no file names a file of the repository; a constant leaves it when the repository declares nothing at its root, as the edge walk reads it.
+describe('resolver.classifyUse — C, C++ and Ruby say whether a use leaves the repository', () => {
+  const resolverFor = (contents, decls = []) => {
+    const ownerOf = (f) => (contents.has(f) ? f.split('/').slice(0, -1).join('/') || '.' : undefined);
+    const st = new SymbolTable();
+    for (const [key, file] of decls) st.declare('ruby', key, file);
+    return makeResolver({ ownerIndex: { ownerOf }, symbolTable: st, resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, undefined, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+  };
+  const include = (r, specifier, from, language = 'c') => r.classifyUse([{ kind: 'path', specifier }], from, language);
+  const sym = (symbolKey, extra = {}) => ({ kind: 'symbol', symbolKey, ...extra });
+
+  it('C and C++ without a compilation database: an angle include of a system header leaves the repository, a quoted include with no file does not', () => {
+    const r = resolverFor(new Map([['src/a.c', ''], ['src/a.cpp', ''], ['src/b.h', ''], ['hiredis.h', ''], ['adapters/ae.h', ''], ['lib/x/y.h', ''], ['include/x/y.h', ''], ['include/k/v.h', '']]));
+    expect(include(r, '<stdio.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, 'missing.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, '<vector>', 'src/a.cpp', 'cpp')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, 'missing.hpp', 'src/a.cpp', 'cpp')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, 'b.h', 'src/a.c')).toEqual({ kind: 'resolved', owner: 'src', resolvedFile: 'src/b.h' });
+    // An angle include of a header the repository holds where a build's -I list would name it: beside the includer or under a probe root.
+    expect(include(r, '<b.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, '<hiredis.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(include(r, '<k/v.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A header that includes its own name wraps the library's header of that name.
+    expect(include(r, '<ae.h>', 'adapters/ae.h')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A quoted name the probe finds under two roots binds neither: the files it could name, which the edge walk passes by.
+    const split = resolverFor(new Map([['src/a.c', ''], ['k/v.h', ''], ['include/k/v.h', ''], ['solo/s.h', '']]));
+    expect(include(split, 'k/v.h', 'src/a.c')).toEqual({ kind: 'ambiguous', candidates: ['include/k/v.h', 'k/v.h'] });
+    expect(split.classify({ kind: 'path', specifier: 'k/v.h' }, 'src/a.c', 'c')).toEqual({ kind: 'absent' });
+    expect(split.classifyUse([{ kind: 'path', specifier: 'k/v.h' }, { kind: 'path', specifier: 'solo/s.h' }], 'src/a.c', 'c')).toEqual({ kind: 'resolved', owner: 'solo', resolvedFile: 'solo/s.h' });
+    // A name that leaves the repository: absolute, or climbing past its root.
+    expect(include(r, '/usr/include/zlib.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '../../zlib.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '../missing.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('C and C++ with a compilation database: an angle include binds the -I roots only, so a header outside them leaves the repository', () => {
+    const db = JSON.stringify([{ directory: '/nonexistent', file: 'src/a.c', arguments: ['cc', '-Ipub', '-Iinc', '-c', 'src/a.c'] }]);
+    const r = resolverFor(new Map([['compile_commands.json', db], ['src/a.c', ''], ['hiredis.h', ''], ['pub/p.h', ''], ['inc/p.h', ''], ['pub/q.h', '']]));
+    expect(include(r, '<pub/q.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '<hiredis.h>', 'src/a.c')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(include(r, '<q.h>', 'src/a.c')).toEqual({ kind: 'resolved', owner: 'pub', resolvedFile: 'pub/q.h' });
+    expect(include(r, '<p.h>', 'src/a.c')).toEqual({ kind: 'ambiguous', candidates: ['inc/p.h', 'pub/p.h'] });
+    expect(include(r, 'gone.h', 'src/a.c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('an excluded header names a place of the repository: unfollowed, never outside', () => {
+    const contents = new Map([['src/a.c', ''], ['include/k/v.h', ''], ['include/gen/g.h', '']]);
+    const ownerOf = (f) => (contents.has(f) ? f.split('/').slice(0, -1).join('/') : undefined);
+    const isExcluded = (f) => f.startsWith('include/gen/');
+    const r = makeResolver({ ownerIndex: { ownerOf }, symbolTable: new SymbolTable(), resolvePathToFile: makeResolvePathToFile('/nonexistent', ownerOf, isExcluded, { files: listedFileView(contents.keys(), (p) => contents.get(p)) }) });
+    expect(r.classifyUse([{ kind: 'path', specifier: 'gen/g.h' }], 'src/a.c', 'c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(r.classifyUse([{ kind: 'path', specifier: '<gen/g.h>' }], 'src/a.c', 'c')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('Ruby: a require_relative with no file names a file of the repository, unless its path climbs past the root', () => {
+    const r = resolverFor(new Map([['lib/a.rb', ''], ['lib/b.rb', '']]));
+    const req = (specifier) => r.classifyUse([{ kind: 'path', specifier }], 'lib/a.rb', 'ruby');
+    expect(req('./missing')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(req('b')).toEqual({ kind: 'resolved', owner: 'lib', resolvedFile: 'lib/b.rb' });
+    expect(req('../../outside.rb')).toEqual({ kind: 'absent', reason: 'outside' });
+  });
+  it('Ruby: a plain require binds the file on the repository\'s load path, and leaves the repository where no root holds it', () => {
+    const r = resolverFor(new Map([['app/a.rb', ''], ['lib/shop/cart.rb', ''], ['lib/x/y.rb', ''], ['gems/c/c.gemspec', ''], ['gems/c/lib/x/y.rb', '']]));
+    const req = (specifier) => r.classifyUse([{ kind: 'path', specifier, callForm: 'require' }], 'app/a.rb', 'ruby');
+    expect(req('shop/cart')).toEqual({ kind: 'resolved', owner: 'lib/shop', resolvedFile: 'lib/shop/cart.rb' });
+    expect(req('json')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(req('x/y')).toEqual({ kind: 'ambiguous', candidates: ['gems/c/lib/x/y.rb', 'lib/x/y.rb'] });
+  });
+  it('Ruby: a constant leaves the repository when nothing of the repository is at its root, and is the repository\'s when its root or an inheritable nested constant is', () => {
+    const r = resolverFor(new Map([['lib/shop.rb', '']]), [['Shop', 'lib/shop.rb'], ['Shop::Cart', 'lib/shop.rb'], ['Shop::Cart::Line', 'lib/shop.rb'], ['Rackup::Handler', 'lib/shop.rb']]);
+    const use = (...candidates) => r.classifyUse(candidates, 'lib/a.rb', 'ruby');
+    expect(use(sym('JSON'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Nokogiri::XML'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Shop::Missing'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(use(sym('Shop::Cart::Gone'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // Read in the namespaces around the reference first, then as written.
+    expect(use(sym('Shop::JSON'), sym('JSON', { rubyInheritGuard: 'JSON' }))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Shop::Cart::Gone::X', { rubyAnchor: 'Shop::Cart::Gone' }), sym('Shop::Gone::X', { rubyAnchor: 'Shop::Gone' }), sym('Gone::X', { rubyInheritGuard: 'Gone' }))).toEqual({ kind: 'absent', reason: 'outside' });
+    // A constant some namespace of the repository nests may be inherited by the reference.
+    expect(use(sym('Shop::Cart::Line'), sym('Line', { rubyInheritGuard: 'Line' }))).toEqual({ kind: 'resolved', owner: 'lib', resolvedFile: 'lib/shop.rb' });
+    expect(use(sym('Other::Line'), sym('Line', { rubyInheritGuard: 'Line' }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A core class, a framework namespace and a compact reopening of a namespace the repository does not declare leave it, as the edge walk reads them.
+    expect(use(sym('String'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('ActiveRecord::Base'))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(sym('Rackup::Handler'))).toEqual({ kind: 'absent', reason: 'outside' });
+    // Inside the framework's own repository its namespace is the repository's: the edge walk binds nothing there, and the answer says the readers could not follow it. A core class stays Ruby's, whatever the repository reopens.
+    const rack = resolverFor(new Map([['lib/rack.rb', '']]), [['Rack', 'lib/rack.rb'], ['Rack::Utils', 'lib/rack/utils.rb'], ['String', 'lib/core_ext/string.rb']]);
+    const inRack = (...candidates) => rack.classifyUse(candidates, 'lib/rack/content_length.rb', 'ruby');
+    expect(inRack(sym('Rack::Utils'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('Rack::Gone'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('Rack'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('Rack::ContentLength::Utils'), sym('Rack::Utils'), sym('Utils', { rubyInheritGuard: 'Utils' }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inRack(sym('String'))).toEqual({ kind: 'absent', reason: 'outside' });
+    // An application that only reopens a framework's namespace (Rails' generated test_helper.rb) is not that framework: no file its require name loads declares it.
+    const app = resolverFor(new Map([['test/test_helper.rb', ''], ['app/models/user.rb', '']]), [['ActiveSupport', 'test/test_helper.rb'], ['ActiveSupport::TestCase', 'test/test_helper.rb']]);
+    expect(app.classifyUse([sym('ActiveSupport::Concern')], 'app/models/user.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(app.classifyUse([sym('ActiveSupport::TestCase')], 'test/models/user_test.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    // RSpec's require name is its lowercase, not its underscore.
+    const rspec = resolverFor(new Map([['lib/rspec.rb', '']]), [['RSpec', 'lib/rspec.rb']]);
+    expect(rspec.classifyUse([sym('RSpec::Core')], 'lib/rspec/core.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
+  it('Ruby: a constant under a framework namespace is the repository\'s where the file some prefix of its name requires declares that prefix', () => {
+    // A gem under a framework namespace (rack-attack): no lib/rack.rb, but lib/rack/attack.rb declares Rack::Attack.
+    const gem = resolverFor(new Map([['lib/rack/attack.rb', ''], ['lib/rack/attack/throttle.rb', ''], ['spec/attack_spec.rb', '']]), [['Rack', 'lib/rack/attack.rb'], ['Rack::Attack', 'lib/rack/attack.rb'], ['Rack', 'lib/rack/attack/throttle.rb'], ['Rack::Attack', 'lib/rack/attack/throttle.rb'], ['Rack::Attack::Throttle', 'lib/rack/attack/throttle.rb']]);
+    const inGem = (key) => gem.classifyUse([sym(key)], 'spec/attack_spec.rb', 'ruby');
+    expect(inGem('Rack::Attack')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inGem('Rack::Attack::Throttle')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inGem('Rack::Attack::Gone')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(inGem('Rack::Request')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(inGem('Rack')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A framework whose entry file only requires others (sinatra): lib/sinatra.rb declares nothing, lib/sinatra/base.rb declares Sinatra::Base.
+    const entry = resolverFor(new Map([['lib/sinatra.rb', ''], ['lib/sinatra/base.rb', ''], ['test/app_test.rb', '']]), [['Sinatra', 'lib/sinatra/base.rb'], ['Sinatra::Base', 'lib/sinatra/base.rb']]);
+    expect(entry.classifyUse([sym('Sinatra::Base')], 'test/app_test.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(entry.classifyUse([sym('Sinatra::Base::Gone')], 'lib/sinatra/main.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A framework with no root file (rspec-core): no lib/rspec.rb; the namespace is lowercased, every later name underscored.
+    const core = resolverFor(new Map([['lib/rspec/core.rb', ''], ['lib/rspec/core/rake_task.rb', ''], ['Rakefile', '']]), [['RSpec', 'lib/rspec/core.rb'], ['RSpec::Core', 'lib/rspec/core.rb'], ['RSpec', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core::RakeTask', 'lib/rspec/core/rake_task.rb']]);
+    expect(core.classifyUse([sym('RSpec::Core::RakeTask')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(core.classifyUse([sym('RSpec::Core::Gone')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(core.classifyUse([sym('RSpec::Mocks')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    const task = resolverFor(new Map([['lib/rspec/core/rake_task.rb', ''], ['Rakefile', '']]), [['RSpec', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core', 'lib/rspec/core/rake_task.rb'], ['RSpec::Core::RakeTask', 'lib/rspec/core/rake_task.rb']]);
+    expect(task.classifyUse([sym('RSpec::Core::RakeTask')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(task.classifyUse([sym('RSpec::Core::Gone')], 'Rakefile', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    // A gem's own require name joins the names with a hyphen (rspec-rails: lib/rspec-rails.rb declares RSpec::Rails, lib/rspec/rails.rb only requires).
+    const rails = resolverFor(new Map([['lib/rspec-rails.rb', ''], ['lib/rspec/rails.rb', ''], ['lib/rspec/rails/example/rails_example_group.rb', '']]), [['RSpec', 'lib/rspec-rails.rb'], ['RSpec::Rails', 'lib/rspec-rails.rb'], ['RSpec', 'lib/rspec/rails/example/rails_example_group.rb'], ['RSpec::Rails', 'lib/rspec/rails/example/rails_example_group.rb'], ['RSpec::Rails::RailsExampleGroup', 'lib/rspec/rails/example/rails_example_group.rb']]);
+    expect(rails.classifyUse([sym('RSpec::Rails::RailsExampleGroup')], 'lib/rspec/rails/example/view_example_group.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    expect(rails.classifyUse([sym('RSpec::Core::ExampleGroup')], 'lib/rspec/rails/example/view_example_group.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    // An application's reopenings have no such file: a reopening in test/test_helper.rb or config/initializers, or a compact one of a nested name, leaves every prefix without the file its require name loads.
+    const app = resolverFor(new Map([['test/test_helper.rb', ''], ['config/initializers/ar.rb', ''], ['lib/active_record/base_ext.rb', ''], ['app/models/user.rb', '']]), [['ActiveSupport', 'test/test_helper.rb'], ['ActiveSupport::TestCase', 'test/test_helper.rb'], ['ActiveRecord', 'config/initializers/ar.rb'], ['ActiveRecord::Base', 'config/initializers/ar.rb'], ['ActiveRecord::Base', 'lib/active_record/base_ext.rb']]);
+    for (const key of ['ActiveSupport::TestCase', 'ActiveSupport::Concern', 'ActiveRecord::Base', 'ActiveRecord::Base::Gone', 'ActiveRecord']) expect(app.classifyUse([sym(key)], 'test/models/user_test.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
   });
 });
 

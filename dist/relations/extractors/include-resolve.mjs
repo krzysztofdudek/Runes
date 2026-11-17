@@ -38,6 +38,44 @@ export function resolveIncludePath(specifier, fromFile, exists, roots) {
         return undefined; // none, or ambiguous → silence
     return [...hits][0];
 }
+/**
+ * Why an include bound no file, asked only after {@link resolveIncludePath} answered undefined for the same arguments, for the resolver's `classifyUse`:
+ *  - `{ split }`, the files sorted, when the roots the resolver searched hold the name two or more times (the exactly-one-hit rule left it unbound);
+ *  - `outside` for a name that leaves the repository (absolute, or a quoted name whose join with the includer's directory climbs past the root), and for an angle include whose name no searched place of the repository holds: the `-I` roots of a compilation database, or without one the includer's directory (the includer itself aside) and the probe roots, which a build's `-I` list would most likely name;
+ *  - `unfollowed` for every other quoted include, which names a header beside the includer or under the repository's roots that is not there (a generated header, a typo, a header of a library the repository expects on its path), and for an angle include whose name one of those places holds.
+ */
+export function explainIncludeMiss(specifier, fromFile, exists, roots) {
+    const angle = specifier.length >= 2 && specifier.startsWith('<') && specifier.endsWith('>');
+    const name = toPosix(angle ? specifier.slice(1, -1) : specifier).trim();
+    if (name === '' || name.startsWith('/') || /^[A-Za-z]:/.test(name))
+        return 'outside';
+    const beside = normalizeRepoRel(path.posix.join(path.posix.dirname(toPosix(fromFile)), name));
+    const db = roots?.compileDbRoots(fromFile);
+    const searched = db !== undefined ? (angle ? db.angle : [...db.quote, ...db.angle]) : !angle && isProbeable(name) ? roots?.probeRoots() ?? [] : [];
+    const live = new Set();
+    const held = new Set();
+    const look = (candidate, counts) => {
+        if (candidate === undefined || !exists(candidate))
+            return;
+        held.add(candidate);
+        if (counts && roots?.isExcluded?.(candidate) !== true)
+            live.add(candidate);
+    };
+    for (const root of searched)
+        look(normalizeRepoRel(root === '' ? name : path.posix.join(root, name)), true);
+    if (live.size >= 2)
+        return { split: [...live].sort() };
+    if (!angle)
+        return beside === undefined && held.size === 0 ? 'outside' : 'unfollowed';
+    if (db === undefined) {
+        // A header that includes its own name in angle brackets (`adapters/ae.h` including `<ae.h>`) wraps the library's header of that name.
+        if (beside !== toPosix(fromFile))
+            look(beside, false);
+        for (const root of roots?.probeRoots() ?? [])
+            look(normalizeRepoRel(root === '' ? name : path.posix.join(root, name)), false);
+    }
+    return held.size > 0 ? 'unfollowed' : 'outside';
+}
 /** A quoted name the no-database probe may look up: 2+ segments, none of them `.`/`..`. */
 function isProbeable(name) {
     const segs = name.split('/');
