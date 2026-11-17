@@ -22,7 +22,7 @@ export interface BuildGrammarsOptions {
     cacheDir?: string;
     /** Ignore the shipped files and the cache and re-derive every non-npm grammar (a reproducibility audit). */
     rebuild?: boolean;
-    /** Forbid downloads and source builds: a grammar missing from the shipped files and the cache (and, for an npm pin, not installed) is an error. */
+    /** Forbid downloads and source builds: a download or source pin missing from the shipped files and the cache is an error. */
     offline?: boolean;
     /** Progress lines; silent when absent. */
     log?: (line: string) => void;
