@@ -47,6 +47,8 @@ use super::super::Config;
 
 ## Expect
 
+- src/lib.rs:2 -> node:linux   # the `mod` its `#[path]` attribute moves names the file the attribute gives
+- src/net/mod.rs:2 -> node:sock   # the `mod` its `#[path]` attribute moves names the file the attribute gives
 - src/lib.rs:3 -> node:platform
 - src/lib.rs:4 -> node:net
 - src/platform/linux.rs:1 -> node:root   # `super` is the crate root, which loads the file as `sys`

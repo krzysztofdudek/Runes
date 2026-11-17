@@ -58,6 +58,13 @@ import path from 'node:path';
  * file, and binds nothing; in edition 2015 a `use` path starts at the crate root, so it is read as
  * written.
  *
+ * PATHS OUTSIDE A `use`: a path written in code whose first name is lowercase and bound by
+ * nothing in scope where it stands is emitted as `in::<the path>` (`in` is a keyword, so no path
+ * of the source starts with it). Rust finds such a name in the extern prelude in every edition:
+ * a crate a crate root binds with `extern crate`, the package's own library, or a dependency.
+ * It is read as a `use` path is from edition 2018 on, never from the crate root: a path
+ * dependency binds its library, and `std`, `core` or a registry crate binds nothing.
+ *
  * PATH DEPENDENCIES: a bare first segment that names an in-repo path dependency of the
  * importing crate (`core-lib = { path = "../core-lib" }`, or `{ workspace = true }` inherited
  * from `[workspace.dependencies]`) resolves inside that crate's library tree. Registry
@@ -82,6 +89,9 @@ import path from 'node:path';
  * under a directory named after it. Its `super` is the module of the file that loads it,
  * whatever their places on disk: `super::x` there is `self::x` read from that file. Two files
  * that load it make its parent a module that cannot be told, so such a path names nothing.
+ * The `mod` that carries the attribute is emitted as `mod::<path>`, the attribute's path
+ * normalized and relative to the directory of the file that writes it (`mod` is a keyword, so
+ * no path of the source starts with it), and binds that file when it exists in a Cargo package.
  *
  * RESOLUTION MISS → undefined. This fail-to-silence is the single most important
  * false-positive guard:
@@ -172,6 +182,13 @@ export function resolveRustPath(
   const crate = deps.crateRootFor(fromFile);
   if (crate === undefined) return undefined; // no Cargo.toml ancestor → not a crate path
 
+  // A `mod` with a `path` attribute among the items of its file (`mod::<path>`): the file the attribute names, relative to the directory of the file that writes it.
+  if (root === 'mod') {
+    const written = specifier.startsWith('mod::') ? specifier.slice('mod::'.length) : '';
+    const file = written === '' ? undefined : joinUnder(dirOfFile(toPosix(fromFile)), written);
+    return file !== undefined && exists(file) ? file : undefined;
+  }
+
   if (root === 'crate') {
     if (crate.unrooted === true) return undefined;
     return resolveFromModuleDir(crate.srcDir, rest, exists, rootContext(crate.srcDir, crate.rootFiles, declares, crate.rootsShared), moduleCheckOf(deps));
@@ -186,6 +203,9 @@ export function resolveRustPath(
     const named = crateNamed(name, fromFile, deps, crate);
     return named === undefined ? undefined : resolveFromModuleDir(named.srcDir, segments.slice(aliased ? 4 : 2), exists, rootContext(named.srcDir, named.rootFiles, declares), moduleCheckOf(deps));
   }
+
+  // A path written outside a `use` whose first name nothing in scope binds (`in::<the path>`): in every edition that name is a crate of the extern prelude, as a 2018 `use` path reads it.
+  if (root === 'in') return resolveBare(segments.slice(1), fromFile, exists, deps, { ...crate, crateRelativeUses: false });
 
   // A `use` path whose first name is in scope where it is written (`use::<n>::<the n segments that name stands for>::<the path as written>`). From edition 2018 that name is what the path starts at; in edition 2015 a `use` path starts at the crate root whatever is in scope, so it is read as written.
   if (root === 'use') {
@@ -202,13 +222,13 @@ export function resolveRustPath(
 }
 
 /**
- * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
+ * Why a path `resolveRustPath` bound no file came to nothing, read the way it reads the path: `unfollowed` when the path starts in the crate (`crate`, `self`, `super`, a file a `path` attribute names, an item of a block, a name in scope that stands for a path of the crate), at the package's own crate name, at an in-repo path dependency or a crate an `extern crate` binds to one, or in edition 2015 at an item of the crate root; `outside` when it starts at any other crate (`std`, `core`, a registry or git dependency); undefined when the file belongs to no Cargo package.
  */
 export function explainRustMiss(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, deps: RustResolveDeps): 'outside' | 'unfollowed' | undefined {
   const segments = specifier.split('::').filter((s) => s.length > 0);
   const root = segments[0];
   if (root === undefined) return undefined;
-  if (root === 'super' || root === 'self') return 'unfollowed';
+  if (root === 'super' || root === 'self' || root === 'mod') return 'unfollowed';
   const crate = deps.crateRootFor(fromFile);
   if (crate === undefined) return undefined;
   if (root === 'crate') return 'unfollowed';
@@ -218,6 +238,7 @@ export function explainRustMiss(specifier: string, fromFile: string, exists: (re
     if (segments[2] === 'as' && crate.crateRelativeUses === true) return bareMiss(segments.slice(3), fromFile, exists, deps, crate);
     return crateNamed(name, fromFile, deps, crate) === undefined ? 'outside' : 'unfollowed';
   }
+  if (root === 'in') return bareMiss(segments.slice(1), fromFile, exists, deps, { ...crate, crateRelativeUses: false });
   if (root === 'use') {
     const lead = Number(segments[1]);
     const written = segments.slice(2 + lead);
@@ -605,6 +626,12 @@ function joinUnder(dir: string, sub: string): string | undefined {
   const joined = path.posix.normalize(dir === '' ? sub : path.posix.join(dir, sub));
   if (joined.startsWith('..')) return undefined;
   return joined;
+}
+
+/** The repository-relative directory of a file, '' at the repository root. */
+function dirOfFile(file: string): string {
+  const dir = path.posix.dirname(file);
+  return dir === '.' ? '' : dir;
 }
 
 function toPosix(p: string): string {
