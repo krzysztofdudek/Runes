@@ -1,6 +1,6 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/rust.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import { runExtractor } from '../../helpers/tree-sitter.mjs';
+import { runExtractor, withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 import { rustExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code) => runExtractor(rustExtractor, 'rust', '.rs', code);
@@ -552,5 +552,45 @@ describe('rust extractor — mod declarations inside cfg_if!', () => {
     ].join('\n');
     const { uses } = await run(code);
     expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['use::2::crate::m::mm::X@6', 'use::3::crate::m::n::n::X@6', 'o::X@6', 'c::X@6', 'use::2::crate::p::p::X@6']);
+  });
+});
+
+// A file of deeply nested blocks, each with a `use` or a path written outside one. What a name stands for is looked up in the scopes around the node, outward to its module; the lookup must not walk every block around each node, or the file reads in time that grows with the square of its depth (16 000 blocks took 47 s with a `use` each and 6 s with a path each). Each input is read at a quarter of its depth and at its full depth, and the full read may take at most eight times as long as the quarter read: linear time gives about four, the square sixteen. A ratio, not a number of seconds, as in the test of very wide nodes, because coverage instrumentation and a loaded machine slow every read alike.
+describe('rust extractor — a file of 16 000 nested blocks is read in time linear in their depth', () => {
+  const DEPTH = 16_000;
+  const nested = (depth, line) => `fn f() {\n${Array.from({ length: depth }, (_, i) => line(i)).join('')}${'}\n'.repeat(depth)}}\n`;
+  const timed = async (code) => {
+    let out;
+    await withParsedFile('a.rs', code, (tree) => {
+      const file = parsedFile('a.rs', code, tree, 'rust');
+      const start = performance.now();
+      const uses = rustExtractor.uses(file);
+      out = { uses, elapsed: performance.now() - start };
+    });
+    return out;
+  };
+  const best = async (code) => {
+    const first = await timed(code);
+    const second = await timed(code);
+    return second.elapsed < first.elapsed ? second : first;
+  };
+  const readsLinearly = async (line) => {
+    const quarter = await best(nested(DEPTH / 4, line));
+    const full = await best(nested(DEPTH, line));
+    const allowed = 8 * Math.max(quarter.elapsed, 50);
+    expect(full.elapsed < allowed, `a quarter of the depth took ${Math.round(quarter.elapsed)} ms, the whole of it ${Math.round(full.elapsed)} ms: over 8 times`).toBe(true);
+    return full.uses;
+  };
+
+  it('with a use declaration in each block', async () => {
+    const uses = await readsLinearly((i) => `{ use a${i}::X;\n`);
+    expect(uses.length).toBe(DEPTH);
+    expect(uses[DEPTH - 1]).toEqual({ candidates: [{ kind: 'path', specifier: `a${DEPTH - 1}::X` }], kind: 'import', line: DEPTH + 1 });
+  });
+
+  it('with a path written outside a use in each block', async () => {
+    const uses = await readsLinearly((i) => `{ a${i}::f();\n`);
+    expect(uses.length).toBe(DEPTH);
+    expect(uses[DEPTH - 1]).toEqual({ candidates: [{ kind: 'path', specifier: `in::a${DEPTH - 1}::f` }], kind: 'import', line: DEPTH + 1 });
   });
 });
