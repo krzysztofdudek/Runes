@@ -272,6 +272,7 @@ describe('MATRIX — a path attribute that comments or other attributes separate
 // ─────────────────────────────────────────────────────────────────────────────
 describe('MATRIX — mod declarations inside cfg_if!', () => {
   it('rust-mod-decl-inside-cfg-if-edge', () => runCase('rust-mod-decl-inside-cfg-if-edge'));
+  it('rust-cfg-if-module-and-use-are-names-in-scope-edge', () => runCase('rust-cfg-if-module-and-use-are-names-in-scope-edge'));
   it('rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge', () => runCase('rust-mod-decl-inside-cfg-if-nested-inline-and-path-edge'));
 });
 

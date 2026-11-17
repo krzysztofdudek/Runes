@@ -98,7 +98,10 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * every branch is emitted, from the line of its `mod`, under the rules it follows outside the
  * macro: inside an inline `mod y { … }` written there it is `self::y::x`, and with a `#[path]`
  * attribute on it or on such an inline module it is skipped. Only a `cfg_if!` that stands
- * among the items of a module is read.
+ * among the items of a module is read. The modules its branches declare, with or without a body,
+ * and the names the `use` declarations there bind are names in scope of that module (NAMES IN
+ * SCOPE), as they are written outside the macro, and a glob `use` there may bind any name; the
+ * `use` declarations of a branch are not emitted themselves.
  *
  * INLINE PATHS: a fully-qualified path used WITHOUT a `use` — in TYPE position
  * (`field: crate::orders::Order`, `impl crate::traits::T`) a `scoped_type_identifier`, in
@@ -117,7 +120,8 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * is emitted: a local module shadows a crate of its name, and a guess would be a false edge.
  * A capitalised first name, `Self` and a primitive type (`u32::MAX`) name a type, a path that
  * starts with `::` starts at the crate root in edition 2015, and a tool's attribute
- * (`#[rustfmt::skip]`) names no crate: none of them is emitted. Only the OUTERMOST scoped node
+ * (`#[rustfmt::skip]`, `#[rust_analyzer::skip]`) or one of the compiler's `diagnostic` namespace
+ * (`#[diagnostic::do_not_recommend]`) names no crate: none of them is emitted. Only the OUTERMOST scoped node
  * of a chain is read (it carries the complete path); the inner `path` segments are skipped.
  */
 /**
@@ -252,40 +256,78 @@ function uses(file) {
     let mods = null;
     // The blocks and item lists around the node being visited, innermost first, carried down the walk.
     let lexical = null;
-    const externsByScope = new Map();
-    const externsOf = (scope) => {
-        let bound = externsByScope.get(scope.id);
-        if (bound === undefined) {
-            bound = new Map(externCratesIn(scope).flatMap((e) => (e.crate === undefined ? [] : [[e.name, e.crate]])));
-            externsByScope.set(scope.id, bound);
+    // The scopes around the node being visited, by depth: `chain[d]` is the one of depth `d`, for every `d` up to the depth of `lexical`. A deeper entry is a scope the walk has left.
+    const chain = [];
+    const onChain = (scope) => scope.depth <= (lexical?.depth ?? -1) && chain[scope.depth] === scope;
+    // For each name, the scopes around the node being visited whose items bind it in one way, outermost first, one index per way a lookup below reads: each lookup jumps to the scopes that bind its name instead of walking every block around the node, which costs the square of the depth of the file. A scope the walk has left is dropped from the end of a list when the list is next read or added to.
+    const byName = () => new Map();
+    const usesNamed = byName(); // the names `scopeNames` reads: modules, and the names `use` declarations bind
+    const externsNamed = byName(); // those, the crates an `extern crate` binds and the items of the type namespace
+    const boundNamed = byName(); // those, and the names of every `extern crate`
+    const itemsNamed = byName(); // the items of the type namespace
+    const enter = (index, names, scope) => {
+        for (const name of new Set(names)) {
+            const list = index.get(name);
+            if (list === undefined) {
+                index.set(name, [scope]);
+                continue;
+            }
+            while (list.length > 0 && !(list[list.length - 1].depth < scope.depth && chain[list[list.length - 1].depth] === list[list.length - 1]))
+                list.pop();
+            list.push(scope);
         }
-        return bound;
+    };
+    /** The scope a block, the body of a module, an `impl` or a trait, or the file makes for what stands in it, with what its own items bind, entered in the indexes. */
+    const scopeOf = (node, module, outer) => {
+        const names = scopeNames(node, module);
+        const externCrates = externCratesIn(node);
+        const externs = new Map(externCrates.flatMap((e) => (e.crate === undefined ? [] : [[e.name, e.crate]])));
+        const { items, glob } = scopeTypeNames(node);
+        const depth = outer === null ? 0 : outer.depth + 1;
+        const scope = { node, module, outer, depth, moduleDepth: module || outer === null ? depth : outer.moduleDepth, glob: glob || (!module && (outer?.glob ?? false)), names, externs, items };
+        chain[depth] = scope;
+        enter(usesNamed, names.keys(), scope);
+        enter(externsNamed, [...externs.keys(), ...names.keys(), ...items], scope);
+        enter(boundNamed, [...externCrates.map((e) => e.name), ...names.keys(), ...items], scope);
+        enter(itemsNamed, items, scope);
+        return scope;
+    };
+    /** The innermost scope of `index` that binds `name`, from `from` outward to the module around it, for which `accept` holds. */
+    const nearest = (index, name, from, accept = () => true) => {
+        const list = index.get(name);
+        if (from === null || list === undefined)
+            return undefined;
+        while (list.length > 0 && !onChain(list[list.length - 1]))
+            list.pop();
+        // The list is a chain of scopes, each inside the one before, so the depths rise along it: the last at most as deep as `from` is the innermost around it.
+        let lo = 0;
+        let hi = list.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (list[mid].depth <= from.depth)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        for (let i = lo - 1; i >= 0 && list[i].depth >= from.moduleDepth; i--)
+            if (accept(list[i]))
+                return list[i];
+        return undefined;
     };
     // While a `use` declaration is read: the declaration, whose scope's names its path may start with.
     let useDecl = null;
     // Whether that declaration's path starts with `::`: the crate root in edition 2015, a crate from edition 2018 on, and in neither a name in scope.
     let useFromRoot = false;
-    const namesByScope = new Map();
-    const namesOf = (scope) => {
-        let names = namesByScope.get(scope.node.id);
-        if (names === undefined) {
-            names = scopeNames(scope.node, scope.module);
-            namesByScope.set(scope.node.id, names);
-        }
-        return names;
-    };
     /** The path the first segment `name` of a `use` path written in `decl` stands for, when a name in scope there says so: a module the module around it declares (`self::<name>`), or the path another `use` in scope bound to that name. The scopes are the blocks around the declaration, outward, and the module around them; a name of an outer module is not in scope. Undefined when no such name is found, or the `use` declarations found disagree. */
     const inScope = (name, decl, from) => {
-        for (let scope = from; scope !== null; scope = scope.outer) {
-            const found = (namesOf(scope).get(name) ?? []).filter((n) => n.decl?.id !== decl.id);
-            if (found.length > 0) {
-                const one = found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0].path) ? found[0] : undefined);
-                return one === undefined ? undefined : { name: one, scope };
-            }
-            if (scope.module)
-                return undefined;
-        }
-        return undefined;
+        const others = (scope) => (scope.names.get(name) ?? []).filter((n) => n.decl?.id !== decl.id);
+        // Only the scope that holds `decl` can bind the name through `decl` alone, so this passes over one scope at most.
+        const scope = nearest(usesNamed, name, from, (s) => others(s).length > 0);
+        if (scope === undefined)
+            return undefined;
+        const found = others(scope);
+        const one = found.find((n) => n.decl === null) ?? (found.every((n) => n.path === found[0].path) ? found[0] : undefined);
+        return one === undefined ? undefined : { name: one, scope };
     };
     /** A `use` path of `decl` with its first segment replaced by what that name stands for in scope, again and again while the path starts with such a name (`use crate::a; use a::b; use b::C;`). A path that starts with `crate`, `self` or `super`, or with a name nothing in scope binds, is returned as it is. */
     const inScopePath = (specifier, decl, scope) => {
@@ -310,24 +352,14 @@ function uses(file) {
     };
     /** The crate an `extern crate` declaration binds as `name` where `decl`, a `use` declaration, stands: the declaration's own scope, then the blocks around it, outward, and the module around them, the first that binds `name` deciding. A scope where another `use`, a module or another item of the type namespace binds the name hides a declaration farther out, and an outer module is not in scope. */
     const externCrateFor = (name, decl, from) => {
-        for (let scope = from; scope !== null; scope = scope.outer) {
-            const crate = externsOf(scope.node).get(name);
-            if (crate !== undefined)
-                return crate;
-            if ((namesOf(scope).get(name) ?? []).some((n) => n.decl?.id !== decl.id) || scope.module)
-                return undefined;
-            if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name))
-                return undefined;
-        }
-        return undefined;
+        // A scope that binds the name only through `decl` itself hides nothing; only the scope that holds `decl` can, so this passes over one scope at most.
+        const scope = nearest(externsNamed, name, from, (s) => s.externs.has(name) || s.items.has(name) || (s.names.get(name) ?? []).some((n) => n.decl?.id !== decl.id));
+        return scope?.externs.get(name);
     };
     /** True when a block around `from`, before the module that holds it, declares an item of the type namespace named `name` (a `mod` in a function body): a `use` path that starts with it names that item, which sits in this file, and no crate, module file or other file. */
     const blockItemNamed = (name, from) => {
-        for (let scope = from; scope !== null && !scope.module; scope = scope.outer) {
-            if (scope.node.namedChildren.some((c) => c !== null && TYPE_NAMESPACE_ITEMS.has(c.type) && unraw(c.childForFieldName('name')?.text ?? '') === name))
-                return true;
-        }
-        return false;
+        const scope = nearest(itemsNamed, name, from);
+        return scope !== undefined && !scope.module;
     };
     const emit = (raw, node) => {
         if (raw === undefined || raw === '')
@@ -374,19 +406,7 @@ function uses(file) {
         out.push(single({ kind: 'path', specifier }, 'import', line));
     };
     /** Whether `name` is bound where a path written outside a `use` stands, so that a path starting with it names no crate of the extern prelude: by a `use` or a module in scope, an item of the type namespace or an `extern crate` of a block around it or of its module, or possibly by a glob `use` there. An outer module is not in scope. */
-    const typeNamesByScope = new Map();
-    const boundInScope = (name, from) => {
-        for (let scope = from; scope !== null; scope = scope.module ? null : scope.outer) {
-            let own = typeNamesByScope.get(scope.node.id);
-            if (own === undefined) {
-                own = scopeTypeNames(scope.node);
-                typeNamesByScope.set(scope.node.id, own);
-            }
-            if (own.glob || own.names.has(name) || namesOf(scope).has(name))
-                return true;
-        }
-        return false;
-    };
+    const boundInScope = (name, from) => from !== null && (from.glob || nearest(boundNamed, name, from) !== undefined);
     /** Emit an inline path: one rooted at `crate`/`self`/`super` as it is, and one whose first name is lowercase and bound by nothing in scope as `in::<the path>`, a crate of the extern prelude. */
     const emitInline = (specifier, node, inAttribute = false) => {
         if (specifier === undefined || specifier === '')
@@ -396,7 +416,7 @@ function uses(file) {
             return;
         }
         const first = unraw(specifier.split('::', 1)[0]);
-        // A leading `::` starts at the crate root in edition 2015 and at a crate from 2018 on; a capitalised name, `Self` or a primitive names a type; a tool's attribute (`#[rustfmt::skip]`) names no crate.
+        // A leading `::` starts at the crate root in edition 2015 and at a crate from 2018 on; a capitalised name, `Self` or a primitive names a type; a tool's attribute (`#[rustfmt::skip]`) or a `diagnostic` one names no crate.
         if (node.text.startsWith('::') || !/^[a-z_]/.test(first) || PRIMITIVE_TYPES.has(first) || (inAttribute && TOOL_ATTRIBUTES.has(first)))
             return;
         if (boundInScope(first, lexical))
@@ -480,7 +500,7 @@ function uses(file) {
         lexical = around.lexical;
         // A block, the body of a module, an `impl` or a trait, and the file are scopes: what stands in them reads their names first.
         if (node.type === 'source_file' || node.type === 'block' || node.type === 'declaration_list') {
-            return { mods: scope, lexical: { node, module: node.type === 'source_file' || parent()?.type === 'mod_item', outer: around.lexical } };
+            return { mods: scope, lexical: scopeOf(node, node.type === 'source_file' || parent()?.type === 'mod_item', around.lexical) };
         }
         if (node.type === 'use_declaration') {
             const arg = node.childForFieldName('argument');
@@ -551,7 +571,7 @@ function uses(file) {
     });
     return out;
 }
-/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module's own scope (`module`) declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names. A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
+/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module's own scope (`module`) declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names, those of a branch of a `cfg_if!` among a module's items included (`cfgIfNames`). A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
 function scopeNames(scope, module) {
     const out = new Map();
     const add = (name, path, decl) => {
@@ -579,8 +599,19 @@ function scopeNames(scope, module) {
             for (const bound of useBindingPaths(arg, ''))
                 add(bound.name, unrawPath(bound.path), node);
         }
+        else if (module) {
+            const body = cfgIfBodyOf(node, scope);
+            if (body !== null)
+                for (const bound of cfgIfNames(body).names)
+                    add(bound.name, bound.path, bound.at);
+        }
     }
     return out;
+}
+/** The token tree of `node`, an item of `scope`, when it is a `cfg_if!` invocation that `cfgIfBody` reads, written as an item or as a statement; null otherwise. */
+function cfgIfBodyOf(node, scope) {
+    const call = node.type === 'expression_statement' ? node.namedChild(0) : node;
+    return call?.type === 'macro_invocation' ? cfgIfBody(call, call === node ? scope : node) : null;
 }
 /** The names a `use` argument binds, each with the path it names: the last segment of a path, each member of a group under the group's path, the alias of an `as`, the module a `self` member names. `prefix` is the path of the groups around the argument. */
 function useBindingPaths(arg, prefix) {
@@ -714,8 +745,8 @@ function declarations(file) {
 const INERT_MOD_ATTRIBUTES = new Set(['cfg', 'doc', 'allow', 'warn', 'deny', 'forbid', 'expect', 'macro_use', 'deprecated']);
 /** The further attributes of the compiler that stand at the head of a file or of an inline module (`#![no_std]`, `#![feature(…)]`). */
 const INERT_INNER_ATTRIBUTES = new Set(['no_std', 'no_core', 'no_main', 'no_implicit_prelude', 'no_builtins', 'feature', 'recursion_limit', 'type_length_limit', 'crate_type', 'crate_name', 'windows_subsystem']);
-/** The tools whose attributes (`#[rustfmt::skip]`, `#[clippy::…]`) the compiler passes over. */
-const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy']);
+/** The attribute namespaces that name no crate: the tools whose attributes (`#[rustfmt::skip]`, `#[clippy::…]`, `#[rust_analyzer::skip]`) the compiler passes over, and its own `diagnostic` namespace (`#[diagnostic::on_unimplemented(…)]`). */
+const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy', 'rust_analyzer', 'diagnostic']);
 /**
  * The modules a Rust file places in files of their own by their names: each `mod x;` (no body) that is an item of the file itself, or of inline modules nested in it, as the path of the names from the file's own module (`x`, `outer/x`), with `r#` stripped. Rust compiles the file that path names beside the declaring file (`x.rs` or `x/mod.rs`) into every crate that compiles the declaring file, unless a `cfg` removes the declaration.
  *
@@ -969,17 +1000,20 @@ function attributeIsInert(item, inner) {
 const TYPE_NAMESPACE_ITEMS = new Set(['mod_item', 'struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item']);
 /** The primitive types, whose names start a path to an associated item (`u32::MAX`, `str::from_utf8`) and name no crate. */
 const PRIMITIVE_TYPES = new Set(['bool', 'char', 'str', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'f16', 'f32', 'f64', 'f128']);
-/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` reads: the names of its items of the type namespace and of its `extern crate` declarations, and whether it holds a glob `use`, which can bring in any name. */
+/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` and `externCratesIn` read: the names of its items of the type namespace, and whether it holds a glob `use`, which can bring in any name, in a branch of a `cfg_if!` among its items too. */
 function scopeTypeNames(scope) {
-    const names = new Set(externCratesIn(scope).map((e) => e.name));
+    const items = new Set();
     let glob = false;
     for (const c of scope.namedChildren) {
         if (c !== null && TYPE_NAMESPACE_ITEMS.has(c.type))
-            names.add(unraw(c.childForFieldName('name')?.text ?? ''));
+            items.add(unraw(c.childForFieldName('name')?.text ?? ''));
         if (c !== null && c.type === 'use_declaration' && c.descendantsOfType('use_wildcard').length > 0)
             glob = true;
+        const body = c === null ? null : cfgIfBodyOf(c, scope);
+        if (body !== null && cfgIfNames(body).glob)
+            glob = true;
     }
-    return { names, glob };
+    return { items, glob };
 }
 /** The item kinds whose `name` field a file's top level binds as an item. */
 const NAMED_ITEMS = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item', 'function_item', 'function_signature_item', 'const_item', 'static_item', 'mod_item', 'macro_definition']);
@@ -1225,6 +1259,100 @@ export function cfgIfExternCrates(body) {
     branches(body);
     return out;
 }
+/**
+ * The names the items of a `cfg_if!` body bring into the module around it, read from its tokens as `scopeNames` reads items: each module a braced branch declares, with or without a body, as `self::<name>` (`at` null), and each name a `use` there binds, as the path it names (`at` its `use` token), those of a `cfg_if!` nested in a branch included, and nothing written inside an inline module, a function body or any other nested token tree there. A `use` that starts with `::` names a crate and is left out; `glob` says that a branch holds a glob `use`. `r#` is stripped.
+ */
+function cfgIfNames(body) {
+    const names = [];
+    let glob = false;
+    const braced = (tree) => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+    const branches = (tree) => {
+        for (const c of tree.namedChildren)
+            if (c !== null && braced(c))
+                items(c);
+    };
+    const items = (tree) => {
+        const tokens = innerTokens(tree);
+        for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i];
+            const next = tokens[i + 1];
+            if (t.type === 'identifier' && t.text === 'cfg_if' && next?.type === '!' && tokens[i + 2]?.type === 'token_tree') {
+                branches(tokens[i + 2]);
+                i += 2;
+            }
+            else if (!t.isNamed && t.type === 'mod' && next?.type === 'identifier') {
+                names.push({ name: unraw(next.text), path: `self::${unraw(next.text)}`, at: null });
+                i += 1;
+            }
+            else if (t.type === 'use') {
+                let end = i + 1;
+                while (end < tokens.length && tokens[end].type !== ';')
+                    end++;
+                const tree = tokens.slice(i + 1, end);
+                if (tree[0]?.type !== '::') {
+                    const read = useTokenBindings(tree, '');
+                    glob ||= read.glob;
+                    for (const bound of read.bound)
+                        names.push({ name: unraw(bound.name), path: unrawPath(bound.path), at: t });
+                }
+                i = end;
+            }
+        }
+    };
+    branches(body);
+    return { names: names.filter((n) => n.name !== '' && n.name !== '_'), glob };
+}
+/** The tokens of a token tree inside its delimiters, comments left out. */
+function innerTokens(tree) {
+    return tree.children.filter((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+}
+/** The tokens that can be a segment of a `use` path. */
+const PATH_SEGMENT_TOKENS = new Set(['identifier', 'crate', 'self', 'super']);
+/** The names a `use` tree written as tokens binds, as `useBindingPaths` gives them for one the grammar parsed (the last segment of a path, each member of a group under the group's path, the alias of an `as`, the module a `self` member names), and whether it holds a glob. `tokens` are those between `use` and its `;`, or one member of a group; `prefix` is the path of the groups around them. A form it does not read binds nothing. */
+function useTokenBindings(tokens, prefix) {
+    const none = { bound: [], glob: false };
+    const segments = [];
+    let i = 0;
+    while (i < tokens.length && PATH_SEGMENT_TOKENS.has(tokens[i].type)) {
+        segments.push(tokens[i].text);
+        i++;
+        if (tokens[i]?.type !== '::')
+            break;
+        i++;
+    }
+    const trailing = i > 0 && tokens[i - 1].type === '::';
+    const path = join(prefix, segments.join('::'));
+    const rest = tokens.slice(i);
+    if (segments.length === 0 || trailing) {
+        // What follows a `::`, or the whole tree: a glob or a group.
+        const group = rest[0];
+        if (rest.length !== 1 || group === undefined)
+            return none;
+        const groupPrefix = segments.length === 0 ? prefix : path;
+        if (group.type === '*')
+            return { bound: [], glob: true };
+        if (group.type !== 'token_tree' || group.child(0)?.type !== '{')
+            return none;
+        const members = [[]];
+        for (const t of innerTokens(group)) {
+            if (t.type === ',')
+                members.push([]);
+            else
+                members[members.length - 1].push(t);
+        }
+        const read = members.filter((m) => m.length > 0).map((m) => useTokenBindings(m, groupPrefix));
+        return { bound: read.flatMap((r) => r.bound), glob: read.some((r) => r.glob) };
+    }
+    const last = segments[segments.length - 1];
+    // A `self` member names the group's module; `crate` and `super` alone bind no name.
+    const plain = last === 'self' ? (segments.length === 1 && prefix !== '' ? [{ name: prefix.slice(prefix.lastIndexOf(':') + 1), path: prefix }] : []) : last === 'crate' || last === 'super' ? [] : [{ name: last, path: path }];
+    if (rest.length === 0)
+        return { bound: plain, glob: false };
+    const alias = rest[1];
+    if (rest.length === 2 && rest[0].type === 'as' && alias !== undefined && (alias.type === 'identifier' || alias.type === '_') && plain.length === 1)
+        return { bound: [{ name: alias.text, path: plain[0].path }], glob: false };
+    return none;
+}
 /** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
 function cfgIfItems(body) {
     return body.namedChildren.flatMap((c) => (c !== null && c.type === 'token_tree' && c.child(0)?.type === '{' ? tokenItems(c) : []));
@@ -1276,7 +1404,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 28,
+    rev: 30,
     declarations,
     uses,
 };

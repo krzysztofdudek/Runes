@@ -1,6 +1,6 @@
 // Moved from Yggdrasil source/cli/tests/unit/relations/extractors/rust.test.ts (vitest) to node:test; the assertions are unchanged.
 import { describe, it, expect } from '../../helpers/expect.mjs';
-import { runExtractor } from '../../helpers/tree-sitter.mjs';
+import { runExtractor, withParsedFile, parsedFile } from '../../helpers/tree-sitter.mjs';
 import { rustExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code) => runExtractor(rustExtractor, 'rust', '.rs', code);
@@ -356,6 +356,11 @@ describe('rust extractor — a use path that starts with a name in scope', () =>
     ]);
   });
 
+  it('reads the path a use of an outer scope bound where that use stands, past a nearer block that binds the next name too', async () => {
+    const { uses } = await run('mod m;\nuse m::k as n;\nfn f() {\n    use crate::q as m;\n    use n::X;\n}');
+    expect(specs(uses)).toEqual(['self::m', 'use::2::self::m::m::k', 'crate::q', 'use::3::self::m::k::n::X']);
+  });
+
   it('emits the path as written under an inline module whose directory a path attribute moved', async () => {
     const { uses } = await run('#[path = "elsewhere"]\nmod outer {\n    mod m;\n    use m::X;\n    use crate::k;\n    use k::Y;\n}');
     expect(specs(uses)).toEqual(['m::X', 'crate::k', 'use::2::crate::k::k::Y']);
@@ -479,6 +484,23 @@ describe('rust extractor — a path written outside a use whose first name nothi
     const { uses } = await run(code);
     expect(at(uses)).toEqual(['self::local@1', 'self@3', 'in::local::f@7', 'extern::foo@8', 'a::b@10', 'a::c@10', 'in::datacrate::dc@10', 'in::tokio::main@14']);
   });
+
+  it('emits no use for an attribute of the built-in diagnostic namespace or of a tool, rust-analyzer included', async () => {
+    const code = [
+      '#[diagnostic::on_unimplemented(message = "no T for {Self}")]',
+      'trait T {}',
+      '#[diagnostic::do_not_recommend]',
+      'impl T for u8 {}',
+      '#[rust_analyzer::skip]',
+      'fn f() {}',
+      '#[rustfmt::skip]',
+      'fn g() {}',
+      '#[tokio::main]',
+      'async fn m() {}',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(at(uses)).toEqual(['in::tokio::main@9']);
+  });
 });
 
 describe('rust extractor — mod declarations inside cfg_if!', () => {
@@ -495,5 +517,102 @@ describe('rust extractor — mod declarations inside cfg_if!', () => {
   it('reads a cfg_if! inside an inline module relative to it, and none in a function body, an impl aside', async () => {
     const { uses } = await run('mod outer {\n    cfg_if! { if #[cfg(a)] { mod leaf; } }\n}\nfn f() {\n    cfg_if! { if #[cfg(a)] { mod local; } }\n    cfg_if! { if #[cfg(a)] { mod stmt; } };\n}\ncfg_if! { if #[cfg(a)] { mod top; } };\nother_macro! { mod not_read; }\n#[path = "p"]\nmod pinned { cfg_if! { if #[cfg(a)] { mod unpinned; } } }\ncfg_if!();');
     expect(specs(uses)).toEqual(['self::outer::leaf', 'self::top']);
+  });
+
+  it('takes the modules a branch declares and the names its use declarations bind for names in scope of the module, as written outside the macro', async () => {
+    const code = [
+      'cfg_if::cfg_if! {',
+      '    if #[cfg(unix)] {',
+      '        mod datacrate;',
+      '        mod unix;',
+      '        pub(crate) use unix as imp;',
+      '        use crate::g::{b, c as d, e::{self}};',
+      '        use ::x::outside;',
+      '        mod inline { use crate::hidden; }',
+      '        fn body() { use crate::body_only; }',
+      '    } else {',
+      '        cfg_if! { if #[cfg(a)] { use crate::nested; mod r#gen {} } }',
+      '    }',
+      '}',
+      'use datacrate::dc;',
+      'use imp::G;',
+      'use b::X; use d::X; use e::X; use nested::X; use r#gen::X;',
+      'use outside::X; use hidden::X; use body_only::X;',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual([
+      'self::datacrate@3', 'self::unix@4', 'use::2::self::datacrate::datacrate::dc@14', 'use::2::self::unix::imp::G@15',
+      'use::3::crate::g::b::b::X@16', 'use::3::crate::g::c::d::X@16', 'use::3::crate::g::e::e::X@16', 'use::2::crate::nested::nested::X@16', 'use::2::self::gen::gen::X@16',
+      'outside::X@17', 'hidden::X@17', 'body_only::X@17',
+    ]);
+  });
+
+  it('takes those names, and a glob use in a branch, as binding the first name of a path written outside a use', async () => {
+    const code = [
+      'cfg_if! {',
+      '    if #[cfg(unix)] { mod datacrate; use unix_impl as imp; }',
+      '}',
+      'mod globbed {',
+      '    cfg_if! { if #[cfg(a)] { use super::*; } }',
+      '    fn t() { other::f(); }',
+      '}',
+      'fn f() { datacrate::dc(1u8); imp::g(); other::f(); }',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['self::datacrate@2', 'in::other::f@8']);
+  });
+
+  it('reads a use written in a branch as the grammar reads one outside: a self member, an alias, a brace list, and binds nothing for a form it does not read', async () => {
+    const code = [
+      'cfg_if! { if #[cfg(a)] {',
+      '    use crate::m::{self as mm, n::{self}, o as _,};',
+      '    use crate as c; use a::; use a b; use; use a::(x); use self;',
+      '    use {crate::p, crate::q::*};',
+      '} }',
+      'use mm::X; use n::X; use o::X; use c::X; use p::X;',
+      'fn f() { other::g(); }',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['use::2::crate::m::mm::X@6', 'use::3::crate::m::n::n::X@6', 'o::X@6', 'c::X@6', 'use::2::crate::p::p::X@6']);
+  });
+});
+
+// A file of deeply nested blocks, each with a `use` or a path written outside one. What a name stands for is looked up in the scopes around the node, outward to its module; the lookup must not walk every block around each node, or the file reads in time that grows with the square of its depth (16 000 blocks took 47 s with a `use` each and 6 s with a path each). Each input is read at a quarter of its depth and at its full depth, and the full read may take at most eight times as long as the quarter read: linear time gives about four, the square sixteen. A ratio, not a number of seconds, as in the test of very wide nodes, because coverage instrumentation and a loaded machine slow every read alike.
+describe('rust extractor — a file of 16 000 nested blocks is read in time linear in their depth', () => {
+  const DEPTH = 16_000;
+  const nested = (depth, line) => `fn f() {\n${Array.from({ length: depth }, (_, i) => line(i)).join('')}${'}\n'.repeat(depth)}}\n`;
+  const timed = async (code) => {
+    let out;
+    await withParsedFile('a.rs', code, (tree) => {
+      const file = parsedFile('a.rs', code, tree, 'rust');
+      const start = performance.now();
+      const uses = rustExtractor.uses(file);
+      out = { uses, elapsed: performance.now() - start };
+    });
+    return out;
+  };
+  const best = async (code) => {
+    const first = await timed(code);
+    const second = await timed(code);
+    return second.elapsed < first.elapsed ? second : first;
+  };
+  const readsLinearly = async (line) => {
+    const quarter = await best(nested(DEPTH / 4, line));
+    const full = await best(nested(DEPTH, line));
+    const allowed = 8 * Math.max(quarter.elapsed, 50);
+    expect(full.elapsed < allowed, `a quarter of the depth took ${Math.round(quarter.elapsed)} ms, the whole of it ${Math.round(full.elapsed)} ms: over 8 times`).toBe(true);
+    return full.uses;
+  };
+
+  it('with a use declaration in each block', async () => {
+    const uses = await readsLinearly((i) => `{ use a${i}::X;\n`);
+    expect(uses.length).toBe(DEPTH);
+    expect(uses[DEPTH - 1]).toEqual({ candidates: [{ kind: 'path', specifier: `a${DEPTH - 1}::X` }], kind: 'import', line: DEPTH + 1 });
+  });
+
+  it('with a path written outside a use in each block', async () => {
+    const uses = await readsLinearly((i) => `{ a${i}::f();\n`);
+    expect(uses.length).toBe(DEPTH);
+    expect(uses[DEPTH - 1]).toEqual({ candidates: [{ kind: 'path', specifier: `in::a${DEPTH - 1}::f` }], kind: 'import', line: DEPTH + 1 });
   });
 });
