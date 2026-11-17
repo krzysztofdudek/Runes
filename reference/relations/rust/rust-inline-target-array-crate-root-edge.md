@@ -65,6 +65,10 @@ mod cases;
 pub struct Fixture;
 ```
 
+```rust path=suites/cases/mod.rs
+mod login;
+```
+
 ```rust path=suites/cases/login.rs
 use crate::support::Fixture;
 ```
@@ -75,6 +79,7 @@ use crate::support::Fixture;
 - tools/tool/cmd/run.rs:1 -> node:tool      # crate:: of the inline [[bin]] crate → tools/tool/state.rs, never src/state.rs (node:src)
 - tools/tool/cmd/run.rs:2 -> node:tool      # a crate-root item → the binary's root tools/tool/main.rs, never the library's Config
 - suites/suite.rs:1 -> node:support         # `mod support;` in the inline [[test]] root → suites/support/mod.rs
+- suites/suite.rs:2 -> node:cases           # the module declaration of the completed crate
 - suites/cases/login.rs:1 -> node:support   # crate:: of the [[test]] crate → suites/support/mod.rs, never src/support.rs (node:src)
 
 ## Why

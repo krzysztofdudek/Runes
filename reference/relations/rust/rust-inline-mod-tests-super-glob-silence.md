@@ -8,7 +8,7 @@ cites: "Rust Reference — Paths (`super` is the parent of the CURRENT module, a
 
 ## Rule
 
-Inside an inline module, `super` names the module that encloses the inline one, not the parent of the file. The canonical unit-test idiom `#[cfg(test)] mod tests { use super::*; }` in `src/orders/service.rs` therefore imports from module `orders::service`, which is the same file. Each enclosing inline module consumes one leading `super` before the file's own module is climbed from, so the import is a self-reference and emits no cross-node edge. The trap is `src/orders.rs`, the parent module's file, mapped to another node (`src`): climbing from the file instead of from the inline module lands there.
+Inside an inline module, `super` names the module that encloses the inline one, not the parent of the file. The canonical unit-test idiom `#[cfg(test)] mod tests { use super::*; }` in `src/orders/service.rs` therefore imports from module `orders::service`, which is the same file. Each enclosing inline module consumes one leading `super` before the file's own module is climbed from, so the import is a self-reference and emits no cross-node edge. The trap is `src/orders.rs`, the parent module's file, mapped to another node (`src`): climbing from the file instead of from the inline module lands there. The crate root `src/lib.rs` declares `orders`, whose file declares `service`.
 
 ## Files
 
@@ -19,6 +19,7 @@ name = "mycrate"
 
 ```rust path=src/orders.rs
 pub struct Other;
+pub mod service;
 ```
 
 ```rust path=src/orders/service.rs
@@ -31,9 +32,14 @@ mod tests {
 }
 ```
 
+```rust path=src/lib.rs
+pub mod orders;
+```
+
 ## Expect
 
 - silence      # `use super::*` inside `mod tests` is the service module itself → no edge from service.rs to the parent module's node:src
+- src/orders.rs:2 -> node:orders      # the module declaration of the completed crate
 
 ## Why
 
