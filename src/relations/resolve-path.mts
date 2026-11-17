@@ -7,7 +7,7 @@ import { explainPhpMiss, resolvePhpFqn, parseComposerAutoload, type ComposerAuto
 import { explainRustMiss, resolveRustPath, RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustConditionalGlobKey, rustGlobKey, rustModuleFileKey, rustModuleKey, rustInlinePathModuleKey, rustPathModuleKey, rustPathModuleNameKey, rustTopLevelItemKey, type RustResolveDeps, type RustCrateRoot, type RustCrateTree } from './extractors/rust-resolve.mjs';
 import { declarationCount, type SymbolTable } from './symbol-table.mjs';
 import { explainIncludeMiss, resolveIncludePath } from './extractors/include-resolve.mjs';
-import { explainRubyRequireRelativeMiss, resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
+import { explainRubyRequireMiss, explainRubyRequireRelativeMiss, resolveRubyRequire, resolveRubyRequireRelative } from './extractors/ruby-resolve.mjs';
 import { makeRepoLayout } from './repo-layout.mjs';
 import { diskFileView, joinRel, type FileSource, type FileView } from './file-view.mjs';
 import { makeDiagnosticSink, reportUnreadable, strictJsonFailure, type DiagnosticSink, type RelationDiagnostic } from './diagnostics.mjs';
@@ -210,22 +210,23 @@ export function makeResolvePathToFile(
       return resolveIncludePath(specifier, fromFile, exists, layout.includeRoots);
     }
     if (language === 'ruby') {
-      // Ruby's ONLY path-precise link: `require_relative '<lit>'` resolves relative to the
-      // requiring file's directory (`.rb` appended). Constant references carry no path —
-      // they route through the SymbolTable, so they never reach this branch.
-      return resolveRubyRequireRelative(specifier, fromFile, exists);
+      // `require_relative '<lit>'` resolves relative to the requiring file's directory (`.rb`
+      // appended); a plain `require '<lit>'` (the hint's `callForm` `require`) under the
+      // repository's load-path roots. Constant references carry no path — they route through
+      // the SymbolTable, so they never reach this branch.
+      return callForm === 'require' ? resolveRubyRequire(specifier, exists, layout.rubyLoadRoots(), isExcluded) : resolveRubyRequireRelative(specifier, fromFile, exists);
     }
     return undefined;
   };
   // Why a path bound no file, for the resolver's `classifyUse`: asked only after the function above answered undefined for the same arguments.
-  const explainMiss = (specifier: string, fromFile: string, language: string, _isPackage?: boolean, symbolTable?: SymbolTable): 'outside' | 'unfollowed' | { split: string[] } | undefined => {
+  const explainMiss = (specifier: string, fromFile: string, language: string, _isPackage?: boolean, symbolTable?: SymbolTable, callForm?: 'require' | 'import' | 'esm'): 'outside' | 'unfollowed' | { split: string[] } | undefined => {
     if (language === 'typescript' || language === 'tsx' || language === 'javascript') return explainTsMiss(specifier, fromFile, tsDeps);
     if (language === 'python') return python.explain(specifier, fromFile);
     if (language === 'go') return explainGoImport(specifier, fromFile, goDeps);
     if (language === 'php') return explainPhpMiss(specifier, fromFile, phpDeps);
     if (language === 'rust') return explainRustMiss(specifier, fromFile, exists, rustDepsFor(symbolTable));
     if (language === 'c' || language === 'cpp') return explainIncludeMiss(specifier, fromFile, exists, layout.includeRoots);
-    if (language === 'ruby') return explainRubyRequireRelativeMiss(specifier, fromFile);
+    if (language === 'ruby') return callForm === 'require' ? explainRubyRequireMiss(specifier, exists, layout.rubyLoadRoots(), isExcluded) : explainRubyRequireRelativeMiss(specifier, fromFile);
     return undefined;
   };
   return Object.assign(resolvePathToFile, { explainMiss });

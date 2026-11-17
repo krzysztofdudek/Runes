@@ -7,8 +7,10 @@ import { rubyUnderscore } from './ruby-resolve.mjs';
  * Ruby dependency extractor — the LAST language, and honestly the LOWEST-detectability
  * one. Ruby uses BOTH hint kinds:
  *
- *   - PATH hints (`require_relative '<literal>'`) — the ONLY file-precise static link in
- *     the language. Resolved by `ruby-resolve.ts` relative to the requiring file.
+ *   - PATH hints (`require_relative '<literal>'`, and `require '<literal>'` marked with
+ *     `callForm: 'require'`) — the file-precise static links of the language. Resolved by
+ *     `ruby-resolve.ts`: relative to the requiring file, or for `require` under the
+ *     repository's load-path roots (`lib/` and every gemspec's `require_paths`).
  *   - SYMBOL hints (constants) — `class C < Base`, `include/extend/prepend Mod`,
  *     `Foo::Bar`, a bare `constant` used as a value/receiver. Resolved through the shared
  *     SymbolTable like Kotlin/C#.
@@ -101,10 +103,12 @@ function literalStringArg(callNode: Node): string | undefined {
 
 const MIXIN_METHODS = new Set(['include', 'extend', 'prepend']);
 const REQUIRE_RELATIVE = new Set(['require_relative']);
+const REQUIRE = new Set(['require']);
 
 /**
  * The dependency hints this file emits. TWO kinds:
- *   - PATH: a `require_relative '<lit>'` → `{kind:'path', specifier:<lit>}`.
+ *   - PATH: a `require_relative '<lit>'` → `{kind:'path', specifier:<lit>}`; a plain
+ *     `require '<lit>'` → `{kind:'path', specifier:<lit>, callForm:'require'}`.
  *   - SYMBOL: a superclass constant, a mixin-argument constant, a `scope_resolution`, and
  *     a bare `constant` used as a value/receiver → an ordered candidate group of symbol hints.
  *
@@ -134,12 +138,12 @@ function uses(file: ParsedFile): DetectedDep[] {
   const out: DetectedDep[] = [];
   const seen = new Set<string>();
 
-  const emitPath = (specifier: string | undefined, line: number): void => {
+  const emitPath = (specifier: string | undefined, line: number, loadPath = false): void => {
     if (specifier === undefined || specifier === '') return;
-    const dedupKey = `path\0${specifier}\0${line}`;
+    const dedupKey = `${loadPath ? 'require' : 'path'}\0${specifier}\0${line}`;
     if (seen.has(dedupKey)) return;
     seen.add(dedupKey);
-    out.push(single({ kind: 'path', specifier }, 'import', line));
+    out.push(single(loadPath ? { kind: 'path', specifier, callForm: 'require' } : { kind: 'path', specifier }, 'import', line));
   };
 
   const emitConstant = (ref: Node | null, nesting: readonly string[], line: number): void => {
@@ -170,6 +174,11 @@ function uses(file: ParsedFile): DetectedDep[] {
     if (isBareCallTo(node, REQUIRE_RELATIVE)) {
       emitPath(literalStringArg(node), node.startPosition.row + 1);
       return; // a string arg, no constant children to descend for symbols
+    }
+    // require '<lit>' → a PATH hint marked `callForm: 'require'`, resolved on the load path.
+    if (isBareCallTo(node, REQUIRE)) {
+      emitPath(literalStringArg(node), node.startPosition.row + 1, true);
+      return;
     }
 
     // (b) class C < Base / module M → superclass in the OUTER nesting, then the body under
@@ -329,7 +338,7 @@ function declarations(file: ParsedFile): DeclaredSymbol[] {
 
 export const rubyExtractor: DependencyExtractor = {
   languages: new Set(['ruby']),
-  rev: 2,
+  rev: 3,
   declarations,
   uses,
 };

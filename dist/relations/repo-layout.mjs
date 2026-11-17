@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { parseCompileCommands } from './extractors/include-resolve.mjs';
 import { parseComposerAutoload } from './extractors/php-resolve.mjs';
+import { gemspecRequirePaths } from './extractors/ruby-resolve.mjs';
 import { joinRel } from './file-view.mjs';
 import { reportUnreadable, strictJsonFailure } from './diagnostics.mjs';
 /**
- * Repository-wide build-layout facts the C/C++ and PHP path resolvers need beyond the
+ * Repository-wide build-layout facts the C/C++, PHP and Ruby path resolvers need beyond the
  * importing file's own ancestors: every directory named `include` (the C/C++ probe roots),
- * every `composer.json` (the PHP autoload union), and the C/C++ compilation database.
+ * every `composer.json` (the PHP autoload union), every gemspec (the Ruby load path), and the C/C++ compilation database.
  *
  * Everything is discovered LAZILY, at most once per factory instance (one resolver run),
  * and only when a resolver actually needs it: a repository without C/C++ or PHP never walks.
@@ -25,7 +26,7 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
     const scan = () => {
         if (layout !== undefined)
             return layout;
-        const found = { includeDirs: [], composerFiles: [] };
+        const found = { includeDirs: [], composerFiles: [], gemspecFiles: [] };
         const queue = [{ dir: '', depth: 0 }];
         let visited = 0;
         while (queue.length > 0 && visited < MAX_DIRS) {
@@ -50,6 +51,11 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
                     if (isExcluded?.(rel) === true)
                         continue;
                     found.composerFiles.push(rel);
+                }
+                else if (e.kind === 'file' && e.name.endsWith('.gemspec')) {
+                    if (isExcluded?.(rel) === true)
+                        continue;
+                    found.gemspecFiles.push(rel);
                 }
             }
         }
@@ -102,5 +108,25 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
         }
         return maps;
     };
-    return { includeRoots, composerMaps };
+    let loadRoots;
+    const rubyLoadRoots = () => {
+        if (loadRoots !== undefined)
+            return loadRoots;
+        const roots = new Set(['lib']);
+        for (const file of scan().gemspecFiles) {
+            const text = files.read(file);
+            if (text === undefined)
+                continue;
+            const dir = path.posix.dirname(file);
+            for (const p of gemspecRequirePaths(text)) {
+                const root = path.posix.normalize(dir === '.' ? p : `${dir}/${p}`).replace(/\/+$/, '');
+                if (root === '..' || root.startsWith('../') || root.startsWith('/'))
+                    continue;
+                roots.add(root === '.' ? '' : root);
+            }
+        }
+        loadRoots = [...roots];
+        return loadRoots;
+    };
+    return { includeRoots, composerMaps, rubyLoadRoots };
 }

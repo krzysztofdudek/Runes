@@ -803,6 +803,13 @@ describe('resolver.classifyUse — C, C++ and Ruby say whether a use leaves the 
     expect(req('b')).toEqual({ kind: 'resolved', owner: 'lib', resolvedFile: 'lib/b.rb' });
     expect(req('../../outside.rb')).toEqual({ kind: 'absent', reason: 'outside' });
   });
+  it('Ruby: a plain require binds the file on the repository\'s load path, and leaves the repository where no root holds it', () => {
+    const r = resolverFor(new Map([['app/a.rb', ''], ['lib/shop/cart.rb', ''], ['lib/x/y.rb', ''], ['gems/c/c.gemspec', ''], ['gems/c/lib/x/y.rb', '']]));
+    const req = (specifier) => r.classifyUse([{ kind: 'path', specifier, callForm: 'require' }], 'app/a.rb', 'ruby');
+    expect(req('shop/cart')).toEqual({ kind: 'resolved', owner: 'lib/shop', resolvedFile: 'lib/shop/cart.rb' });
+    expect(req('json')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(req('x/y')).toEqual({ kind: 'ambiguous', candidates: ['gems/c/lib/x/y.rb', 'lib/x/y.rb'] });
+  });
   it('Ruby: a constant leaves the repository when nothing of the repository is at its root, and is the repository\'s when its root or an inheritable nested constant is', () => {
     const r = resolverFor(new Map([['lib/shop.rb', '']]), [['Shop', 'lib/shop.rb'], ['Shop::Cart', 'lib/shop.rb'], ['Shop::Cart::Line', 'lib/shop.rb'], ['Rackup::Handler', 'lib/shop.rb']]);
     const use = (...candidates) => r.classifyUse(candidates, 'lib/a.rb', 'ruby');
