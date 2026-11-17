@@ -198,7 +198,7 @@ export interface CsharpUsesOptions {
 export type CsharpRefDescriptor = 
 /** A plain `pushRef(ref, node, line, rooted)` reference: a dotted partial name or bare
  *  identifier. `rooted` (a `global::`-stripped or `using static` target form) resolves
- *  verbatim-only; otherwise alias/enclosing-ns/using-prefix expansion applies on assembly. */
+ *  verbatim-only; otherwise alias/enclosing-ns/using-prefix expansion applies on assembly. `members`, on a simple name a pattern binds as an expression first (`case Order:`, `Order =>`, `(Order, _)`), names the types around it that can hold a member this file does not show, as a `receiver` descriptor's does: where the name is such a member there, it is that member and names no type. */
 {
     kind: 'plain';
     ref: string;
@@ -207,6 +207,7 @@ export type CsharpRefDescriptor =
     enclosingNs: string[];
     at: number;
     types?: string[];
+    members?: number;
 }
 /** An `S::Tail` alias-qualified reference (`alias_qualified_name`, non-`global` alias). Emitted
  *  only on assembly IF the merged alias map binds `aliasName` → its rewritten `${fqn}.${tail}`
@@ -297,7 +298,7 @@ export interface CsharpExtract {
     refs: CsharpRefDescriptor[];
     /** The keys of the types this file declares but keeps to itself (a C#11 `file` type and the types nested in one), written like a declaration key (`App.Helper`, `App.Outer+Inner`). They are not published, yet inside the file a name binds them: the candidate group of a reference ends where such a type would be found, so a public type of the same name farther out is never reached. */
     fileLocalTypes: string[];
-    /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` descriptor's `members`): a list many calls of one type body share is written once. Absent only when no descriptor names one: whoever stores `refs` stores this with them, and a descriptor that names a place this does not hold gives no candidate group. */
+    /** The lists of type keys the descriptors name by their place here (an `ext` descriptor's `from` and `member.types`, a `receiver` or a `plain` descriptor's `members`): a list many calls of one type body share is written once. Absent only when no descriptor names one: whoever stores `refs` stores this with them, and a descriptor that names a place this does not hold gives no candidate group. */
     lists?: string[][];
     /** The written types of the receivers of the file's extension-shaped calls, each as the reference that type is, which an `ext` descriptor's `on` names by their place here: every call on one parameter, field or local shares one. Absent only when no call has one, and stored with `refs` like `lists`. */
     receiverTypes?: CsharpRefDescriptor[];
