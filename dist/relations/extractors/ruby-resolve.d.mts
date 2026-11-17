@@ -46,6 +46,8 @@ export declare function explainRubyRequireMiss(specifier: string, fromFile: stri
 export declare function gemspecRequirePaths(text: string): string[];
 /** Why a `require_relative` bound no file, asked only after {@link resolveRubyRequireRelative} answered undefined for the same arguments: `outside` when its path climbs past the repository root, else `unfollowed` (it names a file of the repository that is not there). */
 export declare function explainRubyRequireRelativeMiss(specifier: string, fromFile: string): 'outside' | 'unfollowed';
+/** True when a Ruby constant key is rooted at the namespace of a ubiquitous framework or tool (`Rack`, `ActiveSupport`, `RSpec`), which the repository declares as its own only when it is that framework's repository. */
+export declare function isRubyFrameworkConstant(symbolKey: string): boolean;
 /** True when a Ruby constant key is rooted at one of Ruby's core classes or modules, which no repository declares (a reopening is not a definition). */
 export declare function isRubyCoreConstant(symbolKey: string): boolean;
 /** True when a Ruby constant key (`A::B::C`, leading `::` already stripped) is rooted at a

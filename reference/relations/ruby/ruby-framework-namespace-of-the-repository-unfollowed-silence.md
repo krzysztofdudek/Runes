@@ -8,11 +8,11 @@ cites: "Ruby constant lookup (lexical scope, then ancestors, then Object) https:
 
 ## Rule
 
-The edge walk takes a framework namespace (`Rack`, `Rails`, `RSpec`) for external whatever the repository declares, so inside that framework's own repository a reference to one of its constants binds nothing. The repository declares the namespace, so `classifyUse` answers such a use as the repository's that the readers could not follow: absent, `unfollowed`, written whole (`Rack::Utils`) or bare inside `module Rack` (`Utils`), as it answers any constant under a namespace the repository declares. A core class (`String`) stays Ruby's, though the repository reopens it: absent, `outside`.
+The edge walk takes a framework namespace (`Rack`, `Rails`, `RSpec`) for external whatever the repository declares, so inside that framework's own repository a reference to one of its constants binds nothing. There the file the namespace's own require name loads, `require 'rack'` reading `lib/rack.rb`, declares the namespace, so `classifyUse` answers such a use as the repository's that the readers could not follow: absent, `unfollowed`, written whole (`Rack::Utils`) or bare inside `module Rack` (`Utils`), as it answers any constant under a namespace the repository declares. A core class (`String`) stays Ruby's, though the repository reopens it: absent, `outside`.
 
 ## Files
 
-```ruby path=lib/rack/rack.rb
+```ruby path=lib/rack.rb
 module Rack
 end
 ```

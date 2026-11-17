@@ -84,6 +84,7 @@ describe('MATRIX — dynamic / external / coverage silences (const_get/autoload,
   it('ruby-intra-node-silence', () => runCase('ruby-intra-node-silence'));
   it('ruby-unbound-use-outside-or-unfollowed-silence', () => runCase('ruby-unbound-use-outside-or-unfollowed-silence'));
   it('ruby-framework-namespace-of-the-repository-unfollowed-silence', () => runCase('ruby-framework-namespace-of-the-repository-unfollowed-silence'));
+  it('ruby-framework-namespace-reopened-by-an-application-outside-silence', () => runCase('ruby-framework-namespace-reopened-by-an-application-outside-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

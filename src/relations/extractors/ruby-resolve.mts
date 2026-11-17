@@ -175,6 +175,12 @@ const RUBY_FRAMEWORK_ROOTS: ReadonlySet<string> = new Set([
 
 const RUBY_EXTERNAL_ROOTS: ReadonlySet<string> = new Set([...RUBY_CORE_ROOTS, ...RUBY_FRAMEWORK_ROOTS]);
 
+/** True when a Ruby constant key is rooted at the namespace of a ubiquitous framework or tool (`Rack`, `ActiveSupport`, `RSpec`), which the repository declares as its own only when it is that framework's repository. */
+export function isRubyFrameworkConstant(symbolKey: string): boolean {
+  const idx = symbolKey.indexOf('::');
+  return RUBY_FRAMEWORK_ROOTS.has(idx === -1 ? symbolKey : symbolKey.slice(0, idx));
+}
+
 /** True when a Ruby constant key is rooted at one of Ruby's core classes or modules, which no repository declares (a reopening is not a definition). */
 export function isRubyCoreConstant(symbolKey: string): boolean {
   const idx = symbolKey.indexOf('::');

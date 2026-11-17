@@ -835,6 +835,13 @@ describe('resolver.classifyUse — C, C++ and Ruby say whether a use leaves the 
     expect(inRack(sym('Rack'))).toEqual({ kind: 'absent', reason: 'unfollowed' });
     expect(inRack(sym('Rack::ContentLength::Utils'), sym('Rack::Utils'), sym('Utils', { rubyInheritGuard: 'Utils' }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
     expect(inRack(sym('String'))).toEqual({ kind: 'absent', reason: 'outside' });
+    // An application that only reopens a framework's namespace (Rails' generated test_helper.rb) is not that framework: no file its require name loads declares it.
+    const app = resolverFor(new Map([['test/test_helper.rb', ''], ['app/models/user.rb', '']]), [['ActiveSupport', 'test/test_helper.rb'], ['ActiveSupport::TestCase', 'test/test_helper.rb']]);
+    expect(app.classifyUse([sym('ActiveSupport::Concern')], 'app/models/user.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(app.classifyUse([sym('ActiveSupport::TestCase')], 'test/models/user_test.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'outside' });
+    // RSpec's require name is its lowercase, not its underscore.
+    const rspec = resolverFor(new Map([['lib/rspec.rb', '']]), [['RSpec', 'lib/rspec.rb']]);
+    expect(rspec.classifyUse([sym('RSpec::Core')], 'lib/rspec/core.rb', 'ruby')).toEqual({ kind: 'absent', reason: 'unfollowed' });
   });
 });
 
