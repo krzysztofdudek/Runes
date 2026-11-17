@@ -160,6 +160,7 @@ describe('MATRIX — same-package references without an import', () => {
   it('java-same-package-type-parameter-silence', () => runCase('java-same-package-type-parameter-silence'));
   it('java-same-package-nested-type-shadow-silence', () => runCase('java-same-package-nested-type-shadow-silence'));
   it('java-same-package-inherited-member-type-edge', () => runCase('java-same-package-inherited-member-type-edge'));
+  it('java-inherited-library-member-type-outside-silence', () => runCase('java-inherited-library-member-type-outside-silence'));
   it('java-same-package-external-supertype-member-trap', () => runCase('java-same-package-external-supertype-member-trap'));
   it('java-same-package-local-variable-obscures-silence', () => runCase('java-same-package-local-variable-obscures-silence'));
   it('java-same-package-split-owners-silence', () => runCase('java-same-package-split-owners-silence'));

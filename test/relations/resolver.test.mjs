@@ -688,6 +688,28 @@ describe('resolver.classifyUse — a use that binds no file says whether it leav
     expect(r.classifyUse([sym('com.acme.app.Base+Missing', { samePackage: true }), sym('com.acme.app.Missing', { samePackage: true })], 'src/use/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
     expect(r.classifyUse([sym('com.acme.app.Order+Missing', { samePackage: true }), sym('com.acme.app.Missing', { samePackage: true }), sym('java.lang.Missing')], 'src/use/Use.java', 'java')).toEqual({ kind: 'absent', reason: 'outside' });
   });
+  it('Java and Kotlin: a member type inherited from a supertype outside the repository leaves it, unless the package may declare the name', () => {
+    const r = resolverOf([['java', 'com.acme.app.Order', 'src/main/java/com/acme/app/Order.java']]);
+    const use = (file, ...hints) => r.classifyUse(hints, file, file.endsWith('.kt') ? 'kotlin' : 'java');
+    const main = 'src/main/java/com/acme/app/Tree.java';
+    expect(use(main, sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use(main, sym('java.util.Map+Entry'), sym('java.io.Serializable+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
+    expect(use('src/main/kotlin/com/acme/app/Tree.kt', sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'outside' });
+    // A supertype in a package of the repository may be a type of the repository no file declares (generated): its member types stay the repository's.
+    expect(use(main, sym('com.acme.app.Base+Entry', { samePackage: true }), sym('com.acme.app.Entry', { samePackage: true }))).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // A farther reading that commits to the repository decides, as before: a starred package of the repository declares the name.
+    const starred = resolverOf([['java', 'com.acme.app.Order', 'src/main/java/com/acme/app/Order.java'], ['java', 'com.acme.gen.Entry', 'src/main/java/com/acme/gen/Entry.java']]);
+    expect(starred.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true, onDemand: ['com.acme.gen'] })], main, 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    // Where the package declares the name, the answer is the one of the package's reading.
+    const own = resolverOf([['java', 'com.acme.app.Entry', 'src/main/java/com/acme/app/Entry.java']]);
+    expect(own.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], main, 'java')).toEqual({ kind: 'resolved', owner: 'app', resolvedFile: 'src/main/java/com/acme/app/Entry.java' });
+    const unowned = resolverOf([['java', 'com.acme.app.Entry', 'vendor/com/acme/app/Entry.java']]);
+    expect(unowned.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], main, 'java')).toEqual({ kind: 'absent', reason: 'unowned', resolvedFile: 'vendor/com/acme/app/Entry.java' });
+    const testOnly = resolverOf([['java', 'com.acme.app.Entry', 'src/test/java/com/acme/app/Entry.java']]);
+    expect(testOnly.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], main, 'java')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+    const unread = resolverOf([['kotlin', 'com.acme.app.Order', 'src/main/kotlin/com/acme/app/Order.kt'], ['kotlin', 'com.acme.app.*', 'src/main/kotlin/com/acme/app/Broken.kt']]);
+    expect(unread.classifyUse([sym('java.util.AbstractMap+Entry'), sym('com.acme.app.Entry', { samePackage: true })], 'src/main/kotlin/com/acme/app/Tree.kt', 'kotlin')).toEqual({ kind: 'absent', reason: 'unfollowed' });
+  });
   it('C#: a name only a namespace from elsewhere can give leaves it; a name read in the repository\'s namespaces, or through an alias of one, does not', () => {
     const r = resolverOf([['csharp', 'Shop.Core.Order', 'src/core/Order.cs'], ['csharp', 'Shop.App.Use', 'src/app/Use.cs'], ['csharp', 'Microsoft.AspNetCore.Hosting.Boot', 'src/host/Boot.cs'], ['csharp', 'Shop.App.Ext', 'src/app/Ext.cs']]);
     const cs = (...hints) => r.classifyUse(hints, 'src/app/Use.cs', 'csharp');

@@ -845,10 +845,29 @@ export function makeResolver(deps) {
         // Else an on-demand import of a package the repository declares nothing in (a library's, `java.util`) can give the name.
         return onDemand.some((pkg) => !inRepository(language, pkg)) ? 'outside' : 'pass';
     };
+    /** A Java or Kotlin reading of a member type inherited from a supertype outside the repository (`java.util.AbstractMap+Entry`): its supertype is no type of the repository and lies in a package the repository declares nothing in, so it reads on (the library's members are unknown) and, where no farther reading commits to the repository, leaves it. */
+    const inheritedFromOutside = (hint, language) => {
+        if (hint.kind !== 'symbol' || !JVM_LANGUAGES.has(language) || hint.set !== undefined || hint.within !== undefined || hint.nestedOnly === true)
+            return false;
+        const plus = hint.symbolKey.indexOf('+');
+        if (plus === -1)
+            return false;
+        const supertype = hint.symbolKey.slice(0, plus);
+        return !inRepository(language, supertype) && !inRepository(language, supertype.slice(0, Math.max(supertype.lastIndexOf('.'), 0)));
+    };
+    /** Whether the file's own package may declare the type a same-package reading names, by the first name of its key: a file of the repository declares it, in any source set, or a file of the package whose declarations could not be read may. */
+    const packageMayDeclare = (candidates, language) => candidates.some((c) => {
+        if (c.kind !== 'symbol' || c.samePackage !== true)
+            return false;
+        const plus = c.symbolKey.indexOf('+');
+        const type = plus === -1 ? c.symbolKey : c.symbolKey.slice(0, plus);
+        return deps.symbolTable.has(language, type) || deps.symbolTable.has(language, `${type.slice(0, type.lastIndexOf('.') + 1)}*`);
+    });
     const classifyUse = (candidates, fromFile, language) => {
         const written = language === 'ruby' ? rubyWritten(candidates) : writtenName(candidates);
         let told;
         let readOn = false;
+        let inherited = false;
         for (const cand of candidates) {
             const outcome = examine(cand, fromFile, language, true);
             if (PASSED in outcome) {
@@ -864,12 +883,18 @@ export function makeResolver(deps) {
                 continue;
             }
             const reason = readingReason(cand, fromFile, language, written);
-            if (reason === 'pass')
+            if (reason === 'pass') {
                 readOn = true;
+                inherited ||= inheritedFromOutside(cand, language);
+            }
             else if (reason !== undefined)
                 told = { kind: 'absent', reason };
         }
-        return told ?? (readOn ? { kind: 'absent', reason: 'unfollowed' } : { kind: 'absent' });
+        if (told !== undefined)
+            return told;
+        if (inherited && !packageMayDeclare(candidates, language))
+            return { kind: 'absent', reason: 'outside' };
+        return readOn ? { kind: 'absent', reason: 'unfollowed' } : { kind: 'absent' };
     };
     const resolveFile = (hint, fromFile, language) => {
         const jvmFirst = hint.kind === 'symbol' ? jvmOutcome(hint, language, false, fromFile) : undefined;
