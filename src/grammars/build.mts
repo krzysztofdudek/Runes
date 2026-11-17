@@ -1,5 +1,5 @@
 /**
- * The grammar build recipe: turns manifest pins into the two files a parser loads, `<wasmFile>` and `<name>.node-types.json`, and writes a file only after its bytes were hashed and matched against the pin, whatever its source (see `GrammarSource`). Built and downloaded files land in a content-addressed cache named by their sha256 and are re-hashed on every read: a warm cache needs no network and no toolchain, and a damaged entry is evicted, never written out. Source builds are byte-reproducible on Linux and macOS (the same bytes from Linux x64 and macOS arm64), so the pinned sha256 is also the reproducibility check. Windows is the exception, and a source build there is refused before any download: the refusal was written for tree-sitter-cli 0.27.0, whose wasi-sdk (wasi-sdk-34) names its clang `23.1.0-rc3` in the WASM `producers` section on Windows, where the Linux and macOS builds of the same LLVM commit say `23.1.0-wasi-sdk`. For that version the code was byte-identical, and only that metadata string differed, which changes the sha256. The Windows build with tree-sitter-cli 0.27.2 is not verified; on Linux, 0.27.2 builds with wasi-sdk 34.0 and reproduces every pin. On Windows the grammars come from the cache, filled from a Linux, macOS or WSL build.
+ * The grammar build recipe: turns manifest pins into the two files a parser loads, `<wasmFile>` and `<name>.node-types.json`, and writes a file only after its bytes were hashed and matched against the pin, whatever its source (see `GrammarSource`). The published package carries every pin's two files in `grammars/built/`, built and verified by the release before the pack, so a consumer installed from npm reads them there first and needs no network, no toolchain and no grammar package; a checkout of the repository has no such files (they never enter git) and goes on to the sources below. Built and downloaded files land in a content-addressed cache named by their sha256 and are re-hashed on every read: a warm cache needs no network and no toolchain, and a damaged entry is evicted, never written out. Source builds are byte-reproducible on Linux and macOS (the same bytes from Linux x64 and macOS arm64), so the pinned sha256 is also the reproducibility check. Windows is the exception, and a source build there is refused before any download: the refusal was written for tree-sitter-cli 0.27.0, whose wasi-sdk (wasi-sdk-34) names its clang `23.1.0-rc3` in the WASM `producers` section on Windows, where the Linux and macOS builds of the same LLVM commit say `23.1.0-wasi-sdk`. For that version the code was byte-identical, and only that metadata string differed, which changes the sha256. The Windows build with tree-sitter-cli 0.27.2 is not verified; on Linux, 0.27.2 builds with wasi-sdk 34.0 and reproduces every pin. On Windows the grammars come from the cache, filled from a Linux, macOS or WSL build.
  *
  * This runs at build time, never at run time: it downloads, checks out repositories and runs the tree-sitter CLI. A consumer calls it from its own build or test script; `@chrisdudek/runes` itself ships no executable.
  */
@@ -15,6 +15,11 @@ import { parseGrammarManifest, syntaxNodeTypesFile, type GrammarManifest, type G
 /** The shipped grammars/ directory: the manifest, its schema and the patches. */
 export function shippedGrammarsDir(): string {
   return fileURLToPath(new URL('../../grammars/', import.meta.url));
+}
+
+/** Where the published package carries the built grammar files: `<wasmFile>` and its node-types.json for every pin. */
+export function shippedGrammarFilesDir(): string {
+  return path.join(shippedGrammarsDir(), 'built');
 }
 
 /** The shipped grammar manifest, parsed and validated. */
@@ -33,11 +38,13 @@ export interface BuildGrammarsOptions {
   patchesRoot?: string;
   /** Directory whose node_modules hold the npm grammar packages and tree-sitter-cli (resolved as from a file in it). Default: the current directory. */
   resolveFrom?: string;
+  /** The built grammar files read before any other source, each checked against its pin. Default: the `grammars/built/` the published package carries. */
+  shippedDir?: string;
   /** The content-addressed cache. Default: `RUNES_GRAMMAR_CACHE`, else `~/.cache/runes/grammars`. */
   cacheDir?: string;
-  /** Ignore the cache and re-derive every non-npm grammar (a reproducibility audit). */
+  /** Ignore the shipped files and the cache and re-derive every non-npm grammar (a reproducibility audit). */
   rebuild?: boolean;
-  /** Forbid downloads and source builds: a grammar missing from the cache is an error. */
+  /** Forbid downloads and source builds: a download or source pin missing from the shipped files and the cache is an error. */
   offline?: boolean;
   /** Progress lines; silent when absent. */
   log?: (line: string) => void;
@@ -48,8 +55,8 @@ export interface BuildGrammarsOptions {
 export interface BuiltGrammar {
   language: string;
   wasmFile: string;
-  /** How the bytes were obtained: already in `outDir`, from the cache, from an npm package, downloaded, or built from source. */
-  from: 'out' | 'cache' | 'npm' | 'download' | 'source';
+  /** How the bytes were obtained: already in `outDir`, from the files the package ships, from the cache, from an npm package, downloaded, or built from source. */
+  from: 'out' | 'shipped' | 'cache' | 'npm' | 'download' | 'source';
 }
 
 const REPIN_HINT = 'If the pin in the grammar manifest was changed on purpose, set the sha256 to the value above after reviewing the grammar change (the node-types.json diff and the full relation test suite); otherwise what was read, downloaded or built is not the pinned grammar.';
@@ -69,6 +76,16 @@ function readVerified(file: string, expected: string): Buffer | undefined {
   if (!existsSync(file)) return undefined;
   const bytes = readFileSync(file);
   return sha256(bytes) === expected ? bytes : undefined;
+}
+
+function readShipped(file: string, expected: string, log: (l: string) => void, damaged: string[]): Buffer | undefined {
+  if (!existsSync(file)) return undefined;
+  const bytes = readFileSync(file);
+  const actual = sha256(bytes);
+  if (actual === expected) return bytes;
+  damaged.push(file);
+  log(`passed over a shipped grammar file that does not match its pin: ${file} (expected sha256 ${expected}, got ${actual})`);
+  return undefined;
 }
 
 function readCache(cacheDir: string, expected: string, log: (l: string) => void): Buffer | undefined {
@@ -145,12 +162,13 @@ function buildFromSource(pin: GrammarPin, source: Extract<GrammarPin['source'], 
 const rawNodeTypesUrl = (pin: GrammarPin): string => `https://raw.githubusercontent.com/${pin.repo!.replace(/^https:\/\/github\.com\//, '')}/${pin.commit!}/src/node-types.json`;
 
 /**
- * Builds (or fetches, or copies) the pinned grammars into `outDir`, verified by sha256. Every requested grammar is materialized before anything is written, so a failing pin leaves no partial set behind. A grammar whose two files already sit in `outDir` with the pinned bytes is left as it is.
+ * Builds (or fetches, or copies) the pinned grammars into `outDir`, verified by sha256. The sources are tried in order: the files already in `outDir`, the files the package ships, then by the pin's kind the installed npm package, or the cache and then a download or a source build. Every requested grammar is materialized before anything is written, so a failing pin leaves no partial set behind. A grammar whose two files already sit in `outDir` with the pinned bytes is left as it is.
  */
 export async function buildGrammars(options: BuildGrammarsOptions): Promise<BuiltGrammar[]> {
   const manifest = options.manifest ?? loadGrammarManifest();
   const log = options.log ?? ((): void => {});
   const cacheDir = options.cacheDir ?? process.env.RUNES_GRAMMAR_CACHE ?? path.join(os.homedir(), '.cache', 'runes', 'grammars');
+  const shippedDir = options.shippedDir ?? shippedGrammarFilesDir();
   const patchesRoot = options.patchesRoot ?? shippedGrammarsDir();
   const resolveFrom = path.resolve(options.resolveFrom ?? process.cwd());
   const only = options.only === undefined ? undefined : new Set(options.only);
@@ -171,12 +189,20 @@ export async function buildGrammars(options: BuildGrammarsOptions): Promise<Buil
       outputs.push({ pin, wasm: inOut.wasm, nodeTypes: inOut.nodeTypes, from: 'out' });
       continue;
     }
+    const damaged: string[] = [];
+    if (!options.rebuild) {
+      const shipped = { wasm: readShipped(path.join(shippedDir, pin.wasmFile), pin.sha256.wasm, log, damaged), nodeTypes: readShipped(path.join(shippedDir, syntaxNodeTypesFile(pin.wasmFile)), pin.sha256.nodeTypes, log, damaged) };
+      if (shipped.wasm && shipped.nodeTypes) { outputs.push({ pin, wasm: shipped.wasm, nodeTypes: shipped.nodeTypes, from: 'shipped' }); continue; }
+    }
+    const fail: (message: string) => never = (message) => {
+      throw new Error(damaged.length === 0 ? message : `${message} The package ships this grammar, but ${damaged.join(' and ')} does not match its pin and was passed over: reinstall the package.`);
+    };
     const src = pin.source;
     if (src.kind === 'npm') {
       const found = findInstalledPackage(resolveFrom, src.package);
-      if (found === undefined) throw new Error(`grammar ${pin.language}: the npm package ${src.package}@${src.version} is not installed where it is resolved from (${resolveFrom}).`);
+      if (found === undefined) fail(`grammar ${pin.language}: the npm package ${src.package}@${src.version} is not installed where it is resolved from (${resolveFrom}).`);
       const installed = found.version;
-      if (installed !== src.version) throw new Error(`grammar ${pin.language}: ${src.package}@${installed} is installed, but its pin is ${src.version}. A 0.x grammar minor can rename or restructure node types, so a bump is reviewed, not taken silently.`);
+      if (installed !== src.version) fail(`grammar ${pin.language}: ${src.package}@${installed} is installed, but its pin is ${src.version}. A 0.x grammar minor can rename or restructure node types, so a bump is reviewed, not taken silently.`);
       const dir = found.dir;
       outputs.push({
         pin,
@@ -191,7 +217,7 @@ export async function buildGrammars(options: BuildGrammarsOptions): Promise<Buil
       const nodeTypes = readCache(cacheDir, pin.sha256.nodeTypes, log);
       if (wasm && nodeTypes) { outputs.push({ pin, wasm, nodeTypes, from: 'cache' }); continue; }
     }
-    if (options.offline) throw new Error(`grammar ${pin.language} is not in the cache (${cacheDir}) and offline mode forbids fetching or building it.`);
+    if (options.offline) fail(`grammar ${pin.language} is not in the cache (${cacheDir}) and offline mode forbids fetching or building it.`);
     let files: { wasm: Buffer; nodeTypes: Buffer };
     let from: BuiltGrammar['from'];
     if (src.kind === 'github-release') {
@@ -199,7 +225,7 @@ export async function buildGrammars(options: BuildGrammarsOptions): Promise<Buil
       files = { wasm: await download(src.url), nodeTypes: await download(rawNodeTypesUrl(pin)) };
       from = 'download';
     } else {
-      if ((options.platform ?? process.platform) === 'win32') throw new Error(WIN32_SOURCE_BUILD(pin.language, manifest.cli.version, cacheDir));
+      if ((options.platform ?? process.platform) === 'win32') fail(WIN32_SOURCE_BUILD(pin.language, manifest.cli.version, cacheDir));
       cli ??= treeSitterCli(resolveFrom, manifest.cli.version);
       log(`building ${pin.language} from ${pin.repo} at ${pin.commit} with tree-sitter-cli ${manifest.cli.version}`);
       files = buildFromSource(pin, src, cli, patchesRoot);

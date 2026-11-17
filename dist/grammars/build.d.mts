@@ -1,6 +1,8 @@
 import { type GrammarManifest } from './manifest.mjs';
 /** The shipped grammars/ directory: the manifest, its schema and the patches. */
 export declare function shippedGrammarsDir(): string;
+/** Where the published package carries the built grammar files: `<wasmFile>` and its node-types.json for every pin. */
+export declare function shippedGrammarFilesDir(): string;
 /** The shipped grammar manifest, parsed and validated. */
 export declare function loadGrammarManifest(): GrammarManifest;
 export interface BuildGrammarsOptions {
@@ -14,11 +16,13 @@ export interface BuildGrammarsOptions {
     patchesRoot?: string;
     /** Directory whose node_modules hold the npm grammar packages and tree-sitter-cli (resolved as from a file in it). Default: the current directory. */
     resolveFrom?: string;
+    /** The built grammar files read before any other source, each checked against its pin. Default: the `grammars/built/` the published package carries. */
+    shippedDir?: string;
     /** The content-addressed cache. Default: `RUNES_GRAMMAR_CACHE`, else `~/.cache/runes/grammars`. */
     cacheDir?: string;
-    /** Ignore the cache and re-derive every non-npm grammar (a reproducibility audit). */
+    /** Ignore the shipped files and the cache and re-derive every non-npm grammar (a reproducibility audit). */
     rebuild?: boolean;
-    /** Forbid downloads and source builds: a grammar missing from the cache is an error. */
+    /** Forbid downloads and source builds: a download or source pin missing from the shipped files and the cache is an error. */
     offline?: boolean;
     /** Progress lines; silent when absent. */
     log?: (line: string) => void;
@@ -28,11 +32,11 @@ export interface BuildGrammarsOptions {
 export interface BuiltGrammar {
     language: string;
     wasmFile: string;
-    /** How the bytes were obtained: already in `outDir`, from the cache, from an npm package, downloaded, or built from source. */
-    from: 'out' | 'cache' | 'npm' | 'download' | 'source';
+    /** How the bytes were obtained: already in `outDir`, from the files the package ships, from the cache, from an npm package, downloaded, or built from source. */
+    from: 'out' | 'shipped' | 'cache' | 'npm' | 'download' | 'source';
 }
 /**
- * Builds (or fetches, or copies) the pinned grammars into `outDir`, verified by sha256. Every requested grammar is materialized before anything is written, so a failing pin leaves no partial set behind. A grammar whose two files already sit in `outDir` with the pinned bytes is left as it is.
+ * Builds (or fetches, or copies) the pinned grammars into `outDir`, verified by sha256. The sources are tried in order: the files already in `outDir`, the files the package ships, then by the pin's kind the installed npm package, or the cache and then a download or a source build. Every requested grammar is materialized before anything is written, so a failing pin leaves no partial set behind. A grammar whose two files already sit in `outDir` with the pinned bytes is left as it is.
  */
 export declare function buildGrammars(options: BuildGrammarsOptions): Promise<BuiltGrammar[]>;
 export interface GrammarFileProblem {
