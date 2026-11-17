@@ -46,28 +46,30 @@ export function resolveRubyRequireRelative(
 export interface RubyLoadPath {
   /** The load-path roots a plain `require` in `fromFile` is looked up under (repo-rel dirs, '' the repository root). */
   rootsFor(fromFile: string): readonly string[];
-  /** The places where a file the repository holds may be on a load path the readers cannot know: '' and every directory named `lib`, `spec` or `test`. */
+  /** The places where a file the repository holds may be on a load path the readers cannot know: '' and every directory named `lib`, `spec` or `test` that lies in no `fixture` or `fixtures` directory. */
   probeDirs(): readonly string[];
   /** Optional: true when the caller excludes this repo-relative POSIX path. */
   isExcluded?(repoRelPosix: string): boolean;
 }
 
 /**
- * Resolve a plain Ruby `require '<lit>'` to a repo-relative POSIX file, or undefined. `require` searches `$LOAD_PATH`, so the literal (`.rb` appended when it names no extension) is looked up under each root `load.rootsFor(fromFile)` gives: `lib/`, the `require_paths` of the repository's gemspecs, and a `spec/` or `test/` directory the requiring file lies in, which RSpec and Rails' test runs put on the load path. A literal that starts with `./` or `../` is a path, which Ruby reads from the working directory; it is read from the requiring file's directory, where a script or a rackup file run from its own directory finds it. Exactly one existing file the caller keeps binds; none, or two or more (two gems of the repository that both hold `lib/x/y.rb`, whose order on the load path the repository does not tell), bind nothing. A literal that is absolute, empty or climbs out of its root or the repository binds nothing either.
+ * Resolve a plain Ruby `require '<lit>'` to a repo-relative POSIX file, or undefined. `require` searches `$LOAD_PATH`, so the literal (`.rb` appended when it names no extension) is looked up under each root `load.rootsFor(fromFile)` gives: `lib/`, the `require_paths` of the repository's gemspecs, and a `spec/` or `test/` directory the requiring file lies in outside `lib/`, which RSpec and Rails' test runs put on the load path. A literal that starts with `./` or `../` is a path, which Ruby reads from the working directory, which the readers cannot know; it binds the file it names from the requiring file's directory, where a script or a rackup file run from its own directory finds it, unless the repository root holds another file of that path. Exactly one existing file the caller keeps binds; none, or two or more (two gems of the repository that both hold `lib/x/y.rb`, whose order on the load path the repository does not tell), bind nothing. A literal that is absolute, empty or climbs out of its root or the repository binds nothing either.
  */
 export function resolveRubyRequire(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, load: RubyLoadPath): string | undefined {
   const hits = rubyRequireHits(specifier, fromFile, exists, load);
   return hits.live.length === 1 ? hits.live[0] : undefined;
 }
 
-/** Why a plain `require` bound no file, asked only after {@link resolveRubyRequire} answered undefined for the same arguments: `{ split }` with the files, sorted, when two or more roots hold it; `unfollowed` when the repository holds the file but the readers cannot know it is on the load path (only an excluded file holds it; a `./` path the repository root holds; a name under the root, a `lib/`, `spec/` or `test/` directory or the requiring file's own directory, outside the roots the requiring file has); else `outside` (a gem, the standard library, a native extension). */
+/** Why a plain `require` bound no file, asked only after {@link resolveRubyRequire} answered undefined for the same arguments: `{ split }` with the files, sorted, when two or more roots hold it; `unfollowed` when the repository holds the file but the readers cannot know it is on the load path (only an excluded file holds it; a name under the root, a `lib/`, `spec/` or `test/` directory outside a fixture directory, or the requiring file's own directory, outside the roots the requiring file has), and for a `./` or `../` path that stays inside the repository, as the same path in a `require_relative` is; else `outside` (a gem, the standard library, a native extension, a path that climbs out of the repository). */
 export function explainRubyRequireMiss(specifier: string, fromFile: string, exists: (repoRelPosix: string) => boolean, load: RubyLoadPath): 'outside' | 'unfollowed' | { split: string[] } {
   const hits = rubyRequireHits(specifier, fromFile, exists, load);
   if (hits.live.length >= 2) return { split: [...hits.live].sort() };
   if (hits.held > 0) return 'unfollowed';
   const name = requireName(specifier);
   if (name === undefined) return 'outside';
-  const places = isRelativeRequire(name) ? [''] : ['', ...load.probeDirs(), path.posix.dirname(toPosix(fromFile))];
+  // A path stays the repository's wherever it lands inside it, as the same path in a require_relative does.
+  if (isRelativeRequire(name)) return relativeCandidates(name, fromFile).some((f) => f !== undefined) ? 'unfollowed' : 'outside';
+  const places = ['', ...load.probeDirs(), path.posix.dirname(toPosix(fromFile))];
   return places.some((dir) => { const f = underRoot(dir === '.' ? '' : dir, name); return f !== undefined && exists(f); }) ? 'unfollowed' : 'outside';
 }
 
@@ -82,12 +84,21 @@ function rubyRequireHits(specifier: string, fromFile: string, exists: (repoRelPo
     if (load.isExcluded?.(candidate) !== true) live.push(candidate);
   };
   if (isRelativeRequire(name)) {
-    const joined = path.posix.normalize(path.posix.join(path.posix.dirname(toPosix(fromFile)), name));
-    look(joined === '..' || joined.startsWith('../') ? undefined : joined);
+    // Ruby reads the path from the working directory, which the readers cannot know: the requiring file's directory binds unless the repository root holds another file of that path.
+    const [beside, fromRoot] = relativeCandidates(name, fromFile);
+    if (fromRoot === undefined || fromRoot === beside || !exists(fromRoot)) look(beside);
   } else {
     for (const root of load.rootsFor(fromFile)) look(underRoot(root, name));
   }
   return { live, held };
+}
+
+/** A `./` or `../` path read from the requiring file's directory and from the repository root, each undefined where it climbs out of the repository. */
+function relativeCandidates(name: string, fromFile: string): [string | undefined, string | undefined] {
+  const beside = path.posix.normalize(path.posix.join(path.posix.dirname(toPosix(fromFile)), name));
+  const fromRoot = path.posix.normalize(name);
+  const inside = (f: string): string | undefined => (f === '..' || f.startsWith('../') ? undefined : f);
+  return [inside(beside), inside(fromRoot)];
 }
 
 /** The literal of a plain `require` with `.rb` appended where it names no extension, or undefined for one that is empty or absolute. */

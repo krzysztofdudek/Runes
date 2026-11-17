@@ -106,7 +106,14 @@ describe('a plain require, looked up on the repository\'s load path', () => {
     expect(req(r, './helper', 'bin/run.rb')).toBe('bin/helper.rb');
     expect(req(r, './lib/foo', 'bin/run.rb')).toBeUndefined();
     expect(why(r, './lib/foo', 'bin/run.rb')).toBe('unfollowed');
-    expect(why(r, './lib/gone', 'bin/run.rb')).toBe('outside');
+    // A path that stays inside the repository is the repository's, as the same path in a require_relative is; one that climbs out leaves it.
+    expect(why(r, './lib/gone', 'bin/run.rb')).toBe('unfollowed');
+    expect(why(r, '../test_gone', 'test/cgi/test.ru')).toBe('unfollowed');
+    expect(why(r, '../../../gone', 'test/cgi/test.ru')).toBe('outside');
+    // The working directory is unknown: where the requiring file's directory and the repository root both hold the path, neither binds.
+    const both = resolverOf({ 'bin/run.rb': '', 'bin/helper.rb': '', 'helper.rb': '' });
+    expect(req(both, './helper', 'bin/run.rb')).toBeUndefined();
+    expect(why(both, './helper', 'bin/run.rb')).toBe('unfollowed');
   });
   it('a file under spec/ or test/ has that directory on its load path, as RSpec and Rails\' test runs put it there', () => {
     const r = resolverOf({ 'spec/spec_helper.rb': '', 'spec/models/user_spec.rb': '', 'test/test_helper.rb': '', 'test/unit/a_test.rb': '', 'lib/tasks/x.rb': '', 'gems/g/spec/spec_helper.rb': '', 'gems/g/spec/g_spec.rb': '' });
@@ -116,12 +123,17 @@ describe('a plain require, looked up on the repository\'s load path', () => {
     // Outside spec/, the readers cannot know the load path, and the repository holds the file twice.
     expect(req(r, 'spec_helper', 'lib/tasks/x.rb')).toBeUndefined();
     expect(why(r, 'spec_helper', 'lib/tasks/x.rb')).toBe('unfollowed');
+    // A test directory inside lib/ is part of the library's tree, no load-path root.
+    const inLib = resolverOf({ 'lib/foo/test/runner.rb': '', 'lib/foo/test/json.rb': '', 'test/lib/t.rb': '', 'test/helper.rb': '' });
+    expect(req(inLib, 'json', 'lib/foo/test/runner.rb')).toBeUndefined();
+    expect(req(inLib, 'helper', 'test/lib/t.rb')).toBe('test/helper.rb');
   });
   it('a gemspec under a test or fixture directory puts its roots on the load path of the files under it only', () => {
     const r = resolverOf({ 'spec/fixtures/gem/fixture.gemspec': '', 'spec/fixtures/gem/lib/helper.rb': '', 'spec/fixtures/gem/bin/run.rb': '', 'app/x.rb': '', 'gems/real/real.gemspec': '', 'gems/real/lib/real.rb': '' });
     expect(req(r, 'helper', 'spec/fixtures/gem/bin/run.rb')).toBe('spec/fixtures/gem/lib/helper.rb');
+    // A fixture's files are no place a file of the repository is required from.
     expect(req(r, 'helper', 'app/x.rb')).toBeUndefined();
-    expect(why(r, 'helper', 'app/x.rb')).toBe('unfollowed');
+    expect(why(r, 'helper', 'app/x.rb')).toBe('outside');
     expect(req(r, 'real', 'app/x.rb')).toBe('gems/real/lib/real.rb');
     expect(req(r, 'real', 'spec/fixtures/gem/bin/run.rb')).toBe('gems/real/lib/real.rb');
   });

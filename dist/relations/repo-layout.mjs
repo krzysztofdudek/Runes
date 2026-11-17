@@ -25,6 +25,8 @@ const SKIP_DIRS = new Set(['node_modules', 'vendor']);
 const RUBY_DIRS = new Set(['lib', 'spec', 'test']);
 /** The directory names under which a gemspec describes a fixture, not a gem of the repository: its load path reaches only the files under it. */
 const RUBY_FIXTURE_DIRS = new Set(['test', 'tests', 'spec', 'specs', 'fixture', 'fixtures']);
+/** The directory names whose contents are fixtures alone: no `lib`, `spec` or `test` directory under them is a place a file of the repository is required from. */
+const RUBY_FIXTURE_ONLY = new Set(['fixture', 'fixtures']);
 export function makeRepoLayout(projectRoot, files, isExcluded, report) {
     let layout;
     const scan = () => {
@@ -48,7 +50,7 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
                         continue;
                     if (e.name === 'include')
                         found.includeDirs.push(rel);
-                    if (RUBY_DIRS.has(e.name))
+                    if (RUBY_DIRS.has(e.name) && !rel.split('/').some((seg) => RUBY_FIXTURE_ONLY.has(seg)))
                         found.rubyDirs.push(rel);
                     if (depth + 1 <= MAX_DEPTH)
                         queue.push({ dir: rel, depth: depth + 1 });
@@ -141,8 +143,10 @@ export function makeRepoLayout(projectRoot, files, isExcluded, report) {
                 if (scope === undefined || fromFile.startsWith(`${scope}/`))
                     roots.add(root);
             const segs = fromFile.split('/');
+            // A spec or test directory inside lib/ is part of the library's tree, which no test run puts on the load path.
+            const inLib = segs.indexOf('lib');
             for (let i = 1; i < segs.length; i++)
-                if (segs[i - 1] === 'spec' || segs[i - 1] === 'test')
+                if ((segs[i - 1] === 'spec' || segs[i - 1] === 'test') && (inLib === -1 || inLib >= i - 1))
                     roots.add(segs.slice(0, i).join('/'));
             return [...roots];
         },
