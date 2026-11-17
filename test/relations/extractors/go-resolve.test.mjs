@@ -371,6 +371,19 @@ describe('resolveGoImport — go.work at the repository root', () => {
     expect(resolve('example.com/root/lib', 'tools/gen/g.go', 'go')).toBe('lib/l.go');
   });
 
+  it('a `use ./` member, in every spelling of the repository root, is the repository-root module as `use .` is', () => {
+    put('go.mod', 'module example.com/root\n');
+    put('tools/go.mod', 'module example.com/tools\n');
+    put('lib/l.go', 'package lib\n');
+    put('tools/gen/g.go', 'package gen\n');
+    for (const spelling of ['.', './', './/', '"./"', '././', 'tools/../', './tools/../']) {
+      put('go.work', `use (\n  ${spelling}\n  ./tools/\n)\n`);
+      const resolve = makeResolvePathToFile(ws);
+      expect(resolve('example.com/root/lib', 'tools/gen/g.go', 'go')).toBe('lib/l.go');
+      expect(resolve('example.com/tools/gen', 'lib/l.go', 'go')).toBe('tools/gen/g.go');
+    }
+  });
+
   it('a nested module root imported by its own path from the parent module is bound', () => {
     put('go.mod', 'module example.com/m\n');
     put('sub/go.mod', 'module example.com/m/sub\n');
