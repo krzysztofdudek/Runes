@@ -8,7 +8,7 @@ cites: "Rust Reference — Modules (a file is a module only when a `mod` item de
 
 ## Rule
 
-`src/lib.rs` (node `root`) declares `mod unix;` inside a `cfg_if!` branch and defines `pub fn legacy()`. A `mod` in a `cfg_if!` branch declares its module like any other, so `use crate::unix::f;` binds `src/unix/mod.rs` (node `unix`). No `mod` declares the leftover `src/legacy.rs` (node `stale`), so `use crate::legacy;` names the root's function and binds the root file. The root takes `cfg_if!` from the registry crate `cfg-if` with `#[macro_use] extern crate`.
+`src/lib.rs` (node `root`) declares `mod unix;` inside a `cfg_if!` branch and defines `pub fn legacy()`. A `mod` in a `cfg_if!` branch declares its module like any other, so `use crate::unix::f;` binds `src/unix/mod.rs` (node `unix`); it is written under the branch's own `#[cfg(unix)]`, as a target where the branch does not hold has no module `unix` to import from. No `mod` declares the leftover `src/legacy.rs` (node `stale`), so `use crate::legacy;` names the root's function and binds the root file. The root takes `cfg_if!` from the registry crate `cfg-if` with `#[macro_use] extern crate`.
 
 ## Files
 
@@ -41,7 +41,7 @@ pub fn old() {}
 ```
 
 ```rust path=src/api/mod.rs
-use crate::unix::f;
+#[cfg(unix)] use crate::unix::f;
 use crate::legacy;
 ```
 
