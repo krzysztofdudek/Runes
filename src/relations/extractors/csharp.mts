@@ -1450,8 +1450,8 @@ const NAME_DECLARING_TYPES = new Set([
   ...TYPE_DECLARATION_TYPES,
 ]);
 
-/** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type; `constant` marks a `const` field or local, whose value converts by more than its type says (C# spec §10.2.11). */
-type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean; constant?: boolean }>>;
+/** Where the file declares each value name, with the type it writes: `type` is null where the declaration writes none of its own (`var`, an inferred lambda parameter, a pattern or `out` designation, a range variable), `start` and `end` the text range the name is in scope in, as near as the tree says without climbing from every use (the block, the statement that declares in its own header (`for`, `using`, `fixed`, a `catch` clause, a `switch` section or arm) or the callable around a local or a parameter, the type declaration around a field or a property), and `member` whether it is a member of that type; `constant` marks a `const` field or local, whose value converts by more than its type says (C# spec §10.2.11); `inferred` marks a `var` local and an implicitly typed lambda parameter, whose type C# infers. */
+type TypedNames = Map<string, Array<{ type: Node | null; start: number; end: number; member: boolean; constant?: boolean; inferred?: boolean }>>;
 
 /** The nodes a declared name is scoped to. */
 const SCOPE_NODES = new Set(['block', 'for_statement', 'using_statement', 'fixed_statement', 'switch_section', 'catch_clause', 'switch_expression_arm', 'method_declaration', 'constructor_declaration', 'destructor_declaration', 'accessor_declaration', 'local_function_statement', 'lambda_expression', 'anonymous_method_expression', 'operator_declaration', 'conversion_operator_declaration', 'indexer_declaration', 'property_declaration', 'arrow_expression_clause', 'compilation_unit', ...TYPE_DECLARATION_TYPES]);
@@ -1484,8 +1484,8 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
   // The keys of the types of the file that can hold a member the file does not show (`takesMembers`).
   const openTypes = new Set<string>();
   const typedNames: TypedNames = new Map();
-  const typed = (name: string, type: Node | null, within: Node, member = false, constant = false): void => {
-    const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member, ...(constant ? { constant } : {}) };
+  const typed = (name: string, type: Node | null, within: Node, member = false, constant = false, inferred = type !== null && type.type === 'implicit_type'): void => {
+    const entry = { type: type !== null && type.type === 'implicit_type' ? null : type, start: within.startIndex, end: within.endIndex, member, ...(constant ? { constant } : {}), ...(inferred ? { inferred } : {}) };
     const list = typedNames.get(name);
     if (list === undefined) typedNames.set(name, [entry]);
     else list.push(entry);
@@ -1508,7 +1508,7 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
     }
     if (type === 'implicit_parameter' || type === 'single_variable_designation') {
       declaredNames.add(node.text);
-      typed(node.text, null, around);
+      typed(node.text, null, around, false, false, type === 'implicit_parameter');
     } else if (type === 'foreach_statement') {
       const left = node.childForFieldName('left')!;
       if (left.type === 'identifier') {
@@ -1532,7 +1532,9 @@ function collectDeclaredNames(root: Node, fileNs: string): { declaredNames: Set<
         if (ordinaryMethod) methodNames.add(name);
         if (type === 'parameter') {
           // A parameter is in scope in the declaration its list belongs to; a primary constructor's in the whole type.
-          typed(name, node.childForFieldName('type'), inherited.listOf ?? around);
+          // A parameter with no type is a lambda's, whose type C# infers: `(Status, i) => …`.
+          const written = node.childForFieldName('type');
+          typed(name, written, inherited.listOf ?? around, false, false, written === null);
         } else if (type === 'property_declaration') {
           if (holderType !== null) typed(name, node.childForFieldName('type'), holderType, true);
         } else if (type === 'catch_declaration' || type === 'from_clause' || type === 'let_clause' || type === 'join_clause' || type === 'join_into_clause') {
@@ -1608,6 +1610,13 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
   const readAsType = new Set<number>();
   // A simple name the file declares as a value and not only as a type: where an expression could name a constant or a type, the file's own value is what such a name finds.
   const namesValue = (name: string): boolean => declaredNames.has(name) && !typeOnlyNames.has(name);
+  /** True when the value `name` names at `at` may be of the type of its own name, which C# then lets the name read as too (spec §12.8.7.2, `Status == Status.Active` beside `public Status Status`): every declaration of it in the nearest scope around `at` writes a type of that very name, or has a type C# infers. A nullable `Status?` is not read so: of a value type it is `Nullable<Status>`, a type of another name. */
+  const mayBeOfItsType = (name: string, at: number): boolean => {
+    const inScope = (typedNames.get(name) ?? []).filter((e) => at >= e.start && at < e.end);
+    if (inScope.length === 0) return false;
+    const size = Math.min(...inScope.map((e) => e.end - e.start));
+    return inScope.filter((e) => e.end - e.start === size).every((e) => e.inferred === true || (e.type !== null && simpleTypeName(e.type) === name));
+  };
   // The member paths of extended property patterns (`{ Order.Id: 3 }`): names of members of the value tested, which the walk never reads as a receiver.
   const memberPaths = new Set<number>();
 
@@ -2035,6 +2044,22 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
     return { name: segs.join('.'), alias, generics };
   }
 
+  /** True when `access` is compared with or assigned to the bare value `name` (`Status == Status.Active`, `Status = Status.Done`). Beside a value of the type of its own name, C# reads the member through the type when it is static and through the value when it is not (spec §12.8.7.2), which the file does not say. Compared with or assigned to the value itself, the member has the value's type, the shape of an enum member or a constant of that type; a member of that type read anywhere else may be an instance one (`Season.ProviderIds`, `Status.ToString()`), which names the value, so there the value hides the type. An instance member of the value's own type in this shape (`Node = Node.Next`) is the one false reading this allows. */
+  function besideItself(access: Node, name: string, around: Node): boolean {
+    const op = around.type === 'binary_expression' || around.type === 'assignment_expression' ? around.childForFieldName('operator')!.type : '';
+    if (op !== '==' && op !== '!=' && op !== '=') return false;
+    const left = around.childForFieldName('left')!;
+    const other = left.id === access.id ? around.childForFieldName('right')! : left;
+    return other.type === 'identifier' && other.text === name;
+  }
+
+  /** The last simple name of a written type that names one non-generic type (`Status`, `Model.Status`, `global::Status`), or undefined. */
+  function simpleTypeName(type: Node): string | undefined {
+    if (type.type === 'identifier') return type.text;
+    const last = type.type === 'qualified_name' || type.type === 'alias_qualified_name' ? type.childForFieldName('name')! : null;
+    return last !== null && last.type === 'identifier' ? last.text : undefined;
+  }
+
   /** The first child of the given type, or null. */
   function findChild(node: Node, childType: string): Node | null {
     for (const c of node.namedChildren) {
@@ -2325,7 +2350,7 @@ export function extractCsharpRefs(file: ParsedFile): CsharpExtract {
       const rootedName = expr !== null && expr.type === 'alias_qualified_name' && expr.childForFieldName('alias')!.text === 'global' ? expr.childForFieldName('name') : null;
       if (expr !== null && (expr.type === 'generic_name' || rootedName?.type === 'generic_name')) {
         emitTypeNode(expr);
-      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && (!declaredNames.has(expr.text) || typeOnlyNames.has(expr.text)) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
+      } else if (expr !== null && (rootedName?.type === 'identifier' || (expr.type === 'identifier' && (!namesValue(expr.text) || (besideItself(node, expr.text, parentOf()!) && mayBeOfItsType(expr.text, expr.startIndex))) && !isTypeParameterInScope(expr.text, scopeOf(expr)))) && !insideNameof(node)) {
         const rooted = rootedName !== null;
         const chain = [(rootedName ?? expr).text];
         let cur = node;
@@ -3084,7 +3109,7 @@ export function csharpUses(file: ParsedFile, options?: CsharpUsesOptions): Detec
 
 export const csharpExtractor: DependencyExtractor = {
   languages: new Set(['csharp']),
-  rev: 46,
+  rev: 47,
   declarations,
   uses,
 };
