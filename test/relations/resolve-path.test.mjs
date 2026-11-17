@@ -676,6 +676,11 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     // A file directly in a root, and a script directory outside every root, still have their own directory as a root.
     expect(resolve('helper', 'src/main.py', 'python')).toBe('src/helper.py');
     expect(resolve('util', 'scripts/run.py', 'python')).toBe('scripts/util.py');
+    // Below a flat project's own directory, where script folders sit beside the packages, the importer's own directory stays a root.
+    write('tools/pyproject.toml', '[project]\nname = "tools"\n');
+    write('tools/bin/run.py', 'import helper_tool\n');
+    write('tools/bin/helper_tool.py');
+    expect(makeResolvePathToFile(root)('helper_tool', 'tools/bin/run.py', 'python')).toBe('tools/bin/helper_tool.py');
   });
 
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {

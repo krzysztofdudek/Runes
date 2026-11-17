@@ -66,7 +66,8 @@ export function makePythonResolver(
       const fixtures = projects
         .filter((p) => p.fixture)
         .map((p) => ({ dir: p.dir, usable: p.roots.filter((root) => !usable.includes(root) && !insidePackage(root)) }));
-      roots = { all, usable, fixtures };
+      const packageRoots = new Set(projects.flatMap((p) => p.roots.filter((root) => root !== p.dir)));
+      roots = { all, usable, fixtures, packageRoots };
     }
     return roots;
   };
@@ -100,6 +101,7 @@ export function makePythonResolver(
     return found;
   };
   const below = new Map<string, boolean>();
+  const belowPackage = new Map<string, boolean>();
   const fromTool = new Map<string, boolean>();
   const underDiscovered = new Map<string, RootMatches>();
   const ctx: AbsoluteContext = {
@@ -111,6 +113,14 @@ export function makePythonResolver(
       if (isBelow === undefined) {
         isBelow = properAncestors(dir).some((ancestor) => discovered().all.has(ancestor));
         below.set(dir, isBelow);
+      }
+      return isBelow;
+    },
+    belowPackageRoot: (dir) => {
+      let isBelow = belowPackage.get(dir);
+      if (isBelow === undefined) {
+        isBelow = properAncestors(dir).some((ancestor) => discovered().packageRoots.has(ancestor));
+        belowPackage.set(dir, isBelow);
       }
       return isBelow;
     },
@@ -151,8 +161,7 @@ export function makePythonResolver(
     const stdlibName = PYTHON_STDLIB_TOP_LEVEL.has(top);
     const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
     for (const dir of ancestorDirs(ownDir)) {
-      const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
-      if (isRoot && !ctx.insideRegularPackage(dir) && holds(dir)) return 'unfollowed';
+      if (ancestorIsRoot(dir, ownDir, stdlibName, ctx) && !ctx.insideRegularPackage(dir) && holds(dir)) return 'unfollowed';
     }
     return !stdlibName && [...discovered().usable, ...fixtureRootsFor(ownDir)].some(holds) ? 'unfollowed' : 'outside';
   };
@@ -164,6 +173,8 @@ interface DiscoveredRoots {
   readonly all: ReadonlySet<string>;
   readonly usable: readonly string[];
   readonly fixtures: ReadonlyArray<{ readonly dir: string; readonly usable: readonly string[] }>;
+  /** The roots that are not their project's own directory: a `src/` child or a directory the configuration names, which holds only the code the project installs. */
+  readonly packageRoots: ReadonlySet<string>;
 }
 
 /** The strongest live match of each root, by kind (see absoluteMatches). */
@@ -183,6 +194,7 @@ interface AbsoluteContext {
   readonly isExcluded: (repoRelPosix: string) => boolean;
   readonly insideRegularPackage: (dir: string) => boolean;
   readonly belowDiscoveredRoot: (dir: string) => boolean;
+  readonly belowPackageRoot: (dir: string) => boolean;
   readonly toolRoot: (dir: string) => boolean;
   readonly matchesUnderDiscoveredRoots: (segments: readonly string[], modulePath: string, parentPath: string, ownDir: string) => RootMatches;
 }
@@ -218,7 +230,7 @@ const PYTHON_STDLIB_TOP_LEVEL: ReadonlySet<string> = new Set(
  *
  * An ancestor directory INSIDE A REGULAR PACKAGE is never a root: one that holds an `__init__.py`, or whose parent does (a namespace sub-directory of a regular package). `sys.path` only ever holds directories outside packages, so `import logging` in `app/api/routes.py` loads the standard library even when the package `app/` has a `logging.py`, and must not bind to it.
  *
- * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every regular package, yet it is no more on `sys.path` than a package is: what Python puts there is an installed project's source root, the directory of the script it runs, or the current directory for `python -m`. So an ancestor directory lying strictly below a discovered project root is never a root, and for a top-level name the standard library owns (which precedes every installed project on `sys.path`) no ancestor is a root but the repository root. The importing file's own directory is exempt from both rules: it is `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging` and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/` when `acme/` is a namespace package.
+ * A PEP 420 namespace directory (no `__init__.py` in it or its parent) is outside every regular package, yet it is no more on `sys.path` than a package is: what Python puts there is an installed project's source root, the directory of the script it runs, or the current directory for `python -m`. So an ancestor directory lying strictly below a discovered project root is never a root, and for a top-level name the standard library owns (which precedes every installed project on `sys.path`) no ancestor is a root but the repository root. The importing file's own directory is exempt from both rules: it is `sys.path[0]` when the file runs as a script (`python acme/tool.py`). So `import logging` and `import yaml` in `acme/core/service.py` never bind to `acme/logging/` or `acme/yaml/` when `acme/` is a namespace package. A file in a package directory strictly below a discovered root that is not its project's directory (a `src/` child or a root the configuration names, which holds only the code the project installs) is imported through that root, not run as a script, so its own directory is no root unless a tool runs from it (below): `src/poetry/poetry.py` does not answer for `poetry.json` in `src/poetry/factory.py`. Below a flat project's directory, where script folders (`scripts/`, `tools/`) sit beside the packages, the importer's own directory stays a root.
  *
  * Two conventions put a directory below a project root first on `sys.path` without any configuration, so for a name outside the standard library such a directory stays a root: one holding `conftest.py` and no `__init__.py` (pytest's rootdir rule inserts it), and one holding `manage.py` (Django runs from it). A directory put on `sys.path` only by configuration (an Airflow dags folder, a `PYTHONPATH` entry) is not seen and is not searched.
  *
@@ -238,9 +250,7 @@ function absoluteMatches(specifier: string, fromFile: string, ctx: AbsoluteConte
   const ownDir = normalizeDir(path.posix.dirname(toPosix(fromFile)));
   const found = emptyMatches();
   for (const dir of ancestorDirs(ownDir)) {
-    // An ancestor other than the importer's own directory is a root, for a standard-library name, only when it is the repository root; for any other name, when it is not a directory inside a project (strictly below a discovered root) or when pytest or Django runs from it (see the doc comment above).
-    const isRoot = dir === ownDir || (stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir));
-    if (isRoot && !ctx.insideRegularPackage(dir)) probeRoot(dir, modulePath, parentPath, ctx, found);
+    if (ancestorIsRoot(dir, ownDir, stdlibName, ctx) && !ctx.insideRegularPackage(dir)) probeRoot(dir, modulePath, parentPath, ctx, found);
   }
   if (!stdlibName) {
     // A discovered root that is also an ancestor root adds the same file of the same kind again: the sets keep one.
@@ -248,6 +258,12 @@ function absoluteMatches(specifier: string, fromFile: string, ctx: AbsoluteConte
     for (const kind of ['exact', 'parentPackages', 'parentModules'] as const) for (const file of under[kind]) found[kind].add(file);
   }
   return new Set([...(found.exact.size > 0 ? found.exact : found.parentPackages), ...found.parentModules]);
+}
+
+/** Whether the ancestor directory `dir` of an importing file in `ownDir` is searched as a root (see absoluteMatches). The importer's own directory is one unless it is a package directory below a discovered root that is not its project's own directory (a `src/` child or a configured root), which is imported through that root and never run from, and no tool runs from it. Any other ancestor is one, for a standard-library name, only when it is the repository root; for any other name, when it is not a directory inside a project (strictly below a discovered root) or when pytest or Django runs from it. */
+function ancestorIsRoot(dir: string, ownDir: string, stdlibName: boolean, ctx: AbsoluteContext): boolean {
+  if (dir === ownDir) return !ctx.belowPackageRoot(dir) || ctx.toolRoot(dir);
+  return stdlibName ? dir === '' : !ctx.belowDiscoveredRoot(dir) || ctx.toolRoot(dir);
 }
 
 /** The one file of `matches`, or undefined when there is none or there are several (ambiguous: silence). */
