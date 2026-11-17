@@ -98,7 +98,10 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * every branch is emitted, from the line of its `mod`, under the rules it follows outside the
  * macro: inside an inline `mod y { … }` written there it is `self::y::x`, and with a `#[path]`
  * attribute on it or on such an inline module it is skipped. Only a `cfg_if!` that stands
- * among the items of a module is read.
+ * among the items of a module is read. The modules its branches declare, with or without a body,
+ * and the names the `use` declarations there bind are names in scope of that module (NAMES IN
+ * SCOPE), as they are written outside the macro, and a glob `use` there may bind any name; the
+ * `use` declarations of a branch are not emitted themselves.
  *
  * INLINE PATHS: a fully-qualified path used WITHOUT a `use` — in TYPE position
  * (`field: crate::orders::Order`, `impl crate::traits::T`) a `scoped_type_identifier`, in
@@ -551,7 +554,7 @@ function uses(file) {
     });
     return out;
 }
-/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module's own scope (`module`) declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names. A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
+/** The names the items of `scope` itself bring into it that a `use` path can start with: each module a module's own scope (`module`) declares, with or without a body, as `self::<name>`, and each name a `use` declaration there binds, as the path it names, those of a branch of a `cfg_if!` among a module's items included (`cfgIfNames`). A `use` that starts with `::` names a crate and is left out, and so is a glob. `r#` is stripped. */
 function scopeNames(scope, module) {
     const out = new Map();
     const add = (name, path, decl) => {
@@ -579,8 +582,19 @@ function scopeNames(scope, module) {
             for (const bound of useBindingPaths(arg, ''))
                 add(bound.name, unrawPath(bound.path), node);
         }
+        else if (module) {
+            const body = cfgIfBodyOf(node, scope);
+            if (body !== null)
+                for (const bound of cfgIfNames(body).names)
+                    add(bound.name, bound.path, bound.at);
+        }
     }
     return out;
+}
+/** The token tree of `node`, an item of `scope`, when it is a `cfg_if!` invocation that `cfgIfBody` reads, written as an item or as a statement; null otherwise. */
+function cfgIfBodyOf(node, scope) {
+    const call = node.type === 'expression_statement' ? node.namedChild(0) : node;
+    return call?.type === 'macro_invocation' ? cfgIfBody(call, call === node ? scope : node) : null;
 }
 /** The names a `use` argument binds, each with the path it names: the last segment of a path, each member of a group under the group's path, the alias of an `as`, the module a `self` member names. `prefix` is the path of the groups around the argument. */
 function useBindingPaths(arg, prefix) {
@@ -969,7 +983,7 @@ function attributeIsInert(item, inner) {
 const TYPE_NAMESPACE_ITEMS = new Set(['mod_item', 'struct_item', 'enum_item', 'union_item', 'trait_item', 'type_item']);
 /** The primitive types, whose names start a path to an associated item (`u32::MAX`, `str::from_utf8`) and name no crate. */
 const PRIMITIVE_TYPES = new Set(['bool', 'char', 'str', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize', 'i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'f16', 'f32', 'f64', 'f128']);
-/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` reads: the names of its items of the type namespace and of its `extern crate` declarations, and whether it holds a glob `use`, which can bring in any name. */
+/** What the items of `scope` itself bind in the type namespace beside what `scopeNames` reads: the names of its items of the type namespace and of its `extern crate` declarations, and whether it holds a glob `use`, which can bring in any name, in a branch of a `cfg_if!` among its items too. */
 function scopeTypeNames(scope) {
     const names = new Set(externCratesIn(scope).map((e) => e.name));
     let glob = false;
@@ -977,6 +991,9 @@ function scopeTypeNames(scope) {
         if (c !== null && TYPE_NAMESPACE_ITEMS.has(c.type))
             names.add(unraw(c.childForFieldName('name')?.text ?? ''));
         if (c !== null && c.type === 'use_declaration' && c.descendantsOfType('use_wildcard').length > 0)
+            glob = true;
+        const body = c === null ? null : cfgIfBodyOf(c, scope);
+        if (body !== null && cfgIfNames(body).glob)
             glob = true;
     }
     return { names, glob };
@@ -1225,6 +1242,100 @@ export function cfgIfExternCrates(body) {
     branches(body);
     return out;
 }
+/**
+ * The names the items of a `cfg_if!` body bring into the module around it, read from its tokens as `scopeNames` reads items: each module a braced branch declares, with or without a body, as `self::<name>` (`at` null), and each name a `use` there binds, as the path it names (`at` its `use` token), those of a `cfg_if!` nested in a branch included, and nothing written inside an inline module, a function body or any other nested token tree there. A `use` that starts with `::` names a crate and is left out; `glob` says that a branch holds a glob `use`. `r#` is stripped.
+ */
+function cfgIfNames(body) {
+    const names = [];
+    let glob = false;
+    const braced = (tree) => tree !== undefined && tree.type === 'token_tree' && tree.child(0)?.type === '{';
+    const branches = (tree) => {
+        for (const c of tree.namedChildren)
+            if (c !== null && braced(c))
+                items(c);
+    };
+    const items = (tree) => {
+        const tokens = innerTokens(tree);
+        for (let i = 0; i < tokens.length; i++) {
+            const t = tokens[i];
+            const next = tokens[i + 1];
+            if (t.type === 'identifier' && t.text === 'cfg_if' && next?.type === '!' && tokens[i + 2]?.type === 'token_tree') {
+                branches(tokens[i + 2]);
+                i += 2;
+            }
+            else if (!t.isNamed && t.type === 'mod' && next?.type === 'identifier') {
+                names.push({ name: unraw(next.text), path: `self::${unraw(next.text)}`, at: null });
+                i += 1;
+            }
+            else if (t.type === 'use') {
+                let end = i + 1;
+                while (end < tokens.length && tokens[end].type !== ';')
+                    end++;
+                const tree = tokens.slice(i + 1, end);
+                if (tree[0]?.type !== '::') {
+                    const read = useTokenBindings(tree, '');
+                    glob ||= read.glob;
+                    for (const bound of read.bound)
+                        names.push({ name: unraw(bound.name), path: unrawPath(bound.path), at: t });
+                }
+                i = end;
+            }
+        }
+    };
+    branches(body);
+    return { names: names.filter((n) => n.name !== '' && n.name !== '_'), glob };
+}
+/** The tokens of a token tree inside its delimiters, comments left out. */
+function innerTokens(tree) {
+    return tree.children.filter((c) => c !== null && c.type !== 'line_comment' && c.type !== 'block_comment').slice(1, -1);
+}
+/** The tokens that can be a segment of a `use` path. */
+const PATH_SEGMENT_TOKENS = new Set(['identifier', 'crate', 'self', 'super']);
+/** The names a `use` tree written as tokens binds, as `useBindingPaths` gives them for one the grammar parsed (the last segment of a path, each member of a group under the group's path, the alias of an `as`, the module a `self` member names), and whether it holds a glob. `tokens` are those between `use` and its `;`, or one member of a group; `prefix` is the path of the groups around them. A form it does not read binds nothing. */
+function useTokenBindings(tokens, prefix) {
+    const none = { bound: [], glob: false };
+    const segments = [];
+    let i = 0;
+    while (i < tokens.length && PATH_SEGMENT_TOKENS.has(tokens[i].type)) {
+        segments.push(tokens[i].text);
+        i++;
+        if (tokens[i]?.type !== '::')
+            break;
+        i++;
+    }
+    const trailing = i > 0 && tokens[i - 1].type === '::';
+    const path = join(prefix, segments.join('::'));
+    const rest = tokens.slice(i);
+    if (segments.length === 0 || trailing) {
+        // What follows a `::`, or the whole tree: a glob or a group.
+        const group = rest[0];
+        if (rest.length !== 1 || group === undefined)
+            return none;
+        const groupPrefix = segments.length === 0 ? prefix : path;
+        if (group.type === '*')
+            return { bound: [], glob: true };
+        if (group.type !== 'token_tree' || group.child(0)?.type !== '{')
+            return none;
+        const members = [[]];
+        for (const t of innerTokens(group)) {
+            if (t.type === ',')
+                members.push([]);
+            else
+                members[members.length - 1].push(t);
+        }
+        const read = members.filter((m) => m.length > 0).map((m) => useTokenBindings(m, groupPrefix));
+        return { bound: read.flatMap((r) => r.bound), glob: read.some((r) => r.glob) };
+    }
+    const last = segments[segments.length - 1];
+    // A `self` member names the group's module; `crate` and `super` alone bind no name.
+    const plain = last === 'self' ? (segments.length === 1 && prefix !== '' ? [{ name: prefix.slice(prefix.lastIndexOf(':') + 1), path: prefix }] : []) : last === 'crate' || last === 'super' ? [] : [{ name: last, path: path }];
+    if (rest.length === 0)
+        return { bound: plain, glob: false };
+    const alias = rest[1];
+    if (rest.length === 2 && rest[0].type === 'as' && alias !== undefined && (alias.type === 'identifier' || alias.type === '_') && plain.length === 1)
+        return { bound: [{ name: alias.text, path: plain[0].path }], glob: false };
+    return none;
+}
 /** The items of a `cfg_if!` body: those of each braced branch (`if #[cfg(…)] { … } else { … }`), a nested `cfg_if!` among them included. */
 function cfgIfItems(body) {
     return body.namedChildren.flatMap((c) => (c !== null && c.type === 'token_tree' && c.child(0)?.type === '{' ? tokenItems(c) : []));
@@ -1276,7 +1387,7 @@ function tokenItems(tree) {
 }
 export const rustExtractor = {
     languages: new Set(['rust']),
-    rev: 28,
+    rev: 29,
     declarations,
     uses,
 };

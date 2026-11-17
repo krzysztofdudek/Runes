@@ -539,4 +539,18 @@ describe('rust extractor — mod declarations inside cfg_if!', () => {
     const { uses } = await run(code);
     expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['self::datacrate@2', 'in::other::f@8']);
   });
+
+  it('reads a use written in a branch as the grammar reads one outside: a self member, an alias, a brace list, and binds nothing for a form it does not read', async () => {
+    const code = [
+      'cfg_if! { if #[cfg(a)] {',
+      '    use crate::m::{self as mm, n::{self}, o as _,};',
+      '    use crate as c; use a::; use a b; use; use a::(x); use self;',
+      '    use {crate::p, crate::q::*};',
+      '} }',
+      'use mm::X; use n::X; use o::X; use c::X; use p::X;',
+      'fn f() { other::g(); }',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(uses.map((u) => `${u.candidates[0].specifier}@${u.line}`)).toEqual(['use::2::crate::m::mm::X@6', 'use::3::crate::m::n::n::X@6', 'o::X@6', 'c::X@6', 'use::2::crate::p::p::X@6']);
+  });
 });
