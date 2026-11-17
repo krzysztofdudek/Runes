@@ -190,6 +190,8 @@ describe('readBundlerAliases — where an alias stands', () => {
       "export default ((defineConfig({ resolve: { alias: { a: '/x' } } })) as UserConfig);",
       "module.exports = [(env) => ({ resolve: { alias: { a: '/x' } } })];",
       "export = { resolve: { alias: { a: '/x' } } };",
+      "const config: (env: Record<string, string>) => UserConfig = (env) => ({ resolve: { alias: { a: '/x' } } });\nexport default config;",
+      "export default defineConfig((env): UserConfig => ({ resolve: { alias: { a: '/x' } } }) as unknown as UserConfig);",
     ]) expect(read(text)).toEqual(READ);
     expect(read('')).toEqual([]);
     expect(read('// nothing but a comment')).toEqual([]);
@@ -339,6 +341,14 @@ describe('readBundlerAliases — the replacement forms', () => {
 
 describe('readBundlerAliases — Babel module-resolver', () => {
   const babel = (plugins) => read(`module.exports = { plugins: ${plugins} };`, 'babel');
+  it('a plugins list filtered with .filter(…), which only drops plugins, is read; one changed any other way is not', () => {
+    const READ = [[{ find: '@d', exact: false, replacement: PATH('src/data') }]];
+    expect(babel("[isTest && 'istanbul', ['module-resolver', { alias: { '@d': './src/data' } }]].filter(Boolean)")).toEqual(READ);
+    expect(read("const plugins = [['module-resolver', { alias: { '@d': './src/data' } }]];\nmodule.exports = { plugins: plugins.filter(Boolean) };", 'babel')).toBe('unknown');
+    expect(read("const plugins = ['istanbul'].filter(Boolean);\nmodule.exports = { plugins };", 'babel')).toEqual([]);
+    expect(babel("[['module-resolver', { alias: { '@d': './src/data' } }]].concat(shared)")).toBe('unknown');
+    expect(read("module.exports = { plugins: ['istanbul'].concat(shared) };", 'babel')).toEqual([[{ exact: false, replacement: UNKNOWN }]]);
+  });
   it('reads the alias of its options; listed by name alone it has none', () => {
     expect(babel("[['babel-plugin-module-resolver', { alias: { '@d': './src/data' }, extensions: ['.js'] }]]")).toEqual([[{ find: '@d', exact: false, replacement: PATH('src/data') }]]);
     expect(babel("['module-resolver']")).toEqual([]);
