@@ -8,7 +8,7 @@ cites: "Rust Reference, Paths (`crate` is the root of the current crate); the cf
 
 ## Rule
 
-`src/lib.rs` declares `mod unix;` inside `cfg_if! { … }`, and `src/main.rs` is a second crate with an `Opts` of its own. `src/unix/mod.rs` is a module of the library, but a `mod` inside a macro's tokens is no item of the parse tree, and it is not followed when the roots that compile a file are told (the `mod` itself gives its edge, from line 3). Nothing is known about the file, so the roots are tried in their usual order and its `crate::Opts` binds `src/lib.rs` (owner root). The root takes `cfg_if!` from the registry crate `cfg-if` with `#[macro_use] extern crate`.
+`src/lib.rs` declares `mod unix;` inside `cfg_if! { … }`, and `src/main.rs` is a second crate with an `Opts` of its own. `src/unix/mod.rs` is a module of the library, but a `mod` inside a macro's tokens is no item of the parse tree, and it is not followed when the roots that compile a file are told (the `mod` itself gives its edge, from line 3). The `mod other;` of the other branch, which a target that is not unix compiles, has its file `src/other/mod.rs` too and gives its edge from line 5. Nothing is known about the file, so the roots are tried in their usual order and its `crate::Opts` binds `src/lib.rs` (owner root). The root takes `cfg_if!` from the registry crate `cfg-if` with `#[macro_use] extern crate`.
 
 ## Files
 
@@ -42,7 +42,12 @@ fn main() {}
 use crate::Opts;
 ```
 
+```rust path=src/other/mod.rs
+pub fn f() {}
+```
+
 ## Expect
 
 - src/lib.rs:3 -> node:unix      # the `mod unix;` of the branch itself
+- src/lib.rs:5 -> node:other     # the `mod other;` of the branch a target that is not unix compiles
 - src/unix/mod.rs:1 -> node:root
