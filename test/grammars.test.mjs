@@ -32,7 +32,7 @@ describe('the shipped manifest', () => {
   });
 
   test('the runtime pin equals the web-tree-sitter peer and dev dependency, and the cli pin the tree-sitter-cli dev dependency', () => {
-    assert.equal(manifest.runtime.version, '0.27.0');
+    assert.equal(manifest.runtime.version, '0.27.2');
     assert.equal(manifest.runtime.version, pkg.peerDependencies['web-tree-sitter']);
     assert.equal(manifest.runtime.version, pkg.devDependencies['web-tree-sitter']);
     assert.equal(manifest.cli.version, pkg.devDependencies['tree-sitter-cli']);
