@@ -52,7 +52,7 @@ export type Classification = {
     candidates?: string[];
 } | {
     kind: 'absent';
-    /** Added in 1.1.0, set by `classifyUse` only, where the readers can tell (TypeScript, JavaScript, Python, Go, Rust, PHP, Java, Kotlin, C#): `outside` when the use leaves the repository (an installed package, the standard library), `unfollowed` when it names a place of the repository that binds no file, `unowned` when it binds a file of the repository no owner maps, which `resolvedFile` names. */
+    /** Added in 1.1.0, set by `classifyUse` only, where the readers can tell (TypeScript, JavaScript, Python, Go, Rust, PHP, Java, Kotlin, C#, and from 1.2.0 C, C++ and Ruby): `outside` when the use leaves the repository (an installed package, the standard library), `unfollowed` when it names a place of the repository that binds no file, `unowned` when it binds a file of the repository no owner maps, which `resolvedFile` names. */
     reason?: 'outside' | 'unfollowed' | 'unowned';
     resolvedFile?: string;
 };

@@ -62,6 +62,7 @@ describe('MATRIX — angle / macro / non-existent includes (emission gate + reso
   it('cpp-angle-system-include-silence', () => runCase('cpp-angle-system-include-silence'));
   it('cpp-macro-operand-include-silence', () => runCase('cpp-macro-operand-include-silence'));
   it('cpp-nonexistent-quoted-include-silence', () => runCase('cpp-nonexistent-quoted-include-silence'));
+  it('cpp-unbound-include-outside-or-unfollowed-silence', () => runCase('cpp-unbound-include-outside-or-unfollowed-silence'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

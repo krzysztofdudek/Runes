@@ -86,6 +86,7 @@ lib/rack/utils.rb:11	lib/rack/query_parser.rb
 lib/rack/utils.rb:12	lib/rack/mime.rb
 lib/rack/utils.rb:13	lib/rack/constants.rb
 rack.gemspec:3	lib/rack/version.rb
+test/cgi/rackup_stub.rb:5	lib/rack.rb
 test/helper.rb:20	lib/rack.rb
 test/spec_auth_basic.rb:3	test/helper.rb
 test/spec_auth_basic.rb:6	lib/rack/auth/basic.rb
