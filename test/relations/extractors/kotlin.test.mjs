@@ -399,6 +399,78 @@ describe('kotlin extractor — local declarations and JVM file facades', () => {
   });
 });
 
+describe('kotlin extractor — a declaration whose annotation the grammar splits off keeps the annotation\'s line', () => {
+  // After exactly one declaration, the grammar reads `@OptIn(KspExperimental::class)` above `internal fun primaryConstructor(` as an annotated expression (`@OptIn` applied to `(KspExperimental::class)`) and the function as starting on the line below, with no ERROR; at any other depth it reads one annotated function.
+  const text = (annotations) => [
+        '/** Returns a target type for [type] or null if it cannot be used with code gen. */',
+        'internal fun targetType(',
+        '): TargetType? {',
+        '  if (type !is KSClassDeclaration) {',
+        '    logger.error(',
+        '    )',
+        '  }',
+        '    if (visibility == KModifier.INTERNAL) {',
+        '    }',
+        '  return TargetType(',
+        '  )',
+        '}',
+        annotations,
+        'internal fun primaryConstructor(',
+        '): TargetConstructor? {',
+        '  for ((index, parameter) in primaryConstructor.parameters.withIndex()) {',
+        '      TargetParameter(',
+        '      )',
+        '  }',
+        '      ?: run {',
+        '      }',
+        '  return TargetConstructor(',
+        '  )',
+        '}'
+  ].join('\n');
+
+  const factsAfter = async (fillerLines, annotations = '@OptIn(KspExperimental::class)') => {
+    const filler = Array.from({ length: fillerLines }, (_, i) => `val filler${i} = 1\n`).join('');
+    const { declarations, uses } = await run('package p\n' + filler + text(annotations) + '\n');
+    const at = (line) => line - fillerLines - 1;
+    return {
+      declarations: declarations.filter((d) => at(d.line) > 1).map((d) => `${d.symbolKey}@${at(d.line)}`),
+      uses: uses.map((u) => `${u.candidates.map((c) => c.symbolKey).join('|')}@${at(u.line)}`),
+    };
+  };
+
+  it('reads the declaration the same wherever it sits in the file', async () => {
+    const atTop = await factsAfter(0);
+    expect(atTop.declarations).toEqual(['p.targetType@2', 'p.primaryConstructor@13']);
+    expect(atTop.uses).toEqual(expect.arrayContaining(['p.OptIn|kotlin.OptIn@13', 'p.KspExperimental@13']));
+    for (const depth of [1, 2, 3, 5, 9, 40, 120]) {
+      expect(await factsAfter(depth)).toEqual(atTop);
+    }
+  });
+
+  it('declares it on the line of its first annotation, however its annotations are written', async () => {
+    for (const annotations of [
+      '@Suppress("unused")',
+      '@OptIn (KspExperimental::class)',
+      '@Keep @OptIn(KspExperimental::class)',
+      '@Suppress("unused") @OptIn(KspExperimental::class)',
+      '@Keep\n@OptIn(KspExperimental::class)',
+      '@OptIn(KspExperimental::class)\n',
+    ]) {
+      const atTop = await factsAfter(0, annotations);
+      expect(atTop.declarations).toContain('p.primaryConstructor@13');
+      expect(await factsAfter(1, annotations)).toEqual(atTop);
+    }
+  });
+
+  it('keeps an annotated expression statement a statement, the declaration after it on its own line', async () => {
+    for (const statement of ['@Suppress("unused") run()', '@Suppress("unused") (y)']) {
+      for (const depth of [0, 1, 2]) {
+        expect((await factsAfter(depth, statement)).declarations).toContain('p.primaryConstructor@14');
+      }
+    }
+  });
+});
+
 describe('kotlin extractor — parse recovery reads headers and lexes defensively', () => {
   const keysOf = (decls) => decls.map((d) => d.symbolKey);
 
