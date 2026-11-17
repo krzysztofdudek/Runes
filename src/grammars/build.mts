@@ -78,6 +78,16 @@ function readVerified(file: string, expected: string): Buffer | undefined {
   return sha256(bytes) === expected ? bytes : undefined;
 }
 
+function readShipped(file: string, expected: string, log: (l: string) => void, damaged: string[]): Buffer | undefined {
+  if (!existsSync(file)) return undefined;
+  const bytes = readFileSync(file);
+  const actual = sha256(bytes);
+  if (actual === expected) return bytes;
+  damaged.push(file);
+  log(`passed over a shipped grammar file that does not match its pin: ${file} (expected sha256 ${expected}, got ${actual})`);
+  return undefined;
+}
+
 function readCache(cacheDir: string, expected: string, log: (l: string) => void): Buffer | undefined {
   const p = path.join(cacheDir, expected);
   if (!existsSync(p)) return undefined;
@@ -179,16 +189,20 @@ export async function buildGrammars(options: BuildGrammarsOptions): Promise<Buil
       outputs.push({ pin, wasm: inOut.wasm, nodeTypes: inOut.nodeTypes, from: 'out' });
       continue;
     }
+    const damaged: string[] = [];
     if (!options.rebuild) {
-      const shipped = { wasm: readVerified(path.join(shippedDir, pin.wasmFile), pin.sha256.wasm), nodeTypes: readVerified(path.join(shippedDir, syntaxNodeTypesFile(pin.wasmFile)), pin.sha256.nodeTypes) };
+      const shipped = { wasm: readShipped(path.join(shippedDir, pin.wasmFile), pin.sha256.wasm, log, damaged), nodeTypes: readShipped(path.join(shippedDir, syntaxNodeTypesFile(pin.wasmFile)), pin.sha256.nodeTypes, log, damaged) };
       if (shipped.wasm && shipped.nodeTypes) { outputs.push({ pin, wasm: shipped.wasm, nodeTypes: shipped.nodeTypes, from: 'shipped' }); continue; }
     }
+    const fail: (message: string) => never = (message) => {
+      throw new Error(damaged.length === 0 ? message : `${message} The package ships this grammar, but ${damaged.join(' and ')} does not match its pin and was passed over: reinstall the package.`);
+    };
     const src = pin.source;
     if (src.kind === 'npm') {
       const found = findInstalledPackage(resolveFrom, src.package);
-      if (found === undefined) throw new Error(`grammar ${pin.language}: the npm package ${src.package}@${src.version} is not installed where it is resolved from (${resolveFrom}).`);
+      if (found === undefined) fail(`grammar ${pin.language}: the npm package ${src.package}@${src.version} is not installed where it is resolved from (${resolveFrom}).`);
       const installed = found.version;
-      if (installed !== src.version) throw new Error(`grammar ${pin.language}: ${src.package}@${installed} is installed, but its pin is ${src.version}. A 0.x grammar minor can rename or restructure node types, so a bump is reviewed, not taken silently.`);
+      if (installed !== src.version) fail(`grammar ${pin.language}: ${src.package}@${installed} is installed, but its pin is ${src.version}. A 0.x grammar minor can rename or restructure node types, so a bump is reviewed, not taken silently.`);
       const dir = found.dir;
       outputs.push({
         pin,
@@ -203,7 +217,7 @@ export async function buildGrammars(options: BuildGrammarsOptions): Promise<Buil
       const nodeTypes = readCache(cacheDir, pin.sha256.nodeTypes, log);
       if (wasm && nodeTypes) { outputs.push({ pin, wasm, nodeTypes, from: 'cache' }); continue; }
     }
-    if (options.offline) throw new Error(`grammar ${pin.language} is not in the cache (${cacheDir}) and offline mode forbids fetching or building it.`);
+    if (options.offline) fail(`grammar ${pin.language} is not in the cache (${cacheDir}) and offline mode forbids fetching or building it.`);
     let files: { wasm: Buffer; nodeTypes: Buffer };
     let from: BuiltGrammar['from'];
     if (src.kind === 'github-release') {
@@ -211,7 +225,7 @@ export async function buildGrammars(options: BuildGrammarsOptions): Promise<Buil
       files = { wasm: await download(src.url), nodeTypes: await download(rawNodeTypesUrl(pin)) };
       from = 'download';
     } else {
-      if ((options.platform ?? process.platform) === 'win32') throw new Error(WIN32_SOURCE_BUILD(pin.language, manifest.cli.version, cacheDir));
+      if ((options.platform ?? process.platform) === 'win32') fail(WIN32_SOURCE_BUILD(pin.language, manifest.cli.version, cacheDir));
       cli ??= treeSitterCli(resolveFrom, manifest.cli.version);
       log(`building ${pin.language} from ${pin.repo} at ${pin.commit} with tree-sitter-cli ${manifest.cli.version}`);
       files = buildFromSource(pin, src, cli, patchesRoot);

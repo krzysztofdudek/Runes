@@ -163,11 +163,18 @@ describe('buildGrammars and verifyGrammarFiles', () => {
       assert.deepEqual(readdirSync(empty), [], 'nothing was cached');
       const audit = await buildGrammars({ outDir: path.join(out, 'h'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: root, rebuild: true });
       assert.deepEqual(audit.map((b) => b.from), ['npm']);
-      writeFileSync(path.join(shipped, 'tree-sitter-go.node-types.json'), 'damaged');
-      const passedOver = await buildGrammars({ outDir: path.join(out, 'i'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: root, offline: true });
+      const damagedGo = path.join(shipped, 'tree-sitter-go.node-types.json');
+      writeFileSync(damagedGo, 'damaged');
+      const logs = [];
+      const passedOver = await buildGrammars({ outDir: path.join(out, 'i'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: root, offline: true, log: (l) => logs.push(l) });
       assert.deepEqual(passedOver.map((b) => b.from), ['npm']);
-      await assert.rejects(buildGrammars({ outDir: path.join(out, 'j'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: empty, offline: true }), /tree-sitter-go@0\.25\.0 is not installed/);
+      assert.ok(logs.some((l) => l.startsWith(`passed over a shipped grammar file that does not match its pin: ${damagedGo} (expected sha256 ${byLanguage.get('go').sha256.nodeTypes}, got ${sha('damaged')})`)), logs.join('\n'));
+      const named = (file) => new RegExp(`The package ships this grammar, but ${file.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')} does not match its pin and was passed over: reinstall the package\\.$`);
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'j'), only: ['go'], shippedDir: shipped, cacheDir: empty, resolveFrom: empty, offline: true }), (err) => /tree-sitter-go@0\.25\.0 is not installed/.test(err.message) && named(damagedGo).test(err.message));
       assert.ok(!existsSync(path.join(out, 'j')), 'nothing written');
+      const damagedTs = path.join(shipped, 'tree-sitter-typescript.wasm');
+      writeFileSync(damagedTs, 'damaged');
+      await assert.rejects(buildGrammars({ outDir: path.join(out, 'k'), only: ['typescript'], shippedDir: shipped, cacheDir: empty, resolveFrom: empty, offline: true }), (err) => /typescript is not in the cache .* offline mode forbids/.test(err.message) && named(damagedTs).test(err.message));
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
