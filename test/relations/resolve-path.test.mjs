@@ -771,6 +771,52 @@ describe('makeResolvePathToFile — Python project roots discovered from manifes
     }
   });
 
+  it('inside a project, a package importing itself by its own name and a pytest test module keep the roots Python and pytest give them', () => {
+    for (const manifest of ['[project]\nname = "app"\n', '[tool.setuptools.packages.find]\nwhere = ["lib"]\n']) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(root);
+      write('pyproject.toml', manifest);
+      write('src/app/__init__.py');
+      write('lib/app/__init__.py');
+      // A package that runs as myext at all has docs/_ext on sys.path.
+      write('docs/_ext/myext/__init__.py', 'from myext.util import helper\n');
+      write('docs/_ext/myext/util/__init__.py');
+      write('docs/_ext/myext/sub/mod.py', 'import myext.util\n');
+      write('docs/_ext/myext/sub/__init__.py');
+      write('docs/_ext/other.py');
+      // pytest inserts the first directory upward without __init__.py for a test module or a conftest.py.
+      write('tests/helpers.py');
+      write('tests/unit/__init__.py');
+      write('tests/unit/common.py');
+      write('tests/unit/test_a.py', 'from helpers import make\nfrom unit.common import c\n');
+      write('tests/unit/conftest.py', 'from helpers import make\n');
+      write('tests/unit/case_test.py', 'from helpers import make\n');
+      write('src/app_tests/test_x.py', 'import helpers_x\n');
+      write('src/app_tests/helpers_x.py');
+      const resolve = makeResolvePathToFile(root);
+      const at = (spec, from) => resolve(spec, from, 'python');
+      expect(at('myext.util', 'docs/_ext/myext/__init__.py'), manifest).toBe('docs/_ext/myext/util/__init__.py');
+      expect(at('myext.util.helper', 'docs/_ext/myext/__init__.py'), manifest).toBe('docs/_ext/myext/util/__init__.py');
+      expect(at('myext.util', 'docs/_ext/myext/sub/mod.py'), manifest).toBe('docs/_ext/myext/util/__init__.py');
+      // Only the package's own name: another module beside it stays out of reach, as a plain directory inside the project is no root.
+      expect(at('other', 'docs/_ext/myext/__init__.py'), manifest).toBeUndefined();
+      for (const from of ['tests/unit/test_a.py', 'tests/unit/conftest.py', 'tests/unit/case_test.py']) {
+        expect(at('helpers', from), from).toBe('tests/helpers.py');
+        expect(at('unit.common', from), from).toBe('tests/unit/common.py');
+      }
+      expect(at('helpers_x', 'src/app_tests/test_x.py'), manifest).toBe('src/app_tests/helpers_x.py');
+    }
+  });
+
+  it('a pytest basedir is a root below a flat project too: a member\'s tests/ without __init__.py whose subdirectories are packages', () => {
+    write('m/pyproject.toml', '[project]\nname = "m"\n');
+    write('m/m/__init__.py');
+    write('m/tests/helpers.py');
+    write('m/tests/unit/__init__.py');
+    write('m/tests/unit/test_a.py', 'from helpers import make\n');
+    expect(makeResolvePathToFile(root)('helpers', 'm/tests/unit/test_a.py', 'python')).toBe('m/tests/helpers.py');
+  });
+
   it('a monorepo of many projects costs file probes in proportion to imports plus projects, not their product (issue 013)', () => {
     // 60 src-layout projects; every module imports three external libraries, its own package and the first project's.
     const projects = 60;

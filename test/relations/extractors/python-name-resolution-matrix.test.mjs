@@ -114,6 +114,9 @@ describe('MATRIX — source roots (ancestor packages are not roots; discovered p
   it('python-own-namespace-dir-under-root-not-a-root-edge', () => runCase('python-own-namespace-dir-under-root-not-a-root-edge'));
   it('python-script-subdir-beside-src-not-a-root-silence', () => runCase('python-script-subdir-beside-src-not-a-root-silence'));
   it('python-workspace-member-tests-package-edge', () => runCase('python-workspace-member-tests-package-edge'));
+  it('python-package-self-import-beside-src-edge', () => runCase('python-package-self-import-beside-src-edge'));
+  it('python-pytest-basedir-beside-src-edge', () => runCase('python-pytest-basedir-beside-src-edge'));
+  it('python-pytest-basedir-namespace-under-src-edge', () => runCase('python-pytest-basedir-namespace-under-src-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
