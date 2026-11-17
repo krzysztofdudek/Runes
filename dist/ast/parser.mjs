@@ -91,7 +91,23 @@ export function createParserHost(options) {
         parser.setLanguage(lang);
         return parser;
     };
+    // The runtime aborts (at its 2 GiB memory limit, for one) by throwing a RuntimeError whose message starts with `Aborted(`, and stays damaged for the rest of the process: a parser made afterwards can fail on any text. So an abort is not retried, and the host parses nothing more.
+    let abortedOn;
+    const isAbort = (error) => error instanceof Error && error.message.startsWith('Aborted(');
+    const abortedError = (filePath) => {
+        const { filePath: first, error } = abortedOn;
+        const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}, so ${filePath} was not parsed`;
+        return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${error.message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
+    };
+    const failOnAbort = (filePath, error) => {
+        if (!isAbort(error))
+            return;
+        abortedOn = { filePath, error };
+        throw abortedError(filePath);
+    };
     const parseFile = async (filePath, content, language, options) => {
+        if (abortedOn !== undefined)
+            throw abortedError(filePath);
         const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
         const progress = options?.progressCallback;
         let stop;
@@ -123,13 +139,18 @@ export function createParserHost(options) {
         try {
             tree = run(first);
         }
-        catch {
+        catch (error) {
+            failOnAbort(filePath, error);
             for (const [key, cached] of parserCache)
                 if (cached === first)
                     parserCache.delete(key);
             const fresh = await freshParser(ext);
             try {
                 tree = run(fresh);
+            }
+            catch (retryError) {
+                failOnAbort(filePath, retryError);
+                throw retryError;
             }
             finally {
                 fresh.delete();

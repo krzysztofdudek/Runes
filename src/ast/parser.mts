@@ -41,7 +41,7 @@ export interface ParserHost {
   loadedParserFor(extension: string): Parser | undefined;
   /** A new parser with no language set, outside the cache; the caller deletes it. Needs the runtime initialized, which any earlier parse did. */
   newParser(): Parser;
-  /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. */
+  /** Parses `content` with the grammar of `filePath`'s extension, or of `language` when given. The caller deletes the tree. When the runtime aborts, the call rejects with `code` `ERUNTIMEABORTED`, and so does every later call on this host. */
   parseFile(filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree>;
   /** Parses a file, calls `fn` with the tree, and deletes the tree afterwards whatever `fn` does. A stopped parse never calls `fn`. */
   withParsedFile<T>(filePath: string, content: string, fn: (tree: Tree) => T | Promise<T>, language?: string, options?: ParseFileOptions): Promise<T>;
@@ -141,7 +141,22 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
     return parser;
   };
 
+  // The runtime aborts (at its 2 GiB memory limit, for one) by throwing a RuntimeError whose message starts with `Aborted(`, and stays damaged for the rest of the process: a parser made afterwards can fail on any text. So an abort is not retried, and the host parses nothing more.
+  let abortedOn: { filePath: string; error: unknown } | undefined;
+  const isAbort = (error: unknown): boolean => error instanceof Error && error.message.startsWith('Aborted(');
+  const abortedError = (filePath: string): Error => {
+    const { filePath: first, error } = abortedOn!;
+    const what = first === filePath ? `while parsing ${filePath}` : `earlier, while parsing ${first}, so ${filePath} was not parsed`;
+    return Object.assign(new Error(`the tree-sitter runtime aborted ${what} (${(error as Error).message.split('\n')[0]}); it stays damaged for the rest of this process, so this host parses nothing more: restart the process`, { cause: error }), { code: 'ERUNTIMEABORTED' });
+  };
+  const failOnAbort = (filePath: string, error: unknown): void => {
+    if (!isAbort(error)) return;
+    abortedOn = { filePath, error };
+    throw abortedError(filePath);
+  };
+
   const parseFile = async (filePath: string, content: string, language?: string, options?: ParseFileOptions): Promise<Tree> => {
+    if (abortedOn !== undefined) throw abortedError(filePath);
     const ext = (language !== undefined ? primaryExtension(language) : undefined) ?? grammarExtensionForPath(filePath);
     const progress = options?.progressCallback;
     let stop: { thrown: boolean; error: unknown } | undefined;
@@ -168,11 +183,15 @@ export function createParserHost(options: ParserHostOptions): ParserHost {
     const first = await getParser(ext);
     try {
       tree = run(first);
-    } catch {
+    } catch (error) {
+      failOnAbort(filePath, error);
       for (const [key, cached] of parserCache) if (cached === first) parserCache.delete(key);
       const fresh = await freshParser(ext);
       try {
         tree = run(fresh);
+      } catch (retryError) {
+        failOnAbort(filePath, retryError);
+        throw retryError;
       } finally {
         fresh.delete();
       }

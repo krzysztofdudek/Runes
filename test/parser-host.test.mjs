@@ -205,6 +205,22 @@ describe('a parse the runtime aborts', () => {
     assert.deepEqual(parses, ['x'], 'the spent host does not reach the runtime again');
   });
 
+  it('a throw that is no abort is still taken for a scanner trap: retried once on a fresh parser, and the host stays usable', async () => {
+    const parses = [];
+    class TrappingParser {
+      static init() { return Promise.resolve(); }
+      setLanguage() {}
+      parse(content) { parses.push(content); throw new WebAssembly.RuntimeError('unreachable'); }
+      reset() {}
+      delete() {}
+    }
+    const h = createParserHost({ runtime: { Parser: TrappingParser, Language: { load: async () => ({}) } }, runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
+    await assert.rejects(h.parseFile('a.rb', 'x'), (error) => error.message === 'unreachable' && error.code === undefined);
+    assert.deepEqual(parses, ['x', 'x'], 'retried once');
+    await assert.rejects(h.parseFile('b.rb', 'y'), /unreachable/);
+    assert.deepEqual(parses, ['x', 'x', 'y', 'y'], 'the next call reaches the runtime');
+  });
+
   it('with a progress callback that asks to stop, an abort still rejects with ERUNTIMEABORTED, not EPARSESTOPPED', async () => {
     const parses = [];
     const h = createParserHost({ runtime: abortingRuntime(parses), runtimeIdentity: 'r', grammarDirs: [GRAMMAR_DIR] });
