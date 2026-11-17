@@ -123,7 +123,8 @@ import { RUST_MODULES_KNOWN_KEY, rustExternBindingKey, rustExternNameKey, rustCo
  * is emitted: a local module shadows a crate of its name, and a guess would be a false edge.
  * A capitalised first name, `Self` and a primitive type (`u32::MAX`) name a type, a path that
  * starts with `::` starts at the crate root in edition 2015, and a tool's attribute
- * (`#[rustfmt::skip]`) names no crate: none of them is emitted. Only the OUTERMOST scoped node
+ * (`#[rustfmt::skip]`, `#[rust_analyzer::skip]`) or one of the compiler's `diagnostic` namespace
+ * (`#[diagnostic::do_not_recommend]`) names no crate: none of them is emitted. Only the OUTERMOST scoped node
  * of a chain is read (it carries the complete path); the inner `path` segments are skipped.
  */
 
@@ -420,7 +421,7 @@ function uses(file: ParsedFile): DetectedDep[] {
       return;
     }
     const first = unraw(specifier.split('::', 1)[0]!);
-    // A leading `::` starts at the crate root in edition 2015 and at a crate from 2018 on; a capitalised name, `Self` or a primitive names a type; a tool's attribute (`#[rustfmt::skip]`) names no crate.
+    // A leading `::` starts at the crate root in edition 2015 and at a crate from 2018 on; a capitalised name, `Self` or a primitive names a type; a tool's attribute (`#[rustfmt::skip]`) or a `diagnostic` one names no crate.
     if (node.text.startsWith('::') || !/^[a-z_]/.test(first) || PRIMITIVE_TYPES.has(first) || (inAttribute && TOOL_ATTRIBUTES.has(first))) return;
     if (boundInScope(first, lexical)) return;
     const specifierIn = `in::${unrawPath(specifier)}`;
@@ -756,8 +757,8 @@ const INERT_MOD_ATTRIBUTES = new Set(['cfg', 'doc', 'allow', 'warn', 'deny', 'fo
 /** The further attributes of the compiler that stand at the head of a file or of an inline module (`#![no_std]`, `#![feature(…)]`). */
 const INERT_INNER_ATTRIBUTES = new Set(['no_std', 'no_core', 'no_main', 'no_implicit_prelude', 'no_builtins', 'feature', 'recursion_limit', 'type_length_limit', 'crate_type', 'crate_name', 'windows_subsystem']);
 
-/** The tools whose attributes (`#[rustfmt::skip]`, `#[clippy::…]`) the compiler passes over. */
-const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy']);
+/** The attribute namespaces that name no crate: the tools whose attributes (`#[rustfmt::skip]`, `#[clippy::…]`, `#[rust_analyzer::skip]`) the compiler passes over, and its own `diagnostic` namespace (`#[diagnostic::on_unimplemented(…)]`). */
+const TOOL_ATTRIBUTES = new Set(['rustfmt', 'clippy', 'rust_analyzer', 'diagnostic']);
 
 /**
  * The modules a Rust file places in files of their own by their names: each `mod x;` (no body) that is an item of the file itself, or of inline modules nested in it, as the path of the names from the file's own module (`x`, `outer/x`), with `r#` stripped. Rust compiles the file that path names beside the declaring file (`x.rs` or `x/mod.rs`) into every crate that compiles the declaring file, unless a `cfg` removes the declaration.
@@ -1322,7 +1323,7 @@ function tokenItems(tree: Node): string[] {
 
 export const rustExtractor: DependencyExtractor = {
   languages: new Set(['rust']),
-  rev: 29,
+  rev: 30,
   declarations,
   uses,
 };
