@@ -392,14 +392,92 @@ describe('rust extractor — a use path that starts with ::', () => {
 });
 
 describe('rust extractor — a path attribute and what stands between it and its mod', () => {
-  it('skips the mod behind a doc comment, a line comment, a block comment and another attribute', async () => {
+  it('reads the attribute behind a doc comment, a line comment, a block comment and another attribute, so the mod names the file it gives', async () => {
     const { uses } = await run('#[path = "a.rs"]\n/// doc\nmod a;\n#[path = "b.rs"]\n// line\n/* block */\n#[allow(dead_code)]\nmod b;\n/// doc only\nmod c;\n#[cfg(unix)]\n/** block doc */\nmod d;');
-    expect(specs(uses)).toEqual(['self::c', 'self::d']);
+    expect(specs(uses)).toEqual(['mod::a.rs', 'mod::b.rs', 'self::c', 'self::d']);
   });
 
   it('silences what an inline module holds when a comment follows its path attribute', async () => {
     const { uses } = await run('#[path = "elsewhere"]\n/// doc\nmod outer {\n    mod inner;\n    use self::inner::X;\n}');
     expect(specs(uses)).toEqual([]);
+  });
+});
+
+describe('rust extractor — a mod with a path attribute among the items of the file', () => {
+  const at = (uses) => uses.map((u) => `${u.candidates[0].specifier}@${u.line}`);
+
+  it('names the file the attribute gives, relative to the directory of the file, on its own line and on one line with the mod', async () => {
+    const { uses } = await run('pub mod f;\n#[path = "../data/orphan.rs"]\npub mod via_attr;\n#[path = "./imp/../data//d.rs"] mod dd;\n#[cfg(unix)] #[path = "r#gen.rs"] pub(crate) mod r#gen;');
+    expect(at(uses)).toEqual(['self::f@1', 'mod::../data/orphan.rs@3', 'mod::data/d.rs@4', 'mod::r#gen.rs@5']);
+  });
+
+  it('stays silent inside an inline module, under one that carries a path attribute, in a function body, and for a path it cannot place', async () => {
+    const { uses } = await run('mod outer {\n    #[path = "x.rs"]\n    mod x;\n}\n#[path = "elsewhere"]\nmod moved {\n    #[path = "y.rs"]\n    mod y;\n}\nfn f() {\n    #[path = "z.rs"]\n    mod z;\n}\n#[path = "/abs.rs"]\nmod a;\n#[path = ""]\nmod e;\n#[path = ".."]\nmod up;\n#[cfg_attr(unix, path = "u.rs")]\nmod u;');
+    expect(specs(uses)).toEqual(['self::u']);
+  });
+});
+
+describe('rust extractor — a path written outside a use whose first name nothing in scope binds', () => {
+  const at = (uses) => uses.map((u) => `${u.candidates[0].specifier}@${u.line}`);
+
+  it('names a crate of the extern prelude, in a function body and in a type, unless a name in scope, a type, a primitive or a leading :: says otherwise', async () => {
+    const code = [
+      'use other::bound;',
+      'use std::io;',
+      'mod local;',
+      'mod inline_mod {}',
+      'enum lower { A }',
+      'pub fn k(_x: datacrate::Thing) -> u32 {',
+      '    datacrate::dc();',
+      '    std::mem::swap(&mut 1, &mut 2);',
+      '    registry_crate::call();',
+      '    bound::x();',
+      '    io::stdout();',
+      '    local::f();',
+      '    inline_mod::f();',
+      '    let _ = lower::A;',
+      '    Vec::<u8>::new();',
+      '    String::new();',
+      '    u32::MAX;',
+      '    ::datacrate::dc();',
+      '    r#datacrate::r#dc();',
+      '    { mod blockmod {} blockmod::f(); }',
+      '    { use x::y as z; z::f(); }',
+      '    { struct st; st::f(); }',
+      '    datacrate::m!();',
+      '    crate::a::b();',
+      '    0',
+      '}',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(at(uses)).toEqual(['other::bound@1', 'std::io@2', 'self::local@3', 'in::datacrate::Thing@6', 'in::datacrate::dc@7', 'in::std::mem::swap@8', 'in::registry_crate::call@9', 'in::datacrate::dc@19', 'x::y@21', 'in::datacrate::m@23', 'crate::a::b@24']);
+  });
+
+  it('keeps a type of two segments rooted at crate, self or super as it stands, and emits none rooted at a type', async () => {
+    const { uses } = await run('fn f<T: Tr>(_a: crate::Foo, _b: self::Bar, _c: super::Baz, _d: T::Assoc, _e: <T as Tr>::Out) {}');
+    expect(specs(uses)).toEqual(['crate::Foo', 'self::Bar', 'super::Baz']);
+  });
+
+  it('reads the names of its own module only, and stays silent where a glob or an extern crate of a scope around it may bind the name', async () => {
+    const code = [
+      'mod local;',
+      'mod tests {',
+      '    use super::*;',
+      '    fn t() { datacrate::dc(); }',
+      '}',
+      'mod other_mod {',
+      '    fn t() { local::f(); }',
+      '    extern crate foo as aliased;',
+      '    fn u() { aliased::f(); }',
+      '    fn v() { { use a::{b::*, c}; datacrate::dc(); } datacrate::dc(); }',
+      '}',
+      '#[rustfmt::skip]',
+      'fn w() {}',
+      '#[tokio::main]',
+      'async fn main2() {}',
+    ].join('\n');
+    const { uses } = await run(code);
+    expect(at(uses)).toEqual(['self::local@1', 'self@3', 'in::local::f@7', 'extern::foo@8', 'a::b@10', 'a::c@10', 'in::datacrate::dc@10', 'in::tokio::main@14']);
   });
 });
 
