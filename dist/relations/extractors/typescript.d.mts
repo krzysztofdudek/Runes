@@ -16,6 +16,8 @@ export interface SfcScriptView {
  * byte outside a script body becomes a space (newlines are kept, so every line
  * number is the component's own), and the view is parsed with the TS, TSX or JS
  * grammar the blocks' `lang` names (`ts`/`typescript` → TS, `tsx` → TSX, otherwise
- * JS). Returns null for any other file, or a component with no script block.
+ * JS). Returns null for any other file, or a component with no script block outside
+ * its HTML comments. A script element with a `src` and no body stands for the file it
+ * names, as an import written over its own tag.
  */
 export declare function sfcScriptView(filePath: string, content: string): SfcScriptView | null;

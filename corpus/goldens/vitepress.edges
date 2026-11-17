@@ -27,6 +27,7 @@ __tests__/e2e/team-and-sponsors/data.ts:1	theme.d.ts
 __tests__/e2e/vitestGlobalSetup.ts:6	types/index.d.ts
 __tests__/init/init.test.ts:8	types/index.d.ts
 __tests__/unit/client/theme-default/components/VPImage.test.ts:2	src/client/theme-default/components/VPImage.vue
+__tests__/unit/client/theme-default/components/VPImage.test.ts:6	src/client/index.ts
 __tests__/unit/client/theme-default/composables/langs.test.ts:1	src/client/theme-default/composables/langs.ts
 __tests__/unit/client/theme-default/composables/langs.test.ts:2	src/client/index.ts
 __tests__/unit/client/theme-default/composables/langs.test.ts:3	theme.d.ts

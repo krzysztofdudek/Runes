@@ -133,9 +133,26 @@ interface CargoTargetEdition {
 export declare function parseCargoManifest(text: string): CargoManifest;
 /** Does Rust source `text` declare an item called `name` (struct / enum / union / trait / type / fn / const / static / mod / macro_rules!), bind it with `extern crate` (the alias of `extern crate x as name;`, else the crate of `extern crate name;`), or bring it into scope with a `use`, anywhere in the file? It is the answer of a caller that passes no symbol table, and a word in a string or an item nested in a function satisfies it. With the table, what the top level binds is read from the parse tree instead (`topLevelItemNames` and `topLevelExternCrates` in the Rust extractor). */
 export declare function rustFileDeclares(text: string, name: string): boolean;
+/**
+ * The source roots a Python project manifest names, each a POSIX path relative to the manifest's directory (`.` for the directory itself), from these keys only:
+ *
+ * - `pyproject.toml`: `[tool.setuptools.packages.find] where` (an array of strings), the empty key of `[tool.setuptools] package-dir` (an inline table, or the table `[tool.setuptools.package-dir]`), the `from` of each element of Poetry's `[tool.poetry] packages` (an array of inline tables; an element without `from` names the directory itself, and one with `to` makes the whole key name nothing), and the directory of each path in Hatch's `[tool.hatch.build.targets.wheel] packages` (an array of strings). A key is found by its full key path, so a dotted key under a parent table reads alike.
+ * - `setup.cfg`: the empty key of `[options] package_dir`, and the first directory of `[options.packages.find] where`, read as setuptools reads them (a list of lines, or of comma-separated items on one line).
+ *
+ * Any other key or form gives nothing, and a key with a value it cannot read whole (an element that is not a string, a mapping of a named package) gives nothing for that key: a misread root moves every absolute import of a project, so the reader refuses rather than guesses. A path that is absolute, holds a backslash or climbs above the manifest's directory names no root, so a root never leaves the project.
+ */
+export declare function pythonManifestRoots(name: string, text: string): string[];
 /** The module path declared by go.mod text: `module x`, `module "x"`, ``module `x` ``, or
  *  the block form `module ( x )`. The first declaration wins; undefined when there is none. */
 export declare function parseGoModulePath(text: string): string | undefined;
+/** The modules go.mod text replaces with a local directory: each `replace <module> [<version>] => <dir>` (single-line and block form, quoted or bare) whose right side is one path beginning with `./` or `../`, as written, relative to the go.mod directory, with the version its left side names, if any. A replacement by another module and version, an absolute directory, and a line it cannot split into those parts give nothing. */
+export declare function parseGoModReplaces(text: string): Array<{
+    modulePath: string;
+    dir: string;
+    version?: string;
+}>;
+/** The version go.mod text requires of each module (`require <module> <version>`, single-line and block form); the first requirement of a module keeps it. */
+export declare function parseGoModRequires(text: string): Map<string, string>;
 /** The directories named by `use` directives in go.work text (single-line and block form,
  *  quoted or bare), as written — relative to the go.work directory. */
 export declare function parseGoWorkUses(text: string): string[];

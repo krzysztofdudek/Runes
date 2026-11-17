@@ -5,8 +5,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { findInstalledPackage } from '../../grammars/installed.mjs';
-import { loadGrammarManifest } from '../../grammars/build.mjs';
-/** Every package whose installed version differs from the manifest's pin, or that is missing, and the runtime WASM when its sha256 differs from the pin. An empty list means the consumer runs the pinned runtime and grammar packages. */
+import { loadGrammarManifest, shippedGrammarFilesDir, verifyGrammarFiles } from '../../grammars/build.mjs';
+/** Every package whose installed version differs from the manifest's pin, or that is missing (an npm grammar package whose grammar the package ships built is not needed), and the runtime WASM when its sha256 differs from the pin. An empty list means the consumer runs the pinned runtime and grammar packages. */
 export function checkRuntimePins(options) {
     const manifest = options.manifest ?? loadGrammarManifest();
     const version = (pkg) => (options.versions && Object.hasOwn(options.versions, pkg) ? options.versions[pkg] : findInstalledPackage(options.resolveFrom, pkg)?.version);
@@ -19,10 +19,14 @@ export function checkRuntimePins(options) {
         if (unknown.length > 0)
             throw new Error(`checkRuntimePins: the grammar manifest pins no grammar for: ${unknown.join(', ')}`);
     }
+    const shippedDir = options.shippedDir ?? shippedGrammarFilesDir();
+    const shipped = new Set();
     for (const g of manifest.grammars) {
         if (g.source.kind !== 'npm' || (only !== undefined && !only.has(g.language)))
             continue;
         wanted.push({ package: g.source.package, role: g.language, expected: g.source.version });
+        if (verifyGrammarFiles(shippedDir, { only: [g.language], manifest }).length === 0)
+            shipped.add(g.source.package);
     }
     const problems = [];
     // The engine bytes: a version string can be right while the WASM is patched, rebuilt or from another release.
@@ -37,6 +41,8 @@ export function checkRuntimePins(options) {
     }
     for (const w of wanted) {
         const installed = version(w.package);
+        if (installed === undefined && shipped.has(w.package))
+            continue;
         if (installed !== w.expected)
             problems.push(installed === undefined ? { ...w } : { ...w, installed });
     }

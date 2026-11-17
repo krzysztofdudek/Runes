@@ -42,8 +42,11 @@ class Handler {}
 ## Expect
 
 - silence      # `App\Pay\G` exists under BOTH roots → 2+ distinct hits → ambiguous → silence (never first-wins)
+- src/Order/Handler.php:3 answers ambiguous lib/Pay/G.php, src/Pay/G.php      # classifyUse names both files, sorted
 
 ## Why
 
 Two distinct hits mean two candidate owner nodes; PSR-4 resolves such a clash
 arbitrarily at runtime, so a static tool must not guess a root — it collapses to silence.
+
+`classifyUse` answers the use ambiguous with both files, so a consumer can tell it from a class no root holds and judge the candidates itself; the edge walk stays silent.

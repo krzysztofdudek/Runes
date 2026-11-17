@@ -44,7 +44,10 @@
   },
   "files": [
     "dist",
-    "grammars",
+    "grammars/manifest.json",
+    "grammars/manifest.schema.json",
+    "grammars/patches",
+    "grammars/built",
     "skills",
     "docs/api.md",
     "CHANGELOG.md"
@@ -59,6 +62,8 @@
     "check:compiler": "node scripts/check-compiler.mjs",
     "check": "npm run check:compiler && npm test && npm run check:dist",
     "grammars": "node scripts/build-grammars.mjs --table",
+    "grammars:package": "npm ci --ignore-scripts --legacy-peer-deps --prefix grammars/npm && node scripts/build-grammars.mjs --package",
+    "prepublishOnly": "npm run grammars:package",
     "corpus": "node scripts/corpus.mjs gate",
     "corpus:edges": "node scripts/corpus.mjs verify",
     "corpus:update": "node scripts/corpus.mjs update",

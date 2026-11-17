@@ -6,6 +6,8 @@ import { typescriptExtractor } from '../../helpers/internal/relations.mjs';
 
 const run = (code, ext = '.ts', lang = 'typescript') =>
   runExtractor(typescriptExtractor, lang, ext, code);
+const importsOf = async (view) =>
+  (await run(view.content, '.js', 'javascript')).uses.map((u) => [u.candidates[0].specifier, u.line]);
 
 describe('typescript extractor — uses()', () => {
   it('detects relative ESM imports as path hints', async () => {
@@ -353,6 +355,118 @@ describe('sfcScriptView', () => {
     expect(sfcScriptView('c/N.vue', '<template><a/></template>')).toBeNull();
     expect(sfcScriptView('c/x.ts', '<script></script>')).toBeNull();
   });
+  it('reads no script inside an HTML comment, and reads the script beside one', async () => {
+    const commented = '<!-- <script>import { d } from "../data/d"</script> -->';
+    expect(sfcScriptView('c/V.vue', `<template><b/></template>\n${commented}\n`)).toBeNull();
+    expect(sfcScriptView('c/S.svelte', `${commented}\n<p>x</p>`)).toBeNull();
+    const beside = sfcScriptView('c/B.vue', `<template><b/></template>\n${commented}\n<script>import { e } from "../data/e"</script>\n`);
+    expect(beside.content.split('\n')).toHaveLength(4);
+    const { uses } = await run(beside.content, '.js', 'javascript');
+    expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/e', 3]]);
+  });
+  it('reads a comment that closes at once, and reads a `<!--` that never closes as text', () => {
+    expect(sfcScriptView('c/A.vue', '<!--><script>import a from "./a"</script>').content.trim()).toBe('import a from "./a"');
+    expect(sfcScriptView('c/U.vue', '<!-- <script>import a from "./a"</script>').content.trim()).toBe('import a from "./a"');
+    expect(sfcScriptView('c/T.vue', '<template><div title="<!--">x</div></template>\n<script>import a from "./a"</script>').content.split('\n')[1].trim()).toBe('import a from "./a"');
+    expect(sfcScriptView('c/O.vue', '<script>import a from "./a"')).toBeNull();
+  });
+  it('keeps the body that an html string names as it was read before comments were skipped', () => {
+    const view = sfcScriptView('c/H.svelte', "<p>{@html '<script>'}</p>\n<script>import a from './a'</script>");
+    expect(view.content).toBe(`${' '.repeat(19)}'}</p>\n<script>import a from './a'${' '.repeat(9)}`);
+  });
+  it('gives a use of the file a src names at the line of its script element, in Vue and Svelte', async () => {
+    const vue = sfcScriptView('c/s.vue', '<template><b/></template>\n<script src="../data/d.ts"></script>\n');
+    expect(vue.content.split('\n')[1].trim()).toBe('import "../data/d.ts";');
+    const svelte = sfcScriptView('c/s.svelte', '<p>x</p>\n<script lang="ts" src="../data/d.ts"></script>');
+    expect(svelte.language).toBe('typescript');
+    for (const view of [vue, svelte]) {
+      const { uses } = await run(view.content, view.language === 'typescript' ? '.ts' : '.js', view.language);
+      expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/d.ts', 2]]);
+    }
+  });
+  it('reads a src in each quoting, one per line, and keeps every line of the view', async () => {
+    const view = sfcScriptView('c/m.vue', '<script src="../data/a.ts"></script>\n<script src=\'../data/b.ts\'></script>\n<script src=../data/c.ts></script>');
+    expect(view.content.split('\n')).toHaveLength(3);
+    const { uses } = await run(view.content, '.js', 'javascript');
+    expect(uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['../data/a.ts', 1], ['../data/b.ts', 2], ['../data/c.ts', 3]]);
+  });
+  it('gives no use for a src element with a body, a tag too long for its first line, or a src that names no file', async () => {
+    const bodied = sfcScriptView('c/b.vue', '<script src="../data/d.ts">import x from "./x"</script>');
+    expect((await run(bodied.content, '.js', 'javascript')).uses.map((u) => [u.candidates[0].specifier, u.line])).toEqual([['./x', 1]]);
+    const tall = sfcScriptView('c/t.vue', '<script\n  src="../data/d.ts"></script>');
+    expect((await run(tall.content, '.js', 'javascript')).uses).toEqual([]);
+    for (const tag of ['<script src="https://cdn.example.com/d.js"></script>', '<script src=""></script>', '<script data-src="../data/d.ts"></script>', '<script :src="file"></script>']) {
+      expect((await run(sfcScriptView('c/n.vue', tag).content, '.js', 'javascript')).uses).toEqual([]);
+    }
+  });
+  it('reads a script past a `<!--` in an attribute value, in style, textarea or title text, when a `-->` follows', async () => {
+    const cases = [
+      '<template><div title="<!--">x</div></template>\n<script>import { d } from "../data/d"</script>\n<p>--></p>\n',
+      '<style>p { color: red } <!-- </style>\n<script>import { d } from "../data/d"</script>\n<p>--></p>\n',
+      '<textarea><!--</textarea>\n<script>import { d } from "../data/d"</script>\n<p>--></p>\n',
+      '<title><!--</title>\n<script>import { d } from "../data/d"</script>\n<p>--></p>\n',
+    ];
+    for (const file of ['c/a.vue', 'c/a.svelte']) {
+      for (const code of cases) {
+        expect(await importsOf(sfcScriptView(file, code))).toEqual([['../data/d', 2]]);
+      }
+    }
+  });
+  it('reads a script past a `<!--` in a Svelte expression or in a script body, when a `-->` follows', async () => {
+    expect(await importsOf(sfcScriptView('c/e.svelte', "<p>{'<!--'}</p>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/h.svelte', "<p>{@html '<!--'}</p>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/n.svelte', "<p>{ {a: 1}.a + '<!--' }</p>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/t.svelte', "<div title={'<!--'}>x</div>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/b.vue', "<script>const s = '<!--';</script>\n<script>import { d } from \"../data/d\"</script>\n<p>--></p>\n"))).toEqual([['../data/d', 2]]);
+    expect(await importsOf(sfcScriptView('c/d.vue', '<template><div title="<!--">x</div></template>\n<script>let i = 2;\nwhile (i-->0) {}\nimport { d } from "../data/d"</script>\n'))).toEqual([['../data/d', 4]]);
+  });
+  it('reads the script beside a commented-out one in a Svelte component too', async () => {
+    const view = sfcScriptView('c/S.svelte', '<p>x</p>\n<!-- <script>import { d } from "../data/d"</script> -->\n<script>import { e } from "../data/e"</script>\n');
+    expect(await importsOf(view)).toEqual([['../data/e', 3]]);
+  });
+  it('reads a src only as a relative path with no quote or backslash, and gives no use for any other', async () => {
+    expect(await importsOf(sfcScriptView('c/r.vue', '<script src="../data/d.ts"></script>'))).toEqual([['../data/d.ts', 1]]);
+    for (const tag of [
+      '<script src="//cdn.example.com/d.js"></script>',
+      '<script src="/js/a.js"></script>',
+      '<script src="https://cdn.example.com/d.js"></script>',
+      `<script src='../data/d" ; import "../data/e.ts'></script>`,
+      '<script src="..\\data\\d.ts"></script>',
+      '<script src=".\\x.js"></script>',
+    ]) {
+      expect(await importsOf(sfcScriptView('c/r.vue', tag))).toEqual([]);
+    }
+  });
+});
+
+describe('typescript extractor — test mocks and the bundler forms that stay unread', () => {
+  it('gives vi.mock and jest.mock with a literal path the edge of an import() of that path', async () => {
+    const { uses } = await run(
+      [
+        `vi.mock('../data/d');`,
+        `jest.mock("./j", () => ({}));`,
+        'vi.mock(`../data/t`);',
+        `vi.mock(path);`,
+        `vi.mock();`,
+        `vi.fn('../data/n');`,
+        `other.mock('../data/o');`,
+      ].join('\n'),
+    );
+    expect(uses.map((u) => [u.candidates[0].specifier, u.candidates[0].callForm, u.line])).toEqual([
+      ['../data/d', 'import', 1],
+      ['./j', 'import', 2],
+      ['../data/t', 'import', 3],
+    ]);
+  });
+  it('reads no use from import.meta.glob or require.context', async () => {
+    const { uses } = await run(
+      [
+        `const m = import.meta.glob('../data/*.ts');`,
+        `const c = require.context('../data', false, /\\.ts$/);`,
+      ].join('\n'),
+    );
+    expect(uses).toEqual([]);
+  });
 });
 
 describe('typescript extractor — declarations()', () => {
@@ -413,6 +527,30 @@ describe('typescript extractor — about 1 MB of source is read in linear time (
     const { uses, declarations, elapsed } = await timed(code);
     expect(declarations).toEqual([]);
     expect(uses.map((u) => u.candidates[0].specifier)).toEqual(['./kept']);
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+});
+
+describe('sfcScriptView — a component of about 1 MB is read in linear time', () => {
+  const MB = 1024 * 1024;
+  const BOUND_MS = 15_000;
+  const timedView = (file, code) => {
+    const start = performance.now();
+    const view = sfcScriptView(file, code);
+    return { view, elapsed: performance.now() - start };
+  };
+
+  it('a comment that never closes, repeated, leaves the script after them read', () => {
+    const unclosed = `<!--${'x'.repeat(10)}`;
+    const code = `<template>${unclosed.repeat(Math.floor(MB / unclosed.length))}</template>\n<script>import a from "./a"</script>\n`;
+    const { view, elapsed } = timedView('c/big.vue', code);
+    expect(view.content).toContain('import a from "./a"');
+    expect(elapsed).toBeLessThan(BOUND_MS);
+  });
+
+  it('a run of script tags with no closing angle bracket is read in linear time', () => {
+    const { view, elapsed } = timedView('c/tags.vue', '<script'.repeat(Math.floor(MB / 7)));
+    expect(view).toBeNull();
     expect(elapsed).toBeLessThan(BOUND_MS);
   });
 });

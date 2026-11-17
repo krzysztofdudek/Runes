@@ -73,14 +73,14 @@ describe('MATRIX — require axis (require / import-equals / export-assignment; 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('MATRIX — dynamic references (string literal resolves; non-literal arguments and mock registrations stay silent)', () => {
+describe('MATRIX — dynamic references (string literal resolves, a mock registration included; non-literal arguments stay silent)', () => {
   it('typescript-dynamic-import-literal-edge', () => runCase('typescript-dynamic-import-literal-edge'));
   it('typescript-dynamic-import-template-silence', () => runCase('typescript-dynamic-import-template-silence'));
   it('typescript-dynamic-import-non-literal-silence', () => runCase('typescript-dynamic-import-non-literal-silence'));
   it('typescript-import-meta-resolve-silence', () => runCase('typescript-import-meta-resolve-silence'));
   it('typescript-template-no-substitution-dynamic-import-edge', () => runCase('typescript-template-no-substitution-dynamic-import-edge'));
   it('typescript-new-url-import-meta-edge', () => runCase('typescript-new-url-import-meta-edge'));
-  it('typescript-vi-mock-silence', () => runCase('typescript-vi-mock-silence'));
+  it('typescript-vi-and-jest-mock-literal-edge', () => runCase('typescript-vi-and-jest-mock-literal-edge'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
